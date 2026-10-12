@@ -1,0 +1,6 @@
+# Keep LF in the working tree regardless of core.autocrlf: frozen evidence
+# files carry sha256 self-checks over their exact bytes.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
