@@ -1,0 +1,8 @@
+# Primary packages frozen for the 2026-10-04 native HF experiment.
+# Install torch first from https://download.pytorch.org/whl/cu130.
+torch==2.14.1+cu130
+transformers==5.18.0
+accelerate==1.15.0
+nagisa==0.3.0
+soundfile==0.14.0
+librosa==1.0.0

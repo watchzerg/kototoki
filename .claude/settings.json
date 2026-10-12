@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(just --list)",
+      "Bash(just check)",
+      "Bash(just test)",
+      "Bash(just translation-test)",
+      "Bash(just translation-flow-test)",
+      "Bash(just translation-flow-v2-test)",
+      "Bash(uv run --locked --offline python -m unittest:*)",
+      "Bash(uv run --locked --offline python -m compileall:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(uv run --locked --offline python -m experiments.translation_v3:*)",
+      "Bash(.venv/Scripts/python.exe -X utf8 -m experiments.translation_v3:*)",
+      "Bash(nvidia-smi:*)",
+      "PowerShell(uv run --locked --offline python -m experiments.translation_v3:*)",
+      "PowerShell(nvidia-smi:*)",
+      "PowerShell(Get-Process:*)"
+    ],
+    "ask": [
+      "Bash(just setup)",
+      "Bash(uv sync:*)",
+      "Bash(uv add:*)",
+      "Bash(uv lock:*)",
+      "Bash(just x0-demo:*)",
+      "Bash(just translation-demo:*)",
+      "Bash(just translation-baseline:*)",
+      "Bash(just translation-flow:*)",
+      "Bash(just translation-eval:*)",
+      "Bash(codex:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Edit(./.local/gpu.lock)",
+      "Write(./.local/gpu.lock)"
+    ]
+  }
+}

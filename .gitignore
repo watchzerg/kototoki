@@ -1,0 +1,57 @@
+# Local-only data: models, caches, media, results, envs (see CLAUDE.md hard constraints)
+.local/
+.scratch/
+tests/bridge-cohort-test-*/
+*.log
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tool caches and reports
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Safety net: never commit media, transcripts, or weights outside .local/
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.mp4
+*.mkv
+*.webm
+*.srt
+*.vtt
+*.ass
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+# Secrets and per-user config
+.env
+.env.*
+mise.local.toml
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/worktrees/
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
