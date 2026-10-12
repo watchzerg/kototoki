@@ -1,6 +1,4 @@
-# Keep LF in the working tree regardless of core.autocrlf: frozen evidence
-# files carry sha256 self-checks over their exact bytes.
-* text=auto eol=lf
-
-*.png binary
-*.jpg binary
+# Store every file byte-for-byte: no line-ending conversion, regardless of
+# core.autocrlf. Frozen evidence carries sha256 self-checks over exact bytes,
+# and some of it was written with CRLF or mixed line endings.
+* -text
