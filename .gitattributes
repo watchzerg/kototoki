@@ -1,4 +1,21 @@
-# Store every file byte-for-byte: no line-ending conversion, regardless of
-# core.autocrlf. Frozen evidence carries sha256 self-checks over exact bytes,
-# and some of it was written with CRLF or mixed line endings.
-* -text
+# Line endings: store LF in the repository and check out LF on every platform.
+# eol=lf takes precedence over core.autocrlf, so Windows checkouts stay LF too.
+* text=auto eol=lf
+
+# Binary files are never converted.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.flac binary
+*.m4a binary
+*.mp4 binary
+*.mkv binary
+*.zip binary
+*.pt binary
+*.bin binary
+*.onnx binary
+*.gguf binary
+*.safetensors binary
