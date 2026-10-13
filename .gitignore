@@ -1,4 +1,4 @@
-# Local-only data: models, caches, media, results, envs (see CLAUDE.md hard constraints)
+# Local-only data: models, caches, media, results, envs (see AGENTS.md 常驻约束)
 .local/
 .scratch/
 tests/bridge-cohort-test-*/
@@ -55,10 +55,3 @@ CLAUDE.local.md
 Thumbs.db
 desktop.ini
 .DS_Store
-
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
-.beads/proxieddb/
-*.gate.lock*

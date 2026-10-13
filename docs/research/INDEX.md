@@ -1,0 +1,143 @@
+# 调研索引
+
+本目录保存技术比较、实验、验证证据及其限制，按记录时点阅读，永不改写、不归档。结论采纳后更新当前正文或新增 ADR，证据保留原样。验收记录放 `acceptance/`，文件名带日期。
+
+新增文件必须在本页登记，未登记的文件视为不存在。每条登记：主题、结论、适用条件与未覆盖项。
+
+Migrated research is adapted prose, not a copy of the sibling project's task
+state, permissions, or assets. Each document records sources and limitations.
+Links to `../../../subtitle-edit-fix/` require that sibling checkout; original
+experiment artifacts remain there and were not imported. External findings are
+attributed to the original investigation dates, not newly verified by migration.
+
+## 决定与探索时间线
+
+按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
+
+2026-10-12：v4 第四轮字幕翻译流程探索已完成，详见 [v4 报告](2026-10-11-hy30-flow-v4-report.md) 和 [v4 台账](../context/2026-10-11-hy30-flow-exploration-v4.md)。**1 个配方通过确认：`mbr8c`**，即每批 8 个样本，逐条用本地 chrF-MBR 选择。确认集上 Δ −0.016（约 4%，集中在剧集），Holm p 0.016，代价是约 6 倍墙钟。`t03`（temperature 0.3）在确认集上未通过。基线 b10-joint 不自动替换，等待用户决策。实现入口为 [translation_v4](../../experiments/translation_v4/README.md)。
+
+2026-10-11：用户采纳 **b10-joint** 作为完整 SRT 流程基线（[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)，入口 `just translation-srt`）；模型和采样仍按 ADR-0005。这是工程选择：b10-joint 在 v3 确认集上没有通过显著性检验。下一轮见 [v4 计划](../plans/hy-mt2-translation-flow-exploration-v4.md)（proposed）。
+
+2026-10-10：v3 第三轮字幕翻译流程探索已完成，[v3 报告](2026-10-10-hy30-flow-v3-report.md)：19 个配方、Claude MQM 裁判、确认集检验，**0 个配方通过确认**；唯一 promising 的 b10-joint 在确认集上未复现。基线 `official30b-cached-v1` 不变，待用户决策。
+
+2026-10-10：字幕翻译流程探索改为[第三轮计划](../plans/hy-mt2-translation-flow-exploration-v3.md)（Claude Opus 5.5 MQM 裁判，重新起跑），[v3 台账](../context/2026-10-10-hy30-flow-exploration-v3.md)维护执行状态，[v1/v2 教训](2026-10-10-hy30-flow-v1-v2-lessons.md)只作为先验使用，[参考 v3 复核](../testing/2026-10-10-reference-v3-audit.md)完成；实现入口为[translation_v3](../../experiments/translation_v3/README.md)；第二轮已停止，下面关于 v2 的条目均为历史记录。
+
+2026-10-08用户选择[第二轮C档字幕流程探索计划](../plans/hy-mt2-translation-flow-exploration-v2.md)：96筛选＋48独立确认，批次大小采用资源宽松的自适应搜索。[新台账](../context/2026-10-08-hy30-flow-exploration-v2.md)记录已冻结的源／参考、评估校准、判定规则及正在执行的候选实验，当前尚未收敛、未替换基线。第一轮仅完成有限局部筛选，不证明1-5-1最优或主要方向充分收敛。
+
+[翻译模式筛选报告](2026-10-07-hy30-flow-optimization-results.md)完成固定 Hy-MT2 APEX 的一轮有界探索：主要低成本方向无可靠胜出方案，完整SRT实验外层及机械验证可用，未替换基线。[起始计划](../plans/hy-mt2-translation-mode-optimization.md)和[探索台账与接跑](../context/2026-10-07-hy30-flow-exploration.md)保留范围、证据及未验证方向。
+
+用户于2026-10-08随后采纳官方30B采样、4096输出与缓存，当前配置为`official30b-cached-v1`，总context8192；见[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)和[新配方验证](../testing/2026-10-08-official30b-cached-baseline-validation.md)。历史筛选结论不回写。
+
+[Hy30 四量化大规模报告](2026-10-07-hy30-four-quantization-results.md)汇总旧 83 窗及新增 1,200 窗全量评估、四轮性能和正式长跑；[复现入口](2026-10-07-hy30-four-quantization-results-appendices/reproduction.md)、[方案](../plans/hy30-four-quantization-comparison.md)和[接跑记录](../context/2026-10-06-hy30-four-execution.md)保留命令与历史。用户在交付后明确采纳 APEX-I-Compact，原报告与附录保留当时的结论和 Q3_K_M 冻结统计对照。
+
+配套工具：[独立语料构建与双轮参考复核](../../experiments/translation_corpus/README.md)、[串行 GPU 比较与恢复](../../experiments/translation_four_quantization/README.md)、[全量评估及配对统计](../../experiments/translation_eval/README.md)。
+
+[ADR-0005：字幕翻译 Hy-MT2 30B-A3B APEX-I-Compact 基线](../adr/0005-apex-i-compact-translation-baseline.md)记录当前采纳决定（`hy-mt2-30b-a3b-apex-i-compact`）；执行复用[翻译 demo](../../experiments/translation_demo/README.md)，后续讨论和回归以该固定身份与配方为起点。[ADR-0004](../adr/0004-hy-mt2-translation-baseline.md)保留此前 Q3_K_M 采纳历史，已被新决定取代。
+
+[国会讨论 W0／X0 整段实测](2026-10-05-parliament-baselines.md)记录新增三小时素材的当前基线运行；
+字幕准确度未知，仅作参考，与电影主参考分开报告。
+
+[ADR-0003：W0／X0统一采用新Pyannote](../adr/0003-new-pyannote-baselines.md)更新当前组件定义；
+ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复用入口原则继续有效。
+
+## 调研
+
+条目格式：`[主题](文件.md)：一句话结论；适用条件或限制`
+
+### STT 组件与基线（2026-10-03 至 2026-10-04）
+
+- [模型与后端候选](2026-10-03-model-backend-candidates.md)：继承自相邻调研的本地 STT 候选短名单；exploratory，未采用任何后端或模型
+- [Whisper 与 Qwen 后端契约](2026-10-03-stt-backend-contracts.md)：推理、对齐、文本单元与时间行为的版本绑定观察；绑定当时版本，未验证
+- [STT pipeline 设计参考](2026-10-03-stt-pipeline-design.md)：迁入的本地转写流水线设计调研；不是已采纳架构
+- [STT 应用对照](2026-10-03-stt-application-comparison.md)：三个相邻应用快照的本地 STT 与时间路径对照；历史比较已结束，实现建议仍属探索
+- [时间戳失败案例](2026-10-03-timestamp-failure-cases.md)：相邻项目有界时间调查中观察到的失败机制与工程教训；对 Kototoki 的补救措施未验证
+- [Whisper demo 就绪度](2026-10-03-whisper-demo-readiness.md)：faster-whisper large-v3 与 WhisperX 日语对齐的源码核查；原生 GPU 执行当时未验证
+- [Qwen 与 Crisp demo 就绪度](2026-10-03-qwen-crisp-demo-readiness.md)：官方 Qwen3-ASR／ForcedAligner 与 CrispASR 在原生 Windows＋RTX 5080 上的来源评审；无本地推理
+- [第一轮固定验证结果](2026-10-04-validation-results.md)：验证章 03/14/23 的六配置完整实测并锁定保留候选；严格时间目标均未达标，不含保留测试
+- [开发集对比](2026-10-04-dev-comparison.md)：开发五章 13 种配置的验证前观察，跨家族 X0 经官方 CTC 归一化后 0.5 秒确定成功约 49%；均未达严格时间目标，不等于生产推荐
+- [固定保留测试结果](2026-10-04-heldout-results.md)：五条预锁路线在 N=620 的描述性结果，W1 确定成功率最高、W0 覆盖最高；五条均未达时间目标，缺人工声学真值
+- [整片质量与连续性](2026-10-04-fullfilm-results.md)：W0／W1 各一次完整 7,028 秒整片推理，CER 约 20% 且几乎相同；同片诊断，均未达时间目标
+- [最终性能与重复性](2026-10-04-final-performance.md)：两条路线各三次 chapter07 新推理加一次整片，文字与 timed units 的 SHA 完全一致；只证明重复稳定，不证明识别正确
+- [实测结论与实施顺序](2026-10-04-stt-demo-conclusions.md)：保留 W0 与 W1 两个方向，尚无配置达到严格时间目标；首轮成绩与单片冻结输入绑定，不替代已采纳的 W0／X0 基线
+- [开发／验证／保留集字幕显示分析](2026-10-04-display-analysis.md)：CPU 显示回放核算 SRT 覆盖与短／长 cue；声学同步和人工可读性未验证
+- [数字静音预检](2026-10-04-silence-preflight.md)：10 秒全零输入下 W0、Q0 仍产生少量文字，W1 与 Crisp 原生 VAD 输出空；单一合成输入，不代表真实静音稳健性
+- [Whisper 执行准备](2026-10-04-whisper-execution.md)：W0／W1 环境、适配器与离线合成测试的执行基线；探索中，不构成正式选型
+- [Whisper 后续实现边界](2026-10-04-whisper-engineering-boundaries.md)：W0、W1 与标准 CTC 分支的工程交接与约束；仅用开发证据，无后端采用决定
+- [Qwen 执行准备](2026-10-04-qwen-execution.md)：官方 Qwen native HF 的源码、冻结环境与 CUDA 推理核查；历史 Q0 记录，当前 X0 以 X0 demo 为准
+- [Crisp 执行准备](2026-10-04-crisp-execution.md)：CrispASR 0.8.41 在原生 Windows 的两种受控流程实测，GPU 可复现；字幕时间未达标
+- [W0 与标准 CTC 的有界探索](2026-10-04-w0-ctc-exploration.md)：保留 W0 文字、换用日语 CTC 官方归一化与 forced spans 的锁定后探索；新增单一配置，不能放回原盲测排行榜，不宣称胜出
+- [两片主参考复核结果](2026-10-04-two-film-revalidation.md)：II／III 新主参考上五条固定路线复核，保留原实验建议与分数；均未达到严格时间目标
+- [模型资产获取记录](2026-10-04-model-assets.md)：七组模型与配套文件已通过内容身份核验；只证明资产就绪，不代表推理或质量通过
+- [Subtitle Edit 模型复用](2026-10-04-subtitle-edit-model-reuse.md)：优先复用 Subtitle Edit 已下载资产的本地核验；未新增推理、不改变首轮结论
+- [环境与复现清单](2026-10-04-runtime-inventory.md)：原生 Windows 的锁定版本、模型、安装包与恢复入口只读清点；质量结论见各实验报告
+
+### Whisper 框架与 W0／X0 流程（2026-10-04 至 2026-10-05）
+
+- [Whisper 框架架构选择](2026-10-04-whisper-framework-architecture.md)：推荐 faster-whisper＋保行为适配，含维护成本、反证与迁移门槛；不代表正式采用
+- [Whisper 冻结 VAD 等价实验](2026-10-04-whisper-framework-experiment.md)：两窗 17 块适配层 ASR 严格一致、46 项 VAD 后处理一致，标准 API 不等价；MMS 复用输入契约证据，未重跑
+- [Whisper ASR 源码核验](2026-10-04-whisper-framework-asr-audit.md)：三种生成路径、有效参数、特征处理及安装源码完整性；绑定所核查版本
+- [Whisper VAD／MMS 边界核验](2026-10-04-whisper-framework-vad-alignment-audit.md)：原始 VAD 分数到窗口、MMS 自研替换点及残留框架职责
+- [X0／WhisperX 源码核查](2026-10-05-x0-whisperx-source-audit.md)：可跨模型的策略、已有等价行为、Whisper 专属逻辑及旧入口 CTC 身份差异
+- [X0 吸收 WhisperX 流程](2026-10-05-x0-whisperx-flow.md)：历史两窗三臂 GPU 验证，energy 与 VAD 均有取舍；流程设计采用见 ADR-0002，新 demo 的 cut-merge 不继承 energy 分数
+
+### VAD／分段（2026-10-04 至 2026-10-05）
+
+- [W0＋VAD＋CTC 追加比较](2026-10-04-w0-vad-ctc-follow-up.md)：同十二窗六配置对照，VAD 叠加未提高全分母时间成功，长尾与漏字存在取舍
+- [VAD 全景与 W0／X0 分片改进](2026-10-05-vad-landscape.md)：探索性来源调研，VAD 允许 CPU／GPU、对白优先；未更换基线组件，未执行新推理
+- [成熟 VAD 来源核查](2026-10-05-established-vad-sources.md)：Silero、Pyannote、FSMN、NeMo、SpeechBrain 的发布、模型身份、语言与 Windows／GPU 边界
+- [新兴 VAD 来源核查](2026-10-05-emerging-vad-sources.md)：FireRed、OmniVAD-Kit、TEN 的模型关系、维护记录、许可与部署限制
+- [VAD 稳定版本核验](2026-10-05-vad-stable-versions.md)：四候选的官方发布、权重 revision、默认参数与许可；FireRed Beta 例外与 Pyannote 访问门控已区分
+- [W0／X0 十组合 VAD 比较](2026-10-05-vad-baseline-comparison.md)：十组合实测与审计完成，1 次 X0＋新 Pyannote 生成上限失败保留；结论保留当时口径，后续采纳见 ADR-0003
+- [新 Pyannote CPU／GPU 对照](2026-10-05-pyannote-gpu-comparison.md)：切分与质量一致，新进程 GPU 较慢，单窗模型复用约快 13.1 倍；23 次完成、1 次同窗触顶
+- [两片整片分段对照](2026-10-05-fullfilm-segmentation-comparison.md)：新 Pyannote GPU 与 cut-merge 共八组整片运行及独立审计；后续用户已采纳新 Pyannote（ADR-0003）
+
+### ASR 候选与评测素材（2026-10-05）
+
+- [ASR 模型全景与候选优先级](2026-10-05-asr-model-landscape.md)：面向日语、本地 Windows／RTX 5080 的官方来源调研与验证门槛；未改变 W0／X0 基线
+- [第一批 ASR 两片整片实测](2026-10-05-asr-candidates-fullfilm.md)：五路线十次运行，Cohere／Nemotron 更快但 CER 落后，Granite 多次重复触顶；保留 W0／X0
+- [日语长音频与对应文本来源](2026-10-05-japanese-longform-asr-sources.md)：公开有声书、播客、长篇语料与会议录像的入口、长度与参考质量；来源调研，未下载或纳入正式评测
+- [YODAS2 日语元数据与选样](2026-10-05-yodas2-japanese-selection.md)：两子集 32,899 条时长实查、字幕质量陷阱与按包获取方案；后续选定国会讨论
+- [国会讨论 W0／X0 整段实测](2026-10-05-parliament-baselines.md)：YODAS2 国会讨论 10,843 秒各一次完整推理；字幕准确度未知，结果仅作参考，X0 附加时间评分中止，不混入电影排名、不据此换基线
+
+### 对齐（2026-10-04）
+
+- [新增组件与对齐器兼容性](2026-10-04-component-augmentation-sources.md)：Demucs、GPU VAD、Qwen FA、Canary 日语限制及现有 wav2vec2 身份的官方来源核查；不代表质量已验证
+- [组件增量实测](2026-10-04-component-augmentation-results.md)：分离／VAD 出现回归，W0＋CTC 输入契约修复有时间收益但有覆盖取舍；无新的总体优胜组合
+- [日语 CTC 官方来源核验](2026-10-04-japanese-ctc-source-verification.md)：模型身份、blank／tokenizer 契约、日语 adapter 与许可核验；质量结论另见实测
+- [Japanese CTC Forced Alignment 外部会话参考](2026-10-04-japanese-ctc-alignment-reference.md)：保留外部会话原始建议的历史身份；官方核验与本机实测见相邻两篇
+- [日语 CTC 补充实测](2026-10-04-japanese-ctc-results.md)：MMS 补充 W1／X0、Reazon 补充 X0、假名模型补充 W0 均有证据；保留严重偏移、粒度与许可取舍
+
+### 翻译方法与源码调研（2026-10-04 至 2026-10-06）
+
+- [字幕翻译调研总报告](2026-10-05-subtitle-translation.md)：三个相邻项目源码、上下文与语义映射、JSON／缩批恢复及质量评估；exploratory，未运行翻译实验
+- [Subtitle Edit 翻译源码](2026-10-05-translation-subtitleedit.md)：本地快照与固定上游证据下的实际机制与边界
+- [VideoLingo 翻译源码](2026-10-05-translation-videolingo.md)：本地快照与固定上游证据下的实际机制与边界
+- [pyVideoTrans 翻译源码](2026-10-05-translation-pyvideotrans.md)：本地快照与固定上游证据下的实际机制与边界
+- [翻译主流方法与模型契约](2026-10-05-translation-methods.md)：字幕与文档翻译的上下文、语义单元与专用模型一手资料；不构成模型排名或已采纳实现
+- [日译中字幕质量评估](2026-10-05-translation-evaluation.md)：评估方法与小规模实验建议；不构成已采纳实现
+- [三个本地翻译模型对比](2026-10-05-local-translation-model-comparison.md)：Hy-MT2、TranslateGemma、Tower+ 的输入契约、多段／JSON、字幕约束与部署；来源核查，未进行模型实测
+- [Hy-MT2-7B-GGUF 详解](2026-10-05-hy-mt2-7b-local-translation.md)：模板解释、伪代码、证据等级与字幕适用边界；exploratory
+- [TranslateGemma-12B 详解](2026-10-05-translategemma-12b-local-translation.md)：输入契约、证据等级与字幕使用边界；exploratory
+- [Tower-Plus-9B 详解](2026-10-05-tower-plus-9b-local-translation.md)：本地接口、结构输出与字幕适用性；exploratory
+- [Hy-MT2 字幕流程官方资料复核](2026-10-06-hy-mt2-subtitle-flow-review.md)：核查提示、批量协议、采样与验证边界，建议已回写 Hy-MT2 草案；未实施、未运行推理
+
+### 翻译模型与量化比较（2026-10-06 至 2026-10-07）
+
+- [RTX 5080 16 GB 翻译模型量化选择](2026-10-06-translation-5080-quantization.md)：五个指定模型的 GGUF、文件大小与全 GPU／混合运行边界，纠正 30B-A3B Q4 显存预期；exploratory，未实测
+- [Hy-MT2 30B-A3B Q4 候选](2026-10-06-hy-mt2-30b-q4-candidates.md)：首次四位 GGUF 来源与容量调查；后续官方 Q4 实测见文内更新链接
+- [Hy-MT2 30B-A3B 5080 量化短名单](2026-10-06-hy30-5080-quantization-shortlist.md)：历史 exploratory，固定文件与试验优先级；当前决定见 ADR-0005（APEX-I-Compact）
+- [五候选字幕翻译正式比较](2026-10-06-translation-model-comparison-results.md)：三家族五版本固定 test，408/415 语义终分；结论为条件化质量／性能建议，附完整失败成本
+- [Hy30 Q3／Q4 实测对照](2026-10-06-hy30-q3-q4-comparison-results.md)：各 83/83 终分，Q4 中位耗时 4.18 倍而质量收益有限且不稳定；当时用户保留 Q3，现行基线见 ADR-0005
+- [Hy30 四量化质量、耗时与显存稳定性](2026-10-07-hy30-four-quantization-results.md)：83 旧窗与 1,200 新窗分别报告，含配对不确定性、四轮耗时与 30 分钟长跑；用户随后采纳 APEX-I-Compact，附录见 [四量化附录目录](2026-10-07-hy30-four-quantization-results-appendices/reproduction.md)（含 identity、expanded-quality、formal-stability 等附录与数值 JSON，随母报告登记）
+
+### 翻译流程探索 v1–v4（2026-10-07 至 2026-10-11）
+
+- [Hy30 流程参数核对](2026-10-07-hy30-flow-parameter-check.md)：30B 官方采样与 native HTTP 映射、模板与资源实测边界；仅为参数与接口核对
+- [固定 APEX-I-Compact 的 SRT 流程筛选（第一轮）](2026-10-07-hy30-flow-optimization-results.md)：主要低成本方向无确认优势，未替换基线；文首更正指出证据只支持具体配方未过 8 窗筛选，不能据此淘汰整个方向
+- [Hy30 流程 v1／v2 经验提炼](2026-10-10-hy30-flow-v1-v2-lessons.md)：对既有证据的提炼，作为 v3 先验；数值来自旧裁判 `gpt-6.1-sol`，与后续 Claude 裁判分数不可比，不是采纳决定
+- [Hy30 流程 v3 报告](2026-10-10-hy30-flow-v3-report.md)：19 个配方、Claude MQM 裁判，0 个通过确认，b10-joint 在确认集未复现（后续因工程选择被采纳，见 ADR-0006）；确认集现已开封，再做确认须新建独立确认集
+- [Hy30 流程 v4 报告](2026-10-11-hy30-flow-v4-report.md)：`mbr8c`（每批 8 个样本、逐条 chrF-MBR）通过确认，Δ −0.016，约 6 倍墙钟；`t03` 未通过，基线仍为 b10-joint，由用户决定是否替换
+
+## 验收记录
+
+条目格式：`[主题 日期](acceptance/文件.md)：验收范围与未覆盖项`

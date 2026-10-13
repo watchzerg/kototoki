@@ -55,3 +55,32 @@ check:
 
 setup:
     uv sync --locked
+
+# --- Contract recipes (docs/development/workflow.md#命令与门禁) ---
+
+# Verify uv/just versions (mise.toml) and Python (.python-version); never syncs or downloads.
+check-toolchain:
+    uv run --no-project --no-python-downloads --offline python scripts/check_toolchain.py
+
+# Install the root environment from uv.lock (same as setup; changes the environment, ask first).
+install: setup
+
+fmt *args:
+    @echo "fmt: no formatter selected for this project (see docs/development/toolchain.md)" && exit 1
+
+lint:
+    @echo "lint: no linter selected; 'just check' is only a compile check (see docs/development/toolchain.md)" && exit 1
+
+typecheck:
+    @echo "typecheck: no type checker selected (see docs/development/toolchain.md)" && exit 1
+
+# Full tests would be real GPU inference; none are automated and each run needs user approval.
+test-full *args:
+    @echo "test-full: no automated full tests; real inference runs are manual and need user approval (see docs/agents/testing.md)" && exit 1
+
+docs-check:
+    uv run --locked --offline python scripts/check_docs.py
+
+gate-core: check-toolchain docs-check lint typecheck test translation-test translation-flow-test translation-flow-v2-test
+
+gate-full: gate-core test-full

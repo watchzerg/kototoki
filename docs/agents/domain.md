@@ -4,15 +4,12 @@ This repository uses a single domain context.
 
 ## Read relevant context
 
-- Canonical glossary: `docs/glossary/GLOSSARY.md`.
+- Canonical glossary: root `GLOSSARY.md`.
 - Technical decisions: relevant ADRs under `docs/adr/`.
-- Document routing and conventions: `docs/INDEX.md`.
+- Document routing: `docs/INDEX.md`; maintenance rules: `docs/agents/documentation.md`.
 
-If the glossary is absent, proceed silently. Create it only when
-domain terms are resolved. Existing ADRs remain in their current location.
-
-When a skill refers to the root `GLOSSARY.md`, use
-`docs/glossary/GLOSSARY.md` in this repository.
+Add a term to the glossary only when it is resolved. Existing ADRs remain in their
+current location.
 
 ## Vocabulary and decisions
 
