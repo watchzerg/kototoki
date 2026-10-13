@@ -84,7 +84,7 @@ class TerminologyTests(unittest.TestCase):
             analyze(self.manifest(), outputs)
 
     def test_cli_new_directory_snapshot_and_history_refusal(self):
-        scratch = Path(__file__).resolve().parents[1] / ".local" / "translation-evaluation-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local" / "translation-evaluation-tests"
         scratch.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)

@@ -402,7 +402,7 @@ class HistoricalNativeTests(unittest.TestCase):
 
 class RegisteredMetadataTests(unittest.TestCase):
     def setUp(self):
-        scratch = Path(__file__).resolve().parents[1] / ".local" / "bridge-registration-synthetic-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local" / "bridge-registration-synthetic-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temp.cleanup)

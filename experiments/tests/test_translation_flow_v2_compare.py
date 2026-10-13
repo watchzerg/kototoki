@@ -21,12 +21,12 @@ from experiments.translation_flow.v2_source_preparation import SESSION_SCHEMA, B
 from experiments.translation_flow.v2_source_projection import SOURCE_CONTROL
 from experiments.translation_flow.test_worker import FakeClient
 from experiments.translation_flow.test_v2_worker import result
-from tests import test_translation_flow_v2_source_preparation as auxiliary_fixtures
+from experiments.tests import test_translation_flow_v2_source_preparation as auxiliary_fixtures
 
 
 class ComparisonTests(unittest.TestCase):
     def setUp(self):
-        scratch = Path(__file__).resolve().parents[1] / ".local/v2-comparison-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local/v2-comparison-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.root = Path(self.temp.name)
@@ -975,7 +975,7 @@ def pointer(path):
 
 class AuxiliaryComparisonTests(unittest.TestCase):
     def setUp(self):
-        scratch=Path(__file__).resolve().parents[1]/".local/translation-evaluation-tests"
+        scratch=Path(__file__).resolve().parents[2]/".local/translation-evaluation-tests"
         scratch.mkdir(parents=True,exist_ok=True)
         self.temp=tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temp.cleanup)
@@ -996,7 +996,7 @@ class AuxiliaryComparisonTests(unittest.TestCase):
         self.roots=[]
         self.plans=[]
         self.items=[]
-        recipe_source=Path(__file__).resolve().parents[1]/comparison.RECIPE_CODE
+        recipe_source=Path(__file__).resolve().parents[2]/comparison.RECIPE_CODE
         self.recipe_pin=e.sha(recipe_source)
         for seed in SEEDS:
             self.native_seed(seed)
@@ -1037,10 +1037,10 @@ class AuxiliaryComparisonTests(unittest.TestCase):
         shutil.copyfile(prepared/"batch-options.json",run_dir/"batch-options.json")
         shutil.copyfile(prepared/"session-plan.json",session_root/"session-plan.json")
         packed=e.read_json(prepared/"packed-mapping.json")
-        code={comparison.RECIPE_CODE:e.sha(Path(__file__).resolve().parents[1]/comparison.RECIPE_CODE)}
+        code={comparison.RECIPE_CODE:e.sha(Path(__file__).resolve().parents[2]/comparison.RECIPE_CODE)}
         snapshot=session_root/"source"/comparison.RECIPE_CODE
         snapshot.parent.mkdir(parents=True)
-        shutil.copyfile(Path(__file__).resolve().parents[1]/comparison.RECIPE_CODE,snapshot)
+        shutil.copyfile(Path(__file__).resolve().parents[2]/comparison.RECIPE_CODE,snapshot)
         asset={"id":"synthetic","sha256":"b"*64}
         runtime={"asset":asset,"engine":{"asset":asset,"model_sha256":asset["sha256"],"context_size":8192},"template_sha256":"c"*64}
         e.dump(session_root/"session.json",{"schema":"hy30-flow-session-v2","plan_sha256":e.sha(session_root/"session-plan.json"),
@@ -1096,7 +1096,7 @@ class AuxiliaryComparisonTests(unittest.TestCase):
                                                     "scenes":str(f.scene_path),"scenes_sha256":e.sha(f.scene_path)},"decision_policy":pointer(self.policy),
             "prepare":{"recipe_id":"F7-native-fixture-20261008","recipe":"id-text","seed":SEEDS[0],"split":"screen-a",
                 "stage":"screening","target_size":1,"source_preparation_projection":SOURCE_CONTROL},
-            "implementation_identity":[{"path":comparison.RECIPE_CODE,"sha256":e.sha(Path(__file__).resolve().parents[1]/comparison.RECIPE_CODE)}],
+            "implementation_identity":[{"path":comparison.RECIPE_CODE,"sha256":e.sha(Path(__file__).resolve().parents[2]/comparison.RECIPE_CODE)}],
             "source_preparation":{"plan":str(self.plans[0]),"sha256":e.sha(self.plans[0])}}
         first=self.root/"card-first.json"
         e.dump(first,card)
@@ -1118,7 +1118,7 @@ class AuxiliaryComparisonTests(unittest.TestCase):
                                                     "scenes":str(f.scene_path),"scenes_sha256":e.sha(f.scene_path)},"decision_policy":pointer(self.policy),
             "prepare":{"recipe_id":f"F7-native-fixture-{seed}","recipe":"id-text","seed":seed,"split":"screen-a",
                                                         "stage":"screening","target_size":1,"source_preparation_projection":SOURCE_CONTROL},
-            "implementation_identity":[{"path":comparison.RECIPE_CODE,"sha256":e.sha(Path(__file__).resolve().parents[1]/comparison.RECIPE_CODE)}],
+            "implementation_identity":[{"path":comparison.RECIPE_CODE,"sha256":e.sha(Path(__file__).resolve().parents[2]/comparison.RECIPE_CODE)}],
             "source_preparation":{"plan":str(self.plans[index]),"sha256":e.sha(self.plans[index])}}
         if mutate:mutate(card)
         path=self.root/f"card-{index}.json"

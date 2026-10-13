@@ -10,7 +10,7 @@ from experiments.translation_reference_judge import run_job
 
 class FlowReferenceTests(unittest.TestCase):
     def setUp(self):
-        base = Path(__file__).resolve().parents[1] / ".local/testing-flow-reference"
+        base = Path(__file__).resolve().parents[2] / ".local/testing-flow-reference"
         base.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=base)
         self.root = Path(self.temp.name)

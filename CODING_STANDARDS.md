@@ -17,6 +17,7 @@ code-review 按本文评审 diff。只写工具查不出的判断类标准；可
 - Keep audio loading/preprocessing, model inference, and output handling separate from
   CLI/API/UI; keep model-specific details behind a boundary testable without a model.
 - Explicit data structures for shared transcription results.
+- 公开接口带类型标注。
 - Model path, device, inference options configurable; fail with actionable errors on
   unsupported configs. No model load or download at import time. Model acquisition is
   separate from inference; after provisioning, inference must work offline.

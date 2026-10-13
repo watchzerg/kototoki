@@ -35,7 +35,7 @@
 
 - 源码：`experiments/translation_v3/cli.py::cmd_translate_srt`、`recipes.py`（`Recipe`、`BUILTIN`、`load_recipe`）、`batching.py`、`generate.py`（`run_generation`、`run_id_for`、`managed_session_factory`）、`server.py`（`ManagedServer`、`GpuLock`、`verify_model`）、`procs.py`、`common.py`。
 - 测试（离线，55 项，约 3–4 秒）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`。`test_recipes.py::AdoptedBaselineTest` 固定 `b10-joint` 的批次参数与 hash `2ba68054…`；`C0EquivalenceTest`、`RecipeIdentityTest`、`BatchingTest`、`CategoryRoutingTest` 覆盖配方；`test_generate.py::GenerationTest` 用伪客户端覆盖续跑、OOM、缓存校验、重试、上下文超限；`test_status.py` 覆盖锁、Job Object、原子写。
-- 已知限制：上述 v3 测试不在任何 just recipe 中（`just test`、`just translation-test` 都不包含 `experiments/translation_v3`），只能按 README 命令单独运行。
+- 已知限制：上述 v3 测试不在任何 just recipe 中（`just experiments-test`、`just translation-test` 都不包含 `experiments/translation_v3`），只能按 README 命令单独运行。
 - 已知差异：[translation_v3 README](../../../experiments/translation_v3/README.md#验证范围)「未验证」列出 "`translate-srt` 端到端"，而 [ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md#证据与已知代价如实记录) 记录了两份整片交付（1993 条电影、387 条剧集）完整完成。两者不一致，需确认 README 的未验证清单是否应更新（文档修正，不涉及代码）。
 - 未验证：新 Job Object／锁逻辑下的真实 llama-server 启动（README 明示）。
 

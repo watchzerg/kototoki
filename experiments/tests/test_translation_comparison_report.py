@@ -12,7 +12,7 @@ from experiments.translation_eval.runner import aggregate, dump, dump_jsonl
 
 class ComparisonReportTests(unittest.TestCase):
     def setUp(self) -> None:
-        scratch = Path(__file__).resolve().parents[1] / ".local" / "translation-evaluation-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local" / "translation-evaluation-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temp.cleanup)

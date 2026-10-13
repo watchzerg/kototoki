@@ -30,7 +30,7 @@
 ## 代码与验证入口
 
 - 源码：`experiments/translation_demo_runtime.py`（`main`、`parser`、`residency_evidence`、`validate_residency`、`loader_logs`、`forward_worker_events`）、`experiments/translation_demo/`（`run.py`、`adapters.py`、`client.py`、`profiles.py`、`gguf.py`）、`experiments/translation_monitor.py::ResourceMonitor`。
-- 测试（离线）：`experiments/translation_demo/test_demo.py::DemoTests`（44 项：ID 校验、原生模板、无参考输入、映射保真、截断与重试记账、禁止远程推理、产物防覆盖、资产清单身份、OOM 中止、部分 offload 许可）、`tests/test_translation_monitor.py`；由 `just translation-test` 运行，`tests/` 下的部分也被 `just test` 发现。
+- 测试（离线）：`experiments/translation_demo/test_demo.py::DemoTests`（44 项：ID 校验、原生模板、无参考输入、映射保真、截断与重试记账、禁止远程推理、产物防覆盖、资产清单身份、OOM 中止、部分 offload 许可）、`experiments/tests/test_translation_monitor.py`；由 `just translation-test` 运行，后者也被 `just experiments-test` 发现。
 - 真实验证：[新配方采纳检查](../../testing/2026-10-08-official30b-cached-baseline-validation.md)；离线测试不验证翻译质量。
 - 已知限制：外层不获取 `.local/gpu.lock`，只检查端口占用；与 STT 或 v3 GPU 作业的互斥须由操作者保证（见[模块边界：并发与生命周期](../module-boundaries.md#并发与生命周期)）。
 - 已知差异：无（CLI 默认 `legacy-greedy-v1` 与 README、ADR-0005 的说明一致）。

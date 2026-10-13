@@ -34,7 +34,7 @@
 ## 代码与验证入口
 
 - 源码：`experiments/x0_demo/run.py`、`stages.py`、`chunks.py`、`vad.py`、`asr.py`、`pipeline.py`、`storage.py`。
-- 测试（离线，`just test` 中 `discover -s experiments/x0_demo -t .`）：`test_demo.py`（`ChunkTests` 样本守恒、cut-merge 合并与尾段；`ResultTests` 完整文字、`text_only`、偏移、cap；`RunnerTests` 假子阶段下的失败保留、拒绝覆盖与进程成本）、`test_vad.py::VadTests`（身份／offset 拒绝、窗口排序与上限、整数边界、manifest 篡改、空检测）。根环境缺 NumPy 时数组测试跳过，README 给出在 `whisper-latest` 中补测的命令。
+- 测试（离线，`just experiments-test` 中 `discover -s experiments/x0_demo -t .`）：`test_demo.py`（`ChunkTests` 样本守恒、cut-merge 合并与尾段；`ResultTests` 完整文字、`text_only`、偏移、cap；`RunnerTests` 假子阶段下的失败保留、拒绝覆盖与进程成本）、`test_vad.py::VadTests`（身份／offset 拒绝、窗口排序与上限、整数边界、manifest 篡改、空检测）。根环境缺 NumPy 时数组测试跳过，README 给出在 `whisper-latest` 中补测的命令。
 - 真实推理验证：[X0 验证记录](../../testing/2026-10-05-x0-demo-validation.md)（fixed30／cut-merge）与[整片报告](../../research/2026-10-05-fullfilm-segmentation-comparison.md)（新 Pyannote）。
 - 已知差异：CLI 默认 `--segmentation fixed30`，而 [ADR-0003](../../adr/0003-new-pyannote-baselines.md) 采纳的当前基线须显式 `--segmentation vad --vad-manifest`；ADR 与 README 已把它列为待迁移的代码默认。
 - 未验证：完整 Windows 取消与 OOM 恢复（README 明示）；整片 worker 的"失败后继续"只属于 `fullfilm_comparison`，canonical X0 生成触顶仍非零退出。

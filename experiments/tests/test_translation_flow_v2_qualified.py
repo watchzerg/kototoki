@@ -52,7 +52,7 @@ class QualifiedSourceTests(unittest.TestCase):
             validate_accepted([], [], [], [], role="unknown")
 
     def test_confirmation_publication_uses_separate_safe_pointers_and_no_calibration(self):
-        temp_root = Path(__file__).resolve().parents[1] / ".local/tests/qualified-source"
+        temp_root = Path(__file__).resolve().parents[2] / ".local/tests/qualified-source"
         temp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=temp_root) as temporary:
             root = Path(temporary)
@@ -127,7 +127,7 @@ class QualifiedSourceTests(unittest.TestCase):
             validate_accepted(rows, reserve + [later], rows, [step])
 
     def test_publication_allows_event_language_metadata_but_rejects_reference_text(self):
-        temp_root = Path(__file__).resolve().parents[1] / ".local/tests/qualified-source"
+        temp_root = Path(__file__).resolve().parents[2] / ".local/tests/qualified-source"
         temp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=temp_root) as temporary:
             root = Path(temporary)

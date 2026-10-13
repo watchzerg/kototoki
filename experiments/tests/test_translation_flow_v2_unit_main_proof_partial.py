@@ -13,7 +13,7 @@ from experiments.translation_flow import v2_unit_main_proof_partial as main
 from experiments.translation_flow import v2_unit_custody as custody
 from experiments.translation_flow import v2_delivery as delivery
 from experiments.translation_eval import runner as evaluator
-from tests import test_translation_flow_v2_unit_main_proof_singleton as singletontests
+from experiments.tests import test_translation_flow_v2_unit_main_proof_singleton as singletontests
 
 
 class PartialMainProofTests(singletontests.SingletonMainProofTests):

@@ -217,7 +217,7 @@ class IdenticalOutputDiagnosticsTests(unittest.TestCase):
         self.assertEqual(len(summary["sets"]["expanded"]["groups"][0]["translation_map_sha256"]), 64)
 
     def test_cli_provenance_configuration_and_source_snapshot(self) -> None:
-        scratch = Path(__file__).resolve().parents[1] / ".local" / "translation-evaluation-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local" / "translation-evaluation-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)

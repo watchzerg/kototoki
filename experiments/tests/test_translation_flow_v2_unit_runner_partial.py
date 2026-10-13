@@ -24,7 +24,7 @@ from experiments.translation_flow import v2_worker as worker
 from experiments.translation_flow import v2_trial, v2_execute
 from experiments.translation_flow.test_v2_worker import settings, result
 from experiments.translation_flow.test_worker import budget
-from tests import test_translation_flow_v2_unit_runner_singleton as prior
+from experiments.tests import test_translation_flow_v2_unit_runner_singleton as prior
 
 FIXED_ENGINE = original.FIXED_ENGINE
 
@@ -87,7 +87,7 @@ class BoundedRunnerRegressionTests(unittest.TestCase):
             "tests/test_translation_flow_v2_unit_runner_singleton.py": "c6d9d93353d6f049ca6f3033bd559bdfea299639a41fb5393657825a80c1543a",
             "experiments/translation_flow/v2_unit_role_seed_validator_singleton.py": "f2747acfc1cc0d68a17f55f8dd9cc3a1887b6ddadab23e1115e8b5547a92abf2",
             "experiments/translation_flow/v2_unit_role_seed_validator_partial.py": "e3d78fed78b347fa2373fb942b93fb553385e2131aa47ac6636c7abb0ae840a4"}
-        workspace = Path(__file__).resolve().parents[1]
+        workspace = Path(__file__).resolve().parents[2]
         for file, sha in expected.items():
             self.assertEqual(runner.identity(workspace / file)["sha256"], sha)
 

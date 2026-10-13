@@ -239,7 +239,7 @@ class FourStatisticsTests(unittest.TestCase):
         self.assertEqual(data["quality"]["candidates"]["B"]["categories"]["anime_series"]["semantic_upper"], 4)
 
     def test_cli_preserves_input_hashes_and_produces_chinese_report(self) -> None:
-        scratch = Path(__file__).resolve().parents[1] / ".local" / "translation-evaluation-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local" / "translation-evaluation-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)

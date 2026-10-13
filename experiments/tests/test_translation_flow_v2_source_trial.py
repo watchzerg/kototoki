@@ -12,7 +12,7 @@ from unittest.mock import patch
 from experiments.translation_flow.cli import digest, read_json
 from experiments.translation_flow.v2_execute import execute, execute_source_preparation
 from experiments.translation_flow.v2_trial import trial
-from tests import test_translation_flow_v2_source_preparation as source_fixtures
+from experiments.tests import test_translation_flow_v2_source_preparation as source_fixtures
 
 
 def write_json(path, value):

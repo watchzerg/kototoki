@@ -11,7 +11,7 @@ from experiments.translation_flow.v2_prepare import prepare
 from experiments.translation_flow.v2_worker import execute_plan, load_plan, source_options_by_window
 from experiments.translation_flow.test_worker import FakeClient
 from experiments.translation_flow.test_v2_worker import result
-from tests import test_translation_flow_v2_source_preparation as source_fixtures
+from experiments.tests import test_translation_flow_v2_source_preparation as source_fixtures
 
 
 def dump(path, value):

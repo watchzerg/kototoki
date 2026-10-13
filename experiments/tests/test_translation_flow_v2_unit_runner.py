@@ -175,7 +175,7 @@ class FakeNative:
 
 class UnitRunnerTests(unittest.TestCase):
     def setUp(self):
-        scratch = Path(__file__).resolve().parents[1] / ".local" / "unit-runner-synthetic-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local" / "unit-runner-synthetic-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temp.cleanup)

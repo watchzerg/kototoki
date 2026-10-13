@@ -10,7 +10,7 @@ from experiments.translation_corpus.prepare import (
     snapshot_final_sources, validate_active_selection, validate_execution, validate_review, write_json, write_jsonl,
 )
 
-TEMP_ROOT = Path(__file__).resolve().parents[1] / ".local/tests/translation-corpus"
+TEMP_ROOT = Path(__file__).resolve().parents[2] / ".local/tests/translation-corpus"
 
 
 def temporary_directory():

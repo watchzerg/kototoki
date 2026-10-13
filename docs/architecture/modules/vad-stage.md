@@ -29,7 +29,7 @@
 ## 代码与验证入口
 
 - 源码：`experiments/vad_comparison/vad_stage.py::main`；`experiments/w0_demo/vad_candidates.py` 的 `chunk_intervals`、`CHUNK_POLICY`、`_CandidateVad`、`CurrentPyannoteVad`、`create_vad`。
-- 测试：`experiments/w0_demo/test_vad_candidates.py`（`ChunkTests` 覆盖取整、并集、硬切、贪心合并；`AdapterTests` 用假后端覆盖设备、包版本、生命周期）；`experiments/vad_comparison/test_*.py` 覆盖十组合比较 runner（历史）。均为离线测试，由 `just test` 运行，根环境缺 NumPy 等依赖时相关测试跳过。
+- 测试：`experiments/w0_demo/test_vad_candidates.py`（`ChunkTests` 覆盖取整、并集、硬切、贪心合并；`AdapterTests` 用假后端覆盖设备、包版本、生命周期）；`experiments/vad_comparison/test_*.py` 覆盖十组合比较 runner（历史）。均为离线测试，由 `just experiments-test` 运行，根环境缺 NumPy 等依赖时相关测试跳过。
 - 已知限制：`vad_stage.py` 位于历史比较包 `experiments/vad_comparison/` 内，却是当前基线的必经入口；该目录其余文件（`run.py`、`evaluate.py`、`verify.py`、`diagnose.py`）属于已完成的十组合比较。`vad_stage.py` 本身没有专门的单元测试，真实 GPU 行为见[整片报告](../../research/2026-10-05-fullfilm-segmentation-comparison.md)与 [GPU 补测](../../research/2026-10-05-pyannote-gpu-comparison.md)。
 - 已知差异：无（代码与 W0／X0 README、基线测试指南描述一致）。
 

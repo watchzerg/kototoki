@@ -32,7 +32,7 @@
 ## 代码与验证入口
 
 - 源码：`experiments/w0_demo/run.py`、`pipeline.py`、`asr.py`、`vad.py`、`__init__.py::RECIPE`；`compare.py` 为验证用的同窗对照脚本。
-- 测试（离线，`just test` 中 `discover -s experiments/w0_demo -t .`）：`test_pipeline.py::PipelineTests`（坐标、完整文字、空语音、阶段生命周期）、`test_manifest.py::ManifestTests`（manifest 身份、offset、窗口与整数边界校验）、`test_asr_vad.py`（`BoundaryTests`、`NumericalTests`，数值参照导入历史 `experiments/framework_equivalence`）、`test_vad_candidates.py`、`test_alignment.py`。根环境缺 NumPy／Torch 时数组测试跳过，需在 `whisper-latest` 中补测。
+- 测试（离线，`just experiments-test` 中 `discover -s experiments/w0_demo -t .`）：`test_pipeline.py::PipelineTests`（坐标、完整文字、空语音、阶段生命周期）、`test_manifest.py::ManifestTests`（manifest 身份、offset、窗口与整数边界校验）、`test_asr_vad.py`（`BoundaryTests`、`NumericalTests`，数值参照导入历史 `experiments/framework_equivalence`）、`test_vad_candidates.py`、`test_alignment.py`。根环境缺 NumPy／Torch 时数组测试跳过，需在 `whisper-latest` 中补测。
 - 真实推理验证：[W0 验证记录](../../testing/2026-10-05-w0-demo-validation.md)（旧 PyanNet 两窗）与[整片报告](../../research/2026-10-05-fullfilm-segmentation-comparison.md)（新 Pyannote）。
 - 已知差异：CLI 不传 VAD 参数时仍加载旧 PyanNet 并写 `w0-pyannote-mms-v1`，而 [ADR-0003](../../adr/0003-new-pyannote-baselines.md) 采纳的当前基线须显式 `--vad-manifest`；ADR 与 README 已把它列为待迁移的代码默认，尚未决定修代码的时间。
 - 已知限制：W0 顶层 `status` 不反映 MMS 窗口失败（X0 会标 `partial`），检查结果须逐条看 `alignment_records`，见[标准基线测试指南](../../guides/baseline-testing.md#检查与评分)。

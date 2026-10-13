@@ -11,7 +11,7 @@ from experiments.translation_reference_judge import MODEL, assemble_prompt, dige
 
 class ReferenceJudgeTests(unittest.TestCase):
     def setUp(self):
-        base = Path(__file__).resolve().parents[1] / '.local/testing-reference-judge'
+        base = Path(__file__).resolve().parents[2] / '.local/testing-reference-judge'
         base.mkdir(parents=True, exist_ok=True)
         self.previous_tempdir = tempfile.tempdir
         tempfile.tempdir = str(base)
@@ -118,7 +118,7 @@ class ReferenceJudgeTests(unittest.TestCase):
         self.assertEqual(assemble_prompt(original, data, {**self.job, 'phase': 'review'}), legacy)
 
     def test_adjudication_prompt_allows_opinions_and_uses_own_provenance(self):
-        source = Path(__file__).resolve().parents[1] / 'experiments/translation_corpus/reference-adjudication-prompt.md'
+        source = Path(__file__).resolve().parents[2] / 'experiments/translation_corpus/reference-adjudication-prompt.md'
         frozen = self.root / 'reference-adjudication-prompt.md'
         frozen.write_bytes(source.read_bytes())
         self.result.update(resolved=True, resolution_zh='日文人数明确，原参考正确。')

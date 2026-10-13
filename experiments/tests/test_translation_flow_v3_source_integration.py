@@ -16,7 +16,7 @@ from experiments.translation_flow.test_worker import budget
 from experiments.translation_flow.test_worker import FakeClient
 from experiments.translation_flow.test_v2_worker import result
 from experiments.translation_flow import v2_recipes
-from tests import test_translation_flow_v2_source_preparation as fixtures
+from experiments.tests import test_translation_flow_v2_source_preparation as fixtures
 
 
 def dump(path, obj):

@@ -28,7 +28,7 @@
 ## 代码与验证入口
 
 - 源码：`experiments/corpus/prepare.py`（`freeze`、`decode_full`、`crop`、`parse_srt`）、`prepare_round2.py`（`fixed_windows`、`window_reference`、`prepare`）、`prepare_heldout.py`、`prepare_scoring_reference.py`、`prepare_silence.py`；`experiments/provision/acquire_models.py`（`SPECS`、`acquire`）、`japanese_ctc.py`、`range_models.py`；`experiments/w0_demo/prepare_assets.py`。
-- 测试（离线，`just test`）：`experiments/corpus/test_prepare.py`、`test_round2.py`、`test_silence.py`；`experiments/provision/test_acquire_models.py`（伪响应下的获取与完整性）、`test_range_models.py`。
+- 测试（离线，`just experiments-test`）：`experiments/corpus/test_prepare.py`、`test_round2.py`、`test_silence.py`；`experiments/provision/test_acquire_models.py`（伪响应下的获取与完整性）、`test_range_models.py`。
 - 已知差异：[语料冻结记录](../../testing/2026-10-04-corpus-freeze.md)说明 `prepare.py` 的默认路径与参考常量属于旧单片 FateStay 冻结，"不代表已经支持新的两片语料流程"；代码中 `prepare.py` 仍以 `D:/movie/FateStay/...` 为默认参数。新语料须另建 manifest，不覆盖旧哈希。
 - 已知限制：`acquire_models.SPECS` 的清单停留在 2026-10-04 的候选集（含历史 Qwen ForcedAligner、Crisp GGUF 等），不覆盖新 Pyannote 与翻译 GGUF。
 

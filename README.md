@@ -62,7 +62,7 @@ Black Panther 为 `.jpn.eac3`），无需再次从视频提取。字幕显示时
 [第一轮数值规则](docs/testing/evaluation-config-v1.md)已在验证前冻结。执行状态和可恢复入口见
 [实验运行记录](docs/context/2026-10-04-demo-execution.md)；环境准备不等于真实推理或质量达标。
 
-最小工具链已建立：`uv sync --locked`，`just test` 执行离线评测、适配器、显示及汇总测试，
+最小工具链已建立：`uv sync --locked`，`just experiments-test` 执行研究期的离线评测、适配器、显示及汇总测试，
 `just check` 检查 Python 语法。各后端使用独立环境，模型获取与离线推理分开。
 所有模型、私有音频、完整转写及运行日志存于 Git 忽略的 `.local/`。
 

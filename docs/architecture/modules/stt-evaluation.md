@@ -28,7 +28,7 @@
 ## 代码与验证入口
 
 - 源码：`kototoki_eval/schema.py`（`validate_transcript`、`normalize`、`from_segments`、`map_time`）、`kototoki_eval/scoring.py`（`evaluate`、`micro_summary`、`display_diagnostics`）、`kototoki_eval/alignment.py`（`align`、`Alignment`）、`kototoki_eval/__main__.py`；`experiments/display/replay.py`（`replay`、`RULES`）。
-- 测试：`tests/test_evaluator.py::EvaluatorTests`（27 项：cue 切分合并不变性、NFKC、完整分母、偏移、歧义不借用时间、`text_only`／failed／interpolated、CLI 输出保护、编辑计数与独立全矩阵一致、数字静音参考等）；`experiments/display/test_replay.py::DisplayContractTests`。均为离线 core 测试，由 `just test` 运行。
+- 测试：`experiments/tests/test_evaluator.py::EvaluatorTests`（27 项：cue 切分合并不变性、NFKC、完整分母、偏移、歧义不借用时间、`text_only`／failed／interpolated、CLI 输出保护、编辑计数与独立全矩阵一致、数字静音参考等）；`experiments/display/test_replay.py::DisplayContractTests`。均为离线测试，由 `just experiments-test` 运行。
 - 已知限制：评分对真实模型与声学真值的有效性仍需独立验证（评测器契约状态行）；SRT 显示时间不是声学真值。
 - 已知差异：无。
 

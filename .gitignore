@@ -1,7 +1,6 @@
 # Local-only data: models, caches, media, results, envs (see AGENTS.md 常驻约束)
 .local/
 .scratch/
-tests/bridge-cohort-test-*/
 *.log
 
 # Python / uv

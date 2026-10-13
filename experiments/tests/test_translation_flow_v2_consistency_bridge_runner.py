@@ -31,7 +31,7 @@ from experiments.translation_judge import integrity
 
 class SyntheticCohort(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="bridge-cohort-test-", dir=Path(__file__).resolve().parent.parent / ".local" / "tmp")
+        self.temp = tempfile.TemporaryDirectory(prefix="bridge-cohort-test-", dir=Path(__file__).resolve().parents[2] / ".local" / "tmp")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.scenes, self.batches = [], []

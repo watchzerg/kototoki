@@ -16,7 +16,7 @@ from experiments.translation_judge import integrity
 
 class PromptContractTests(unittest.TestCase):
     def setUp(self):
-        scratch = Path(__file__).resolve().parents[1] / ".local" / "consistency-contract-synthetic-tests"
+        scratch = Path(__file__).resolve().parents[2] / ".local" / "consistency-contract-synthetic-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temp.cleanup)

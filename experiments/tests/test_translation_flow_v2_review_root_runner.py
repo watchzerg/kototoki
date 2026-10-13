@@ -12,8 +12,8 @@ from unittest.mock import patch
 from experiments.translation_judge import integrity
 from experiments.translation_flow import v2_review_root_evidence as helper
 from experiments.translation_flow import v2_review_root_runner as runner
-from tests.test_translation_flow_v2_review_root_evidence import response, root_record
-from tests.test_translation_flow_v2_review_root_evidence import NativeFixture
+from experiments.tests.test_translation_flow_v2_review_root_evidence import response, root_record
+from experiments.tests.test_translation_flow_v2_review_root_evidence import NativeFixture
 
 
 class RootRunnerCallbackTests(unittest.TestCase):
@@ -327,7 +327,7 @@ class RootRunnerUpstreamDrainTests(unittest.TestCase):
         self.assertTrue(all(not (root / "root-phase-inventory.json").exists() for root in self.roots.values()))
 
     def test_actual_v8_cohort_body_accepts_original_leases_and_rejects_substitution(self):
-        controller = Path(__file__).resolve().parents[1] / (
+        controller = Path(__file__).resolve().parents[2] / (
             ".local/translation-evaluation/hy30-flow-v2-20261008/evaluation-only/methods/run_registered_screening_v8.py")
         if not controller.exists():
             self.skipTest("private V8 controller unavailable; public per-seed mechanics tested separately")
