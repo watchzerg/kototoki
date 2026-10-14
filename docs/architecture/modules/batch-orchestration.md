@@ -1,6 +1,6 @@
 # 批次编排
 
-状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03）的 jobs 约定调用，x0（票据 07）与翻译降级（票据 09）尚未实现；[翻译子系统与合并](translation-subsystem.md)（票据 05）按[目标架构](../bilingual-pipeline-architecture.md)的接口实现；本页只经伪 worker 与伪翻译模块离线验证。
+状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03、07）的 jobs 约定调用；[翻译子系统与合并](translation-subsystem.md)（票据 05）按[目标架构](../bilingual-pipeline-architecture.md)的接口实现，翻译降级（票据 09）尚未实现；本页只经伪 worker 与伪翻译模块离线验证。
 
 ## 定位与阅读
 
