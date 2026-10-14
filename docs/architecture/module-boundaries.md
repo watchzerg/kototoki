@@ -17,6 +17,7 @@
 | 模型下载与资产 SHA256 固定 | [语料与模型资产准备](modules/corpus-and-assets.md) | 推理入口只读本地文件 |
 | llama-server 命令行、驻留证据解析、资产清单与 OOM 识别 | [逐窗翻译运行时](modules/translation-runtime.md) | 完整 SRT 流程导入 `residency_evidence`、`validate_residency`、`load_assets`、`explicit_oom` 等 |
 | Hy30 原生提示模板与 ID JSON grammar（`translation_demo.adapters`） | [逐窗翻译运行时](modules/translation-runtime.md) | 完整 SRT 流程 |
+| 产物契约：`.work/<id>` 布局与短 id、产物文件名、视频／派生身份、模型哈希缓存、坐标约定、匹配跳过与原地替换、原子写、`failure.json`、`published.json` 与覆盖规则；worker `--jobs` 协议、退出码与 `failed_windows`；产品 SRT 读写与毫秒取整 | [产物契约](modules/artifact-contract.md)（`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`） | 产品流水线各阶段与编排器（票据 02–09） |
 | 流程配方身份（`Recipe.recipe_hash`）、批次、整片交付 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) | — |
 
 ## 依赖方向

@@ -31,7 +31,7 @@
 
 - 源码：`experiments/w0_demo/alignment.py` 的 `MmsAligner`、`mms_numeric_policy`、`character_targets`、`sample_window`、`clamp_window`、`normalize_window`、`map_records`、`TIME_SEMANTICS`。
 - 测试：`experiments/w0_demo/test_alignment.py`（`TargetTests`、`NumericPolicyTests`、`MappingTests`、`SampleWindowTests`、`NormalizationTests`、`PublicContractTests`），用假 Torch／假对齐器离线运行；X0 的 `test_demo.py`／`test_vad.py` 覆盖整数窗口传递。
-- 已知限制：TorchAudio 2.8 的 `forced_align` 已弃用、2.9 移除（见[当前 STT 基准线](../stt-candidate-pipelines.md#历史配置的资源与工程代价)）；极短窗口 MMS 失败在整片证据中仍存在。代码位于 `w0_demo` 包内但被两条路线共享，包名不反映归属。
+- 已知限制：代码断言 TorchAudio 2.8.0；`forced_align` 曾在 2.8 标记弃用、计划 2.9 移除，上游随后撤回，2.11.0 仍提供（2026-10-14 在本机 `vad-pyannote-gpu-v1` 的 torchaudio 2.11.0+cu128 上核实存在；背景见[当前 STT 基准线](../stt-candidate-pipelines.md#历史配置的资源与工程代价)）；极短窗口 MMS 失败在整片证据中仍存在。代码位于 `w0_demo` 包内但被两条路线共享，包名不反映归属。
 - 已知差异：无。
 
 ## 变更与决策来源
