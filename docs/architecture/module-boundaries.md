@@ -23,6 +23,7 @@
 | 产品 STT 推理：Pyannote 检测与 `source-span-merge-v1` 分窗、w0 特征链与 CT2 解码（torch 先于 ctranslate2 导入）、x0 Qwen 原生 processor 与 4096 触顶转失败窗口、MMS 强制对齐与字典按模型类数过滤；`vad.json`／`asr.json`／`align.json` 的身份、payload 与窗口级失败记账；CUDA 粘性错误判定（退出码 2）；`validate_transcript`、窗口与 units 校验（`kototoki/schema.py`） | [STT worker](modules/stt-workers.md)（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py`） | 编排器（票据 06）以子进程启动 worker、导入壳的 `identity` 判定跳过；日文 cue 读 `align.json` |
 | 产品批次编排：扫描与稳定性、阶段调度与期望身份、worker 重启、`<output_dir>/.work/lock` 与 `.local/gpu.lock`、Job Object、子进程环境、发布与 `failure.json` 清理、运行日志 | [批次编排](modules/batch-orchestration.md)（`kototoki/__main__.py`、`kototoki/job.py`） | 用户经 `python -m kototoki` 调用 |
 | 流程配方身份（`Recipe.recipe_hash`）、批次、整片交付 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) | — |
+| 产品翻译：配方与 `RECIPE_HASH`（`kototoki/translate/recipes.py`，翻译配方的唯一归属）、llama-server session 生命周期与空闲显存轮询、`b10-joint` 请求、按批次落盘与续跑、基础设施失败重启；中日两行合并 | [翻译子系统与双语合并](modules/translation-subsystem.md)（`kototoki/translate/`、`kototoki/merge.py`） | 编排器（票据 06）持有 `Session`、调用 `translate_document` 与 `merge`；降级（票据 09） |
 
 ## 依赖方向
 
