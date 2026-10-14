@@ -32,9 +32,9 @@ LAYERS = 99
 THREADS = 8
 THREADS_BATCH = 8
 LOAD_TIMEOUT_SECONDS = 180
-# 启动前等待的空闲显存（MiB）与超时。01 smoke #4：stock 会话峰值 15653 MiB，桌面基线约 1200 MiB，
-# 即 llama-server 自身约 14450 MiB；本机空闲时 free 约 14560 MiB。阈值取 14300：上一 worker 释放完毕即可达到。
-MIN_FREE_MIB = 14300
+# 启动前等待的空闲显存（MiB）与超时。2026-10-14 整片实测：会话峰值 15687 MiB、桌面基线约 880 MiB，
+# 即 llama-server 自身约 14800 MiB；阈值取 14900，留约 100 MiB 余量，低于它时宁可等待／失败也不硬启动。
+MIN_FREE_MIB = 14900
 FREE_VRAM_TIMEOUT_SECONDS = 120.0
 FREE_VRAM_POLL_SECONDS = 2.0
 
