@@ -23,7 +23,7 @@
 
 - `write_failure(work_dir, stage, error)` 写 `failure.json`：阶段、异常类型与消息、当时已存在的阶段产物，不含音频与转写内容。
 - `record_published(work_dir, final_paths, sha256, sources, translate_dir)` 在 `publish_blockers` 放行后、移动三份最终 SRT **之前**写 `published.json`（三份 SHA256、来源产物身份、当前 `translate/srt-<sha12>` 目录），并把此刻最终位置上已有文件的 SHA 记为 `previous_sha256`。
-- `publish_blockers(final_paths, work_dir, force=...)`：现有最终文件不存在、或 SHA256 等于当前或上一份记录，视为未改动；否则（含没有记录时已存在的文件）视为用户改动并列为阻止项。`force=True` 时恒为空。编排器在扫描阶段调用它（票据 06）。记录磁盘上的旧 SHA 是为了"写记录后、移动完成前崩溃"（包括连续多次）时，最终位置上残留的旧文件不被误判为用户改动；规格 §4 只要求对照记录的 SHA，`previous_sha256` 是实现为此补充的字段。
+- `publish_blockers(final_paths, work_dir, force=...)`：现有最终文件不存在、或 SHA256 等于当前或上一份记录，视为未改动；否则（含没有记录时已存在的文件）视为用户改动并列为阻止项。`force=True` 时恒为空。编排器在扫描阶段调用它（票据 06）。记录磁盘上的旧 SHA 是为了"写记录后、移动完成前崩溃"（包括连续多次）时，最终位置上残留的旧文件不被误判为用户改动（规格 §4，2026-10-14 用户采纳）。
 
 **原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；Windows `PermissionError`（播放器或扫描器占用）重试 20 次、间隔递增至 0.5 s；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
 
