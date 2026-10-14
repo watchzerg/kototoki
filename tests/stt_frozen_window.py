@@ -1,6 +1,7 @@
 """票据 03 冻结窗口门禁（full：占 GPU、加载三个模型，运行前须经用户批准）。
 
-用法（在仓库根）：`python -m tests.stt_frozen_window [--local <.local 目录>]`。不在 `just test` 的发现范围内
+入口：`just test-full stt_frozen_window`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
+`python -m tests.stt_frozen_window --out <dir>` 启动本脚本；锁不存在时拒绝运行）。不在 `just test` 的发现范围内
 （文件名不以 `test_` 开头）。依次以子进程运行三个产品 worker（`python -m kototoki.workers.<stage>`），
 输入是冻结窗口 `round2/corpus/audio/hf-ii-window-01.wav`，再与现有同窗 W0 结果对照：
 
@@ -9,14 +10,13 @@
 - 对齐 units 字符范围与状态一致，有时间的 unit 起止与现有结果（减去其 `offset_s`）差 ≤20 ms；
   超差单独标记，不阻塞 05／06。
 
-运行期间持有 `<local>/gpu.lock`，已存在时拒绝启动。产物与 `gate.json` 写入 `<local>/stt-gate/<UTC 时间>/`；
-`gate.json` 只含计数、差值、耗时与版本，不含转写文字。
+产物写入 `<out>/stt_frozen_window/`（含 `.work/`），结果写 `<out>/stt_frozen_window.json`；
+结果只含计数、差值、耗时与版本，不含转写文字。
 """
 
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import importlib.metadata
 import json
 import os
@@ -26,13 +26,15 @@ import sys
 import time
 from typing import Any
 
-from kototoki import artifacts, config, recipes
+from kototoki import artifacts, config
 from kototoki.workers import align as align_worker
 from kototoki.workers import asr as asr_worker
 from kototoki.workers import vad as vad_worker
 from kototoki.workers.protocol import FileJob, Jobs, write_jobs
 
 REPO = Path(__file__).resolve().parent.parent
+LOCAL = REPO / ".local"
+NAME = "stt_frozen_window"
 AUDIO = "round2/corpus/audio/hf-ii-window-01.wav"
 REFERENCE = "w0-demo/pyannote-gpu-v1-w0-pyannote-current-hf-ii-window-01/result.json"
 TOLERANCE_S = 0.020
@@ -102,45 +104,36 @@ def compare(work_dir: Path, reference: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--local", type=Path, default=REPO / ".local", help="含模型、语料与 gpu.lock 的 .local 目录")
+    parser.add_argument("--out", type=Path, required=True, help="本次 test-full 的输出目录（由 run_all.py 新建）")
     args = parser.parse_args()
-    local = args.local.resolve()
-    audio, reference_path = local / AUDIO, local / REFERENCE
-    models_root = local / "models"
+    if not (LOCAL / "gpu.lock").is_file():
+        print(f"{LOCAL / 'gpu.lock'} absent; run via `just test-full {NAME}`, which holds the GPU lock", file=sys.stderr)
+        return 1
+    audio, reference_path = LOCAL / AUDIO, LOCAL / REFERENCE
+    models_root = LOCAL / "models"
     models = {"vad": str(models_root / config.DEFAULTS["vad"]["model"]),
               "w0": str(models_root / config.DEFAULTS["asr.w0"]["model"]),
               "w0_mel_assets": str(models_root / config.DEFAULTS["asr.w0"]["mel_assets"]),
               "align": str(models_root / config.DEFAULTS["align"]["model"])}
-    out = local / "stt-gate" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = args.out.resolve() / NAME
     work_dir = artifacts.register_work_dir(out, audio.name)
     model_cache = str(artifacts.model_cache_path(out))
     env = child_env(artifacts.work_root(out) / artifacts.CACHE_DIR)
 
-    lock = local / "gpu.lock"
-    try:
-        with lock.open("x", encoding="utf-8") as stream:
-            json.dump({"pid": os.getpid(), "job": "tests/stt_frozen_window.py",
-                       "created_at_utc": datetime.now(timezone.utc).isoformat()}, stream)
-    except FileExistsError:
-        print(f"{lock} exists; verify the owning process with Get-Process before removing it", file=sys.stderr)
-        return 75
-    try:
-        stages: dict[str, Any] = {}
-        plan = (
-            ("vad", recipes.recipe_hash(recipes.VAD), {"models": models, "model_cache": model_cache},
-             {"wav": str(audio)}),
-            ("asr", asr_worker.recipe_hash("w0"), {"engine": "w0", "models": models, "model_cache": model_cache},
-             {"wav": str(audio), "vad": str(work_dir / artifacts.VAD)}),
-            ("align", align_worker.RECIPE_HASH, {"models": models, "model_cache": model_cache},
-             {"wav": str(audio), "asr": str(work_dir / artifacts.ASR)}),
-        )
-        for stage, recipe_hash, stage_config, inputs in plan:
-            job = FileJob(work_dir.name, work_dir, {name: Path(path) for name, path in inputs.items()})
-            stages[stage] = run_stage(stage, Jobs(stage, recipe_hash, stage_config, (job,)), out, env)
-            if stages[stage]["exit_code"] != 0:
-                break
-    finally:
-        lock.unlink()
+    stages: dict[str, Any] = {}
+    plan = (
+        ("vad", vad_worker.RECIPE_HASH, {"models": models, "model_cache": model_cache},
+         {"wav": str(audio)}),
+        ("asr", asr_worker.recipe_hash("w0"), {"engine": "w0", "models": models, "model_cache": model_cache},
+         {"wav": str(audio), "vad": str(work_dir / artifacts.VAD)}),
+        ("align", align_worker.RECIPE_HASH, {"models": models, "model_cache": model_cache},
+         {"wav": str(audio), "asr": str(work_dir / artifacts.ASR)}),
+    )
+    for stage, recipe_hash, stage_config, inputs in plan:
+        job = FileJob(work_dir.name, work_dir, {name: Path(path) for name, path in inputs.items()})
+        stages[stage] = run_stage(stage, Jobs(stage, recipe_hash, stage_config, (job,)), out, env)
+        if stages[stage]["exit_code"] != 0:
+            break
 
     result: dict[str, Any] = {"stages": stages, "out": str(out), "audio": AUDIO, "reference": REFERENCE,
                               "versions": {name: importlib.metadata.version(name) for name in (
@@ -156,11 +149,10 @@ def main() -> int:
             ("vad", artifacts.VAD), ("asr", artifacts.ASR), ("align", artifacts.ALIGN))}
     else:
         result["blocking_passed"] = False
-    (out / "gate.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (args.out / f"{NAME}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: result.get(key) for key in ("blocking_passed", "time_within_tolerance", "comparison")},
                      ensure_ascii=False, indent=2))
     return 0 if result["blocking_passed"] else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())
