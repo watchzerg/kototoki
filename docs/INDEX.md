@@ -52,6 +52,7 @@
 调研条目已登记在[调研索引](research/INDEX.md)，此处只列其他既有文档，按原登记顺序保留。
 
 - ADR: [双语字幕流水线架构](adr/0007-bilingual-subtitle-pipeline-architecture.md) — 已接受（2026-10-13）；阶段 × 整批的 GPU 调度、单一 CUDA 12.8 Python 环境（torch 2.11.0+cu128）与官方 llama.cpp、以日文 cue 为翻译单元、翻译 10→5→1 降级、配置文件驱动无 CLI；尚未实现。
+- Architecture: [双语字幕流水线：目标架构](architecture/bilingual-pipeline-architecture.md) — 设计（2026-10-14）；产品包 `kototoki/` 的模块接口、依赖方向、接缝裁定与责任边界，票据 08 收口时并入架构总览与模块边界后删除。
 - Specs: [中日双语字幕批量生产流水线：技术设计](specs/bilingual-subtitle-pipeline.md) — draft，设计已收口；第一个正式产品形态（配置文件驱动）：固定配方、八阶段分解、CPU 流水线＋GPU 分阶段批处理、产物与续跑、统一 CUDA 12.8 环境、配置边界与里程碑。
 - Plans: [Hy30 四种量化大规模比较](plans/hy30-four-quantization-comparison.md) — 实测与评估完成；原 83 窗口及新增 1,200 窗口、完整自动评估、四轮性能与正式长跑，失败和缺分完整保留；[结果报告](research/2026-10-07-hy30-four-quantization-results.md)。
 - Specs: [字幕翻译共同设计](specs/subtitle-translation-common.md) — draft；四套流程共用的语义单元、上下文／术语、源文预分析、记忆、映射、恢复、可选反思与评测隔离；反思的审校／修订模型可配置，暂不固定。模型流程：[通用语言模型](specs/subtitle-translation-generic.md)、[Hy-MT2](specs/subtitle-translation-hy-mt2.md)、[TranslateGemma](specs/subtitle-translation-translategemma.md)、[Tower+](specs/subtitle-translation-tower-plus.md)；完整增强设计尚未全部实施，固定窗口实验子集已完成 smoke/dev 并冻结正式 test 配方，不改变当前 STT 里程碑。

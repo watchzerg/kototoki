@@ -259,13 +259,13 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | torchcodec | 0.17.0 | PyPI（cu128 索引没有 0.17.0）；本机 `vad-pyannote-gpu-v1` 已与 torch 2.11.0+cu128 同装并运行 |
 | transformers | 5.19.0 | PyPI；覆盖 Qwen3-ASR 与 MMS wav2vec2；要求 torch ≥2.5 |
 | pyannote.audio | 4.0.7 | PyPI；本机已在 torch 2.11 上运行 |
-| faster-whisper／CTranslate2 | 1.2.1／4.8.3 | PyPI；CT2 wheel 按 CUDA 12.8＋cuDNN 9.10 构建，不需要侧车。01 smoke #3（2026-10-14，干净 PATH、先 import torch）实测：cudart／cuBLAS 与 cuDNN 子库来自 torch（cuDNN 9.19.0），CT2 wheel 自带的 `cudnn64_9.dll`（9.10.2.21 调度器）由其 `__init__` 按全路径加载，两份调度器并存；W0 冻结窗口解码的 token 与特征 SHA 与 torch 2.8＋CT2 4.8.2 的记录逐一一致，用户接受这一组合。CT2 在 sm_120 上依赖 PTX JIT（`CUDA_DISABLE_PTX_JIT=1` 时解码失败）：冷启动首窗解码 27 s，二次启动 5 s |
+| faster-whisper／CTranslate2 | 1.2.1／4.8.3 | PyPI；CT2 wheel 按 CUDA 12.8＋cuDNN 9.10 构建，不需要侧车。01 smoke #3（2026-10-14，干净 PATH、先 import torch）实测：cudart／cuBLAS 与 cuDNN 子库来自 torch（cuDNN 9.19.0），CT2 wheel 自带的 `cudnn64_9.dll`（9.10.2.21 调度器）由其 `__init__` 按全路径加载，两份调度器并存；W0 冻结窗口解码的 token 与特征 SHA 与 torch 2.8＋CT2 4.8.2 的记录逐一一致，用户接受这一组合。CT2 在 sm_120 上依赖 PTX JIT（`CUDA_DISABLE_PTX_JIT=1` 时解码失败；wheel 只嵌入 sm_86 PTX、无 sm_120 SASS，2026-10-14 扫描 `ctranslate2.dll` 确认）：冷启动首窗解码 27 s，二次启动 5 s |
 | llama.cpp | b11583 官方 `win-cuda-13.4` 二进制 | 独立进程，与 Python 进程无 DLL 交集；13.4 构建原生含 sm_120 内核，12.4 构建需 PTX JIT，故不降级 |
 | CUDA toolkit | 不需要本地安装 | 所有组件用 wheel／二进制自带运行时；驱动 617.42 同时满足 12.x 与 13.x |
 
 **选版规则**（用户 2026-10-14 明确）：CUDA 12 与 Python 3.13 是固定锚点；被它们限制的组件随之锁定（torch／torchaudio／torchcodec 取 cu128 索引上的最新版本，CTranslate2 取 CUDA 12 wheel 的最新版本）；不受影响的组件一律取最新稳定版（transformers、pyannote.audio、faster-whisper、numpy、llama.cpp 官方构建）。上表各行均按此规则选定，实施时以 `uv lock` 当日的最新稳定版为准并记录。
 
-**为什么从 CUDA 13 退到 CUDA 12**：CT2 是 w0 的推理内核且只有 CUDA 12 wheel；cuDNN 9 的 DLL 文件名在 CUDA 12 与 13 构建间相同，同进程只能加载一份，原方案 A 因此要求 w0 worker 不 import torch 并用 NumPy 重写特征，复杂且无先例。整体 CUDA 12 后 w0 worker 与 VAD、对齐、x0 worker 一样正常 import torch，特征链保持现有 torch 实现，等价性风险最小。代价是 torch 停在 2.11.0 而非 2.14.1；用户 2026-10-14 接受。未核实项：CT2 wheel 在 sm_120 上是原生 kernel 还是 PTX JIT（`whisper-latest` 已在本卡跑过 CT2，若为 JIT 记录二次启动时间）。
+**为什么从 CUDA 13 退到 CUDA 12**：CT2 是 w0 的推理内核且只有 CUDA 12 wheel；cuDNN 9 的 DLL 文件名在 CUDA 12 与 13 构建间相同，同进程只能加载一份，原方案 A 因此要求 w0 worker 不 import torch 并用 NumPy 重写特征，复杂且无先例。整体 CUDA 12 后 w0 worker 与 VAD、对齐、x0 worker 一样正常 import torch，特征链保持现有 torch 实现，等价性风险最小。代价是 torch 停在 2.11.0 而非 2.14.1；用户 2026-10-14 接受。CT2 wheel 在 sm_120 上是 PTX JIT（只含 sm_86 PTX；01 smoke #3 冷启动 27 s、二次 5 s）。2026-10-14 复议过 cu12／cu13 混用并维持本决定；事实、重新评估的触发条件与届时的可靠形态记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 依据段，不在此重复。
 
 **llama.cpp 改用官方 b11583 构建**：上游 2026-07-13 合并 `hy_v3` 架构；本机 APEX-I-Compact GGUF 的路由偏置张量已是上游命名 `blk.N.exp_probs_b`（2026-10-13 本地读取确认），旧补丁针对的 `.bias` 命名问题不存在。这替代了 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md) 中"继续使用 b11429 兼容 loader、不以 stock 引擎替代"的条款（用户 2026-10-14 确认），由 ADR-0007 记录。票据 01 的 smoke 要对比兼容引擎与 stock 引擎的 `/tokenize` 输出与固定 seed 的短生成，并在一个真实 b10 批次上测量显存峰值（现有 15.7–15.8 GB 是兼容引擎的数字）。`ManagedServer` 要求的 `identity.json` 与驻留日志解析按 stock 构建适配。
 
@@ -273,9 +273,11 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 **升级即新身份**：Torch／CT2／llama.cpp 版本变化会轻微改变数值，必须在冻结输入上与现有基线成绩回归后才算接上基线（本期不做，见 §11）。
 
-**后续可选实验（不在第一版）**：用 HF transformers 的 Whisper 实现（纯 PyTorch）替换 CT2，解除 CUDA 12 锁定、跟上最新 torch。代价是速度约慢 1.5–3 倍、文字与现 W0 有细微差异，需要独立的等价性验证。
+**后续可选实验（不在第一版）**：用 HF transformers 的 Whisper 实现（纯 PyTorch）替换 CT2，解除 CUDA 12 锁定、跟上最新 torch。代价是速度约慢 1.5–3 倍、文字与现 W0 有细微差异，需要独立的等价性验证。另一条路是保留 CT2、只给 ASR worker 一个独立的 cu12 侧车 venv，让其余 worker 跟最新 torch；触发条件见 ADR-0007。
 
 ### 7.3 代码布局
+
+各模块的接口、依赖方向、接缝裁定与责任边界以[目标架构](../architecture/bilingual-pipeline-architecture.md)为准，本节只列文件与来源。
 
 新建产品包 `kototoki/`，从 `experiments/` 复制并精简已验证的实现（历史目录保持冻结，产品包不导入它们）：
 

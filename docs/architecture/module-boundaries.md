@@ -25,6 +25,8 @@
 - 允许：X0 → W0（`read_audio`、`setup_runtime`、`gpu_lock`、`read_vad_manifest`、`MmsAligner`）；外部 VAD 阶段 → W0（`gpu_lock`、`read_audio`、`vad_candidates`）；W0／X0 → `kototoki_eval.schema`。
 - 允许：完整 SRT 流程 → 逐窗翻译运行时（`translation_demo.adapters`、`client`、`run`、`translation_demo_runtime` 的纯函数）。
 - 现存的当前→历史依赖（只读导入，不得扩大）：X0 → `experiments.qwen.run_qwen`（Qwen 资产身份常量与 `checkpoint_identity`、`check_gpu`）；完整 SRT 流程 → `experiments.translation_flow.srt`（SRT 读写与覆盖校验），其测试另导入冻结的 `translation_flow.v2_prepare`／`v2_recipes` 做 C0 等价核对；W0 测试导入 `experiments.framework_equivalence` 作数值参照，运行时不导入。
+- 产品包 `kototoki/`（目标全图见[目标架构](bilingual-pipeline-architecture.md)）：依赖只向下，编排 `job` → 媒体、cue、合并、翻译子系统 → 基础层（`config`、`recipes`、`artifacts`、`srt`、`workers/protocol`、`schema`）；推理模块 `vad`、`asr_*`、`align` 只依赖基础层且互不导入，编排只经 `kototoki.workers.<stage> --jobs` 子进程使用它们；基础层不依赖 torch、ffmpeg、网络与上层。
+- 禁止：`kototoki/job.py`、`kototoki/__main__.py` 导入 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`；`kototoki/` 任何模块导入 `experiments.*`（历史实现只复制）。
 - 禁止：`kototoki_eval` 导入任何推理或 `experiments` 代码；推理入口导入 `experiments/provision`；当前模块写入或修改历史实验包（`translation_flow/v2_*`、`translation_judge/`、`translation_eval/` 等冻结证据）。
 - 文件契约代替导入：W0／X0 不导入外部 VAD 阶段的入口，只读其 manifest；评分 CLI 只读 `result.json`；各入口只读语料准备产出的 WAV 与参考 JSON。
 

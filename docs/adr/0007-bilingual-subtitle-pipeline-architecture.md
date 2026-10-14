@@ -29,10 +29,11 @@
 - 2026-10-14 用户在评审后裁定：下混按声道布局（单声道直通、双声道 0.5/0.5、5.1 以上标准矩阵含中置）；重采样保持 ffmpeg 默认 swr 以便与基线证据逐字节对照；产品翻译配方命名 `b10-joint-degrade-v1`。
 - 2026-10-14 两轮评审（主 agent 自审、独立 Opus 评审）核实：torch wheel 与 CUDA 12 cuDNN 的 DLL 同名；现有 W0 `setup_runtime` 同时修改 PATH；旧语料准备拒绝非立体声与非零 `start_time`；v3 `Recipe.spec()` 含 `overflow` 字段；v3 session 要求首个请求 `cache_n == 0` 且按整个场景落盘。修订见规格 §13。
 - 2026-10-14 第三轮独立评审核实：W0 `setup_runtime` 在 `whisper-latest` 里同样把私有 DLL 目录加进 PATH，因此"CT2 共用 torch DLL"只被证明为同版本可共存，不加目录能否解析留给 01 smoke 在干净 PATH 下验证；v3 `run_generation` 在 `sources`／`scene_ids` 变化时拒绝而非重建，故翻译 run 目录按 `ja.srt` SHA 分键；`forced_align` 在本机 torchaudio 2.11.0+cu128 存在。全部修订见规格 §1.2 第三轮表与 §13。
+- 2026-10-14 复议"cu12 与 cu13 并存"（用户问能否按社区方案混用；来源 OpenNMT/CTranslate2#1933 与 PyTorch 2.11 转 cu130 的公告，访问 2026-10-14）。本机核实：CT2 4.8.3 Windows wheel 只嵌入 `.target sm_86` 的 PTX、无 sm_120 SASS，在 5080 上全靠驱动 JIT（01 smoke #3 禁用 JIT 即失败）；社区"soname 不同可并存"只对 cuBLAS／cudart 成立，cuDNN 9 的两种构建同名，单 venv 混装取决于 DLL 搜索顺序，不可靠；w0 的 torch 特征链只用 `stft` 与矩阵乘、不碰 cuDNN，是该进程里唯一的减轻因素。结论：维持 CUDA 12.8。换 CUDA 13 今天只换来 torch 2.14，没有组件需要它；CT2 在 sm_120 上的性能问题与 CUDA 版本无关（#1933 报告自建 sm_120 后 FP16 提速约 4 倍，对本工作负载 UNVERIFIED：GEMM 走 cuBLAS 12.8 的原生 sm_120 内核，CT2 自有 PTX 内核只是轻量算子）。**重新评估的触发条件**：CT2 发布 CUDA 13 wheel；某必需组件要求 torch >2.11；整片验收显示 ASR 阶段是墙钟瓶颈。届时的可靠形态是给 ASR worker 一个独立的 cu12 侧车 venv（第二份 lockfile、解释器路径配置键，W0 身份不变，只需重验搬到新 torch 的 VAD／对齐／x0），或改用 HF Whisper；不采用单 venv 混装。
 
 ## 后果
 
 - 根环境从此含 Torch 等推理依赖，demo 时代"根环境无推理依赖"的约定失效；三个历史环境保留供复现。
 - `experiments/` 中因缺 NumPy／Torch 而跳过的离线测试将在根环境实际运行。
 - 产品包 `kototoki/` 从 `experiments/` 复制并精简实现，不导入历史包；历史目录保持冻结。
-- 被否决或推迟：逐文件全流程调度、翻译基于 ASR 窗口文本、Python 3.14／3.15、CUDA 13 Python 环境＋CT2 侧车（方案 A）、CT2 源码构建、用 HF transformers Whisper 替换 CT2（它是日后解除 CUDA 12 锁定的路径）、soxr 重采样、批内语序自由（1+5+1）、跨文件术语一致。后四者登记为未来方向。
+- 被否决或推迟：逐文件全流程调度、翻译基于 ASR 窗口文本、Python 3.14／3.15、CUDA 13 Python 环境＋CT2 侧车（方案 A）、单 venv 混装 cu12／cu13 库（2026-10-14 复议）、CT2 源码构建、用 HF transformers Whisper 替换 CT2（它是日后解除 CUDA 12 锁定的路径）、soxr 重采样、批内语序自由（1+5+1）、跨文件术语一致。后四者登记为未来方向。

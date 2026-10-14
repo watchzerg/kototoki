@@ -84,6 +84,7 @@ flowchart LR
 | 回归、benchmark 或比较改动后的 W0 | [W0 demo 验证](../testing/2026-10-05-w0-demo-validation.md)、[STT 评估方法](../testing/stt-evaluation.md) |
 | 回归当前 X0 实现 | [X0 demo 验证](../testing/2026-10-05-x0-demo-validation.md) |
 | 理解 X0 流程的采纳依据与质量主张的区别 | [ADR-0002](../adr/0002-x0-demo-flow.md) |
+| 实现双语字幕流水线的票据（`.scratch/bilingual-subtitle-pipeline/`） | [目标架构](bilingual-pipeline-architecture.md)（模块接口、依赖方向、接缝与责任边界）→ [技术设计](../specs/bilingual-subtitle-pipeline.md) → [产物契约](modules/artifact-contract.md) |
 | 复现历史实验结果 | 模块地图下方的历史实验 README；不要把其入口当作当前基线 |
 
 重要取舍见 `../adr/`，证据见[调研索引](../research/INDEX.md)；两者不覆盖当前正文。
