@@ -35,7 +35,7 @@
 | 输出位置 | `--out <dir>` 顶层放最终 SRT，工作目录在 `<dir>/.work/`；不写到视频旁边 |
 | 双语行序 | 中文在上、日文在下，无选项 |
 | cue 切分数值 | 由实现方给出初值并放配置文件，后续按真实输出调整 |
-| Python 环境的 CUDA 版本 | **整体 CUDA 12.8**（2026-10-14 替代原方案 A）：torch 2.11.0+cu128 与 CTranslate2 共用同一套 CUDA 12 DLL，不再有侧车与无 torch worker；llama-server 为独立进程，保留官方 CUDA 13.4 构建 |
+| Python 环境的 CUDA 版本 | **整体 CUDA 12.8**（2026-10-14 替代原方案 A）：torch 2.11.0+cu128 与 CTranslate2 共用 torch 的 CUDA 12 运行时（CT2 自带的 cuDNN 调度器例外，见 §7.2），不再有侧车与无 torch worker；llama-server 为独立进程，保留官方 CUDA 13.4 构建 |
 | Python 版本 | 3.13（3.15 无 CT2／torchaudio／torchcodec wheel，不可用；3.14 边角依赖未核） |
 | 环境管理 | 单一根项目：根 `pyproject.toml` 即产品，uv 管理，Torch 走显式 cu128 索引（实现方选择，见 §7.2） |
 | 入口形态 | 第一版不做 CLI，入口只读配置文件；输入／输出／模型目录与组件参数全部在配置文件里 |
@@ -236,7 +236,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 - 锁：只有编排器获取 `.local/gpu.lock`（仓库内固定路径，不随配置文件移动），worker、翻译模块都不再获取；v3 的 `GpuLock`／W0 的 `gpu_lock` 不移植，只保留 `ProcessLock` 给编排器。锁文件记录编排器、当前 worker 与 llama-server 的 pid。
 - 所有 worker 与 llama-server 放进 KILL_ON_JOB_CLOSE Job Object：编排器被强杀时子进程随之退出，不留占显存的孤儿。
 - worker 启动即设置离线环境（`HF_HUB_OFFLINE=1`、`HF_HOME`／`TORCH_HOME` 指向 `<output_dir>/.work/cache/`（整个输出目录共用，不是每文件一份）、`PYANNOTE_METRICS_ENABLED=0` 等，沿用 `setup_runtime` 的变量但**不再加私有 DLL 目录**），保持本地运行不变量。子进程环境统一 `PYTHONUTF8=1`，进度 JSON 与日志文件显式 UTF-8（本机根环境默认 cp1252，`scripts/check_docs.py` 在无 mise 的 shell 下即因此崩溃）。
-- DLL 解析顺序：ASR worker 必须先 `import torch` 再导入 `ctranslate2`／`faster_whisper`，Windows 加载器按模块基名复用已加载的 cudnn／cublas／cudart；有导入顺序测试。VAD worker 把 `dirname(paths.ffmpeg)` 加入 PATH／`add_dll_directory`，供 torchcodec 按需加载 FFmpeg 共享 DLL（是否真的需要见 §9 smoke #2）。
+- DLL 解析顺序：ASR worker 必须先 `import torch` 再导入 `ctranslate2`／`faster_whisper`，cublas／cudart 与 cuDNN 子库由此来自 torch 目录；CT2 在导入时按全路径加载自带的 `cudnn64_9.dll`（9.10 调度器），与 torch 的 9.19 调度器同进程并存，2026-10-14 用户接受（01 smoke #3：W0 冻结窗口 token 与特征逐一一致）。有导入顺序测试。VAD worker 不需要 FFmpeg PATH：01 smoke #2 实测 pyannote＋torchcodec 对内存波形推理全程不加载任何 FFmpeg DLL。
 - "编排器不 import torch"的测试断言 `import kototoki.job` 与 `kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec` 与任何 `experiments.*`。
 
 ### 7.2 环境：一个统一的 CUDA 12.8 环境
@@ -256,10 +256,10 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | Python | 3.13 | uv 托管 |
 | torch | 2.11.0+cu128 | PyTorch cu128 索引（含 sm_120）；cu128 索引止于 2.11.0。本机 `vad-pyannote-gpu-v1` 已在跑 |
 | torchaudio | 2.11.0+cu128 | 同上；`forced_align`／`merge_tokens` 保留（2026-10-14 在本机 `vad-pyannote-gpu-v1` 的 torchaudio 2.11.0+cu128 上只读核实存在；CUDA 路径等价性由 01 smoke #1 验证） |
-| torchcodec | 0.17.0 | 本机 `vad-pyannote-gpu-v1` 已与 torch 2.11.0+cu128 同装并运行 |
+| torchcodec | 0.17.0 | PyPI（cu128 索引没有 0.17.0）；本机 `vad-pyannote-gpu-v1` 已与 torch 2.11.0+cu128 同装并运行 |
 | transformers | 5.19.0 | PyPI；覆盖 Qwen3-ASR 与 MMS wav2vec2；要求 torch ≥2.5 |
 | pyannote.audio | 4.0.7 | PyPI；本机已在 torch 2.11 上运行 |
-| faster-whisper／CTranslate2 | 1.2.1／4.8.3 | PyPI；CT2 wheel 按 CUDA 12.8＋cuDNN 9.10 构建，**直接共用 torch cu128 自带的 cudart／cuBLAS／cuDNN DLL**，不需要侧车。本机 `whisper-latest`（torch 2.8 cu128＋CT2 4.8.2）证明的只是"同版本 DLL 可共存"：W0 的 `setup_runtime` 在该环境里同样把 `.local/tools/whisper-runtime-provisional` 加进 PATH 与 `add_dll_directory`，所以"不加目录也能解析"要靠 01 smoke #3 在干净 PATH 下验证，并以 ASR worker 先 import torch 为前提（§7.1）。cuDNN 9 次版本差异（CT2 按 9.10 构建、torch 2.11 自带更新的 9.x）UNVERIFIED，由 smoke 记录实际版本 |
+| faster-whisper／CTranslate2 | 1.2.1／4.8.3 | PyPI；CT2 wheel 按 CUDA 12.8＋cuDNN 9.10 构建，不需要侧车。01 smoke #3（2026-10-14，干净 PATH、先 import torch）实测：cudart／cuBLAS 与 cuDNN 子库来自 torch（cuDNN 9.19.0），CT2 wheel 自带的 `cudnn64_9.dll`（9.10.2.21 调度器）由其 `__init__` 按全路径加载，两份调度器并存；W0 冻结窗口解码的 token 与特征 SHA 与 torch 2.8＋CT2 4.8.2 的记录逐一一致，用户接受这一组合。CT2 在 sm_120 上依赖 PTX JIT（`CUDA_DISABLE_PTX_JIT=1` 时解码失败）：冷启动首窗解码 27 s，二次启动 5 s |
 | llama.cpp | b11583 官方 `win-cuda-13.4` 二进制 | 独立进程，与 Python 进程无 DLL 交集；13.4 构建原生含 sm_120 内核，12.4 构建需 PTX JIT，故不降级 |
 | CUDA toolkit | 不需要本地安装 | 所有组件用 wheel／二进制自带运行时；驱动 617.42 同时满足 12.x 与 13.x |
 
@@ -322,7 +322,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 ## 9. 验收（草案）
 
 - 离线单元测试：ffprobe 音轨选择与容器映射、派生 WAV 参数、产物身份与跳过逻辑、cue 切分与时间回填、SRT 解析／写出／合并、批次推进与失败隔离（伪 worker）。
-- 环境 smoke（票据 01，脚本入库到 `scripts/smoke/`，并接到 `just test-full`；每项各自在独立子进程运行，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在一个进程里相遇）：① torchaudio 2.11.0 配 torch 2.11.0+cu128 的 `forced_align`（合成序列＋一个真实冻结窗口）；② pyannote 4.0.7＋torchcodec 0.17 在产品环境导入并对内存波形推理，列出进程实际加载的 FFmpeg DLL（若没有任何 `avcodec*` 被加载，则 VAD worker 不需要 FFmpeg PATH，§7.1 的那条随之删除）；③ **在不含 `whisper-runtime-provisional` 的干净 PATH 下**，同一进程先 import torch（cu128）再用 CT2 解码一窗，打印实际加载的 cudnn／cublas／cudart 模块路径均来自 torch 目录，并记录 cuDNN 版本与是否 PTX JIT；④ 官方 llama.cpp 加载 APEX GGUF，与兼容引擎比对 `/tokenize` 与固定 seed 短生成，再发**同一 session 的第二个 `cache_prompt` 请求**并断言 `timings.cache_n`、`tokens_evaluated`、`stop_type`／`stopped_limit`／`truncated` 的含义与 v3 `run_step` 的假设一致，保存一份 stock 引擎加载日志供 `residency_evidence` 回归，测一个 b10 批次的显存峰值。
+- 环境 smoke（票据 01，脚本入库到 `scripts/smoke/`，并接到 `just test-full`；每项各自在独立子进程运行，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在一个进程里相遇）：① torchaudio 2.11.0 配 torch 2.11.0+cu128 的 `forced_align`（合成序列＋一个真实冻结窗口）；② pyannote 4.0.7＋torchcodec 0.17 在产品环境导入并对内存波形推理，列出进程实际加载的 FFmpeg DLL（若没有任何 `avcodec*` 被加载，则 VAD worker 不需要 FFmpeg PATH，§7.1 的那条随之删除）；③ **在不含 `whisper-runtime-provisional` 的干净 PATH 下**，同一进程先 import torch（cu128）再用 CT2 解码一窗，打印实际加载的 cudnn／cublas／cudart 模块路径，除 CT2 wheel 自带的 `cudnn64_9.dll` 外均来自 torch 目录，并记录 cuDNN 版本与是否 PTX JIT；④ 官方 llama.cpp 加载 APEX GGUF，与兼容引擎比对 `/tokenize` 与固定 seed 短生成，再发**同一 session 的第二个 `cache_prompt` 请求**并断言 `timings.cache_n`、`tokens_evaluated`、`stop_type`／`stopped_limit`／`truncated` 的含义与 v3 `run_step` 的假设一致，保存一份 stock 引擎加载日志供 `residency_evidence` 回归，测一个 b10 批次的显存峰值。
 - GPU smoke：1 个 5 分钟片段走完 8 阶段，产物齐全、SRT 合法、双语对齐。
 - 回归：II／III 上新环境与现有基线的 CER／时间指标对比（本期不做，§11）。
 - 整片：2 部电影批量运行一次，记录各阶段墙钟、显存峰值与失败清单。
@@ -414,7 +414,7 @@ seed  = 20261008
 | 00 | M0 共享基础 | `artifacts.py`（产物路径与短 id、身份与模型哈希缓存、坐标约定、匹配跳过与原地替换、原子写、`failure.json`、`published.json` 与覆盖规则）、`workers/protocol.py`（`--jobs`、增量结果、`failed_windows`、退出码 0／1／2）、`srt.py`（允许零条目、`floor(x*1000+0.5)` 取整）；建 `tests/__init__.py`，`just check` 纳入 `kototoki/` | 离线测试；文档：模块边界加"产物契约"归属 | — |
 | 01 | M1 环境 | 根项目改产品项目、统一 CUDA 12.8 环境（torch 2.11.0+cu128）、官方 llama.cpp b11583；`tool.uv.environments` 限 win32；历史 `experiments` 测试在新环境的处理策略；`just test-full` 从此加载模型，随本票更新 AGENTS.md 重任务清单与 workflow.md 的 `test-full`／`gate-full` 描述；ADR-0005 加被 ADR-0007 部分替代的反向链接；`translation-baseline` recipe 与 translation-runtime 模块页的兼容引擎说明改为历史 | §9 的四项环境 smoke 全部通过并入库 `scripts/smoke/`、接 `just test-full`；`technology-stack.md`／`toolchain.md`／`workflow.md` 更新 | — |
 | 02 | M2 配置与媒体 | `config.py`＋`kototoki.toml`、`recipes.py`（不含翻译配方）、`media.py`（probe 全字段与音轨选择含语言标签归一化、流复制与容器映射、从容器解码派生 WAV 与 verbose 日志、按布局 `pan` 常量下混、对视频流的时长校验、`offset_s = 0`） | 离线测试含合成的延迟音轨（断言 cue 时间等于视频时间）、中途间隙、5.1 满幅不削波、单声道；真实视频三份产物；派生 WAV 与现有 `hf-ii-full.wav` 对照（默认 swr 时 PCM SHA256 应一致） | 00 |
-| 03 | M2 STT 三阶段 | `vad.py`、`asr_whisper.py`（torch 先于 ctranslate2 导入＋测试）、`align.py` 三个 worker；VAD worker 的 FFmpeg PATH 视 01 smoke #2 结论 | 冻结窗口三阶段结果与现有同窗结果对照：窗口整数边界一致，ASR 文字逐字符一致（不一致即不通过），units 覆盖全文且时间差 ≤20 ms（超出另开票分析，不阻塞 05／06）；模块页 | 01, 02 |
+| 03 | M2 STT 三阶段 | `vad.py`、`asr_whisper.py`（torch 先于 ctranslate2 导入＋测试）、`align.py` 三个 worker；VAD worker 不加 FFmpeg PATH（01 smoke #2）；对齐字典只取 id < 模型 `vocab_size`（transformers 5.x 的 MMS 分词器多出 `|`＝2268，01 smoke #1） | 冻结窗口三阶段结果与现有同窗结果对照：窗口整数边界一致，ASR 文字逐字符一致（不一致即不通过），units 覆盖全文且时间差 ≤20 ms（超出另开票分析，不阻塞 05／06）；模块页 | 01, 02 |
 | 04 | M2 日文 cue | `cues.py`：回填（插值、边缘外推、整窗按 VAD 子段 `fallback`）、三级切分、`lead_out_s`、`min_duration_s`、空／纯标点／♪ 处理，`ja.srt`＋`ja-cues.json` | 离线测试含非零 offset 只加一次；用现有 `result.json` 离线产出 `ja.srt` 人工看 5 分钟 | 00 |
 | 05 | M3 翻译移植 | `translate/`（含 `translate/recipes.py`、v3 b10-joint hash 钉子测试）：session 传入、按批次落盘与续跑、基础设施失败同 run 重启 server 并记新 session、不取锁、配置化路径、run 目录按 `srt-<sha12>` 分键、启动前空闲显存检查、stock 引擎 `identity.json`；`merge.py`（中文换行替换为空格） | 伪客户端测试（正常、续跑、OOM 重启、缓存校验、空场景、`ja.srt` 变化换目录）；一部电影产出 `zh.srt`／`ja-zh.srt` | 01, 02, 04 |
 | 06 | M4 批次编排 | `__main__.py`、`job.py`：扫描镜像、大小采样稳定性检查、发布前置判定、extract 先于 GPU、输出目录锁、worker 子进程与按文件重启、Job Object、唯一 GPU 锁与环境变量破锁、三份 SRT 一起发布、无语音路径、`PYTHONUTF8`、共用 `.work/cache/`、不含 torch 等推理包的测试；随本票把架构总览"只写 `.local/`"不变量改为产品例外并把入口加入 AGENTS.md 重任务清单 | 伪 worker 离线测试（含输出目录锁冲突、崩溃文件隔离）；中断后重跑能续 | 00, 02 |
@@ -429,3 +429,5 @@ seed  = 20261008
 2026-10-14（续）：用户裁定 Python 环境整体退到 CUDA 12.8（torch 2.11.0+cu128），取消 CT2 侧车与无 torch worker；下混、默认 swr、stock 引擎、`b10-joint-degrade-v1` 按推荐采纳；llama-server 保留 CUDA 13.4 构建。
 
 2026-10-14（第三轮，独立评审，用户全部采纳）：`offset_s` 恒为 0、零点由 `first_pts=0` 补齐（原方案双重计时且参考零点错）；产物坐标系写明；5.1 `pan` 常量与不削波；时长校验对视频流、verbose 日志入工作目录；翻译 run 目录按 `ja.srt` SHA 分键；发布覆盖规则按 `published.json` SHA 判定；输出目录锁；worker 按文件重启；x0 触顶窗口置空；票据 03 门禁加时间容差；`recipes.py` 归属拆分、05 依赖 02；产品测试放 `tests/` 并由 00 接线；AGENTS／workflow／ADR-0005 反向链接随 01／06 交付；`break_stale_lock` 改环境变量；删 `[vad] device`；语言标签归一化；小端 PCM 才映射 `.wav`；毫秒取整、`fallback` 命名、边缘插值、双语换行；DLL 共存证据修正与干净 PATH smoke、stock 引擎响应字段断言、smoke 各自子进程；启动 llama-server 前查空闲显存；清理 CUDA 13 时代残留文字。`forced_align` 在本机 torchaudio 2.11.0+cu128 只读核实存在。
+
+2026-10-14（票据 01 实施）：四项环境 smoke 完成；torchcodec 改取 PyPI；VAD worker 不需要 FFmpeg PATH（§7.1 删除该条）；CT2 自带 cuDNN 调度器与 torch 子库并存经用户接受，§7.1／§7.2／§9 表述随之修正；MMS 分词器多出 `|` 记入票据 03。

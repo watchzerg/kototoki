@@ -7,7 +7,8 @@
 - `nojit`：附加 `CUDA_DISABLE_PTX_JIT=1`。解码成功说明 CT2 自带 sm_120 原生 kernel；
   以 "no kernel image" 一类错误失败则记录为依赖 PTX JIT（这是发现，不是失败）。
 通过条件：`cold` 与 `warm` 均解码成功，PATH 与已加载模块均不含 `whisper-runtime-provisional`，
-且已加载的 cudnn / cublas / cudart DLL 全部位于 torch 包的 `lib` 目录下。
+且已加载的 cudnn / cublas / cudart DLL 除 CT2 wheel 自带的 `cudnn64_9.dll`（其 `__init__` 按全路径加载的
+cuDNN 9.10 调度器，2026-10-14 用户接受与 torch 的 9.19 并存）外，全部位于 torch 包的 `lib` 目录下。
 结果只含版本、计数、哈希、布尔与耗时；不输出转写文本，也不保存解码文本。
 """
 
@@ -33,6 +34,7 @@ NAME = "ct2_after_torch"
 CHILD_PREFIX = "CT2_CHILD "
 PRIVATE_DLL_DIR = "whisper-runtime-provisional"
 DLL_PREFIXES = ("cudnn", "cublas", "cudart")
+CT2_OWN_DLLS = ("cudnn64_9.dll",)  # CT2 wheel 自带、允许在 torch/lib 之外加载的 DLL
 FROZEN_RUN = smokelib.REPO / ".local/w0-demo/pyannote-gpu-v1-w0-pyannote-current-hf-ii-window-01/result.json"
 AUDIO = smokelib.REPO / ".local/round2/corpus/audio/hf-ii-window-01.wav"
 MODEL_PATH = smokelib.REPO / ".local/models/faster-whisper-large-v3"
@@ -170,14 +172,17 @@ def child_main(tag: str, out: Path) -> int:
 
         result["stage"] = "inspect_modules"
         torch_lib = norm(Path(torch.__file__).parent / "lib")
+        ct2_dir = norm(Path(ctranslate2.__file__).parent)
         loaded = smokelib.modules_matching(DLL_PREFIXES)
-        outside = [path for path in loaded if not norm(path).startswith(torch_lib + os.sep)]
+        ct2_own = [path for path in loaded if norm(Path(path).parent) == ct2_dir and Path(path).name.lower() in CT2_OWN_DLLS]
+        outside = [path for path in loaded if not norm(path).startswith(torch_lib + os.sep) and path not in ct2_own]
         private = [path for path in smokelib.loaded_modules() if PRIVATE_DLL_DIR in path.lower()]
         result["dlls"] = {
             "torch_lib_dir": str(Path(torch.__file__).parent / "lib"),
             "loaded": [{"name": Path(path).name, "path": path, "file_version": dll_file_version(path)} for path in loaded],
             "loaded_after_torch_only": [Path(path).name for path in modules_after_torch],
             "new_after_ct2": sorted(set(Path(p).name.lower() for p in loaded) - set(Path(p).name.lower() for p in modules_after_torch)),
+            "ct2_own_loaded": ct2_own,
             "outside_torch_lib": outside,
             "all_under_torch_lib": bool(loaded) and not outside,
             "private_dll_dir_modules": private,

@@ -27,7 +27,7 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 | `check-toolchain` | `scripts/check_toolchain.py`：核对 uv、just 与 `mise.toml`、Python 与 `.python-version` 一致；用 `uv run --no-project --no-python-downloads --offline`，不同步环境 |
 | `install` | 依赖 `setup`（`uv sync --locked`） |
 | `fmt`、`lint`、`typecheck` | 项目尚未选定格式化、lint 与类型检查工具，按契约非零退出并说明原因 |
-| `test-full` | `scripts/smoke/run_all.py [名称 ...]`：四项环境 smoke（`forced_align`、`vad_pyannote`、`ct2_after_torch`、`llama_stock`），每项独立子进程、子进程 PATH 去掉 `whisper-runtime-provisional`、离线变量；运行期间持有 `.local/gpu.lock`，结果写 `.local/smoke/<UTC 时间>/`。**加载模型、独占 GPU，约 15–25 分钟，须先经用户批准** |
+| `test-full` | `scripts/smoke/run_all.py [名称 ...]`：四项环境 smoke（`forced_align`、`vad_pyannote`、`ct2_after_torch`、`llama_stock`），每项独立子进程、子进程 PATH 去掉 `whisper-runtime-provisional`、离线变量；运行期间持有 `.local/gpu.lock`，结果写 `.local/smoke/<UTC 时间>/`。**加载模型、独占 GPU，全套约 3 分钟（2026-10-14 实测 2.5 分钟），须先经用户批准** |
 | `docs-check` | `scripts/check_docs.py`：检查根文档与 `docs/` 的本地链接、锚点、模块页可达性 |
 | `gate-core` | `check-toolchain` → `docs-check` → `lint` → `typecheck` → `test`，首错停止；只含产品测试，研究期测试 recipe 不在门禁内 |
 | `gate-full` | `gate-core` 后运行 `test-full`（同样加载模型、须先批准） |

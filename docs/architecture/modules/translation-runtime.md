@@ -8,7 +8,8 @@
 
 ## 当前行为规格
 
-- 入口：`just translation-baseline --inputs <窗口.jsonl> --output-dir <新目录>`（固定 APEX、兼容引擎与身份文件、99 层、`official30b-cached-v1`、`n_predict` 4096、context 8192、线程 8／8）；`just translation-demo` 为通用入口，须显式给 `--candidate` 等参数。CLI 的默认 `--sampling-profile` 是历史 `legacy-greedy-v1`（temperature 0、输出 1024、context 4096、不缓存）。
+- 引擎（历史记录）：本页描述的研究期运行时使用 b11429＋router-bias 补丁的兼容引擎（`.local/translation-evaluation/20261006-v1/hy30-compat/runtime/`）。2026-10-14 起产品翻译改用官方 llama.cpp b11583 `win-cuda-13.4`（[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)，`.local/tools/llama.cpp/b11583-cuda13.4/`）；票据 01 smoke #4 实测两者 `/tokenize`、固定 seed 生成与 b10-joint 批次结果一致。兼容引擎只用于复现历史结果。
+- 入口：`just translation-baseline --inputs <窗口.jsonl> --output-dir <新目录>`（历史入口；固定 APEX、兼容引擎与身份文件、99 层、`official30b-cached-v1`、`n_predict` 4096、context 8192、线程 8／8）；`just translation-demo` 为通用入口，须显式给 `--candidate` 等参数。CLI 的默认 `--sampling-profile` 是历史 `legacy-greedy-v1`（temperature 0、输出 1024、context 4096、不缓存）。
 - `resolve_profile`：`official30b-cached-v1` 只允许 APEX 候选且不得用于映射阶段，要求输出 4096、context ≥ 8192；显式发送 `top_k:0`、`repeat_penalty:1.0`、`samplers=["temperature"]` 等以关闭其余采样器。
 - 外层前置检查：层数与 context 为正（不支持纯 CPU）；自定义引擎必须附身份文件；模型文件 SHA256 须与资产清单一致；端口已有服务即拒绝；输出目录须不存在。加载后核对实际 offload 层数与 GPU buffer，部分 CPU offload 须 `--allow-cpu-offload` 明确许可，否则中止，不自动降层。
 - 内层：只接受 loopback、无认证、不跟随重定向的 HTTP（`LlamaClient`）；Hy30 使用 `token-ids-v1` 传输（先 `/tokenize` 再以 token 数组请求 `/completion`）；每窗至多两次相同请求；超出 context 不截断而记失败；输出截断、无效 JSON、错／漏／重复 ID 均记失败。
