@@ -33,8 +33,9 @@ THREADS = 8
 THREADS_BATCH = 8
 LOAD_TIMEOUT_SECONDS = 180
 # 启动前等待的空闲显存（MiB）与超时。2026-10-14 整片实测：会话峰值 15687 MiB、桌面基线约 880 MiB，
-# 即 llama-server 自身约 14800 MiB；阈值取 14900，留约 100 MiB 余量，低于它时宁可等待／失败也不硬启动。
-MIN_FREE_MIB = 14900
+# 即 llama-server 自身约 14800 MiB。票据 08 整片验收：桌面占用在 0.6–1.2 GB 间漂移，空闲 14742 MiB 时 server
+# 加载后桌面占用由约 1236 降到约 597 MiB、翻译正常（推测为 WDDM 换出，未核实）；用户裁定阈值取 14700（2026-10-15），低于它时等待／失败。
+MIN_FREE_MIB = 14700
 FREE_VRAM_TIMEOUT_SECONDS = 120.0
 FREE_VRAM_POLL_SECONDS = 2.0
 
