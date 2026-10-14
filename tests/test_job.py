@@ -19,6 +19,7 @@ from unittest import mock
 from kototoki import __main__ as cli
 from kototoki import artifacts, job, media
 from kototoki.config import ConfigError, load
+from tests.fake_worker import FAKE_MODELS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FAKE_WORKER = Path(__file__).resolve().parent / "fake_worker.py"
@@ -57,6 +58,7 @@ class JobCase(unittest.TestCase):
         self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
         self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
         self.enterContext(mock.patch("kototoki.job.cues.build_cues", return_value=({"cues": []}, SRT_JA)))
+        self.enterContext(mock.patch("kototoki.job.gpu.verify_models", return_value=FAKE_MODELS))
         self.enterContext(mock.patch("kototoki.job.contain_children"))  # 不把测试进程放进 Job Object
 
         # 假翻译与合并模块：orchestrator 通过 importlib 取用。

@@ -1,6 +1,6 @@
 # 批次编排
 
-状态：current（票据 06 交付，2026-10-14）；GPU worker（票据 03／07）、翻译子系统与合并（票据 05／09）尚未实现，编排按[目标架构](../bilingual-pipeline-architecture.md)的接口调用它们，只经伪 worker 与伪翻译模块离线验证。
+状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03）的 jobs 约定调用，x0（票据 07）、翻译子系统与合并（票据 05／09）尚未实现，后者按[目标架构](../bilingual-pipeline-architecture.md)的接口调用；只经伪 worker 与伪翻译模块离线验证。
 
 ## 定位与阅读
 
@@ -25,15 +25,13 @@
 | 产物 | 身份 |
 | --- | --- |
 | `probe.json` | `video_identity`（相对路径、大小、`mtime_ns`、ffprobe 指纹）＋ `MEDIA` 配方 hash ＋ `audio_language` |
-| `vad.json` | 上游 `audio_16k`（PCM SHA256）＋ `VAD` 配方 hash |
-| `asr.json` | 上游 `audio_16k`、`vad`（文件 SHA256）＋ `W0`／`X0` 配方 hash |
-| `align.json` | 上游 `audio_16k`、`asr` ＋ `MMS` 配方 hash |
-| `ja-cues.json` | 上游 `align` ＋ `CUES` 配方 hash ＋ `[cues]` 规则 |
+| `vad.json`／`asr.json`／`align.json` | worker 壳的 `identity`（上游 PCM 与上游产物 SHA256、配方 hash、模型文件 SHA256），见 [STT worker](stt-workers.md) |
+| `ja-cues.json` | 上游 `align.json` ＋ `CUES` 配方 hash ＋ `[cues]` 规则 |
 | 翻译 | `ja.srt` SHA256 ＋ `translate.RECIPE_HASH` ＋ seed |
 
-身份暂不含模型文件 SHA256（期望值尚无归属，见"未验证"）。`published.json` 的 `sources` 记录上表全部身份与 `no_speech`（另记 `translate_fallback_cues`，不参与比较）；`sources` 与当前期望相同且三份最终文件 SHA 等于记录时该文件为"已是最新"，不再翻译与发布。
+模型文件 SHA256 由 `gpu.verify_models`（壳的 `model_files` 给出期望值，size+mtime 缓存与 worker 共用 `.work/cache/model-verification.json`）按阶段每次运行最多核对一次；模型缺失或不符时需要该阶段核对的文件记失败。`published.json` 的 `sources` 记录上表全部身份与 `no_speech`（另记 `translate_fallback_cues`，不参与比较）；`sources` 与当前期望相同且三份最终文件 SHA 等于记录时该文件为"已是最新"，不再翻译与发布。
 
-**GPU worker 调度**：命令 `sys.executable -m kototoki.workers.<stage> --jobs <.work/jobs-<stage>.json>`，`cwd` 为仓库根；jobs 的 `inputs` 为 vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`，`config` 为 `{"config_path": <配置文件>, "identities": {<id>: <该文件本阶段期望身份>}}`，worker 用给定身份写产物（`write_artifact`），不自行计算身份。子进程环境在当前环境上加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<output_dir>/.work/cache/`；stdout 逐行读进度 JSON 写入运行日志，stderr 追加到 `.work/run-<时间戳>-<stage>.stderr.log`。
+**GPU worker 调度**：命令 `sys.executable -m kototoki.workers.<stage> --jobs <.work/jobs-<stage>.json>`，`cwd` 为仓库根；jobs 按 [STT worker](stt-workers.md) 的约定：`recipe_hash` 为该阶段配方 hash，`config` 为 `{"engine", "models": {vad, w0, w0_mel_assets, x0, align}, "model_cache"}`，`inputs` 为 vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`；worker 自行计算并写入身份，编排用同一组 `identity` 函数核对。子进程环境在当前环境上加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<output_dir>/.work/cache/`；stdout 逐行读进度 JSON 写入运行日志，stderr 追加到 `.work/run-<时间戳>-<stage>.stderr.log`。
 
 **崩溃与重启**（按文件计）：
 
@@ -53,13 +51,13 @@
 
 ## 接口与依赖
 
-导入 `artifacts`、`config`、`recipes`、`srt`、`workers.protocol`、`media`、`cues`；翻译子系统与合并在用到时以 `importlib` 导入 `kototoki.translate`（`RECIPE_HASH`、`Session(config, on_server_pid=...)` 上下文管理器、`translate_document(document, run_dir, session, config)` 返回带 `translations`（cue id → 译文）与 `fallback_count` 的结果）与 `kototoki.merge`（`merge(ja_document, translations) -> srt_text`），二者由票据 05／09 实现。不导入任何推理模块与 `experiments.*`：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。
+导入 `artifacts`、`config`、`recipes`、`srt`、`workers.protocol`、`media`、`cues` 与 worker 壳 `workers.vad`／`asr`／`align`／`gpu`（只用其身份与模型核对函数，导入时不加载推理库）；翻译子系统与合并在用到时以 `importlib` 导入 `kototoki.translate`（`RECIPE_HASH`、`Session(config, on_server_pid=...)` 上下文管理器、`translate_document(document, run_dir, session, config)` 返回带 `translations`（cue id → 译文）与 `fallback_count` 的结果）与 `kototoki.merge`（`merge(ja_document, translations) -> srt_text`），二者由票据 05／09 实现。不导入任何推理模块与 `experiments.*`：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/__main__.py`（`main`、`check_output_dir`）、`kototoki/job.py`（`run`、`Summary`、`next_stage`、`run_gpu_stage`、`ProcessLock`、`contain_children`）。锁、进程身份与 Job Object 复制自 `experiments/translation_v3/procs.py`（未导入）。
 - 测试（core，`just test`）：`tests/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`、伪翻译与合并模块、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖扫描与镜像、大小采样稳定性、发布前置判定与 `force`、阶段顺序、崩溃文件隔离与按文件重启、失败隔离、中断后续跑、输出目录锁与 GPU 锁冲突退出码、无语音路径、一起发布、子进程环境、禁止导入清单与输出目录位置检查。
-- 未验证：真实 worker、llama-server 与 ffmpeg 下的整批运行（票据 08）；Job Object 在编排器被强杀时结束子进程（只在 Windows 上由系统保证，未自动测试）；产物身份中的模型文件 SHA256（期望值归属待定，票据 03 起接入）；`kototoki.translate`／`kototoki.merge` 的真实接口与本页假设一致（票据 05）。
+- 未验证：真实 worker、llama-server 与 ffmpeg 下的整批运行（票据 08）；Job Object 在编排器被强杀时结束子进程（只在 Windows 上由系统保证，未自动测试）；`kototoki.translate`／`kototoki.merge` 的真实接口与本页假设一致（票据 05）。
 
 ## 变更与决策来源
 

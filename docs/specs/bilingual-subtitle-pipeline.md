@@ -226,7 +226,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；不 import torch)
  ├─ ThreadPool → ffmpeg/ffprobe 子进程（CPU 队列）
  ├─ python -m kototoki.workers.vad    --jobs batch.json   (子进程，加载一次，循环文件)
- ├─ python -m kototoki.workers.asr    --jobs batch.json --engine w0|x0
+ ├─ python -m kototoki.workers.asr    --jobs batch.json   (引擎取 jobs 的 config.engine：w0|x0)
  ├─ python -m kototoki.workers.align  --jobs batch.json
  ├─ llama-server + 进程内 HTTP 客户端循环翻译（一个 server session 服务整批）
  └─ 进程内 ja-cues / merge
@@ -235,7 +235,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 - worker 之间只通过 `.work/<id>/` 下的 JSON 交接，每阶段重验输入身份（继承 X0 的做法）。编排器与 worker 用同一解释器（`sys.executable`）。
 - 锁：只有编排器获取 `.local/gpu.lock`（仓库内固定路径，不随配置文件移动），worker、翻译模块都不再获取；v3 的 `GpuLock`／W0 的 `gpu_lock` 不移植，只保留 `ProcessLock` 给编排器。锁文件记录编排器、当前 worker 与 llama-server 的 pid。
 - 所有 worker 与 llama-server 放进 KILL_ON_JOB_CLOSE Job Object：编排器被强杀时子进程随之退出，不留占显存的孤儿。
-- worker 启动即设置离线环境（`HF_HUB_OFFLINE=1`、`HF_HOME`／`TORCH_HOME` 指向 `<output_dir>/.work/cache/`（整个输出目录共用，不是每文件一份）、`PYANNOTE_METRICS_ENABLED=0` 等，沿用 `setup_runtime` 的变量但**不再加私有 DLL 目录**），保持本地运行不变量。子进程环境统一 `PYTHONUTF8=1`，进度 JSON 与日志文件显式 UTF-8（本机根环境默认 cp1252，`scripts/check_docs.py` 在无 mise 的 shell 下即因此崩溃）。
+- 编排器为 worker 子进程设置离线环境（`HF_HUB_OFFLINE=1`、`HF_HOME`／`TORCH_HOME` 指向 `<output_dir>/.work/cache/`（整个输出目录共用，不是每文件一份）、`PYANNOTE_METRICS_ENABLED=0` 等，沿用 `setup_runtime` 的变量但**不再加私有 DLL 目录**），保持本地运行不变量。子进程环境统一 `PYTHONUTF8=1`，进度 JSON 与日志文件显式 UTF-8（本机根环境默认 cp1252，`scripts/check_docs.py` 在无 mise 的 shell 下即因此崩溃）。
 - DLL 解析顺序：ASR worker 必须先 `import torch` 再导入 `ctranslate2`／`faster_whisper`，cublas／cudart 与 cuDNN 子库由此来自 torch 目录；CT2 在导入时按全路径加载自带的 `cudnn64_9.dll`（9.10 调度器），与 torch 的 9.19 调度器同进程并存，2026-10-14 用户接受（01 smoke #3：W0 冻结窗口 token 与特征逐一一致）。有导入顺序测试。VAD worker 不需要 FFmpeg PATH：01 smoke #2 实测 pyannote＋torchcodec 对内存波形推理全程不加载任何 FFmpeg DLL。
 - "编排器不 import torch"的测试断言 `import kototoki.job` 与 `kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec` 与任何 `experiments.*`。
 
@@ -437,3 +437,5 @@ seed  = 20261008
 2026-10-14（票据 02 实施）：用户裁定重采样由默认 swr 改为 soxr 28 bit（§1.2、§2.2；ADR-0007 中"重采样保持默认 swr"一句为当时裁定，不改写）；swr 在 verbose 下只报告部分补偿，`extract` 另记净补偿（§2.2）。
 
 2026-10-14（票据 04 实施）：`max_gap_s` 初值 0.4 → 1.0（前 5 分钟观感：0.4 时 ≤2 字条目 374 条，1.0 时 123 条）；整窗 `fallback` 每字符时长上限 `FALLBACK_MAX_CHAR_S = 0.25` s 归入 cue 配方 hash（票据 02 收编）；`rules` 为与 `[cues]` 表同形的映射；`max_chars` 计入附着标点、非词汇串分配、cue 时间只取词汇字符、零时长补 1 ms 等实现细节经用户确认，见[日文 cue](../architecture/modules/japanese-cues.md)。
+
+2026-10-14（票据 03 实施）：§7.1 两处与目标架构对齐——ASR 引擎由 jobs 的 `config.engine` 选择（不另设 `--engine` 参数），离线环境由编排器为 worker 子进程设置；冻结窗口门禁三阶段结果与现有同窗结果全等（窗口、文字、token、unit 时间），见 [STT worker](../architecture/modules/stt-workers.md)。

@@ -2,7 +2,7 @@
 
 ## 定位与阅读
 
-负责 W0 与 X0 共用的 CTC 强制对齐：给定完整 ASR 文字与同源音频窗口，用 `facebook/mms-1b-all` 日语 `jpn` adapter 在 CUDA FP32 上求帧概率，经 TorchAudio 2.8 `forced_align` 得到字符级时间，并把结果映射为覆盖全文的 `units`。不负责窗口生成、文字识别、字幕显示切分；时间语义是 CTC nonblank token span，不等于声学真实时长。
+负责 W0 与 X0 共用的 CTC 强制对齐：给定完整 ASR 文字与同源音频窗口，用 `facebook/mms-1b-all` 日语 `jpn` adapter 在 CUDA FP32 上求帧概率，经 TorchAudio 2.8 `forced_align` 得到字符级时间，并把结果映射为覆盖全文的 `units`。不负责窗口生成、文字识别、字幕显示切分；时间语义是 CTC nonblank token span，不等于声学真实时长。双语字幕流水线的产品实现复制了本模块（TorchAudio ≥2.10、字典按模型类数过滤），见 [STT worker](stt-workers.md)；本页仍描述研究期代码。
 
 上级总览见[架构总览](../INDEX.md)；契约条款见 [W0 契约](../../specs/w0-reusable-demo.md#可替换边界)与 [X0 契约](../../specs/x0-reusable-demo.md#mms-和输出)；术语背景见[当前 STT 基准线](../stt-candidate-pipelines.md#历史配置中的-ctc强制对齐vad-和降噪)。
 

@@ -2,7 +2,7 @@
 
 ## 定位与阅读
 
-负责 W0 基线在单个进程内的推理：回放 VAD 窗口 → faster-whisper 逐窗独立无时间戳解码 → 调用共享 MMS 对齐 → 写出私有 `result.json` 与全文。同时持有 X0 和外部 VAD 阶段复用的工具函数（音频读取、GPU 锁、VAD manifest 校验）。不负责生成新 Pyannote 窗口（见[外部 VAD 阶段](vad-stage.md)）、CTC 细节（见 [MMS 对齐](mms-alignment.md)）或评分。
+负责 W0 基线在单个进程内的推理：回放 VAD 窗口 → faster-whisper 逐窗独立无时间戳解码 → 调用共享 MMS 对齐 → 写出私有 `result.json` 与全文。同时持有 X0 和外部 VAD 阶段复用的工具函数（音频读取、GPU 锁、VAD manifest 校验）。不负责生成新 Pyannote 窗口（见[外部 VAD 阶段](vad-stage.md)）、CTC 细节（见 [MMS 对齐](mms-alignment.md)）或评分。双语字幕流水线的产品实现复制了本页的 ASR 与 units 不变量，拆成独立的 VAD／ASR／对齐 worker，见 [STT worker](stt-workers.md)；本页仍描述研究期代码。
 
 上级总览见[架构总览](../INDEX.md)。行为契约以 [W0 契约](../../specs/w0-reusable-demo.md) 为准，使用方法与修改流程见 [W0 demo README](../../../experiments/w0_demo/README.md)，组件定义见[当前 STT 基准线](../stt-candidate-pipelines.md)。本页只说明代码结构，不重复契约条款。
 

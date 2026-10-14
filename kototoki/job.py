@@ -8,8 +8,8 @@
     → ja-cues（进程内）→ translate（进程内，整批一个 session）→ 三份 SRT 一起发布
 
 每个阶段开始前按产物契约重算期望身份：产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。
-GPU 阶段产物（`vad.json`、`asr.json`、`align.json`）由 worker 写出，身份由本模块计算并经
-`jobs.config["identities"]` 交给 worker；CPU 阶段产物由本模块包装身份并写出。本模块不做任何
+GPU 阶段产物（`vad.json`、`asr.json`、`align.json`）由 worker 写出，期望身份用 worker 壳的
+`identity`／`model_files` 计算（壳导入时不加载推理库）；CPU 阶段产物由本模块包装身份并写出。本模块不做任何
 时间换算，不导入任何推理模块（有测试守门）。
 
 锁：启动即取 `<output_dir>/.work/lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
@@ -34,6 +34,7 @@ from typing import Any, TextIO
 
 from kototoki import artifacts, cues, media, recipes, srt
 from kototoki.config import REPO_ROOT, Config
+from kototoki.workers import align as align_worker, asr as asr_worker, gpu, vad as vad_worker
 from kototoki.workers.protocol import FileJob, Jobs, write_jobs
 
 EXIT_OK = 0
@@ -354,10 +355,6 @@ def probe_identity(config: Config, video: VideoFile) -> dict[str, Any]:
             "config": {"audio_language": config.input.audio_language}}
 
 
-def _asr_recipe(config: Config) -> Mapping[str, Any]:
-    return recipes.W0 if config.engine == "w0" else recipes.X0
-
-
 class PlanError(RuntimeError):
     """重算某阶段期望身份时出错（如读不了上游产物）；`stage` 是正在核对的阶段。"""
 
@@ -366,7 +363,32 @@ class PlanError(RuntimeError):
         self.stage = stage
 
 
-def next_stage(config: Config, video: VideoFile) -> str:
+ModelSha = Callable[[str], Mapping[str, str]]  # 阶段名 → {模型文件名: SHA256}
+
+
+def model_sha_lookup(config: Config) -> ModelSha:
+    """按阶段核对 worker 用到的模型文件 SHA256（size+mtime 缓存与 worker 共用），每次运行每阶段最多一次。"""
+    models = _worker_models(config)
+    cache_path = artifacts.model_cache_path(config.paths.output_dir)
+    files = {"vad": lambda: vad_worker.model_files(models),
+             "asr": lambda: asr_worker.model_files(config.engine, models),
+             "align": lambda: align_worker.model_files(models)}
+    done: dict[str, Mapping[str, str]] = {}
+
+    def lookup(stage: str) -> Mapping[str, str]:
+        if stage not in done:
+            done[stage] = gpu.verify_models(files[stage](), cache_path)
+        return done[stage]
+    return lookup
+
+
+def _worker_models(config: Config) -> dict[str, str]:
+    m = config.models
+    return {"vad": str(m.vad), "w0": str(m.w0), "w0_mel_assets": str(m.w0_mel_assets), "x0": str(m.x0),
+            "align": str(m.align)}
+
+
+def next_stage(config: Config, video: VideoFile, models: ModelSha) -> str:
     """从 vad 起逐阶段重算期望身份，返回第一个需要运行的阶段：
 
     `vad`／`asr`／`align`／`cues`／`translate`／`publish`，或 `done`（已发布且身份匹配、最终文件未改动）。
@@ -375,18 +397,17 @@ def next_stage(config: Config, video: VideoFile) -> str:
     """
     checking = ["vad"]
     try:
-        return _next_stage(config, video, checking)
+        return _next_stage(config, video, models, checking)
     except Exception as error:
         raise PlanError(checking[0], error) from error
 
 
-def _next_stage(config: Config, video: VideoFile, checking: list[str]) -> str:
+def _next_stage(config: Config, video: VideoFile, models: ModelSha, checking: list[str]) -> str:
     work = video.work_dir
     pcm = video.pcm_sha256
     assert pcm is not None
     ids = video.identities
-    ids["vad"] = artifacts.derived_identity(upstream={"audio_16k": pcm},
-                                            recipe_hash=recipes.recipe_hash(recipes.VAD))
+    ids["vad"] = vad_worker.identity(pcm, models("vad"))
     if not artifacts.is_current(work / artifacts.VAD, ids["vad"]):
         return "vad"
     checking[0] = "asr"
@@ -395,20 +416,16 @@ def _next_stage(config: Config, video: VideoFile, checking: list[str]) -> str:
         for stage in ("asr", "align", "ja_cues", "translate"):
             ids.pop(stage, None)
         return _publish_state(config, video)
-    ids["asr"] = artifacts.derived_identity(
-        upstream={"audio_16k": pcm, "vad": artifacts.sha256_file(work / artifacts.VAD)},
-        recipe_hash=recipes.recipe_hash(_asr_recipe(config)))
+    ids["asr"] = asr_worker.identity(config.engine, pcm, artifacts.sha256_file(work / artifacts.VAD), models("asr"))
     if not artifacts.is_current(work / artifacts.ASR, ids["asr"]):
         return "asr"
     checking[0] = "align"
-    ids["align"] = artifacts.derived_identity(
-        upstream={"audio_16k": pcm, "asr": artifacts.sha256_file(work / artifacts.ASR)},
-        recipe_hash=recipes.recipe_hash(recipes.MMS))
+    ids["align"] = align_worker.identity(pcm, artifacts.sha256_file(work / artifacts.ASR), models("align"))
     if not artifacts.is_current(work / artifacts.ALIGN, ids["align"]):
         return "align"
     checking[0] = "cues"
     ids["ja_cues"] = artifacts.derived_identity(
-        upstream={"align": artifacts.sha256_file(work / artifacts.ALIGN)},
+        upstream={artifacts.ALIGN: artifacts.sha256_file(work / artifacts.ALIGN)},
         recipe_hash=recipes.recipe_hash(recipes.CUES), config=asdict(config.cues))
     if not ((work / JA_SRT).is_file() and artifacts.is_current(work / artifacts.JA_CUES, ids["ja_cues"])):
         return "cues"
@@ -472,6 +489,7 @@ class _Context:
     worker_command: Callable[[str, Path], list[str]]
     gpu_lock: ProcessLock
     sleep: Callable[[float], None]
+    models: ModelSha
     files: list[VideoFile] = field(default_factory=list)
 
     def fail(self, video: VideoFile, stage: str, error: BaseException | None = None) -> None:
@@ -499,7 +517,8 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
     jobs_path = root / f"jobs-{stage}.json"
     write_jobs(jobs_path, Jobs(
         stage=stage, recipe_hash=batch[0].identities[stage]["recipe_hash"],
-        config={"config_path": str(config.source), "identities": {v.work_dir.name: v.identities[stage] for v in batch}},
+        config={"engine": config.engine, "models": _worker_models(config),
+                "model_cache": str(artifacts.model_cache_path(config.paths.output_dir))},
         files=tuple(FileJob(v.work_dir.name, v.work_dir, {name: v.work_dir / file for name, file in STAGE_INPUTS[stage]})
                     for v in batch)))
     by_id = {v.work_dir.name: v for v in batch}
@@ -666,7 +685,7 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     log = RunLog(root / f"run-{stamp}.log", console)
     gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"output_dir": str(output_dir)})
-    ctx = _Context(config, log, Summary(), stamp, worker_command, gpu_lock, sleep)
+    ctx = _Context(config, log, Summary(), stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
     try:
         _run(ctx)
     finally:
@@ -714,7 +733,7 @@ def _run(ctx: _Context) -> None:
         batch = []
         for video in live():
             try:
-                current = next_stage(config, video)
+                current = next_stage(config, video, ctx.models)
             except PlanError as error:
                 ctx.fail(video, error.stage, error)
                 continue
@@ -745,7 +764,7 @@ def _run(ctx: _Context) -> None:
 
     for video in live():
         try:
-            stage = next_stage(config, video)
+            stage = next_stage(config, video, ctx.models)
             if stage == "publish" and video.no_speech:
                 if publish(ctx, video, {kind: "" for kind in artifacts.FINAL_SUFFIXES}, "", 0):
                     summary.no_speech.append(video.relative)

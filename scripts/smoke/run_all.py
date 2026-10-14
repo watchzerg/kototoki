@@ -1,4 +1,4 @@
-"""`just test-full` 入口：依次在独立子进程中运行环境 smoke（占 GPU、加载模型，运行前须经用户批准）。
+"""`just test-full` 入口：依次在独立子进程中运行环境 smoke 与产品 full 测试（占 GPU、加载模型，运行前须经用户批准）。
 
 用法：`python scripts/smoke/run_all.py [名称 ...]`，省略名称时按 SMOKES 顺序全跑。
 每项一个子进程，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在同一进程相遇；子进程 PATH 去掉
@@ -20,7 +20,9 @@ import time
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 GPU_LOCK = REPO / ".local/gpu.lock"
-SMOKES = ("forced_align", "vad_pyannote", "ct2_after_torch", "llama_stock")
+SMOKES = ("forced_align", "vad_pyannote", "ct2_after_torch", "llama_stock", "stt_frozen_window")
+# 不在 scripts/smoke/ 下的产品 full 测试，以模块方式运行（同样接受 --out）。
+MODULES = {"stt_frozen_window": "tests.stt_frozen_window"}
 PRIVATE_DLL_DIR = "whisper-runtime-provisional"
 
 
@@ -46,7 +48,8 @@ def acquire_lock() -> None:
 
 def run_one(name: str, out: Path, env: dict[str, str]) -> tuple[int, float]:
     started = time.perf_counter()
-    command = [sys.executable, "-X", "utf8", str(HERE / f"{name}.py"), "--out", str(out)]
+    target = ["-m", MODULES[name]] if name in MODULES else [str(HERE / f"{name}.py")]
+    command = [sys.executable, "-X", "utf8", *target, "--out", str(out)]
     with (out / f"{name}.log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen(command, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, encoding="utf-8", errors="replace")

@@ -2,7 +2,7 @@
 
 ## 定位与阅读
 
-负责在独立 Python 环境中运行一个本地 VAD 候选，把原生语音区间整理为最长 30 秒的源窗口，并写出带输入身份、窗口和成本的 VAD manifest。当前 W0／X0 基线使用的候选是 `pyannote-current`（新 Pyannote，`pyannote.audio 4.0.7`＋`segmentation-3.0`）。不负责 ASR、对齐或评分；W0／X0 只读取它写出的 manifest。
+负责在独立 Python 环境中运行一个本地 VAD 候选，把原生语音区间整理为最长 30 秒的源窗口，并写出带输入身份、窗口和成本的 VAD manifest。当前 W0／X0 基线使用的候选是 `pyannote-current`（新 Pyannote，`pyannote.audio 4.0.7`＋`segmentation-3.0`）。不负责 ASR、对齐或评分；W0／X0 只读取它写出的 manifest。双语字幕流水线的产品实现复制了其中的 `CurrentPyannoteVad` 与 `chunk_intervals`，见 [STT worker](stt-workers.md)；本页仍描述研究期代码。
 
 上级总览见[架构总览](../INDEX.md)；组件选型见[当前 STT 基准线](../stt-candidate-pipelines.md)与 [ADR-0003](../../adr/0003-new-pyannote-baselines.md)；manifest 消费规则见 [W0 契约](../../specs/w0-reusable-demo.md#独立-vad-manifest)与 [X0 契约](../../specs/x0-reusable-demo.md#输入分段与特征)。完整运行命令见[标准基线测试指南](../../guides/baseline-testing.md#运行一次新的基线)。
 

@@ -22,9 +22,12 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kototoki import artifacts  # noqa: E402
+from kototoki.workers import align, asr, vad  # noqa: E402
 from kototoki.workers.protocol import FatalWorkerError, run_worker  # noqa: E402
 
 OUTPUT = {"vad": artifacts.VAD, "asr": artifacts.ASR, "align": artifacts.ALIGN}
+# 测试里 `gpu.verify_models` 被打补丁返回同一份映射，编排器与本 worker 算出的身份才一致。
+FAKE_MODELS = {"fake-model": "b" * 64}
 ENV_KEYS = ("PYTHONUTF8", "HF_HOME", "TORCH_HOME", "HF_HUB_OFFLINE")
 
 
@@ -82,7 +85,14 @@ def main(argv: list[str]) -> int:
             payload: dict = {"offset_s": 0}
             if stage == "vad":
                 payload["chunks"] = [] if action == "empty" else [{"start_s": 0.0, "end_s": 1.0}]
-            artifacts.write_artifact(job.work_dir / OUTPUT[stage], jobs.config["identities"][job.id], payload)
+            pcm = artifacts.read_json(job.work_dir / artifacts.PROBE)["extract"]["pcm_sha256"]
+            if stage == "vad":
+                identity = vad.identity(pcm, FAKE_MODELS)
+            elif stage == "asr":
+                identity = asr.identity(jobs.config["engine"], pcm, artifacts.sha256_file(job.inputs["vad"]), FAKE_MODELS)
+            else:
+                identity = align.identity(pcm, artifacts.sha256_file(job.inputs["asr"]), FAKE_MODELS)
+            artifacts.write_artifact(job.work_dir / OUTPUT[stage], identity, payload)
             return {"stage": stage}
 
         return process
