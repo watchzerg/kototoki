@@ -1,7 +1,7 @@
 # Python Toolchain
 
-状态：轻量工具链及隔离后端环境已建立，实测证据与安装状态分别记录
-最后更新：2026-10-05
+状态：产品根环境（统一 CUDA 12.8）与研究期隔离后端环境并存，实测证据与安装状态分别记录
+最后更新：2026-10-14
 Scope: Python tooling, dependencies, and development command ownership.
 
 当前W0／X0测试的环境选择、标准命令和结果核验统一见[基线测试指南](../guides/baseline-testing.md)。
@@ -10,8 +10,9 @@ Scope: Python tooling, dependencies, and development command ownership.
 
 The user has installed mise, uv, and just on the Windows development machine.
 Installed tools do not imply that project configuration or recipes exist.
-The repository now has a lightweight Python evaluation environment, `uv.lock`,
-`mise.toml`, and a `justfile`. Backend environments remain separate experiments;
+The repository has the product root environment (`pyproject.toml` + `uv.lock`,
+CUDA 12.8 inference stack), `mise.toml`, and a `justfile`. Research-era backend
+environments remain separate experiments;
 see [execution record](../context/2026-10-04-demo-execution.md).
 
 - Use mise to select project development tools, including uv and just, once
@@ -55,9 +56,10 @@ neighboring repository's selections are references, not existing installations.
 清单与实测边界见[GPU 补测报告](../research/2026-10-05-pyannote-gpu-comparison.md)。
 
 当前 `just experiments-test` 覆盖研究期的评测器、语料、资产准备、各后端适配器、日语 CTC 映射与批次契约、W0／X0 可复用 demo、显示、实验汇总和性能汇总的离线测试；`just test` 只发现 `tests/` 下的产品测试，目前为空；
-可选后端依赖未安装在根环境时，相关测试显式跳过，并在对应固定后端环境单独验证。
+研究期测试用 `justfile` 的 `legacy` 解释器（Python 3.12、无依赖，等同旧根环境），可选后端依赖缺失时照旧显式跳过，并在对应固定后端环境单独验证。
+根环境自票据 01 起是产品环境（Python 3.13，统一 CUDA 12.8：torch／torchaudio 2.11.0+cu128 走显式 `pytorch-cu128` 索引，其余来自 PyPI，版本见[技术选型](technology-stack.md#已选依赖)）；`just test-full` 在其中运行 `scripts/smoke/` 的环境 smoke。
 `just check` 执行 Python 编译检查，不等同 lint 或类型检查。
-实际版本、锁文件范围与离线恢复入口见[环境清单](../research/2026-10-04-runtime-inventory.md)。
+研究期隔离环境的实际版本、锁文件范围与离线恢复入口见[环境清单](../research/2026-10-04-runtime-inventory.md)。
 
 运行或开发当前 W0 时，复用并更新 [W0 demo](../../experiments/w0_demo/README.md)；
 该说明维护隔离推理环境、已获取资产的复制校验和运行入口。根环境测试与后端数值测试分开执行，

@@ -1,9 +1,28 @@
 [project]
-name = "kototoki-demo"
+name = "kototoki"
 version = "0.0.1"
-description = "Local STT evaluation experiments"
-requires-python = ">=3.12,<3.13"
-dependencies = []
+description = "Local Japanese video to Japanese/Chinese/bilingual SRT pipeline"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
+    "torchcodec==0.17.0",
+    "transformers==5.19.0",
+    "pyannote.audio==4.0.7",
+    "faster-whisper==1.2.1",
+    "ctranslate2==4.8.3",
+    "numpy",
+]
 
 [tool.uv]
 package = false
+environments = ["sys_platform == 'win32'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
