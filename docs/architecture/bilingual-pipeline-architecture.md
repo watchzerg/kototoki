@@ -44,8 +44,8 @@ flowchart TB
 
 | 模块 | 接口 | 实现（调用方不需要知道） | 位置 | 状态 |
 | --- | --- | --- | --- | --- |
-| 编排 | `run(config) -> Summary`；输出目录锁与 GPU 锁冲突各有专用退出码；运行日志只含进度、计数与耗时 | 扫描与大小采样稳定性、镜像与短 id、扫描阶段的发布前置判定、CPU 阶段产物（`probe.json`、`ja-cues.json`、`ja.srt`、`zh.srt`、`ja-zh.srt`）的身份包装与写入、阶段 × 整批调度、worker 增量结果判读与按文件重启、两把锁与 Job Object、无语音捷径、三份 SRT 一起发布、`failure.json` 清理、子进程环境（`PYTHONUTF8=1`、离线变量、共用 `.work/cache/`） | `kototoki/__main__.py`、`job.py` | 票据 06 |
-| worker 协议 | `run_worker(jobs_path, start)`：worker 只提供"启动一次、处理一个文件"的回调；退出码 0／1／2 的含义；`fail_window`／`retained_text` 的 `failed_windows` 写法 | jobs 文件解析、增量落盘、进度行、单文件异常隔离、`FatalWorkerError` 到退出码 2 的映射 | `kototoki/workers/protocol.py` | [产物契约](modules/artifact-contract.md) |
+| 编排 | `run(config) -> Summary`；输出目录锁与 GPU 锁冲突各有专用退出码；运行日志只含进度、计数与耗时 | 扫描与大小采样稳定性、镜像与短 id、扫描阶段的发布前置判定、GPU 阶段产物的期望身份（经 jobs `config.identities` 交给 worker）、CPU 阶段产物（`probe.json`（含 extract 记录）、`ja-cues.json`、`ja.srt`、`zh.srt`、`ja-zh.srt`）的身份包装与写入、阶段 × 整批调度、worker 增量结果判读与按文件重启、两把锁与 Job Object、无语音捷径、三份 SRT 一起发布、`failure.json` 清理、子进程环境（`PYTHONUTF8=1`、离线变量、共用 `.work/cache/`） | `kototoki/__main__.py`、`job.py` | [批次编排](modules/batch-orchestration.md) |
+| worker 协议 | `run_worker(jobs_path, start)`：worker 只提供"启动一次、处理一个文件"的回调；退出码 0／1／2 的含义；`fail_window`／`retained_text` 的 `failed_windows` 写法；编排器写的 jobs `config` 为 `{"config_path", "identities": {id: 期望身份}}`，worker 用给定身份写产物、不自行计算身份，`inputs` 为 vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`；`vad.json` 的 `chunks` 为空列表表示无语音（票据 06） | jobs 文件解析、增量落盘、进度行、单文件异常隔离、`FatalWorkerError` 到退出码 2 的映射 | `kototoki/workers/protocol.py` | [产物契约](modules/artifact-contract.md) |
 | 产物契约 | 四组函数：身份（`video_identity`／`derived_identity`／`is_current`）、路径（`register_work_dir`／`translate_run_dir`／`final_srt_paths`）、写入（`write_artifact`／`write_failure`）、发布（`publish_blockers` → `record_published` → 移动，顺序固定）；坐标约定是接口的一部分，调用方不得自行换算 | 短 id 与碰撞检测、ffprobe 指纹字段、模型哈希 size+mtime 缓存、原子写与 Windows 重试、`previous_sha256` | `kototoki/artifacts.py` | [产物契约](modules/artifact-contract.md) |
 | SRT | `parse_srt`／`read_srt`／`format_srt`／`write_srt`；毫秒取整 `floor(x*1000+0.5)`；零条目合法 | 严格解析规则、`<sha8>-cue-<n>` 别名（供翻译移植保持请求字节） | `kototoki/srt.py` | [产物契约](modules/artifact-contract.md) |
 | 配置与配方 | `load(path) -> Config`；路径解析规则（用户相对路径按配置文件目录，默认相对路径按仓库根）；未知键报错；各阶段 `recipe_hash` 常量 | TOML 读取、默认填充、`pan` 常量与重采样参数进 hash | `kototoki/config.py`、`recipes.py`（不含翻译配方） | [配置、配方与媒体提取](modules/config-and-media.md) |
@@ -54,7 +54,7 @@ flowchart TB
 | ASR 引擎 | 加载一次、按窗口转写，返回文字与窗口级失败；两个适配器写出同一种 `asr.json`；`asr_whisper` 额外要求先 `import torch` 再导入 `ctranslate2`（有测试钉住） | w0：torch 特征链与 CT2 解码；x0：Qwen 原生 processor、4096 触顶转 `failed_windows` | `kototoki/asr_whisper.py`、`asr_qwen.py`、`workers/asr.py` | 票据 03（w0）、07（x0） |
 | 对齐 | 加载一次、按窗口强制对齐，返回 `units` 与 `text_only`；`map_records(offset_s)` 由产品传 0 | torchaudio `forced_align`、字典按模型类数过滤、整数样本窗口校验 | `kototoki/align.py`、`workers/align.py` | 票据 03 |
 | 日文 cue | `build_cues(align, rules) -> (cues, srt_text)`，无副作用；输入 `units` 已含 offset，回退子段加一次 offset | 线性插值与边缘外推、整窗 `fallback`、三级切分、lead-out 与最短时长、取整 | `kototoki/cues.py` | [日文 cue](modules/japanese-cues.md) |
-| 翻译子系统 | 对编排器只暴露 `translate_document(document, run_dir, session, config) -> TranslateResult`（含 report）与 `Session` 生命周期对象；run 目录按 `ja.srt` SHA 分键；回退为日文的 cue 对该配方 hash 与 seed 是终态 | server 启停与显存轮询、`cache_n` 校验、按批次落盘与续跑、重启即新 session、三级降级、stock 引擎驻留解析、翻译配方与 hash | `kototoki/translate/`（`server`、`client`、`batching`、`generate`、`degrade`、`recipes`…） | 票据 05、09 |
+| 翻译子系统 | 对编排器只暴露 `translate_document(document, run_dir, session, config) -> TranslateResult`（含 `translations`（cue id → 译文）、`fallback_count` 与 report）、`Session(config, on_server_pid=...)` 生命周期对象（上下文管理器，server 启停时回调 pid 供编排写进 GPU 锁）与产品配方 hash `RECIPE_HASH`（进翻译身份）；run 目录按 `ja.srt` SHA 分键；回退为日文的 cue 对该配方 hash 与 seed 是终态 | server 启停与显存轮询、`cache_n` 校验、按批次落盘与续跑、重启即新 session、三级降级、stock 引擎驻留解析、翻译配方与 hash | `kototoki/translate/`（`server`、`client`、`batching`、`generate`、`degrade`、`recipes`…） | 票据 05、09 |
 | 合并 | `merge(ja_document, zh_translations) -> srt_text`；每条恰好两行 | 中文换行替换为空格、回退条目照常输出 | `kototoki/merge.py` | 票据 05 |
 
 编排是全系统最深的模块：一个入口，实现承载全部流程知识。三个 worker 的 `__main__` 都应缩到十行以内，流程知识在协议模块里。`cues`、`merge` 是最容易做深的纯函数模块，也是最该直接按接口测试的模块。
@@ -99,8 +99,4 @@ flowchart TB
 
 ## 变更与决策来源
 
-<<<<<<< HEAD
-规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[配置、配方与媒体提取](modules/config-and-media.md)（票据 02）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
-=======
-规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[日文 cue](modules/japanese-cues.md)（票据 04）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
->>>>>>> main
+规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[配置、配方与媒体提取](modules/config-and-media.md)（票据 02）、[日文 cue](modules/japanese-cues.md)（票据 04）、[批次编排](modules/batch-orchestration.md)（票据 06）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。

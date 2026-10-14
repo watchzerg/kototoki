@@ -1,6 +1,6 @@
 # 日文 cue
 
-状态：current（票据 04 交付，2026-10-14）；编排器调用与 `ja-cues.json`／`ja.srt` 落盘尚未实现（票据 06）。
+状态：current（票据 04 交付，2026-10-14）；编排器调用与 `ja-cues.json`／`ja.srt` 落盘见[批次编排](batch-orchestration.md)（票据 06）。
 
 ## 定位与阅读
 

@@ -41,7 +41,8 @@
 
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
 - 测试（core，`just test`）：`tests/test_artifacts.py`（短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、覆盖规则四种组合与崩溃窗口、原子写重试与临时文件清理）、`tests/test_protocol.py`（jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`）、`tests/test_srt.py`（空 SRT、取整边界、严格解析、UTF-8 无 BOM）。
-- 未验证：`failure.json` 在该文件后续重跑成功后何时清理尚无规则（归编排器，票据 06）；真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟；worker 协议尚无真实 worker 使用者（票据 03 起）。
+- `failure.json` 的清理归编排器：该文件成功发布后删除（[批次编排](batch-orchestration.md)，票据 06）。
+- 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟；worker 协议尚无真实 worker 使用者（票据 03 起）。
 
 ## 变更与决策来源
 
