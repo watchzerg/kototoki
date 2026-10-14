@@ -53,7 +53,7 @@ flowchart TB
 | VAD | 加载一次、对内存波形推理一次，返回整数样本窗口与子段（WAV 本地坐标）；设备固定 `cuda:0` | pyannote 4.0.7 适配、`chunk_intervals` 合并策略 | `kototoki/vad.py`、`workers/vad.py` | 票据 03 |
 | ASR 引擎 | 加载一次、按窗口转写，返回文字与窗口级失败；两个适配器写出同一种 `asr.json`；`asr_whisper` 额外要求先 `import torch` 再导入 `ctranslate2`（有测试钉住） | w0：torch 特征链与 CT2 解码；x0：Qwen 原生 processor、4096 触顶转 `failed_windows` | `kototoki/asr_whisper.py`、`asr_qwen.py`、`workers/asr.py` | 票据 03（w0）、07（x0） |
 | 对齐 | 加载一次、按窗口强制对齐，返回 `units` 与 `text_only`；`map_records(offset_s)` 由产品传 0 | torchaudio `forced_align`、字典按模型类数过滤、整数样本窗口校验 | `kototoki/align.py`、`workers/align.py` | 票据 03 |
-| 日文 cue | `build_cues(align, rules) -> (cues, srt_text)`，无副作用；输入 `units` 已含 offset，回退子段加一次 offset | 线性插值与边缘外推、整窗 `fallback`、三级切分、lead-out 与最短时长、取整 | `kototoki/cues.py` | 票据 04 |
+| 日文 cue | `build_cues(align, rules) -> (cues, srt_text)`，无副作用；输入 `units` 已含 offset，回退子段加一次 offset | 线性插值与边缘外推、整窗 `fallback`、三级切分、lead-out 与最短时长、取整 | `kototoki/cues.py` | [日文 cue](modules/japanese-cues.md) |
 | 翻译子系统 | 对编排器只暴露 `translate_document(document, run_dir, session, config) -> TranslateResult`（含 report）与 `Session` 生命周期对象；run 目录按 `ja.srt` SHA 分键；回退为日文的 cue 对该配方 hash 与 seed 是终态 | server 启停与显存轮询、`cache_n` 校验、按批次落盘与续跑、重启即新 session、三级降级、stock 引擎驻留解析、翻译配方与 hash | `kototoki/translate/`（`server`、`client`、`batching`、`generate`、`degrade`、`recipes`…） | 票据 05、09 |
 | 合并 | `merge(ja_document, zh_translations) -> srt_text`；每条恰好两行 | 中文换行替换为空格、回退条目照常输出 | `kototoki/merge.py` | 票据 05 |
 
@@ -99,4 +99,4 @@ flowchart TB
 
 ## 变更与决策来源
 
-规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
+规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[日文 cue](modules/japanese-cues.md)（票据 04）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
