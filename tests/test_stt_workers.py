@@ -251,9 +251,9 @@ class StartupTest(unittest.TestCase):
 
     def test_unavailable_engine_fails_startup(self):
         status, event = self.run_start(asr_worker.start, "asr", recipes.recipe_hash(recipes.X0),
-                                       {"engine": "x0", "models": {}, "model_cache": "x"})
+                                       {"engine": "x9", "models": {}, "model_cache": "x"})
         self.assertEqual(status, EXIT_FATAL)
-        self.assertIn("x0", event["message"])
+        self.assertIn("x9", event["message"])
 
     def test_main_reads_jobs_argument(self):
         with tempfile.TemporaryDirectory() as directory:
