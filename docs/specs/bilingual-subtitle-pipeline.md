@@ -1,6 +1,6 @@
 # 中日双语字幕批量生产流水线：技术设计
 
-状态：draft，设计已收口（2026-10-13），2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)，实施计划在 tracker 票据 `.scratch/bilingual-subtitle-pipeline/`；实现落地后改写为模块页并把本文状态改为 implemented  
+状态：implemented（2026-10-14，票据 00–09 交付；两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
 日期：2026-10-13  
 范围：第一个正式产品形态，命令行工具，输入一批日语视频，输出日文 SRT、中文 SRT 与中日双语 SRT。不含 UI、流式、打包、非日语输入。
 
@@ -278,7 +278,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 ### 7.3 代码布局
 
-各模块的接口、依赖方向、接缝裁定与责任边界以[目标架构](../architecture/bilingual-pipeline-architecture.md)为准，本节只列文件与来源。
+各模块的接口以模块页为准，依赖方向、接缝裁定与责任边界以[模块边界](../architecture/module-boundaries.md#产品包的责任边界)为准（原目标架构页于票据 08 并入后删除），本节只列文件与来源。
 
 新建产品包 `kototoki/`，从 `experiments/` 复制并精简已验证的实现（历史目录保持冻结，产品包不导入它们）：
 

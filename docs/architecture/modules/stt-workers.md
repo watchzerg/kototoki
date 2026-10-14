@@ -4,7 +4,7 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）的三个 GPU 阶段：从 `audio-16k.wav` 求 VAD 窗口（`vad.json`）、逐窗转写（`asr.json`）、字符级强制对齐（`align.json`）。不负责：决定哪些文件要跑或跳过、锁、子进程环境与按文件重启（编排，票据 06）；cue 切分与时间回填（[日文 cue](japanese-cues.md)）。推理逻辑复制自研究期实现，那里的行为说明仍有效：[外部 VAD 阶段](vad-stage.md)、[W0 pipeline](w0-pipeline.md)、[X0 pipeline](x0-pipeline.md)、[MMS 对齐](mms-alignment.md)；本页只写产品侧的差别与接口。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)、[目标架构](../bilingual-pipeline-architecture.md)。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）的三个 GPU 阶段：从 `audio-16k.wav` 求 VAD 窗口（`vad.json`）、逐窗转写（`asr.json`）、字符级强制对齐（`align.json`）。不负责：决定哪些文件要跑或跳过、锁、子进程环境与按文件重启（编排，票据 06）；cue 切分与时间回填（[日文 cue](japanese-cues.md)）。推理逻辑复制自研究期实现，那里的行为说明仍有效：[外部 VAD 阶段](vad-stage.md)、[W0 pipeline](w0-pipeline.md)、[X0 pipeline](x0-pipeline.md)、[MMS 对齐](mms-alignment.md)；本页只写产品侧的差别与接口。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
@@ -42,7 +42,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 ## 接口与依赖
 
-推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。`schema` 属基础层，只依赖标准库：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。壳依赖 `artifacts`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`。子进程环境（`PYTHONUTF8=1`、`HF_HUB_OFFLINE` 等离线变量、`HF_HOME`／`TORCH_HOME = <output_dir>/.work/cache/`）由编排传入，worker 不自行设置（[目标架构：责任边界](../bilingual-pipeline-architecture.md#责任边界)）。pyannote 与 transformers 的告警和加载进度条写 stderr，不干扰 stdout 上的协议进度行。
+推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。`schema` 属基础层，只依赖标准库：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。壳依赖 `artifacts`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`。子进程环境（`PYTHONUTF8=1`、`HF_HUB_OFFLINE` 等离线变量、`HF_HOME`／`TORCH_HOME = <output_dir>/.work/cache/`）由编排传入，worker 不自行设置（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。pyannote 与 transformers 的告警和加载进度条写 stderr，不干扰 stdout 上的协议进度行。
 
 ## 代码与验证入口
 
@@ -50,8 +50,11 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - 测试（core，`just test`）：`tests/test_vad.py`（`chunk_intervals` 取整、裁剪、并集、硬切、贪心合并、秒坐标回整）、`tests/test_align.py`（版本判定、字典过滤 `|`、`character_targets`、`map_records` 的 offset 只加在 units、`normalize_window` 伪提取器、数值作用域恢复）、`tests/test_schema.py`、`tests/test_asr_whisper.py`（导入顺序、逐窗失败）、`tests/test_asr_qwen.py`（伪 processor／模型：配方生成参数、只取 prompt 之后的 token、触顶窗口保留截断文字并返回失败、`RuntimeError` 窗口、模型不在 CUDA 即失败；经壳串到对齐与 `build_cues`：触顶窗口置空、截断文字进 `failed_windows`、不进 cue；x0 模型文件清单与配方 hash）、`tests/test_stt_workers.py`（伪推理对象串起三阶段：身份链、坐标、`failed_windows`、上游身份不符、退出码 0／1／2 与 CUDA 守卫、启动校验、产出能被 `cues.build_cues` 消费、壳导入不加载推理库）。
 - 冻结窗口门禁（full，占 GPU，须用户批准）：`just test-full stt_frozen_window`（`scripts/smoke/run_all.py` 持锁并以 `python -m tests.stt_frozen_window --out <dir>` 启动，结果写 `.local/smoke/<UTC>/stt_frozen_window.json`；没有 `.local/gpu.lock` 时脚本拒绝运行；不在 `just test` 发现范围内）。2026-10-14 首次运行（接入 test-full 之前的手动版本，产物 `.local/stt-gate/20261014T070454Z/`；RTX 5080、torch 2.11.0+cu128、torchaudio 2.11.0+cu128、transformers 5.19.0、pyannote.audio 4.0.7、faster-whisper 1.2.1、CTranslate2 4.8.3；输入 `hf-ii-window-01.wav` 300 s；对照 `.local/w0-demo/pyannote-gpu-v1-w0-pyannote-current-hf-ii-window-01/`，其 VAD 来自同为 torch 2.11 的 `vad-pyannote-gpu-v1` 环境，ASR／MMS 来自 torch 2.8 的 `whisper-latest` 环境）：8 个窗口整数边界全等；8 窗文字逐字符相等且 token 序列全等（549 字）；549 个 unit 字符范围与状态全等（25 个 `text_only`），1048 个起止时间与对照（减去其 `offset_s` 351.402125）全等，最大差 0。耗时：VAD 加载 21.2 s／推理 1.4 s，ASR 加载 3.0 s／推理 6.9 s，MMS 加载 14.1 s／推理 2.8 s。
 - x0 冻结窗口门禁（full，占 GPU，须用户批准）：`just test-full x0_frozen_window`（`run_all.py` 持锁并以 `python -m tests.x0_frozen_window --out <dir>` 启动），与 `stt_frozen_window` 同法同标准，ASR 取 `x0`，对照 `.local/x0-demo/pyannote-gpu-v1-x0-pyannote-current-hf-ii-window-01/`（ASR 来自 torch 2.14.1+cu130／transformers 5.18 的 `qwen-hf-final` 环境，MMS 来自 torch 2.8）；没有 `.local/gpu.lock` 时拒绝运行。2026-10-14 运行两次（`.local/smoke/20261014T082609Z/`、`20261014T082759Z/`，两次产物逐字节相同；torch 2.11.0+cu128、transformers 5.19.0）：8 窗整数边界全等；7 窗文字与 token 全等，窗口 0 的 38 个 token 中第 2 个不同（一个汉字被另一个汉字替换，字数不变），2026-10-14 用户裁定接受为环境差异（BF16 近平局在 torch 2.11+cu128 与对照的 2.14.1+cu130 之间翻转），票据 07 完成；587 个 unit 字符范围与状态全等（47 个 `text_only`），1080 个起止时间与对照全等，最大差 0；无触顶窗口。整轮约 95 s。Qwen 加载不用研究期的 `device_map`（需要产品环境没有的 accelerate），改为加载后整体 `.to("cuda:0")`。
-- 未验证：整片输入（票据 08）；x0 整片与触顶的真实路径；真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试。
+- 整片：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)——两部电影 × w0／x0，无窗口级失败、x0 无触顶、对齐全部成功。
+- 未验证：x0 触顶的真实路径；真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试。
 
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/03-stt-workers.md`、`07-x0-engine.md`；规格 §1.2、§4、§6、§7.1、§7.3、§12；票据 01 smoke #1–#3（`.local/smoke/20261014T045328Z/`）。来源代码：`experiments/w0_demo/vad_candidates.py`（`CurrentPyannoteVad`、`chunk_intervals`）、`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`（`check_gpu`）、`experiments/w0_demo/alignment.py`、`experiments/w0_demo/pipeline.py`（units 不变量）、`kototoki_eval/schema.py`。共用的 CUDA 守卫放在新文件 `workers/gpu.py`（2026-10-14 用户裁定，不改票据 00 的 `protocol.py`）。
+
+目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。

@@ -23,4 +23,4 @@ code-review 按本文评审 diff。只写工具查不出的判断类标准；可
   separate from inference; after provisioning, inference must work offline.
 - Validate inputs (missing/unreadable/empty/silent audio, unsupported formats) and clean up
   temp files on success and failure.
-- 产品包 `kototoki/` 的模块接口以[目标架构](docs/architecture/bilingual-pipeline-architecture.md)"模块清单"的接口列为准：接口变宽、纯函数模块（`cues`、`merge`）出现文件读写、推理模块出现产物读写或跳过判定、在只有一个适配器的位置新建接缝（后端协议类、媒体后端抽象），都要求 diff 先改架构页并写明第二个使用者；责任边界（时间轴、跳过与替换、三级失败、发布、锁、身份、子进程环境、日志）各只允许出现在架构页指定的模块。
+- 产品包 `kototoki/` 的模块接口以各模块页"接口与依赖"节为准，依赖方向、责任边界与接缝以[模块边界](docs/architecture/module-boundaries.md#产品包的责任边界)为准：接口变宽、纯函数模块（`cues`、`merge`）出现文件读写、推理模块出现产物读写或跳过判定、在只有一个适配器的位置新建接缝（后端协议类、媒体后端抽象），都要求 diff 先改模块页与模块边界并写明第二个使用者；责任边界（时间轴、跳过与替换、三级失败、发布、锁、身份、子进程环境、日志）各只允许出现在模块边界指定的模块。

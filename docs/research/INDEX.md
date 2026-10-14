@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-14：双语字幕流水线（票据 00–09）实现完成，规格改为 implemented；两部整片 × w0／x0 验收见[验收记录](acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)。用户裁定的产品翻译配方为 `b10-joint-degrade-v1`（字段同 `b10-joint`，只多 10→5→1 降级），重采样改 soxr 28 bit。
+
 2026-10-13：项目进入实现阶段。用户确定第一个产品形态为配置文件驱动的中日双语字幕批量流水线，设计见[技术设计](../specs/bilingual-subtitle-pipeline.md)，架构取舍见 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)：默认 w0、新 Pyannote、MMS、b10-joint；GPU 阶段按"阶段 × 整批"推进；单一 CUDA 12.8 Python 环境（Python 3.13、torch 2.11.0+cu128，与 CTranslate2 共用 DLL，2026-10-14 由 CUDA 13 方案改定），llama.cpp 用官方 CUDA 13.4 构建；回归与容差推迟到实现之后。
 
 2026-10-12：v4 第四轮字幕翻译流程探索已完成，详见 [v4 报告](2026-10-11-hy30-flow-v4-report.md) 和 [v4 台账](../context/2026-10-11-hy30-flow-exploration-v4.md)。**1 个配方通过确认：`mbr8c`**，即每批 8 个样本，逐条用本地 chrF-MBR 选择。确认集上 Δ −0.016（约 4%，集中在剧集），Holm p 0.016，代价是约 6 倍墙钟。`t03`（temperature 0.3）在确认集上未通过。基线 b10-joint 不自动替换，等待用户决策。实现入口为 [translation_v4](../../experiments/translation_v4/README.md)。
@@ -143,3 +145,5 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 ## 验收记录
 
 条目格式：`[主题 日期](acceptance/文件.md)：验收范围与未覆盖项`
+
+- [双语字幕流水线两部整片 2026-10-14](acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)：Heaven's Feel II／III 各以 w0、x0 整批运行 `python -m kototoki`，12 份 SRT 齐全、STT 零失败、降级与回退 0；记录各阶段墙钟、显存峰值、失败清单与磁盘占用。首轮翻译因桌面占显存低于启动阈值而失败，经进程内临时阈值 14700 MiB 续跑成功。未覆盖：质量与基线回归、真实降级路径、GPU 阶段中途中断、强杀与其他声道布局。

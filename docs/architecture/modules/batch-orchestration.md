@@ -1,10 +1,10 @@
 # 批次编排
 
-状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03、07）的 jobs 约定调用；[翻译子系统与合并](translation-subsystem.md)（票据 05）按[目标架构](../bilingual-pipeline-architecture.md)的接口实现，翻译降级（票据 09）尚未实现；本页只经伪 worker 与伪翻译模块离线验证。
+状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03、07）的 jobs 约定调用，翻译与合并见[翻译子系统与合并](translation-subsystem.md)（票据 05、09）。离线由伪 worker 与伪翻译模块测试；真实 worker、ffmpeg 与 llama-server 下的两部整片 × w0／x0 整批运行，以及翻译失败后重跑时 STT 产物按身份全部跳过的续跑，已在[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中通过。
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3、§4、§6、§7.1，[目标架构](../bilingual-pipeline-architecture.md)"编排"行）的唯一入口与全部流程知识：扫描输入、调度 CPU 与 GPU 阶段、CPU 阶段产物的身份与写入、GPU 阶段产物的期望身份、续跑与失败隔离、两把锁、Job Object、子进程环境、三份 SRT 一起发布与运行日志。不负责：产物身份与覆盖规则本身（[产物契约](artifact-contract.md)）、音轨与 WAV（[配置、配方与媒体提取](config-and-media.md)）、cue 切分（[日文 cue](japanese-cues.md)）、推理（票据 03／07）、翻译与合并的内部（票据 05／09）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3、§4、§6、§7.1，[模块边界](../module-boundaries.md#产品包的责任边界)）的唯一入口与全部流程知识：扫描输入、调度 CPU 与 GPU 阶段、CPU 阶段产物的身份与写入、GPU 阶段产物的期望身份、续跑与失败隔离、两把锁、Job Object、子进程环境、三份 SRT 一起发布与运行日志。不负责：产物身份与覆盖规则本身（[产物契约](artifact-contract.md)）、音轨与 WAV（[配置、配方与媒体提取](config-and-media.md)）、cue 切分（[日文 cue](japanese-cues.md)）、推理（票据 03／07）、翻译与合并的内部（票据 05／09）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
@@ -57,8 +57,11 @@
 
 - 代码：`kototoki/__main__.py`（`main`、`check_output_dir`）、`kototoki/job.py`（`run`、`Summary`、`next_stage`、`run_gpu_stage`、`ProcessLock`、`contain_children`）。锁、进程身份与 Job Object 复制自 `experiments/translation_v3/procs.py`（未导入）。
 - 测试（core，`just test`）：`tests/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`、伪翻译与合并模块、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖扫描与镜像、大小采样稳定性、发布前置判定与 `force`、阶段顺序、崩溃文件隔离与按文件重启、失败隔离、中断后续跑、输出目录锁与 GPU 锁冲突退出码、无语音路径、一起发布、子进程环境、禁止导入清单与输出目录位置检查。
-- 未验证：真实 worker、llama-server 与 ffmpeg 下的整批运行（票据 08）；Job Object 在编排器被强杀时结束子进程（只在 Windows 上由系统保证，未自动测试）。`kototoki.translate`／`kototoki.merge` 的真实接口已由票据 05 按本页假设实现（伪客户端测试见[翻译子系统与合并](translation-subsystem.md)），二者与编排器的真实联调随票据 08。
+- 真实运行：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（Heaven's Feel II／III 各以 w0、x0 整批运行，12 份 SRT 齐全；首轮翻译因空闲显存低于启动阈值失败，重跑时 STT 按产物身份全部跳过、只做翻译与发布）。
+- 未验证：GPU 阶段中途中断后的续跑、worker 崩溃与按文件重启的真实路径、无语音视频；Job Object 在编排器被强杀时结束子进程（只在 Windows 上由系统保证，未自动测试）。
 
 ## 变更与决策来源
 
-票据 `.scratch/bilingual-subtitle-pipeline/issues/06-batch-orchestration.md`；规格 §3、§4、§6、§7.1 与 §1.2 第三轮裁定表；[目标架构](../bilingual-pipeline-architecture.md)。
+票据 `.scratch/bilingual-subtitle-pipeline/issues/06-batch-orchestration.md`；规格 §3、§4、§6、§7.1 与 §1.2 第三轮裁定表。
+
+目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。

@@ -4,7 +4,7 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）的三件事：读取 `kototoki.toml` 得到 `Config`；STT／cue／媒体的配方常量与 `recipe_hash`；从视频选音轨、流复制原始音轨、派生模型输入 WAV。不负责：翻译配方（`kototoki/translate/recipes.py`，票据 05／09）、`probe.json` 等 JSON 产物的身份包装、写入与跳过判定（编排经[产物契约](artifact-contract.md)完成，票据 06）、VAD／ASR／对齐推理（票据 03／07）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)、[目标架构](../bilingual-pipeline-architecture.md)。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）的三件事：读取 `kototoki.toml` 得到 `Config`；STT／cue／媒体的配方常量与 `recipe_hash`；从视频选音轨、流复制原始音轨、派生模型输入 WAV。不负责：翻译配方（`kototoki/translate/recipes.py`，票据 05／09）、`probe.json` 等 JSON 产物的身份包装、写入与跳过判定（编排经[产物契约](artifact-contract.md)完成，票据 06）、VAD／ASR／对齐推理（票据 03／07）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
@@ -36,15 +36,17 @@
 
 ## 接口与依赖
 
-`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与外部 ffmpeg／ffprobe 可执行文件，不依赖 torch 与网络，编排器在线程池里直接调用。媒体模块只写 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[目标架构：责任边界](../bilingual-pipeline-architecture.md#责任边界)）。
+`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与外部 ffmpeg／ffprobe 可执行文件，不依赖 torch 与网络，编排器在线程池里直接调用。媒体模块只写 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki.toml.example`。
 - 测试（core，`just test`）：`tests/test_config.py`（默认值、两种相对路径基准、模型路径、未知键与已删除键、类型、环境变量破锁、示例文件覆盖全部键）、`tests/test_recipes.py`（`pan` 系数与归一化、不削波、`pan`／重采样参数进 hash、固定值、无翻译配方）、`tests/test_media.py`（语言归一化、音轨选择含 commentary／多条匹配／无匹配、视频时长来源、容器映射、命令行构造、补偿解析、时长校验）、`tests/test_media_ffmpeg.py`（用本机 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、流复制容器、多音轨选择；临时目录含空格与非 ASCII）。合成测试需要 `D:/bin/ffmpeg.exe`、`ffprobe.exe`（配置默认值），缺失时测试失败而不是跳过。
 - 真实视频（2026-10-14，ffmpeg 2026-10-01 gyan.dev full build，不进 Git）：Heaven's Feel II（mkv，FLAC 立体声）产出三份产物（112448683 样本，PCM SHA256 `c203f952…`），视频流时长取自 `DURATION-eng`；改 soxr 之前用默认 swr 跑同一条链，PCM SHA256 `ee4e2da3…` 与基线 `hf-ii-full.wav` 一致，说明零点补齐与下混未改变样本，差异只来自重采样器（对比数据见规格 §2.2）；Black Panther（mkv，12 条音轨，选中 jpn E-AC-3 `5.1(side)`）产出 `audio.eac3`、`audio-16k.wav`、`extract.log`。
-- 未验证：广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本；cue 时间等于视频时间目前只在 WAV 样本层断言（`sample / 16000 + offset_s`），经 cue 阶段的断言待票据 04。日本广播双单声道（主／副音声）按双声道处理，是已知限制。已知限制：`pan` 保证下混本身不削波，但其后的降采样滤波（48 kHz→16 kHz，swr 与 soxr 都会）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）；真实素材实测（2026-10-14）：HF II 派生 WAV 1.12 亿样本中 swr 版 1 个、soxr 版 2 个样本到满幅；Black Panther（swr 版）峰值 31073、无削波。
+- 未验证：广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本；cue 时间等于视频时间目前只在 WAV 样本层断言（`sample / 16000 + offset_s`），cue 侧只由[日文 cue](japanese-cues.md)的离线测试断言 offset 只加一次；整片验收只核对了三份 SRT 时间一致，没有与视频画面对时。日本广播双单声道（主／副音声）按双声道处理，是已知限制。已知限制：`pan` 保证下混本身不削波，但其后的降采样滤波（48 kHz→16 kHz，swr 与 soxr 都会）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）；真实素材实测（2026-10-14）：HF II 派生 WAV 1.12 亿样本中 swr 版 1 个、soxr 版 2 个样本到满幅；Black Panther（swr 版）峰值 31073、无削波。
 
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/02-config-and-media.md`；规格 §1.2 第三轮裁定表、§2.1、§2.2、§10。下混与重采样参数取自 `experiments/corpus/prepare_round2.py`，配方常量取自 `experiments/w0_demo/`（`vad_candidates.py`、`asr.py`、`alignment.py`）、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`。
+
+目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。

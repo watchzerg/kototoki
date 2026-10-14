@@ -30,4 +30,32 @@ Separate experiment, not part of the STT milestone: Hy-MT2 30B-A3B
 APEX-I-Compact, sampling recipe `official30b-cached-v1`; full-SRT flow baseline is the v3
 recipe `b10-joint` (ADR-0006: 10 targets/batch, 1 neighbour each side, joint-understanding prompt).
 
+### 双语字幕流水线
+
+**双语字幕流水线**：
+产品包 `kototoki/`，入口 `python -m kototoki [kototoki.toml]`：一批日语视频按阶段整批推进（probe／extract → vad → asr → align → ja-cues → translate → 发布），每部产出 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`。
+_Avoid_: 产品后端, 正式后端
+
+**STT 引擎（w0／x0）**：
+配置键 `stt.engine` 的取值，分别按 W0／X0 的配方在产品统一 CUDA 12.8 环境中运行；环境升级即新身份，与基线成绩的回归本期未做，不直接继承 W0／X0 的分数。
+
+**日文 cue**：
+翻译与字幕的最小单元：由 `align.json` 字符时间回填后按句末、软断点、字数与时长切出的一条日文字幕（`ja-cues.json`／`ja.srt`），中文译文与之一一对应。
+
+**整窗 fallback**：
+日文 cue 回填时，一个窗口没有任何字符时间，按 VAD 子段比例给字符排时间（`time_source=fallback`）；只属时间回填，不是翻译回退。
+
+**产品翻译配方 `b10-joint-degrade-v1`**：
+`kototoki/translate/recipes.py` 的产品翻译配方：提示、grammar、采样与请求字节与 `b10-joint` 完全相同，只把批次终态失败的处理（`overflow`）改为 10→5→1 拆批降级、单条仍失败保留日文，因此另算 `recipe_hash`。
+_Avoid_: b10-joint（指产品配方时）
+
+**回退 cue**：
+降级到单条仍失败、译文保留日文原文的 cue；对该配方 hash 与 seed 是终态，重跑不再尝试，只有改 seed 才重译；数量记入 `translate/report.json` 与 `published.json`。
+
+**产物身份**：
+写在每个中间产物里的身份（上游 SHA256、配方 hash、模型 SHA256、相关配置），续跑时与期望身份相同即跳过、不同即原地替换；不含绝对路径。
+
+**发布**：
+三份最终 SRT 先写入工作目录暂存、记入 `published.json` 再一起移到输出目录；用户改动过的最终文件在 `force = false` 时不被覆盖。
+
 Legacy CLI defaults (old PyanNet / fixed30) are **not** the adopted baselines; see [ADR-0003](docs/adr/0003-new-pyannote-baselines.md).

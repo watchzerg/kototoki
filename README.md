@@ -1,7 +1,7 @@
 # kototoki
 
 以 Python 和本地 AI 模型为主的自托管 Speech-to-Text 项目，当前目标是本地音频转写。
-本地 STT demo 及 II／III 两片主参考复核已完成；基准线已确认，W0／X0均有持续迭代的demo入口，正式后端迁移尚未完成。
+本地 STT demo 及 II／III 两片主参考复核已完成；基准线已确认，W0／X0均有持续迭代的demo入口；第一个产品形态[双语字幕流水线](#双语字幕流水线)已实现。
 
 当前采用两条未来基准线，均无降噪、无人声分离，保留日语原文；ASR 与 CTC 在本地 GPU 上推理，VAD 可选 CPU 或 GPU：
 
@@ -65,6 +65,17 @@ Black Panther 为 `.jpn.eac3`），无需再次从视频提取。字幕显示时
 最小工具链已建立：`uv sync --locked`，`just experiments-test` 执行研究期的离线评测、适配器、显示及汇总测试，
 `just check` 检查 Python 语法。各后端使用独立环境，模型获取与离线推理分开。
 所有模型、私有音频、完整转写及运行日志存于 Git 忽略的 `.local/`。
+
+## 双语字幕流水线
+
+第一个正式产品形态（[技术设计](docs/specs/bilingual-subtitle-pipeline.md)、[ADR-0007](docs/adr/0007-bilingual-subtitle-pipeline-architecture.md)）：从一批日语视频批量生产日文、中文与中日双语 SRT，全部在本机 GPU 上运行。
+
+1. 环境：`uv sync --locked`（根环境即产品环境，统一 CUDA 12.8），模型放在 `.local/models/`，官方 llama.cpp 放在 `.local/tools/llama.cpp/b11583-cuda13.4/`，ffmpeg／ffprobe 需带 libsoxr。
+2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`（递归扫描视频）与 `paths.output_dir`（不得位于仓库内，`.local/` 除外，也不得位于输入目录内）；`stt.engine` 默认 `w0`，可选 `x0`。
+3. 运行：`.venv/Scripts/python.exe -m kototoki kototoki.toml`（省略参数时读当前目录的 `kototoki.toml`）。这是加载全部模型的 GPU 重任务，运行期间持有 `.local/gpu.lock`。
+4. 输出：每部视频在 `output_dir` 下按输入子目录镜像得到 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`（双语每条中文在上、日文在下）；中间产物、日志与续跑状态在 `output_dir/.work/`。中断或失败后重跑同一命令，从各文件的最后一个有效产物继续；退出码 0 全部成功、1 有文件失败、2 配置错误、3／4 输出目录锁／GPU 锁冲突。
+
+翻译失败按 10→5→1 拆批降级，单条仍失败保留日文并计入回退数（`translate/report.json`）。行为与模块说明见[批次编排](docs/architecture/modules/batch-orchestration.md)，两部整片验收见[验收记录](docs/research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)。
 
 ## 独立字幕翻译实验
 

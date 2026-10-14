@@ -1,10 +1,10 @@
 # 翻译子系统与双语合并
 
-状态：current（票据 05 交付，2026-10-14；票据 09 加入产品配方 `b10-joint-degrade-v1` 的三级降级与回退报告，2026-10-14）。降级只经伪 server／伪客户端离线验证，真实整片运行见票据 Comments。
+状态：current（票据 05 交付，2026-10-14；票据 09 加入产品配方 `b10-joint-degrade-v1` 的三级降级与回退报告，2026-10-14）。降级只经伪 server／伪客户端离线验证；与编排器的真实联调见[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（四个文件 468 批，降级与回退均为 0）。
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[目标架构](../bilingual-pipeline-architecture.md)"翻译子系统""合并"行）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：受管 llama-server 的生命周期、`b10-joint` 批次请求、按批次落盘与续跑、基础设施失败的重启、批次终态失败的三级降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`zh.srt`／`ja-zh.srt` 的写出与发布（编排器）、run 目录的位置（[产物契约](artifact-contract.md) `translate_run_dir`）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。v3 实验侧的同名流程见[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是其产品移植，不导入它。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[模块边界](../module-boundaries.md#产品包的责任边界)）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：受管 llama-server 的生命周期、`b10-joint` 批次请求、按批次落盘与续跑、基础设施失败的重启、批次终态失败的三级降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`zh.srt`／`ja-zh.srt` 的写出与发布（编排器）、run 目录的位置（[产物契约](artifact-contract.md) `translate_run_dir`）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。v3 实验侧的同名流程见[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是其产品移植，不导入它。
 
 ## 当前行为规格
 
@@ -70,8 +70,11 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 - 代码：`kototoki/translate/`、`kototoki/merge.py`。
 - 测试（core，`just test`）：`tests/test_translate_degrade.py`（拆分与邻文、三级降级与单条回退及子批次请求字节、单条批次直接回退、超出 context 进入降级、续跑复用已记录节点并截掉写了一半的行、已记录的单条失败续跑时直接回退、降级中途 OOM 重启、原批次 OOM 不进降级、回退终态与改 seed 重试、空场景报告、计划外的降级行报错、经编排器写进 `published.json` 的回退计数）；`tests/test_translate.py`（伪 server／伪客户端：正常（首个请求与按冻结配方构造的请求逐字节相同）、损坏的中间行报错、每批后 `run.json` 已记批次数、意外异常记 `session_error` 并停 server、译文空行按解析失败、整批共用一个 session、按批次续跑与截掉写了一半的行、全部完成不启动 server、OOM 重启即新 session、两次重启后放弃、缓存校验失败、空场景、`ja.srt` 变化换目录、seed 变化另起 run、显存轮询超时、server 起不来时本批其余影片直接失败、混合失败不标记不可用、启动失败后成功）；`tests/test_translate_recipes.py`（v3 `b10-joint` hash 钉子、`b10-joint-degrade-v1` hash 钉子与“只差 `overflow`”、提示／grammar／请求 SHA256 钉子、与冻结 v3 函数逐字节对照）；`tests/test_translate_server.py`（stock 加载日志驻留解析、显存轮询、OOM 识别、冻结命令行、模型核对、引擎文件 SHA 核对）；`tests/test_merge.py`。
 - 真实运行（2026-10-14，票据 05 完成标准第二项）：HF II 的 W0 对齐结果按默认 `[cues]` 切出 1112 条 `ja.srt`，stock b11583 单 session 112 批全部一次通过（无重试、无触顶），`zh.srt` 覆盖 1112/1112，`ja-zh.srt` 1112 条且每条恰好两行。墙钟 176 s（含模型 SHA 首次全量核对 16.7 s、冷加载 7.1 s）；输入 75408、输出 19272 token；首个请求 `cache_n == 0`；启动前空闲 15112 MiB，会话峰值 15687 MiB（桌面基线约 880 MiB，即 server 自身约 14800 MiB）。输出只写在仓库外的会话临时目录。
-- 未验证：降级的真实运行次数（票据 09 完成标准第二项，待整片运行）；与编排器的真实联调（票据 08）；桌面程序占用较多显存（空闲低于 14900 MiB）时翻译会等满 3×120 s 后失败，需先释放显存。
+- 真实运行：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)——经编排器整批翻译四个文件，降级批次 0、回退 cue 0、无重启。
+- 未验证：真实数据上的降级路径（整片未触发）。已知限制：桌面程序占用较多显存（空闲低于 14900 MiB）时翻译会等满 3×120 s 后失败，需先释放显存；整片验收时桌面占用 0.6–1.2 GB 漂移，首轮即因此失败。
 
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/05-translate-and-merge.md`、`09-translate-degrade.md`；规格 §1.2（含第三轮裁定表）、§3.3、§4、§5.2、§6、§7.3；[ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)；stock 引擎的 `run_step` 假设与驻留日志由票据 01 smoke #4 验证。
+
+目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。

@@ -30,7 +30,11 @@
 - 允许：X0 → W0（`read_audio`、`setup_runtime`、`gpu_lock`、`read_vad_manifest`、`MmsAligner`）；外部 VAD 阶段 → W0（`gpu_lock`、`read_audio`、`vad_candidates`）；W0／X0 → `kototoki_eval.schema`。
 - 允许：完整 SRT 流程 → 逐窗翻译运行时（`translation_demo.adapters`、`client`、`run`、`translation_demo_runtime` 的纯函数）。
 - 现存的当前→历史依赖（只读导入，不得扩大）：X0 → `experiments.qwen.run_qwen`（Qwen 资产身份常量与 `checkpoint_identity`、`check_gpu`）；完整 SRT 流程 → `experiments.translation_flow.srt`（SRT 读写与覆盖校验），其测试另导入冻结的 `translation_flow.v2_prepare`／`v2_recipes` 做 C0 等价核对；W0 测试导入 `experiments.framework_equivalence` 作数值参照，运行时不导入。
-- 产品包 `kototoki/`（目标全图见[目标架构](bilingual-pipeline-architecture.md)）：依赖只向下，编排 `job` → 媒体、cue、合并、翻译子系统 → 基础层（`config`、`recipes`、`artifacts`、`srt`、`workers/protocol`、`schema`）；推理模块 `vad`、`asr_*`、`align` 只依赖基础层且互不导入，编排只经 `kototoki.workers.<stage> --jobs` 子进程使用它们；基础层不依赖 torch、ffmpeg、网络与上层。
+- 产品包 `kototoki/`（分层图见[架构总览](INDEX.md#依赖与装配)）：依赖只向下，编排 `job` → 媒体、cue、合并、翻译子系统 → 基础层（`config`、`recipes`、`artifacts`、`srt`、`workers/protocol`、`schema`）。四条硬规则：
+  - **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动阶段 worker，与它们的全部通信是 jobs 文件、工作目录里的产物和退出码；`tests/test_job.py` 的禁止导入测试（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、任何 `experiments.*`）守门。编排可导入 worker 壳（`workers.vad`／`asr`／`align`／`gpu`）的身份与模型核对函数，壳导入时不加载推理库。
+  - **推理模块互不导入。** `vad`、`asr_*`、`align` 只依赖基础层，各自在独立进程里加载模型；阶段之间只经产物文件交接。三壳共用的入口、读 WAV、模型核对与 CUDA 守卫在 `workers/gpu.py`，只被 worker 壳与编排导入，不属基础层。
+  - **基础层不依赖 torch、ffmpeg、网络与上层。** 它是所有离线测试的根基，编排器可以直接导入。
+  - **产品包不导入 `experiments.*`。** 历史实现只复制不引用；`kototoki_eval/` 继续承担评分，产品侧的 `validate_transcript` 复制在 `kototoki/schema.py`。
 - 禁止：`kototoki/job.py`、`kototoki/__main__.py` 导入 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`；`kototoki/` 任何模块导入 `experiments.*`（历史实现只复制）。
 - 禁止：`kototoki_eval` 导入任何推理或 `experiments` 代码；推理入口导入 `experiments/provision`；当前模块写入或修改历史实验包（`translation_flow/v2_*`、`translation_judge/`、`translation_eval/` 等冻结证据）。
 - 文件契约代替导入：W0／X0 不导入外部 VAD 阶段的入口，只读其 manifest；评分 CLI 只读 `result.json`；各入口只读语料准备产出的 WAV 与参考 JSON。
@@ -49,3 +53,20 @@
 - 逐窗翻译运行时（`translation_demo_runtime.py`）不获取 `.local/gpu.lock`，只检查端口是否被占用；与其他 GPU 作业的互斥由操作者保证。
 - 模型生命周期按阶段串行：W0 通过工厂在 VAD 关闭后加载 ASR，ASR `close()` 后再加载 MMS；X0 每阶段一个独立子进程，进程退出即释放；父进程持锁直到全部子进程退出。
 - 取消：X0 父进程在中断时 `terminate`→10 秒后 `kill` 当前子进程，记录被中断阶段成本并清理 `tmp/`；v3 把 llama-server 放入 KILL_ON_JOB_CLOSE Job Object，Python 被强杀时服务器随之退出。发出取消不等于 GPU 已释放；完整 Windows 取消／OOM 恢复仍未验证（见 [X0 pipeline](modules/x0-pipeline.md#代码与验证入口)）。
+
+## 产品包的责任边界
+
+双语字幕流水线（`kototoki/`）按"谁有权做这个决定"划分，每项只有一个归属：
+
+- **时间轴**只在三处出现：媒体定零点，推理模块输出 WAV 本地坐标，日文 cue 加一次 offset。编排、翻译、合并不得出现任何时间换算。
+- **跳过与替换**由产物契约的 `is_current` 判定，编排只负责问；推理模块永远不决定"要不要跑"。
+- **失败分三级，各归一层**：窗口级（`failed_windows`，推理模块填、协议校验，不进对齐、cue 与翻译）；文件级（退出码 1，协议记账，编排继续下一文件）；进程级（退出码 2，编排从下一文件重启 worker）。翻译子系统内部的基础设施失败自己消化到重启两次为止，再往上抛即为该文件的文件级失败；批次终态失败在子系统内降级到单条，单条仍失败保留日文。
+- **发布**只有编排能做，且必须走 `publish_blockers` → `record_published` → 移动三份文件的固定顺序；判定在扫描阶段完成，被用户改动且非 `force` 的文件不进 GPU 阶段。
+- **锁**全归编排：`<output_dir>/.work/lock` 与 `.local/gpu.lock` 都在编排器手里；翻译子系统的 server 不取锁。
+- **身份**：各阶段 `recipe_hash` 归 `recipes.py`，翻译配方 hash 归 `translate/recipes.py`，模型 SHA256 经产物契约的缓存；没有模块把绝对路径写进身份。
+- **子进程环境**归编排：`PYTHONUTF8=1`、离线变量、共用 `HF_HOME`／`TORCH_HOME=<output_dir>/.work/cache/` 由编排传入，worker 不自行设置 PATH 或 DLL 目录。
+- **日志**只有编排写运行日志，内容限进度与计数；推理模块只返回数据，不打印，转写与译文不进日志。
+
+接缝：有两个适配器的位置才是真接缝，只有一个适配器时保持具体实现、不抽象。真接缝有三处：ASR 引擎（`asr_whisper`／`asr_qwen` 写出同一种 `asr.json`，由 `config.engine` 选择）、编排器 ↔ 阶段 worker（真实子进程／测试用伪 worker 脚本，接口是 jobs 文件＋增量结果＋退出码）、翻译 ↔ llama-server（HTTP 客户端／伪客户端，只在 `translate/` 内部）。媒体 ↔ ffmpeg、VAD 与对齐后端、配置来源、SRT 写出器都只有一个实现，不做后端协议类或抽象层；换模型时改配方常量与实现，不改接口。在只有一个适配器的位置新建接缝须先在本节写明第二个使用者。内部接缝只供各自模块的测试使用、不属对外接口：`translate.client` 可换伪客户端，`protocol.run_worker` 的 `start` 回调可换伪处理函数，`artifacts.replace_with_retry` 的 `replace` 可注入。
+
+测试穿过与调用方相同的接缝：`cues`、`merge`、`srt`、`artifacts`、`protocol`、`config` 直接按接口离线测；媒体测命令行构造与合成媒体；推理模块用冻结窗口门禁（重任务）；翻译子系统用伪客户端走完整流程；编排用伪 worker 脚本。需要越过接口去戳实现时，先怀疑模块形状。编排是最深的模块（一个入口承载全部流程知识），worker 壳的 `__main__` 只做入口，流程知识在协议模块。

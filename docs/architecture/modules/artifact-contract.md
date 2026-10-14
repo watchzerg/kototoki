@@ -1,6 +1,6 @@
 # 产物契约
 
-状态：current（票据 00 交付，2026-10-14）；产品流水线其余阶段尚未实现，本页只描述已存在的共享基础。
+状态：current（票据 00 交付，2026-10-14；各阶段在票据 02–09 接入，整片验收见[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)）。
 
 ## 定位与阅读
 
@@ -42,8 +42,10 @@
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
 - 测试（core，`just test`）：`tests/test_artifacts.py`（短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、覆盖规则四种组合与崩溃窗口、原子写重试与临时文件清理）、`tests/test_protocol.py`（jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`）、`tests/test_srt.py`（空 SRT、取整边界、严格解析、UTF-8 无 BOM）。
 - `failure.json` 的清理归编排器：该文件成功发布后删除（[批次编排](batch-orchestration.md)，票据 06）。
-- 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟；worker 协议尚无真实 worker 使用者（票据 03 起）。
+- 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟。worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
 
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/00-foundation.md`；规格 §4、§6、§7.1、§1.2 第三轮裁定表。原子写取自 `experiments/translation_v3/common.py`，模型哈希缓存取自 `experiments/translation_v3/server.py::verify_model`。
+
+目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。

@@ -4,7 +4,7 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §5、[目标架构](../bilingual-pipeline-architecture.md)"日文 cue"行）中 STT 与翻译的交界：把 `align.json` 的字符级时间回填后切成日文字幕条目，产出 `ja-cues.json` 的 payload 与 `ja.srt` 文本。不负责：文件读写、身份与跳过判定（[产物契约](artifact-contract.md)，由编排器经 `write_artifact`／`srt.write_srt` 写出）、cue 规则的配置加载与默认值（票据 02 `config`）、翻译与合并（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §5、[模块边界](../module-boundaries.md#产品包的责任边界)）中 STT 与翻译的交界：把 `align.json` 的字符级时间回填后切成日文字幕条目，产出 `ja-cues.json` 的 payload 与 `ja.srt` 文本。不负责：文件读写、身份与跳过判定（[产物契约](artifact-contract.md)，由编排器经 `write_artifact`／`srt.write_srt` 写出）、cue 规则的配置加载与默认值（票据 02 `config`）、翻译与合并（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
@@ -39,7 +39,7 @@
 
 ## 接口与依赖
 
-只依赖标准库与 `kototoki.srt`（`format_srt`、`milliseconds`）；属基础层之上的纯函数模块，编排器直接调用（[目标架构](../bilingual-pipeline-architecture.md#分层与依赖方向)）。cue 规则的取值与默认由配置模块提供；`FALLBACK_MAX_CHAR_S` 是会改变输出的代码常量，须进 cue 配方 hash；已由票据 02 纳入 `recipes.CUES["fallback_max_char_s"]`（进 cue 配方 hash），本模块的常量是使用处，`tests/test_recipes.py` 钉住两者相等。
+只依赖标准库与 `kototoki.srt`（`format_srt`、`milliseconds`）；属基础层之上的纯函数模块，编排器直接调用（[模块边界](../module-boundaries.md#依赖方向)）。cue 规则的取值与默认由配置模块提供；`FALLBACK_MAX_CHAR_S` 是会改变输出的代码常量，须进 cue 配方 hash；已由票据 02 纳入 `recipes.CUES["fallback_max_char_s"]`（进 cue 配方 hash），本模块的常量是使用处，`tests/test_recipes.py` 钉住两者相等。
 
 ## 代码与验证入口
 
@@ -47,8 +47,10 @@
 - 测试（core，`just test`）：`tests/test_cues.py`——插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、lead-out 不重叠、min-duration、空输入、全 `text_only` 窗、纯标点、♪ 附着、非零 `offset_s` 只加一次、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。
 - 离线观感（2026-10-14，规格 §5.2 原初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（规格 §5.2）。记录见票据 04 Comments。
 - x0 标点密度离线对照（2026-10-14，票据 07；现有同窗 X0／W0 研究期 `result.json`，hf-ii／hf-iii 各 6 个冻结窗口中两引擎都有结果的 11 个，同一组 101 个 VAD 窗口，默认 `[cues]`）：x0 每 100 个词汇字符有 7.7 个句末标点、2.5 个逗号，w0 为 2.3 与 0.6；cue 数 626 对 591，平均每条 9.9 对 9.8 字、p90 均为 18、触及 24 字上限 4 对 3 条，平均时长 1.84 s 对 1.99 s；以句末标点收尾的 cue 占 69% 对 20%，w0 其余多在时间间隔或硬切处断开。结论：x0 的标点主要改变断点位置（更多落在句末），不改变条目长度，现有初值无需按引擎区分。
-- 未验证：x0 标点密度下的观感（只有统计，未人工看）；整片双语观感（票据 08）。
+- 未验证：x0 标点密度下的观感（只有统计，未人工看）；整片双语观感（[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)只核对了条目数、时间一致与每条两行，未人工看）。
 
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/04-japanese-cues.md`；规格 §4、§5.2、§1.2 第三轮裁定表。非词汇字符判定参考 `experiments/display/replay.py`（只读，未导入），并把符号类别（♪）纳入。
+
+目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。
