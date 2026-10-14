@@ -22,6 +22,7 @@
 | [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py` |
 | [日文 cue](modules/japanese-cues.md) | 双语字幕流水线中把 `align.json` 字符时间回填（插值、外推、整窗 `fallback`）并切成日文 cue 的纯函数，产出 `ja-cues.json` payload 与 `ja.srt` 文本；时间轴上唯一加 `offset_s` 的地方 | `kototoki/cues.py` |
 | [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0 逐窗转写（`asr.json`，窗口级 `failed_windows`）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
+| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志与发布记录 | `kototoki/__main__.py`、`kototoki/job.py` |
 | 历史实验代码（冻结或只作回归参考） | 不建模块页；复现历史时按各自 README 使用冻结配置与旧身份，见下方列表 | 见下 |
 
 历史实验代码：[whisper](../../experiments/whisper/README.md)、[qwen](../../experiments/qwen/README.md)、[x0_flow](../../experiments/x0_flow/README.md)、[japanese_ctc](../../experiments/japanese_ctc/README.md)、[framework_equivalence](../../experiments/framework_equivalence/README.md)、[components](../../experiments/components/README.md)、[crisp](../../experiments/crisp/README.md)、[asr_candidates](../../experiments/asr_candidates/README.md)、[vad_comparison](../../experiments/vad_comparison/README.md)（除 `vad_stage.py` 外）、[fullfilm_comparison](../../experiments/fullfilm_comparison/README.md)、[performance](../../experiments/performance/README.md)、`experiments/analysis/`；翻译侧 [translation_flow](../../experiments/translation_flow/README.md)（v1／v2，v2 冻结）、[translation_eval](../../experiments/translation_eval/README.md)、[translation_judge](../../experiments/translation_judge/README.md)、[translation_compat](../../experiments/translation_compat/README.md)、[translation_corpus](../../experiments/translation_corpus/README.md)、[translation_four_quantization](../../experiments/translation_four_quantization/README.md)、[translation_v4](../../experiments/translation_v4/README.md)，以及 `experiments/` 根下 `translation_*.py`、`run_experiment.py`、`run_round2.py`、`x0_flow_evaluate.py` 等单文件脚本。其中当前模块仍在导入的少数符号见[模块边界](module-boundaries.md#依赖方向)。
@@ -63,7 +64,7 @@ flowchart LR
 
 ## 系统不变量
 
-- 音频与转写／译文只写入 `.local/` 下新建的私有运行目录，已有目录或输出拒绝覆盖；控制台只输出状态、计数与耗时。见[模块边界：状态与契约](module-boundaries.md#状态与契约)。
+- 音频与转写／译文只写入 `.local/` 下新建的私有运行目录，已有目录或输出拒绝覆盖；控制台只输出状态、计数与耗时。见[模块边界：状态与契约](module-boundaries.md#状态与契约)。产品例外：`python -m kototoki` 写入用户配置的 `output_dir`（不得位于仓库内，`.local/` 除外，也不得位于输入目录内），工作目录 `.work/` 按产物身份续跑与原地替换，最终 SRT 按 `published.json` 的覆盖规则替换，见[批次编排](modules/batch-orchestration.md)。
 - ASR 与 MMS 只在 CUDA 上运行，失败不回退 CPU；VAD 设备由外部阶段显式记录。见 [MMS 对齐](modules/mms-alignment.md#当前行为规格)、[W0 pipeline](modules/w0-pipeline.md#当前行为规格)。
 - 识别全文的每个字符在 `units` 中恰好出现一次；缺时间的字符保留为 `text_only`，不删除、不伪造时间。见 [MMS 对齐](modules/mms-alignment.md#当前行为规格)。
 - W0／X0 的识别窗口以 VAD manifest 的源坐标为准，有成对整数 `start_sample/end_sample` 时 ASR 与 MMS 使用同一整数裁剪。见[外部 VAD 阶段](modules/vad-stage.md#接口与依赖)。
