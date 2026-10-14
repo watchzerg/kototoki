@@ -14,7 +14,7 @@ from kototoki.artifacts import object_hash
 SAMPLE_RATE = 16000
 MAX_WINDOW_SAMPLES = 30 * SAMPLE_RATE
 
-# --- 媒体：派生 16 kHz 单声道 PCM16 WAV（来源 experiments/corpus/prepare_round2.py，规格 §2.2） --------
+# --- 媒体：派生 16 kHz 单声道 PCM16 WAV（下混取自 experiments/corpus/prepare_round2.py，规格 §2.2） --------
 
 # 按声道布局写死的下混表达式。系数为 ffmpeg 标准下混权重（前左右 1、中置 0.707、环绕 0.707、丢 LFE）
 # 除以权重和后向下截到 6 位小数，系数和 ≤ 1，满幅输入不削波。按声道序号引用，
@@ -39,7 +39,9 @@ MEDIA: dict[str, Any] = {
     # 起始静音补齐、间隙补零，sample 0 即视频 0 秒；offset_s 恒为 0
     "timeline_filter": "aresample=async=1:first_pts=0",
     "pan": PAN,
-    "resample_filter": f"aresample={SAMPLE_RATE}",  # ffmpeg 默认 swr，与基线证据逐字节一致
+    # 降采样用 soxr 28 bit（2026-10-14 用户裁定，替代默认 swr；8 kHz 边缘无折叠残留）。
+    # 时间轴补偿（timeline_filter，同采样率只插静音／丢样）仍由 swr 完成。
+    "resample_filter": f"aresample={SAMPLE_RATE}:resampler=soxr:precision=28",
     "codec": "pcm_s16le",
     "output_flags": ["-fflags", "+bitexact", "-flags:a", "+bitexact"],
     "sample_rate": SAMPLE_RATE,

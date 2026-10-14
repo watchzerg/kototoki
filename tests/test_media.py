@@ -158,7 +158,8 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("-i") + 1], str(self.video))
         self.assertEqual(command[command.index("-map") + 1], "0:3")
         self.assertEqual(command[command.index("-af") + 1],
-                         "aresample=async=1:first_pts=0,pan=mono|c0=0.5*c0+0.5*c1,aresample=16000")
+                         "aresample=async=1:first_pts=0,pan=mono|c0=0.5*c0+0.5*c1,"
+                         "aresample=16000:resampler=soxr:precision=28")
         self.assertEqual(command[command.index("-c:a") + 1], "pcm_s16le")
         self.assertNotIn("-ac", command)
         self.assertNotIn("-ar", command)

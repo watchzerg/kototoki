@@ -28,7 +28,7 @@
 **extract**（`extract(path, work_dir, probe, config) -> Extract`）：先校验下混布局，再依次运行两条 ffmpeg 命令，各写同目录临时文件（保留扩展名）后原子替换目标。
 
 1. `extract_original`：`-map 0:<绝对索引> -c:a copy` 写出 `audio.<ext>`，容器按规格 §2.1：`flac`→`.flac`、`aac`／`alac`→`.m4a`、`ac3`、`eac3`、`dts`、`opus`、`vorbis`→`.ogg`、`mp3`，小端 PCM（`pcm_s16le`／`s24le`／`s32le`／`f32le`）→`.wav`（`-rf64 auto`），其余（大端 PCM、`pcm_bluray`、`pcm_dvd`、`aac_latm`、`truehd` 等）→`.mka`。
-2. `derive_pcm16k`：**从视频容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、默认 swr，`-loglevel verbose`；两条命令行与 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即视频 0 秒，`Extract.offset_s` 恒为 0。
+2. `derive_pcm16k`：**从视频容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,<重采样>`、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`，`-loglevel verbose`；`<重采样>` 是 `aresample=16000:resampler=soxr:precision=28`（时间轴补偿那一步仍是 swr，同采样率只插静音／丢样）；两条命令行与 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即视频 0 秒，`Extract.offset_s` 恒为 0。
 3. 时长校验对**视频流时长**：解码短于视频超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；长于视频超过 1 s 只记告警。
 4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 在 verbose 下报告的"adding N audio samples of silence"／"discarding N audio samples"之和（输入采样率，含起始补齐），以及按 ffmpeg 结束统计的输入样本数算出的净补偿秒数 `net_padding_s`（派生时长 − 解码出的输入时长）。实测 swr 只报告一部分补偿（合成 2 s 间隙只报出约 0.63 s），因此以 `net_padding_s` 为准，swr 计数只作参考。
 
@@ -42,8 +42,8 @@
 
 - 代码：`kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki.toml.example`。
 - 测试（core，`just test`）：`tests/test_config.py`（默认值、两种相对路径基准、模型路径、未知键与已删除键、类型、环境变量破锁、示例文件覆盖全部键）、`tests/test_recipes.py`（`pan` 系数与归一化、不削波、`pan`／重采样参数进 hash、固定值、无翻译配方）、`tests/test_media.py`（语言归一化、音轨选择含 commentary／多条匹配／无匹配、视频时长来源、容器映射、命令行构造、补偿解析、时长校验）、`tests/test_media_ffmpeg.py`（用本机 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、流复制容器、多音轨选择；临时目录含空格与非 ASCII）。合成测试需要 `D:/bin/ffmpeg.exe`、`ffprobe.exe`（配置默认值），缺失时测试失败而不是跳过。
-- 真实视频（2026-10-14，ffmpeg 2026-10-01 gyan.dev full build，不进 Git）：Heaven's Feel II（mkv，FLAC 立体声）产出三份产物，派生 WAV 的 PCM SHA256 `ee4e2da3…` 与基线 `hf-ii-full.wav` 一致（112448683 样本），视频流时长取自 `DURATION-eng`；Black Panther（mkv，12 条音轨，选中 jpn E-AC-3 `5.1(side)`）产出 `audio.eac3`、`audio-16k.wav`、`extract.log`。
-- 未验证：广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本；cue 时间等于视频时间目前只在 WAV 样本层断言（`sample / 16000 + offset_s`），经 cue 阶段的断言待票据 04。日本广播双单声道（主／副音声）按双声道处理，是已知限制。已知限制：`pan` 保证下混本身不削波，但其后的默认 swr 重采样（48 kHz→16 kHz）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）；真实素材实测（2026-10-14）：HF II 派生 WAV 1.12 亿样本中只有 1 个到满幅，Black Panther 峰值 31073、无削波。
+- 真实视频（2026-10-14，ffmpeg 2026-10-01 gyan.dev full build，不进 Git）：Heaven's Feel II（mkv，FLAC 立体声）产出三份产物（112448683 样本，PCM SHA256 `c203f952…`），视频流时长取自 `DURATION-eng`；改 soxr 之前用默认 swr 跑同一条链，PCM SHA256 `ee4e2da3…` 与基线 `hf-ii-full.wav` 一致，说明零点补齐与下混未改变样本，差异只来自重采样器（对比数据见规格 §2.2）；Black Panther（mkv，12 条音轨，选中 jpn E-AC-3 `5.1(side)`）产出 `audio.eac3`、`audio-16k.wav`、`extract.log`。
+- 未验证：广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本；cue 时间等于视频时间目前只在 WAV 样本层断言（`sample / 16000 + offset_s`），经 cue 阶段的断言待票据 04。日本广播双单声道（主／副音声）按双声道处理，是已知限制。已知限制：`pan` 保证下混本身不削波，但其后的降采样滤波（48 kHz→16 kHz，swr 与 soxr 都会）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）；真实素材实测（2026-10-14）：HF II 派生 WAV 1.12 亿样本中 swr 版 1 个、soxr 版 2 个样本到满幅；Black Panther（swr 版）峰值 31073、无削波。
 
 ## 变更与决策来源
 
