@@ -10,7 +10,7 @@
 
 **对编排器的接口**（`kototoki.translate`）：
 
-- `Session(config, on_server_pid=None)`：上下文管理器，整批影片共用。第一次真正需要请求模型时才启动 llama-server（已全部完成的影片不启动）；`on_server_pid(pid)` 在启动后、`on_server_pid(None)` 在停止后回调，供编排器写进 GPU 锁；退出时总是停掉 server。
+- `Session(config, on_server_pid=None)`：上下文管理器，整批影片共用。第一次真正需要请求模型时才启动 llama-server（已全部完成的影片不启动）；`on_server_pid(pid)` 在 server 进程一启动（加载之前）、`on_server_pid(None)` 在进程结束后回调，供编排器写进 GPU 锁；退出时总是停掉 server。
 - `translate_document(document, run_dir, session, config) -> TranslateResult`：`document` 是 `srt.read_srt` 读出的 `ja.srt`，`run_dir` 是 `translate/srt-<sha12>/`。返回 `translations`（cue id → 译文，精确覆盖全部 cue）、`fallback_count`（本票恒为 0）与 `report`（run 的完成状态）。失败抛 `TranslateError`（编排器记为该文件翻译失败）；模型或引擎缺失等配置问题按原异常抛出。
 - `RECIPE_HASH`：产品翻译配方 hash，进编排器的翻译身份。当前等于 v3 `b10-joint` 原 hash `2ba68054…0969a`。
 
@@ -24,7 +24,7 @@
 | `context`、`limit`、`parse` | 输入超预算、`stop_type == "limit"` 或 `truncated`、JSON／ID 校验失败、译文含空行（会让 SRT 断块；v3 校验之外新增） | 批次终态：写 `terminal-failures/` 证据并抛 `TranslateError`，批次不落盘，server 留给下一部影片；重跑同一命令会再试（票据 09 改为三级降级） |
 | 其他异常 | 非 JSON 响应、写盘失败等 | 该 session 记 `stop_reason = session_error: …`，停掉 server，原样上抛 |
 
-**session**：一个 server 进程即一个 session。`cache_n == 0` 校验在每个 session 的首个 completion 做一次（之后的影片复用 KV 前缀属正常）。每次重启都是新 session：影片 `run.json` 的 `sessions[]` 新增一项、`cache_state` 重置、写过批次或遇到基础设施失败的 session 超过一个时 `resumed = true`。server 启动失败（`server_start`）不新增 `sessions[]` 项，记入 `server_start_failures[]`；端口被占、模型核对失败、驻留校验失败等按原异常抛出，不重试。server 启动前用 `nvidia-smi memory.free` 轮询，达到 14300 MiB 才启动，120 s 超时按 `server_start` 失败处理并写明最后读数。
+**session**：一个 server 进程即一个 session。`cache_n == 0` 校验在每个 session 的首个 completion 做一次（之后的影片复用 KV 前缀属正常）。每次重启都是新 session：影片 `run.json` 的 `sessions[]` 新增一项、`cache_state` 重置、写过批次或遇到基础设施失败的 session 超过一个时 `resumed = true`。server 启动失败（`server_start`）不新增 `sessions[]` 项，记入 `server_start_failures[]`；端口被占、模型核对失败、驻留校验失败等按原异常抛出，不重试。server 启动前用 `nvidia-smi memory.free` 轮询，达到 14300 MiB 才启动，120 s 超时按 `server_start` 失败处理并写明最后读数。某部影片的重启额度全部耗在 `server_start` 上（GPU 被占或 server 起不来）时，`Session` 记为不可用，本批其余影片直接抛 `TranslateError`，不再逐片等待；混有其他种类的失败不触发这一点。
 
 **run 目录与续跑**：`<run_dir>/<配方名>__s<seed>/`（配方或 seed 变化即另一个 run，`ja.srt` 变化由产物契约换成新的 `srt-<sha12>`，旧目录都保留）：
 
@@ -36,7 +36,7 @@
 
 零条目 `ja.srt`：写 `run.json`（完成），返回空译文，不启动 server、不请求模型。
 
-**server**：stock llama.cpp（`[paths] llama_server`，同目录必须有 `identity.json`），命令行与 v3 冻结 C0 相同（ctx 8192、单槽、99 层、f16 KV、`--cache-ram 8192`、`--fit off`、`-lv 4`）。启动前检查端口空闲（被占时列出正在运行的 llama-server pid）、模型文件名与大小等于冻结资产 APEX-I-Compact、SHA256 经 `artifacts.verify_model`（size+mtime 缓存在 `.work/cache/model-verification.json`）。加载后从日志解析驻留证据，必须全部层在 GPU、有 CUDA model buffer，否则拒绝。
+**server**：stock llama.cpp（`[paths] llama_server`，同目录必须有 `identity.json`，且 `llama-server.exe` 与同目录全部 DLL 的 SHA256 等于其 `runtime_file_sha256`，经 size+mtime 缓存，目录里出现未登记的 DLL 也拒绝），命令行与 v3 冻结 C0 相同（ctx 8192、单槽、99 层、f16 KV、`--cache-ram 8192`、`--fit off`、`-lv 4`）。启动前检查端口空闲（被占时列出正在运行的 llama-server pid）、模型文件名与大小等于冻结资产 APEX-I-Compact、SHA256 经 `artifacts.verify_model`（size+mtime 缓存在 `.work/cache/model-verification.json`）。加载后从日志解析驻留证据，必须全部层在 GPU、有 CUDA model buffer，否则拒绝。
 
 **合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格，保证每条恰好两行；回退为日文的条目两行相同，照常输出。译文须精确覆盖全部 cue（缺失、多余、空串抛 `IncompleteTranslationError`）；零条目文档得到空串。
 
@@ -63,7 +63,7 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 ## 代码与验证入口
 
 - 代码：`kototoki/translate/`、`kototoki/merge.py`。
-- 测试（core，`just test`）：`tests/test_translate.py`（伪 server／伪客户端：正常（首个请求与按冻结配方构造的请求逐字节相同）、损坏的中间行报错、每批后 `run.json` 已记批次数、意外异常记 `session_error` 并停 server、译文空行按解析失败、整批共用一个 session、按批次续跑与截掉写了一半的行、全部完成不启动 server、OOM 重启即新 session、两次重启后放弃、缓存校验失败、空场景、`ja.srt` 变化换目录、seed 变化另起 run、显存轮询超时、启动失败后成功、批次终态失败）；`tests/test_translate_recipes.py`（v3 `b10-joint` hash 钉子、提示／grammar／请求 SHA256 钉子、与冻结 v3 函数逐字节对照）；`tests/test_translate_server.py`（stock 加载日志驻留解析、显存轮询、OOM 识别、冻结命令行、模型核对）；`tests/test_merge.py`。
+- 测试（core，`just test`）：`tests/test_translate.py`（伪 server／伪客户端：正常（首个请求与按冻结配方构造的请求逐字节相同）、损坏的中间行报错、每批后 `run.json` 已记批次数、意外异常记 `session_error` 并停 server、译文空行按解析失败、整批共用一个 session、按批次续跑与截掉写了一半的行、全部完成不启动 server、OOM 重启即新 session、两次重启后放弃、缓存校验失败、空场景、`ja.srt` 变化换目录、seed 变化另起 run、显存轮询超时、server 起不来时本批其余影片直接失败、混合失败不标记不可用、启动失败后成功、批次终态失败）；`tests/test_translate_recipes.py`（v3 `b10-joint` hash 钉子、提示／grammar／请求 SHA256 钉子、与冻结 v3 函数逐字节对照）；`tests/test_translate_server.py`（stock 加载日志驻留解析、显存轮询、OOM 识别、冻结命令行、模型核对、引擎文件 SHA 核对）；`tests/test_merge.py`。
 - 未验证：真实 llama-server 下的整片运行、墙钟与显存峰值（票据 05 完成标准第二项，GPU 重任务，待用户确认后运行）；显存阈值 14300 MiB 在桌面占用较高时是否过严。
 
 ## 变更与决策来源

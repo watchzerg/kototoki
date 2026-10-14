@@ -78,7 +78,7 @@ class Session:
     """
 
     def __init__(self, config: Config, *, on_server_pid: Callable[[int | None], None] | None = None,
-                 server_factory: Callable[[Path], Any] | None = None,
+                 server_factory: Callable[[Path, Callable[[int | None], None]], Any] | None = None,
                  client_factory: Callable[..., Any] = LlamaClient):
         self.config = config
         self.on_server_pid = on_server_pid or (lambda pid: None)
@@ -89,11 +89,13 @@ class Session:
         self.server: Any = None
         self.ordinal = 0
         self.cache_state: dict[str, Any] = {}
+        # 某部影片因 server 一直起不来（显存被占、加载失败）用尽重启后，本批其余影片不再等待，直接失败。
+        self.unavailable: str | None = None
 
-    def _managed_server(self, runtime_dir: Path) -> ManagedServer:
+    def _managed_server(self, runtime_dir: Path, on_pid: Callable[[int | None], None]) -> ManagedServer:
         return ManagedServer(runtime_dir, engine=self.config.paths.llama_server, model=self.config.models.translate,
                              port=self.config.translate.port,
-                             model_cache=artifacts.model_cache_path(self.config.paths.output_dir))
+                             model_cache=artifacts.model_cache_path(self.config.paths.output_dir), on_pid=on_pid)
 
     def __enter__(self) -> "Session":
         return self
@@ -105,19 +107,15 @@ class Session:
         if self.server is None:
             self.ordinal += 1
             self.cache_state = {"checked": False}
-            server = self.server_factory(self.runtime_root / f"session-{self.ordinal:02d}")
-            server.__enter__()
+            server = self.server_factory(self.runtime_root / f"session-{self.ordinal:02d}", self.on_server_pid)
+            server.__enter__()  # 进程一启动即以 pid 回调；加载失败时自行清理并以 None 回调
             self.server = server
-            self.on_server_pid(server.pid)
         return self.server
 
     def stop(self) -> None:
         server, self.server = self.server, None
         if server is not None:
-            try:
-                server.__exit__(None, None, None)
-            finally:
-                self.on_server_pid(None)
+            server.__exit__(None, None, None)  # 进程结束后以 None 回调
 
 
 # --- 单次请求（v3 run_step） ---------------------------------------------------------------------
@@ -335,9 +333,12 @@ def translate_document(document: SourceDocument, run_dir: Path, session: Session
     batches = build_batches(scene, R.PRODUCT)
     done = _read_batches(root, batches)
     restarts = 0
+    failure_kinds: list[str] = []
     while len(done) < len(batches):
         entry: dict[str, Any] | None = None
         started = time.perf_counter()
+        if session.unavailable is not None:
+            raise TranslateError(f"llama-server could not start earlier in this batch: {session.unavailable}")
         try:
             server = session.ensure_started()
             entry = {"index": len(run["sessions"]) + 1, "server_session": str(session.runtime_root.name)
@@ -376,7 +377,10 @@ def translate_document(document: SourceDocument, run_dir: Path, session: Session
                 entry.update(stop_reason=kind, infra_failure=failure)
             session.stop()
             restarts += 1
+            failure_kinds.append(kind)
             if restarts > MAX_RESTARTS:
+                if set(failure_kinds) == {"server_start"}:
+                    session.unavailable = failure["error"]
                 raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} server restarts "
                                      f"({kind}): {exc}") from exc
         except Exception as exc:

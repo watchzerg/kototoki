@@ -26,8 +26,8 @@ def document(n: int, word: str = "台詞"):
 
 
 class FakeServer:
-    def __init__(self, harness: "Harness", runtime_dir: Path, number: int):
-        self.harness, self.runtime_dir, self.number = harness, runtime_dir, number
+    def __init__(self, harness: "Harness", runtime_dir: Path, number: int, on_pid):
+        self.harness, self.runtime_dir, self.number, self.on_pid = harness, runtime_dir, number, on_pid
         self.pid = 1000 + number
         self.url = f"http://127.0.0.1:8080/#{number}"
         self.identity = {"server_pid": self.pid, "command": ["fake"]}
@@ -38,11 +38,13 @@ class FakeServer:
         failure = self.harness.start_failures.pop(0) if self.harness.start_failures else None
         if failure is not None:
             failure()
+        self.on_pid(self.pid)
         self.harness.events.append(f"start:{self.number}")
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self.stopped = True
+        self.on_pid(None)
         self.harness.events.append(f"stop:{self.number}")
 
 
@@ -95,8 +97,8 @@ class Harness:
                                       translate=SimpleNamespace(seed=SEED, port=8080))
 
     def session(self) -> Session:
-        def server_factory(runtime_dir: Path) -> FakeServer:
-            server = FakeServer(self, runtime_dir, len(self.servers) + 1)
+        def server_factory(runtime_dir: Path, on_pid) -> FakeServer:
+            server = FakeServer(self, runtime_dir, len(self.servers) + 1, on_pid)
             self.servers[server.url] = server
             return server
 
@@ -316,6 +318,32 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual(len(run["server_start_failures"]), 3)
         self.assertIn("9000 MiB", run["server_start_failures"][0]["error"])
         self.assertEqual(self.h.pids, [])
+
+    def test_unstartable_server_fails_the_rest_of_the_batch_without_waiting(self) -> None:
+        def crash() -> None:
+            raise InfraFailure("Free GPU memory 9000 MiB stayed below 14300 MiB for 120 s")
+
+        a, b = document(5), document(5, "別")
+        self.h.start_failures = [crash] * 3
+        with self.h.session() as session:
+            with self.assertRaises(TranslateError):
+                self.h.translate(a, session)
+            with self.assertRaisesRegex(TranslateError, "earlier in this batch.*9000 MiB"):
+                self.h.translate(b, session)
+        self.assertEqual(self.h.start_failures, [])  # 第二部影片没有再尝试启动
+        self.assertEqual(self.run_json(b)["server_start_failures"], [])
+
+    def test_mixed_failures_do_not_mark_the_server_unavailable(self) -> None:
+        def crash() -> None:
+            raise InfraFailure("llama-server exited 1 during load")
+
+        a, b = document(5), document(5, "別")
+        self.h.start_failures = [crash, None, None]
+        self.h.plans = [{1: "oom"}, {1: "oom"}]
+        with self.h.session() as session:
+            with self.assertRaises(TranslateError):
+                self.h.translate(a, session)
+            self.assertEqual(len(self.h.translate(b, session).translations), 5)
 
     def test_start_failure_then_success(self) -> None:
         def crash() -> None:

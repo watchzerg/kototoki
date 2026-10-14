@@ -6,8 +6,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from kototoki.artifacts import sha256_bytes
+
 from kototoki.translate.server import (
-    InfraFailure, MODEL_ASSET, check_model, explicit_oom, residency_evidence, server_command,
+    InfraFailure, MODEL_ASSET, check_engine, check_model, explicit_oom, residency_evidence, server_command,
     validate_residency, wait_for_free_vram,
 )
 
@@ -118,6 +120,34 @@ class CheckModelTests(unittest.TestCase):
             model.write_bytes(b"tiny")
             with self.assertRaisesRegex(ValueError, "size"):
                 check_model(model, Path(tmp) / "cache.json")
+
+
+class CheckEngineTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.engine = self.dir / "llama-server.exe"
+        self.engine.write_bytes(b"exe")
+        (self.dir / "ggml-cuda.dll").write_bytes(b"dll")
+        self.identity = {"runtime_file_sha256": {"llama-server.exe": sha256_bytes(b"exe"),
+                                                 "ggml-cuda.dll": sha256_bytes(b"dll"),
+                                                 "llama-bench.exe": "0" * 64}}
+        self.cache = self.dir / "cache.json"
+
+    def test_matching_files_pass_and_are_cached(self):
+        self.assertEqual(set(check_engine(self.engine, self.identity, self.cache)), {"llama-server.exe", "ggml-cuda.dll"})
+        self.assertTrue(self.cache.is_file())
+
+    def test_modified_dll_raises(self):
+        (self.dir / "ggml-cuda.dll").write_bytes(b"patched")
+        with self.assertRaisesRegex(ValueError, "mismatch"):
+            check_engine(self.engine, self.identity, self.cache)
+
+    def test_unlisted_dll_raises(self):
+        (self.dir / "extra.dll").write_bytes(b"x")
+        with self.assertRaisesRegex(ValueError, "not in identity"):
+            check_engine(self.engine, self.identity, self.cache)
 
 
 if __name__ == "__main__":

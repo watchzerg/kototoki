@@ -138,12 +138,25 @@ def check_model(model: Path, cache_path: Path) -> dict[str, Any]:
     return verify_model(model, MODEL_ASSET["sha256"], cache_path)
 
 
+def check_engine(engine: Path, identity: dict[str, Any], cache_path: Path) -> dict[str, str]:
+    """`llama-server.exe` 与同目录全部 DLL 必须等于 `identity.json` 的 `runtime_file_sha256`（size+mtime 缓存）。"""
+    expected = identity.get("runtime_file_sha256")
+    if not isinstance(expected, dict) or engine.name not in expected:
+        raise ValueError(f"{engine.with_name('identity.json')} does not list {engine.name} in runtime_file_sha256")
+    files = [engine] + sorted(engine.parent.glob("*.dll"))
+    unlisted = [path.name for path in files if path.name not in expected]
+    if unlisted:
+        raise ValueError(f"Engine directory has files not in identity.json: {unlisted}")
+    return {path.name: verify_model(path, expected[path.name], cache_path)["sha256"] for path in files}
+
+
 class ManagedServer:
     """一次 server session：进入时等显存、启动并核对驻留；退出时总是终止进程并记峰值显存。"""
 
-    def __init__(self, runtime_dir: Path, *, engine: Path, model: Path, port: int, model_cache: Path):
+    def __init__(self, runtime_dir: Path, *, engine: Path, model: Path, port: int, model_cache: Path,
+                 on_pid: Callable[[int | None], None] = lambda pid: None):
         self.runtime_dir, self.engine, self.model, self.port = runtime_dir, engine, model, port
-        self.model_cache = model_cache
+        self.model_cache, self.on_pid = model_cache, on_pid
         self.engine_identity = engine.with_name("identity.json")
         self.url = f"http://127.0.0.1:{port}"
         self.process: subprocess.Popen | None = None
@@ -166,14 +179,16 @@ class ManagedServer:
         if not port_free(self.port):
             raise RuntimeError(f"Port {self.port} is occupied (running llama-server pids: {list_llama_servers()}); "
                                "do not share another model server")
+        engine_identity = read_json(self.engine_identity)
+        engine_files = check_engine(self.engine, engine_identity, self.model_cache)
         verification = check_model(self.model, self.model_cache)
         free_mib = wait_for_free_vram()
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         command = server_command(self.engine, self.model, self.port, self.runtime_dir / "server.log")
         self.identity = {
             "candidate": CANDIDATE, "model_path": str(self.model), "asset": MODEL_ASSET,
-            "model_verification": verification, "engine": str(self.engine), "engine_sha256": sha256_file(self.engine),
-            "engine_identity": read_json(self.engine_identity),
+            "model_verification": verification, "engine": str(self.engine), "engine_sha256": engine_files[self.engine.name],
+            "engine_files_verified": len(engine_files), "engine_identity": engine_identity,
             "engine_identity_sha256": sha256_file(self.engine_identity),
             "command": command, "free_vram_mib_before_start": free_mib, "started_at_utc": utc_now()}
         opener = build_opener(ProxyHandler({}))
@@ -182,6 +197,7 @@ class ManagedServer:
             self.process = subprocess.Popen(command, stdout=out, stderr=err,
                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.identity["server_pid"] = self.process.pid
+        self.on_pid(self.process.pid)  # 加载期间 GPU 锁里就有 server pid
         threading.Thread(target=self._sample_gpu, daemon=True).start()
         try:
             while True:
@@ -219,6 +235,8 @@ class ManagedServer:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+        if process is not None:
+            self.on_pid(None)
         self.identity.update(stopped_at_utc=utc_now(),
                              server_exit_code=process.poll() if process else None,
                              peak_device_memory_mib=max(self._samples, default=None))
