@@ -43,7 +43,7 @@
 - 代码：`kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki.toml.example`。
 - 测试（core，`just test`）：`tests/test_config.py`（默认值、两种相对路径基准、模型路径、未知键与已删除键、类型、环境变量破锁、示例文件覆盖全部键）、`tests/test_recipes.py`（`pan` 系数与归一化、不削波、`pan`／重采样参数进 hash、固定值、无翻译配方）、`tests/test_media.py`（语言归一化、音轨选择含 commentary／多条匹配／无匹配、视频时长来源、容器映射、命令行构造、补偿解析、时长校验）、`tests/test_media_ffmpeg.py`（用本机 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、流复制容器、多音轨选择；临时目录含空格与非 ASCII）。合成测试需要 `D:/bin/ffmpeg.exe`、`ffprobe.exe`（配置默认值），缺失时测试失败而不是跳过。
 - 真实视频（2026-10-14，ffmpeg 2026-10-01 gyan.dev full build，不进 Git）：Heaven's Feel II（mkv，FLAC 立体声）产出三份产物，派生 WAV 的 PCM SHA256 `ee4e2da3…` 与基线 `hf-ii-full.wav` 一致（112448683 样本），视频流时长取自 `DURATION-eng`；Black Panther（mkv，12 条音轨，选中 jpn E-AC-3 `5.1(side)`）产出 `audio.eac3`、`audio-16k.wav`、`extract.log`。
-- 未验证：广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本；cue 时间等于视频时间目前只在 WAV 样本层断言（`sample / 16000 + offset_s`），经 cue 阶段的断言待票据 04。日本广播双单声道（主／副音声）按双声道处理，是已知限制。已知限制：`pan` 保证下混本身不削波，但其后的默认 swr 重采样（48 kHz→16 kHz）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）；真实对白峰值通常留有余量，未在真实素材上量化。
+- 未验证：广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本；cue 时间等于视频时间目前只在 WAV 样本层断言（`sample / 16000 + offset_s`），经 cue 阶段的断言待票据 04。日本广播双单声道（主／副音声）按双声道处理，是已知限制。已知限制：`pan` 保证下混本身不削波，但其后的默认 swr 重采样（48 kHz→16 kHz）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）；真实素材实测（2026-10-14）：HF II 派生 WAV 1.12 亿样本中只有 1 个到满幅，Black Panther 峰值 31073、无削波。
 
 ## 变更与决策来源
 
