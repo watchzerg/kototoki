@@ -167,6 +167,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4]  [translate 1 2 3 4]
   .work/lock             编排器独占本输出目录（ProcessLock）
   .work/index.json       <id> ↔ 相对路径
   .work/cache/           HF_HOME／TORCH_HOME，整个输出目录共用一份
+  .work/translate-sessions/  llama-server 运行日志（每次运行一个时间戳目录，按 session 分子目录，整批影片共用）
   .work/<id>/
     probe.json           音轨选择与 ffprobe 快照（含 start_time 诊断）
     audio.<ext>          原始编码音轨（流复制），保留
@@ -176,7 +177,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4]  [translate 1 2 3 4]
     asr.json             最贵的 STT 阶段；每窗文字与 trace、failed_windows，不含音频
     align.json           权威 STT 证据：全文、units、text_only、对齐记录
     ja-cues.json         cue ↔ unit 映射、时间回填记账、未渲染文字记账
-    translate/srt-<sha12>/   v3 风格 run，按 ja.srt 的 SHA256 分键：scenes、transport、runtime 日志；可续跑
+    translate/srt-<sha12>/<配方名>__s<seed>/   v3 风格 run，按 ja.srt 的 SHA256 分键、再按配方与 seed 分目录：run.json、batches.jsonl、scene.json、transport；可续跑
     published.json       三份最终 SRT 的 SHA256 与来源产物身份（含当前使用的 translate 目录）
     failure.json         任一阶段失败时写，记录阶段、异常与已完成产物
 ```
@@ -439,3 +440,5 @@ seed  = 20261008
 2026-10-14（票据 04 实施）：`max_gap_s` 初值 0.4 → 1.0（前 5 分钟观感：0.4 时 ≤2 字条目 374 条，1.0 时 123 条）；整窗 `fallback` 每字符时长上限 `FALLBACK_MAX_CHAR_S = 0.25` s 归入 cue 配方 hash（票据 02 收编）；`rules` 为与 `[cues]` 表同形的映射；`max_chars` 计入附着标点、非词汇串分配、cue 时间只取词汇字符、零时长补 1 ms 等实现细节经用户确认，见[日文 cue](../architecture/modules/japanese-cues.md)。
 
 2026-10-14（票据 03 实施）：§7.1 两处与目标架构对齐——ASR 引擎由 jobs 的 `config.engine` 选择（不另设 `--engine` 参数），离线环境由编排器为 worker 子进程设置；冻结窗口门禁三阶段结果与现有同窗结果全等（窗口、文字、token、unit 时间），见 [STT worker](../architecture/modules/stt-workers.md)。
+
+2026-10-14（票据 05 实施）：翻译 run 目录在 `srt-<sha12>/` 下再按 `<配方名>__s<seed>/` 分目录（与 v3 run_id 同形），否则改 seed 重试会被 run.json 不一致拒绝；llama-server 由整批共用，运行日志放 `.work/translate-sessions/`（§4）。见[翻译子系统与双语合并](../architecture/modules/translation-subsystem.md)。

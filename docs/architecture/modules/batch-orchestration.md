@@ -1,6 +1,6 @@
 # 批次编排
 
-状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03）的 jobs 约定调用，x0（票据 07）、翻译子系统与合并（票据 05／09）尚未实现，后者按[目标架构](../bilingual-pipeline-architecture.md)的接口调用；只经伪 worker 与伪翻译模块离线验证。
+状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03）的 jobs 约定调用，x0（票据 07）与翻译降级（票据 09）尚未实现；[翻译子系统与合并](translation-subsystem.md)（票据 05）按[目标架构](../bilingual-pipeline-architecture.md)的接口实现；本页只经伪 worker 与伪翻译模块离线验证。
 
 ## 定位与阅读
 
@@ -57,7 +57,7 @@
 
 - 代码：`kototoki/__main__.py`（`main`、`check_output_dir`）、`kototoki/job.py`（`run`、`Summary`、`next_stage`、`run_gpu_stage`、`ProcessLock`、`contain_children`）。锁、进程身份与 Job Object 复制自 `experiments/translation_v3/procs.py`（未导入）。
 - 测试（core，`just test`）：`tests/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`、伪翻译与合并模块、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖扫描与镜像、大小采样稳定性、发布前置判定与 `force`、阶段顺序、崩溃文件隔离与按文件重启、失败隔离、中断后续跑、输出目录锁与 GPU 锁冲突退出码、无语音路径、一起发布、子进程环境、禁止导入清单与输出目录位置检查。
-- 未验证：真实 worker、llama-server 与 ffmpeg 下的整批运行（票据 08）；Job Object 在编排器被强杀时结束子进程（只在 Windows 上由系统保证，未自动测试）；`kototoki.translate`／`kototoki.merge` 的真实接口与本页假设一致（票据 05）。
+- 未验证：真实 worker、llama-server 与 ffmpeg 下的整批运行（票据 08）；Job Object 在编排器被强杀时结束子进程（只在 Windows 上由系统保证，未自动测试）。`kototoki.translate`／`kototoki.merge` 的真实接口已由票据 05 按本页假设实现（伪客户端测试见[翻译子系统与合并](translation-subsystem.md)），二者与编排器的真实联调随票据 08。
 
 ## 变更与决策来源
 
