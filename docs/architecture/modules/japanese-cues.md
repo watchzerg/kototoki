@@ -39,13 +39,13 @@
 
 ## 接口与依赖
 
-只依赖标准库与 `kototoki.srt`（`format_srt`、`milliseconds`）；属基础层之上的纯函数模块，编排器直接调用（[目标架构](../bilingual-pipeline-architecture.md#分层与依赖方向)）。cue 规则的取值与默认由配置模块提供；`FALLBACK_MAX_CHAR_S` 是会改变输出的代码常量，应进 cue 配方 hash（`kototoki/recipes.py` 归票据 02）。
+只依赖标准库与 `kototoki.srt`（`format_srt`、`milliseconds`）；属基础层之上的纯函数模块，编排器直接调用（[目标架构](../bilingual-pipeline-architecture.md#分层与依赖方向)）。cue 规则的取值与默认由配置模块提供；`FALLBACK_MAX_CHAR_S` 是会改变输出的代码常量，须进 cue 配方 hash；用户已裁定由票据 02 收编进 `kototoki/recipes.py`（迁入或纳入 hash），收编前它暂住本模块。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/cues.py`（`build_cues`、`is_lexical`、`FALLBACK_MAX_CHAR_S`）。
 - 测试（core，`just test`）：`tests/test_cues.py`——插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、lead-out 不重叠、min-duration、空输入、全 `text_only` 窗、纯标点、♪ 附着、非零 `offset_s` 只加一次、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。
-- 离线观感（2026-10-14，规格 §5.2 初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。记录见票据 04 Comments。
+- 离线观感（2026-10-14，规格 §5.2 原初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（规格 §5.2）。记录见票据 04 Comments。
 - 未验证：Qwen（x0）输出标点密度下的切分效果（票据 07）；整片双语观感（票据 08）。
 
 ## 变更与决策来源

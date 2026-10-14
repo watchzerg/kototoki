@@ -202,7 +202,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 | `max_chars` | 24 | 单条 cue 的日文字符数上限（按 Unicode 码点计，不含空白）。日本商业字幕常用每行 13–16 字、最多两行；双语显示时日文只占一行，取 24 作为单行可读上限 |
 | `max_duration_s` | 6.0 | 单条 cue 显示时长上限 |
 | `min_duration_s` | 0.8 | 低于此值且后方有间隙时向后延长，不与下一条重叠 |
-| `max_gap_s` | 0.4 | 相邻有时间 unit 之间的正间隔超过此值即断开 |
+| `max_gap_s` | 1.0 | 相邻词汇字符之间的正间隔超过此值即断开。原初值 0.4 在 CTC 字间间隔处把词切碎，2026-10-14 按票据 04 离线观感改为 1.0（用户采纳） |
 | `sentence_endings` | `。！？!?` | 遇到即断开 |
 | `soft_breaks` | `、，,` | 超过 `max_chars` 时优先在这些字符后断 |
 | `lead_out_s` | 0.3 | 每条 cue 结束时间向后延长的秒数（CTC 给的是发声结束，整片证据中比参考字幕结束中位早约 0.34 s），不越过下一条起点 |
@@ -371,7 +371,7 @@ model = "mms-1b-all"
 max_chars = 24
 max_duration_s = 6.0
 min_duration_s = 0.8
-max_gap_s = 0.4
+max_gap_s = 1.0
 sentence_endings = "。！？!?"
 soft_breaks = "、，,"
 lead_out_s = 0.3                        # 发声结束后向后延长，不越过下一条起点
@@ -433,3 +433,5 @@ seed  = 20261008
 2026-10-14（第三轮，独立评审，用户全部采纳）：`offset_s` 恒为 0、零点由 `first_pts=0` 补齐（原方案双重计时且参考零点错）；产物坐标系写明；5.1 `pan` 常量与不削波；时长校验对视频流、verbose 日志入工作目录；翻译 run 目录按 `ja.srt` SHA 分键；发布覆盖规则按 `published.json` SHA 判定；输出目录锁；worker 按文件重启；x0 触顶窗口置空；票据 03 门禁加时间容差；`recipes.py` 归属拆分、05 依赖 02；产品测试放 `tests/` 并由 00 接线；AGENTS／workflow／ADR-0005 反向链接随 01／06 交付；`break_stale_lock` 改环境变量；删 `[vad] device`；语言标签归一化；小端 PCM 才映射 `.wav`；毫秒取整、`fallback` 命名、边缘插值、双语换行；DLL 共存证据修正与干净 PATH smoke、stock 引擎响应字段断言、smoke 各自子进程；启动 llama-server 前查空闲显存；清理 CUDA 13 时代残留文字。`forced_align` 在本机 torchaudio 2.11.0+cu128 只读核实存在。
 
 2026-10-14（票据 01 实施）：四项环境 smoke 完成；torchcodec 改取 PyPI；VAD worker 不需要 FFmpeg PATH（§7.1 删除该条）；CT2 自带 cuDNN 调度器与 torch 子库并存经用户接受，§7.1／§7.2／§9 表述随之修正；MMS 分词器多出 `|` 记入票据 03。
+
+2026-10-14（票据 04 实施）：`max_gap_s` 初值 0.4 → 1.0（前 5 分钟观感：0.4 时 ≤2 字条目 374 条，1.0 时 123 条）；整窗 `fallback` 每字符时长上限 `FALLBACK_MAX_CHAR_S = 0.25` s 归入 cue 配方 hash（票据 02 收编）；`rules` 为与 `[cues]` 表同形的映射；`max_chars` 计入附着标点、非词汇串分配、cue 时间只取词汇字符、零时长补 1 ms 等实现细节经用户确认，见[日文 cue](../architecture/modules/japanese-cues.md)。
