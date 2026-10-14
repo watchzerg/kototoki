@@ -18,6 +18,7 @@
 | llama-server 命令行、驻留证据解析、资产清单与 OOM 识别 | [逐窗翻译运行时](modules/translation-runtime.md) | 完整 SRT 流程导入 `residency_evidence`、`validate_residency`、`load_assets`、`explicit_oom` 等 |
 | Hy30 原生提示模板与 ID JSON grammar（`translation_demo.adapters`） | [逐窗翻译运行时](modules/translation-runtime.md) | 完整 SRT 流程 |
 | 产物契约：`.work/<id>` 布局与短 id、产物文件名、视频／派生身份、模型哈希缓存、坐标约定、匹配跳过与原地替换、原子写、`failure.json`、`published.json` 与覆盖规则；worker `--jobs` 协议、退出码与 `failed_windows`；产品 SRT 读写与毫秒取整 | [产物契约](modules/artifact-contract.md)（`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`） | 产品流水线各阶段与编排器（票据 02–09） |
+| 产品配置读取与路径解析（`kototoki.toml`、GPU 锁路径、破锁环境变量）；STT／cue／媒体配方常量、下混 `pan` 常量与 `recipe_hash`（翻译配方除外）；音轨选择、流复制容器映射、派生 WAV 与时间轴零点（`offset_s` 恒为 0）、对视频流的时长校验 | [配置、配方与媒体提取](modules/config-and-media.md)（`kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`） | 编排器（票据 06）、STT worker（票据 03／07）、翻译子系统读配置（票据 05） |
 | 流程配方身份（`Recipe.recipe_hash`）、批次、整片交付 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) | — |
 
 ## 依赖方向

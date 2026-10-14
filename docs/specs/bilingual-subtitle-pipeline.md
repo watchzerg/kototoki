@@ -111,7 +111,7 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 
 - **为什么 ② 不从 ① 派生**：`.ac3`／`.eac3`／`.dts`／`.mp3`／ADTS AAC 等裸码流容器没有时间戳，流复制后丢掉音轨相对视频的起始延迟与中途间隙（广播 `.ts` 常见），AAC 的编码器预延迟处理也不同。② 直接从视频容器解码，`async=1:first_pts=0` 补齐起始静音，让 WAV 的 sample 0 对齐视频 0 秒。
 - **零点与 `offset_s`**（2026-10-14 第三轮修订）：补齐静音后 WAV 已经是视频坐标，因此 `offset_s` 恒为 0，各阶段不再把音轨 `start_time` 加到时间上（否则同一延迟会在 `map_records` 里算两次）。ffmpeg 默认把输入的 `format.start_time` 平移到 0，广播 `.ts` 的音轨 `start_time` 是绝对值，直接当偏移会整体后移一秒多；而音频先于视频的负延迟又无法用非负 offset 表达。`start_time`（音轨与容器）只进 `probe.json` 作诊断。现有 W0 链路的 `offset_s` 参数保留，产品固定传 0；票据 02 的"延迟音轨"合成测试必须断言最终 cue 时间等于视频时间。
-- **丢样与时长校验**：`async=1` 是硬补偿（插静音／丢样本），时间戳回绕或 PTS 断裂时会静默丢音频，因此解码用 `-loglevel verbose` 并把日志写入 `extract.log`，记录补偿量（swr 是否在 verbose 下报告补偿统计待票据 02 实测）。校验对象是**视频流时长**而不是 `format.duration`（TS 内 VBR 音频的容器时长是估算值）：解码短于视频超过 1 s 视为截断失败，长于视频只告警。
+- **丢样与时长校验**：`async=1` 是硬补偿（插静音／丢样本），时间戳回绕或 PTS 断裂时会静默丢音频，因此解码用 `-loglevel verbose` 并把日志写入 `extract.log`，记录补偿量（票据 02 实测：swr 在 verbose 下报告 `adding N audio samples of silence`，但只报出一部分，合成 2 s 间隙只报约 0.63 s，因此另按 ffmpeg 结束统计的输入样本数记净补偿 `net_padding_s`，见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)）。校验对象是**视频流时长**而不是 `format.duration`（TS 内 VBR 音频的容器时长是估算值）：解码短于视频超过 1 s 视为截断失败，长于视频只告警。
 - **下混按声道布局**：每种布局的 `pan` 表达式在 `recipes.py` 写死并进配方 hash。单声道直通；双声道沿用基线证据的 `pan=mono|c0=0.5*c0+0.5*c1`；5.1 及以上用 ffmpeg 标准系数（前左右 1、中置 0.707、环绕 0.707、丢 LFE）并除以系数和归一化，禁止削波，不能只取左右前；`-ac 1` 的隐式矩阵不用，因为它的系数与归一化不在配方里。合成 5.1 测试断言满幅输入不削波。日本广播双单声道（主／副音声）无法自动识别，第一版按双声道处理并记为已知限制。
 - **重采样器**：保持 ffmpeg 默认 swr，与基线证据逐字节一致（现有 `hf-ii-full.wav` 可作对照；基线命令带 `-fflags +bitexact -flags:a +bitexact`，对照只比 PCM SHA256）；soxr 列入未来方向。
 

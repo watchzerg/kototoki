@@ -48,8 +48,8 @@ flowchart TB
 | worker 协议 | `run_worker(jobs_path, start)`：worker 只提供"启动一次、处理一个文件"的回调；退出码 0／1／2 的含义；`fail_window`／`retained_text` 的 `failed_windows` 写法 | jobs 文件解析、增量落盘、进度行、单文件异常隔离、`FatalWorkerError` 到退出码 2 的映射 | `kototoki/workers/protocol.py` | [产物契约](modules/artifact-contract.md) |
 | 产物契约 | 四组函数：身份（`video_identity`／`derived_identity`／`is_current`）、路径（`register_work_dir`／`translate_run_dir`／`final_srt_paths`）、写入（`write_artifact`／`write_failure`）、发布（`publish_blockers` → `record_published` → 移动，顺序固定）；坐标约定是接口的一部分，调用方不得自行换算 | 短 id 与碰撞检测、ffprobe 指纹字段、模型哈希 size+mtime 缓存、原子写与 Windows 重试、`previous_sha256` | `kototoki/artifacts.py` | [产物契约](modules/artifact-contract.md) |
 | SRT | `parse_srt`／`read_srt`／`format_srt`／`write_srt`；毫秒取整 `floor(x*1000+0.5)`；零条目合法 | 严格解析规则、`<sha8>-cue-<n>` 别名（供翻译移植保持请求字节） | `kototoki/srt.py` | [产物契约](modules/artifact-contract.md) |
-| 配置与配方 | `load(path) -> Config`；路径解析规则（用户相对路径按配置文件目录，默认相对路径按仓库根）；未知键报错；各阶段 `recipe_hash` 常量 | TOML 读取、默认填充、`pan` 常量与重采样参数进 hash | `kototoki/config.py`、`recipes.py`（不含翻译配方） | 票据 02 |
-| 媒体 | `probe(path) -> Probe`、`extract(path, work_dir, probe) -> Extract`；唯一不变量：派生 WAV 的 sample 0 等于视频 0 秒，时长已对视频流校验，`offset_s` 恒为 0 | 音轨选择与语言标签归一化、容器映射、`pan` 下混常量、`aresample=async=1:first_pts=0`、verbose 日志落盘 | `kototoki/media.py` | 票据 02 |
+| 配置与配方 | `load(path) -> Config`；路径解析规则（用户相对路径按配置文件目录，默认相对路径按仓库根）；未知键报错；各阶段 `recipe_hash` 常量 | TOML 读取、默认填充、`pan` 常量与重采样参数进 hash | `kototoki/config.py`、`recipes.py`（不含翻译配方） | [配置、配方与媒体提取](modules/config-and-media.md) |
+| 媒体 | `probe(path, config) -> Probe`、`extract(path, work_dir, probe, config) -> Extract`（`config` 提供 ffmpeg／ffprobe 路径与音轨语言偏好）；不支持的声道布局、ffmpeg 失败与解码截断抛 `MediaError`；唯一不变量：派生 WAV 的 sample 0 等于视频 0 秒，时长已对视频流校验，`offset_s` 恒为 0 | 音轨选择与语言标签归一化、容器映射、`pan` 下混常量、`aresample=async=1:first_pts=0`、verbose 日志落盘 | `kototoki/media.py` | [配置、配方与媒体提取](modules/config-and-media.md) |
 | VAD | 加载一次、对内存波形推理一次，返回整数样本窗口与子段（WAV 本地坐标）；设备固定 `cuda:0` | pyannote 4.0.7 适配、`chunk_intervals` 合并策略 | `kototoki/vad.py`、`workers/vad.py` | 票据 03 |
 | ASR 引擎 | 加载一次、按窗口转写，返回文字与窗口级失败；两个适配器写出同一种 `asr.json`；`asr_whisper` 额外要求先 `import torch` 再导入 `ctranslate2`（有测试钉住） | w0：torch 特征链与 CT2 解码；x0：Qwen 原生 processor、4096 触顶转 `failed_windows` | `kototoki/asr_whisper.py`、`asr_qwen.py`、`workers/asr.py` | 票据 03（w0）、07（x0） |
 | 对齐 | 加载一次、按窗口强制对齐，返回 `units` 与 `text_only`；`map_records(offset_s)` 由产品传 0 | torchaudio `forced_align`、字典按模型类数过滤、整数样本窗口校验 | `kototoki/align.py`、`workers/align.py` | 票据 03 |
@@ -99,4 +99,4 @@ flowchart TB
 
 ## 变更与决策来源
 
-规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
+规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[配置、配方与媒体提取](modules/config-and-media.md)（票据 02）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
