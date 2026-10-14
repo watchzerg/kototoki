@@ -18,6 +18,7 @@
 | llama-server 命令行、驻留证据解析、资产清单与 OOM 识别 | [逐窗翻译运行时](modules/translation-runtime.md) | 完整 SRT 流程导入 `residency_evidence`、`validate_residency`、`load_assets`、`explicit_oom` 等 |
 | Hy30 原生提示模板与 ID JSON grammar（`translation_demo.adapters`） | [逐窗翻译运行时](modules/translation-runtime.md) | 完整 SRT 流程 |
 | 产物契约：`.work/<id>` 布局与短 id、产物文件名、视频／派生身份、模型哈希缓存、坐标约定、匹配跳过与原地替换、原子写、`failure.json`、`published.json` 与覆盖规则；worker `--jobs` 协议、退出码与 `failed_windows`；产品 SRT 读写与毫秒取整 | [产物契约](modules/artifact-contract.md)（`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`） | 产品流水线各阶段与编排器（票据 02–09） |
+| 产品日文 cue：无时间字符回填（插值、外推、整窗 `fallback`）、三级切分、lead-out 与最短时长、cue 时间加一次 `offset_s` | [日文 cue](modules/japanese-cues.md)（`kototoki/cues.py`） | 编排器（票据 06）写 `ja-cues.json`／`ja.srt` |
 | 流程配方身份（`Recipe.recipe_hash`）、批次、整片交付 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) | — |
 
 ## 依赖方向
