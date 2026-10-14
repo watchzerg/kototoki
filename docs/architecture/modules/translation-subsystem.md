@@ -24,7 +24,7 @@
 | `context`、`limit`、`parse` | 输入超预算、`stop_type == "limit"` 或 `truncated`、JSON／ID 校验失败、译文含空行（会让 SRT 断块；v3 校验之外新增） | 批次终态：按下节降级，不重启 server、不使该影片失败 |
 | 其他异常 | 非 JSON 响应、写盘失败等 | 该 session 记 `stop_reason = session_error: …`，停掉 server，原样上抛 |
 
-**降级**（`degrade.py`，规格 §6）：批次终态失败后拆成前后两半 `父ID.a`／`父ID.b`（奇数条前半多 1 条），仍失败的半批拆成单条 `父ID.a.1`…，单条仍失败则该 cue 的译文 = 日文原文（回退，原因取该单条的失败种类）；只有 1 条的批次失败即回退。子批次与原批次一样取前后各 1 条只读邻文、同一 seed，提示、grammar、采样与请求由同一组函数构造（测试逐字节对照）。降级中每个节点（含失败的原批次）的结果一出来就追加到 `degrade.jsonl`；降级途中的基础设施失败照常重启 server，新 session 从未记录的节点继续，已记录的节点不再请求。整个批次完成后写成 `batches.jsonl` 的一行（带 `degrade.nodes` 与 `degrade.fallback`），回退由此对该配方 hash 与 seed 是终态：重跑同一命令不再尝试，要重试须改 `[translate] seed`（另起 run）。规格 §6 的"`force = true` 重跑整个翻译阶段"尚未实现（编排器的 `force` 只放行被改动的最终文件）。
+**降级**（`degrade.py`，规格 §6）：批次终态失败后拆成前后两半 `父ID.a`／`父ID.b`（奇数条前半多 1 条），仍失败的半批拆成单条 `父ID.a.1`…，单条仍失败则该 cue 的译文 = 日文原文（回退，原因取该单条的失败种类）；只有 1 条的批次失败即回退。子批次与原批次一样取前后各 1 条只读邻文、同一 seed，提示、grammar、采样与请求由同一组函数构造（测试逐字节对照）。降级中每个节点（含失败的原批次）的结果一出来就追加到 `degrade.jsonl`；降级途中的基础设施失败照常重启 server，新 session 从未记录的节点继续，已记录的节点不再请求。整个批次完成后写成 `batches.jsonl` 的一行（带 `degrade.nodes` 与 `degrade.fallback`），回退由此对该配方 hash 与 seed 是终态：重跑同一命令不再尝试，要重试须改 `[translate] seed`（另起 run）；`force` 不触发重译。
 
 **session**：一个 server 进程即一个 session。`cache_n == 0` 校验在每个 session 的首个 completion 做一次（之后的影片复用 KV 前缀属正常）。每次重启都是新 session：影片 `run.json` 的 `sessions[]` 新增一项、`cache_state` 重置、写过批次或遇到基础设施失败的 session 超过一个时 `resumed = true`。server 启动失败（`server_start`）不新增 `sessions[]` 项，记入 `server_start_failures[]`；端口被占、模型核对失败、驻留校验失败等按原异常抛出，不重试。server 启动前用 `nvidia-smi memory.free` 轮询，达到 14900 MiB 才启动（整片实测 server 自身约 14800 MiB），120 s 超时按 `server_start` 失败处理并写明最后读数。某部影片的重启额度全部耗在 `server_start` 上（GPU 被占或 server 起不来）时，`Session` 记为不可用，本批其余影片直接抛 `TranslateError`，不再逐片等待；混有其他种类的失败不触发这一点。
 
