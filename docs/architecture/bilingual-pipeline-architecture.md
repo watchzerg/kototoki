@@ -36,7 +36,7 @@ flowchart TB
 - **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动阶段 worker，与它们的全部通信是 jobs 文件、工作目录里的产物和退出码。票据 06 的禁止导入测试（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、任何 `experiments.*`）是这条规则的守门员。
 - **推理模块互不导入。** `vad`、`asr_*`、`align` 只依赖基础层，各自在独立进程里加载模型；阶段之间只经产物文件交接。
 - **基础层不依赖 torch、ffmpeg、网络与上层。** 它是所有离线测试的根基，编排器可以直接导入。
-- **产品包不导入 `experiments.*`。** 历史实现只复制不引用，冻结证据保持只读；`kototoki_eval/` 继续承担评分，产品侧的 `validate_transcript` 复制到 `kototoki/schema.py`（票据 03）。
+- **产品包不导入 `experiments.*`。** 历史实现只复制不引用，冻结证据保持只读；`kototoki_eval/` 继续承担评分，产品侧的 `validate_transcript` 复制到 `kototoki/schema.py`（票据 03，另含窗口与 units 校验）。
 
 ## 模块清单
 
@@ -50,14 +50,14 @@ flowchart TB
 | SRT | `parse_srt`／`read_srt`／`format_srt`／`write_srt`；毫秒取整 `floor(x*1000+0.5)`；零条目合法 | 严格解析规则、`<sha8>-cue-<n>` 别名（供翻译移植保持请求字节） | `kototoki/srt.py` | [产物契约](modules/artifact-contract.md) |
 | 配置与配方 | `load(path) -> Config`；路径解析规则（用户相对路径按配置文件目录，默认相对路径按仓库根）；未知键报错；各阶段 `recipe_hash` 常量 | TOML 读取、默认填充、`pan` 常量与重采样参数进 hash | `kototoki/config.py`、`recipes.py`（不含翻译配方） | [配置、配方与媒体提取](modules/config-and-media.md) |
 | 媒体 | `probe(path, config) -> Probe`、`extract(path, work_dir, probe, config) -> Extract`（`config` 提供 ffmpeg／ffprobe 路径与音轨语言偏好）；不支持的声道布局、ffmpeg 失败与解码截断抛 `MediaError`；唯一不变量：派生 WAV 的 sample 0 等于视频 0 秒，时长已对视频流校验，`offset_s` 恒为 0 | 音轨选择与语言标签归一化、容器映射、`pan` 下混常量、`aresample=async=1:first_pts=0`、verbose 日志落盘 | `kototoki/media.py` | [配置、配方与媒体提取](modules/config-and-media.md) |
-| VAD | 加载一次、对内存波形推理一次，返回整数样本窗口与子段（WAV 本地坐标）；设备固定 `cuda:0` | pyannote 4.0.7 适配、`chunk_intervals` 合并策略 | `kototoki/vad.py`、`workers/vad.py` | 票据 03 |
-| ASR 引擎 | 加载一次、按窗口转写，返回文字与窗口级失败；两个适配器写出同一种 `asr.json`；`asr_whisper` 额外要求先 `import torch` 再导入 `ctranslate2`（有测试钉住） | w0：torch 特征链与 CT2 解码；x0：Qwen 原生 processor、4096 触顶转 `failed_windows` | `kototoki/asr_whisper.py`、`asr_qwen.py`、`workers/asr.py` | 票据 03（w0）、07（x0） |
-| 对齐 | 加载一次、按窗口强制对齐，返回 `units` 与 `text_only`；`map_records(offset_s)` 由产品传 0 | torchaudio `forced_align`、字典按模型类数过滤、整数样本窗口校验 | `kototoki/align.py`、`workers/align.py` | 票据 03 |
+| VAD | 加载一次、对内存波形推理一次，返回整数样本窗口与子段（WAV 本地坐标）；设备固定 `cuda:0` | pyannote 4.0.7 适配、`chunk_intervals` 合并策略 | `kototoki/vad.py`、`workers/vad.py` | [STT worker](modules/stt-workers.md) |
+| ASR 引擎 | 加载一次、按窗口转写，返回文字与窗口级失败；两个适配器写出同一种 `asr.json`；`asr_whisper` 额外要求先 `import torch` 再导入 `ctranslate2`（有测试钉住） | w0：torch 特征链与 CT2 解码；x0：Qwen 原生 processor、4096 触顶转 `failed_windows` | `kototoki/asr_whisper.py`、`asr_qwen.py`、`workers/asr.py` | w0：[STT worker](modules/stt-workers.md)；x0：票据 07 |
+| 对齐 | 加载一次、按窗口强制对齐，返回 `units` 与 `text_only`；`map_records(offset_s)` 由产品传 0 | torchaudio `forced_align`、字典按模型类数过滤、整数样本窗口校验 | `kototoki/align.py`、`workers/align.py` | [STT worker](modules/stt-workers.md) |
 | 日文 cue | `build_cues(align, rules) -> (cues, srt_text)`，无副作用；输入 `units` 已含 offset，回退子段加一次 offset | 线性插值与边缘外推、整窗 `fallback`、三级切分、lead-out 与最短时长、取整 | `kototoki/cues.py` | [日文 cue](modules/japanese-cues.md) |
 | 翻译子系统 | 对编排器只暴露 `translate_document(document, run_dir, session, config) -> TranslateResult`（含 report）与 `Session` 生命周期对象；run 目录按 `ja.srt` SHA 分键；回退为日文的 cue 对该配方 hash 与 seed 是终态 | server 启停与显存轮询、`cache_n` 校验、按批次落盘与续跑、重启即新 session、三级降级、stock 引擎驻留解析、翻译配方与 hash | `kototoki/translate/`（`server`、`client`、`batching`、`generate`、`degrade`、`recipes`…） | 票据 05、09 |
 | 合并 | `merge(ja_document, zh_translations) -> srt_text`；每条恰好两行 | 中文换行替换为空格、回退条目照常输出 | `kototoki/merge.py` | 票据 05 |
 
-编排是全系统最深的模块：一个入口，实现承载全部流程知识。三个 worker 的 `__main__` 都应缩到十行以内，流程知识在协议模块里。`cues`、`merge` 是最容易做深的纯函数模块，也是最该直接按接口测试的模块。
+编排是全系统最深的模块：一个入口，实现承载全部流程知识。三个 worker 的 `__main__` 都应缩到十行以内，流程知识在协议模块里；三壳共用的入口、读 WAV、模型核对与 CUDA 守卫在 `workers/gpu.py`（只被 worker 壳导入，不属基础层）。`cues`、`merge` 是最容易做深的纯函数模块，也是最该直接按接口测试的模块。
 
 ## 接缝裁定
 
@@ -99,8 +99,4 @@ flowchart TB
 
 ## 变更与决策来源
 
-<<<<<<< HEAD
-规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[配置、配方与媒体提取](modules/config-and-media.md)（票据 02）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
-=======
-规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[日文 cue](modules/japanese-cues.md)（票据 04）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
->>>>>>> main
+规格 §3、§4、§6、§7.1、§7.3 与 §1.2 第三轮裁定表；ADR-0007；票据 `.scratch/bilingual-subtitle-pipeline/issues/00`–`09`；设计词汇取自 codebase-design 约定（深模块、接缝、适配器）。已交付部分：[产物契约](modules/artifact-contract.md)（票据 00）、[配置、配方与媒体提取](modules/config-and-media.md)（票据 02）、[STT worker](modules/stt-workers.md)（票据 03）、[日文 cue](modules/japanese-cues.md)（票据 04）、统一 CUDA 12.8 环境（票据 01，见[技术选型](../development/technology-stack.md)）。
