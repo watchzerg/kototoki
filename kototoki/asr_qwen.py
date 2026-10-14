@@ -48,9 +48,10 @@ class QwenAsr:
         if not torch.cuda.is_available():
             raise RuntimeError("Qwen ASR requires CUDA; CPU fallback is prohibited")
         self._processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
+        # 研究期用 `device_map={"": "cuda:0"}`，那需要产品环境没有的 accelerate；加载后整体 `.to` 等价。
         self._model = AutoModelForMultimodalLM.from_pretrained(
             model_path, dtype=torch.bfloat16, attn_implementation=X0["attn_implementation"],
-            device_map={"": DEVICE}, local_files_only=True).eval()
+            local_files_only=True).to(DEVICE).eval()
         torch.cuda.synchronize()
         distribution = importlib.metadata.distribution("transformers")
         implementation = {}
