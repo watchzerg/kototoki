@@ -1,0 +1,52 @@
+# kototoki 配置示例（规格 docs/specs/bilingual-subtitle-pipeline.md §10）。复制为 kototoki.toml 后修改。
+# 省略的键取下面的默认值；未知键报错。用户写出的相对路径按本文件所在目录解析，
+# 省略键的默认相对路径按仓库根解析。模型路径为相对路径时相对于 models_root。
+# GPU 锁固定为仓库内 .local/gpu.lock；破除死锁用环境变量 KOTOTOKI_BREAK_STALE_LOCK=1（只对本次运行生效）。
+# 解码、采样、提示等影响模型行为的常量不在这里，见 kototoki/recipes.py 与 kototoki/translate/recipes.py。
+
+[paths]
+input_dir    = "D:/movie/inbox"         # 必填：递归扫描视频
+output_dir   = "D:/movie/subs"          # 必填：最终 SRT 与 .work/
+models_root  = ".local/models"
+ffmpeg       = "D:/bin/ffmpeg.exe"
+ffprobe      = "D:/bin/ffprobe.exe"
+llama_server = ".local/tools/llama.cpp/b11583-cuda13.4/llama-server.exe"
+
+[input]
+video_extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"]
+audio_language   = "jpn"                # jpn／ja／jp 视为同一语言；无匹配时取第一条音轨并告警
+
+[run]
+extract_workers = 4                     # ffmpeg 并发数
+force = false                           # true 时允许覆盖已被改动的最终 SRT
+stable_check_s = 10                     # 两次采样文件大小不变才视为写入完成
+
+[stt]
+engine = "w0"                           # w0 | x0
+
+[vad]
+model = "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"   # 设备固定 cuda:0
+
+[asr.w0]
+model      = "faster-whisper-large-v3"
+mel_assets = "w0-assets"
+
+[asr.x0]
+model = "qwen3-asr-1.7b-hf"
+
+[align]
+model = "mms-1b-all"
+
+[cues]
+max_chars = 24
+max_duration_s = 6.0
+min_duration_s = 0.8
+max_gap_s = 1.0
+sentence_endings = "。！？!?"
+soft_breaks = "、，,"
+lead_out_s = 0.3                        # 发声结束后向后延长，不越过下一条起点
+
+[translate]
+model = "translation/hy-mt2-30b-a3b-apex-i-compact/Hy-MT2-30B-A3B-APEX-I-Compact.gguf"
+port  = 8080
+seed  = 20261008

@@ -39,7 +39,7 @@
 
 ## 接口与依赖
 
-只依赖标准库与 `kototoki.srt`（`format_srt`、`milliseconds`）；属基础层之上的纯函数模块，编排器直接调用（[目标架构](../bilingual-pipeline-architecture.md#分层与依赖方向)）。cue 规则的取值与默认由配置模块提供；`FALLBACK_MAX_CHAR_S` 是会改变输出的代码常量，须进 cue 配方 hash；用户已裁定由票据 02 收编进 `kototoki/recipes.py`（迁入或纳入 hash），收编前它暂住本模块。
+只依赖标准库与 `kototoki.srt`（`format_srt`、`milliseconds`）；属基础层之上的纯函数模块，编排器直接调用（[目标架构](../bilingual-pipeline-architecture.md#分层与依赖方向)）。cue 规则的取值与默认由配置模块提供；`FALLBACK_MAX_CHAR_S` 是会改变输出的代码常量，须进 cue 配方 hash；已由票据 02 纳入 `recipes.CUES["fallback_max_char_s"]`（进 cue 配方 hash），本模块的常量是使用处，`tests/test_recipes.py` 钉住两者相等。
 
 ## 代码与验证入口
 

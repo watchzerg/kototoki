@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from pathlib import Path
+import tempfile
+import tomllib
+import unittest
+
+from dataclasses import asdict
+
+from kototoki import config, cues
+
+MINIMAL = '[paths]\ninput_dir = "in"\noutput_dir = "out"\n'
+
+
+class LoadTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name).resolve() / "配置 dir"
+        self.root.mkdir()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def write(self, text: str) -> Path:
+        path = self.root / "kototoki.toml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_defaults_fill_missing_keys(self) -> None:
+        cfg = config.load(self.write(MINIMAL), environ={})
+        self.assertEqual(cfg.engine, "w0")
+        self.assertEqual(cfg.run.extract_workers, 4)
+        self.assertIs(cfg.run.force, False)
+        self.assertEqual(cfg.run.stable_check_s, 10.0)
+        self.assertEqual(cfg.input.audio_language, "jpn")
+        self.assertEqual(cfg.input.video_extensions, (".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"))
+        self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 1.0, "。！？!?", "、，,", 0.3))
+        self.assertEqual(cfg.translate, config.TranslateConfig(port=8080, seed=20261008))
+        self.assertEqual(cfg.source, self.root / "kototoki.toml")
+
+    def test_cue_rules_have_the_shape_build_cues_expects(self) -> None:
+        rules = asdict(config.load(self.write(MINIMAL), environ={}).cues)
+        self.assertEqual(set(rules), cues.RULE_KEYS)
+
+    def test_user_relative_paths_resolve_against_config_dir(self) -> None:
+        cfg = config.load(self.write(MINIMAL + 'models_root = "models"\nffmpeg = "bin/ffmpeg.exe"\n'), environ={})
+        self.assertEqual(cfg.paths.input_dir, self.root / "in")
+        self.assertEqual(cfg.paths.output_dir, self.root / "out")
+        self.assertEqual(cfg.paths.models_root, self.root / "models")
+        self.assertEqual(cfg.paths.ffmpeg, self.root / "bin" / "ffmpeg.exe")
+
+    def test_default_relative_paths_resolve_against_repo_root(self) -> None:
+        cfg = config.load(self.write(MINIMAL), environ={})
+        self.assertEqual(cfg.paths.models_root, config.REPO_ROOT / ".local" / "models")
+        self.assertEqual(cfg.paths.llama_server,
+                         config.REPO_ROOT / ".local/tools/llama.cpp/b11583-cuda13.4/llama-server.exe")
+        self.assertEqual(cfg.paths.ffmpeg, Path("D:/bin/ffmpeg.exe").resolve())
+
+    def test_model_paths_are_relative_to_models_root(self) -> None:
+        cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "D:/abs/mms"\n'),
+                          environ={})
+        self.assertEqual(cfg.models.w0, self.root / "m" / "w")
+        self.assertEqual(cfg.models.w0_mel_assets, self.root / "m" / "w0-assets")
+        self.assertEqual(cfg.models.align, Path("D:/abs/mms").resolve())
+        default = config.load(self.write(MINIMAL), environ={})
+        self.assertEqual(default.models.vad, config.REPO_ROOT / ".local/models/vad-comparison/"
+                         "pyannote-segmentation-3.0/pytorch_model.bin")
+
+    def test_unknown_keys_and_sections_are_errors(self) -> None:
+        for text, needle in ((MINIMAL + "bogus = 1\n", "bogus"),
+                             (MINIMAL + "[vad]\ndevice = \"cpu\"\n", "device"),
+                             (MINIMAL + "[run]\nbreak_stale_lock = true\n", "break_stale_lock"),
+                             (MINIMAL + "[extra]\nx = 1\n", "[extra]"),
+                             (MINIMAL + "[asr.whisper]\nmodel = \"x\"\n", "[asr.whisper]")):
+            with self.subTest(needle=needle), self.assertRaisesRegex(config.ConfigError, needle.replace("[", r"\[")):
+                config.load(self.write(text), environ={})
+
+    def test_required_paths_and_types_are_checked(self) -> None:
+        bad = (('[paths]\ninput_dir = "in"\n', "output_dir is required"),
+               (MINIMAL + "[run]\nextract_workers = \"4\"\n", "must be an integer"),
+               (MINIMAL + "[run]\nforce = 1\n", "true or false"),
+               (MINIMAL + "[stt]\nengine = \"w1\"\n", "engine must be one of"),
+               (MINIMAL + "[input]\nvideo_extensions = \".mkv\"\n", "list of nonempty strings"),
+               (MINIMAL + "[run]\nextract_workers = 0\n", "at least 1"))
+        for text, message in bad:
+            with self.subTest(message=message), self.assertRaisesRegex(config.ConfigError, message):
+                config.load(self.write(text), environ={})
+
+    def test_integer_accepted_for_float_keys(self) -> None:
+        cfg = config.load(self.write(MINIMAL + "[cues]\nmax_duration_s = 7\n"), environ={})
+        self.assertEqual(cfg.cues.max_duration_s, 7.0)
+        self.assertIsInstance(cfg.cues.max_duration_s, float)
+
+    def test_invalid_toml_and_missing_file_raise_config_error(self) -> None:
+        with self.assertRaisesRegex(config.ConfigError, "Invalid TOML"):
+            config.load(self.write("[paths\n"), environ={})
+        with self.assertRaisesRegex(config.ConfigError, "Cannot read"):
+            config.load(self.root / "missing.toml", environ={})
+
+    def test_gpu_lock_is_fixed_and_break_stale_lock_comes_from_environment(self) -> None:
+        path = self.write(MINIMAL)
+        self.assertEqual(config.load(path, environ={}).gpu_lock, config.REPO_ROOT / ".local" / "gpu.lock")
+        self.assertIs(config.load(path, environ={}).break_stale_lock, False)
+        self.assertIs(config.load(path, environ={"KOTOTOKI_BREAK_STALE_LOCK": "1"}).break_stale_lock, True)
+        self.assertIs(config.load(path, environ={"KOTOTOKI_BREAK_STALE_LOCK": "0"}).break_stale_lock, False)
+
+
+class ExampleFileTests(unittest.TestCase):
+    def test_example_config_loads_and_lists_every_key(self) -> None:
+        example = config.REPO_ROOT / "kototoki.toml.example"
+        cfg = config.load(example, environ={})
+        self.assertEqual(cfg.engine, "w0")
+        with example.open("rb") as stream:
+            document = tomllib.load(stream)
+        written = {(section, key) for section, table in config._flatten(document).items() for key in table}
+        expected = {(section, key) for section, table in config.DEFAULTS.items() for key in table}
+        self.assertEqual(written, expected)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -49,7 +49,7 @@
 | 输出目录 | 镜像输入目录的子目录层级 |
 | 里程碑 | 由实现方拆分并建票（§12） |
 | 下混 | 单声道直通；双声道沿用 0.5/0.5；5.1 以上用 ffmpeg 标准矩阵含中置 |
-| 重采样器 | 保持 ffmpeg 默认 swr，与基线证据逐字节对照；soxr 列未来方向 |
+| 重采样器 | soxr 28 bit（`aresample=16000:resampler=soxr:precision=28`，2026-10-14 用户裁定替代原"保持默认 swr"）；派生 WAV 不再与基线 `hf-ii-full.wav` 逐字节一致 |
 | 翻译引擎 | 官方 llama.cpp b11583 win-cuda-13.4 替代 ADR-0005 的 b11429 兼容引擎条款 |
 | 产品翻译配方 | `b10-joint-degrade-v1` |
 
@@ -111,9 +111,9 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 
 - **为什么 ② 不从 ① 派生**：`.ac3`／`.eac3`／`.dts`／`.mp3`／ADTS AAC 等裸码流容器没有时间戳，流复制后丢掉音轨相对视频的起始延迟与中途间隙（广播 `.ts` 常见），AAC 的编码器预延迟处理也不同。② 直接从视频容器解码，`async=1:first_pts=0` 补齐起始静音，让 WAV 的 sample 0 对齐视频 0 秒。
 - **零点与 `offset_s`**（2026-10-14 第三轮修订）：补齐静音后 WAV 已经是视频坐标，因此 `offset_s` 恒为 0，各阶段不再把音轨 `start_time` 加到时间上（否则同一延迟会在 `map_records` 里算两次）。ffmpeg 默认把输入的 `format.start_time` 平移到 0，广播 `.ts` 的音轨 `start_time` 是绝对值，直接当偏移会整体后移一秒多；而音频先于视频的负延迟又无法用非负 offset 表达。`start_time`（音轨与容器）只进 `probe.json` 作诊断。现有 W0 链路的 `offset_s` 参数保留，产品固定传 0；票据 02 的"延迟音轨"合成测试必须断言最终 cue 时间等于视频时间。
-- **丢样与时长校验**：`async=1` 是硬补偿（插静音／丢样本），时间戳回绕或 PTS 断裂时会静默丢音频，因此解码用 `-loglevel verbose` 并把日志写入 `extract.log`，记录补偿量（swr 是否在 verbose 下报告补偿统计待票据 02 实测）。校验对象是**视频流时长**而不是 `format.duration`（TS 内 VBR 音频的容器时长是估算值）：解码短于视频超过 1 s 视为截断失败，长于视频只告警。
+- **丢样与时长校验**：`async=1` 是硬补偿（插静音／丢样本），时间戳回绕或 PTS 断裂时会静默丢音频，因此解码用 `-loglevel verbose` 并把日志写入 `extract.log`，记录补偿量（票据 02 实测：swr 在 verbose 下报告 `adding N audio samples of silence`，但只报出一部分，合成 2 s 间隙只报约 0.63 s，因此另按 ffmpeg 结束统计的输入样本数记净补偿 `net_padding_s`，见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)）。校验对象是**视频流时长**而不是 `format.duration`（TS 内 VBR 音频的容器时长是估算值）：解码短于视频超过 1 s 视为截断失败，长于视频只告警。
 - **下混按声道布局**：每种布局的 `pan` 表达式在 `recipes.py` 写死并进配方 hash。单声道直通；双声道沿用基线证据的 `pan=mono|c0=0.5*c0+0.5*c1`；5.1 及以上用 ffmpeg 标准系数（前左右 1、中置 0.707、环绕 0.707、丢 LFE）并除以系数和归一化，禁止削波，不能只取左右前；`-ac 1` 的隐式矩阵不用，因为它的系数与归一化不在配方里。合成 5.1 测试断言满幅输入不削波。日本广播双单声道（主／副音声）无法自动识别，第一版按双声道处理并记为已知限制。
-- **重采样器**：保持 ffmpeg 默认 swr，与基线证据逐字节一致（现有 `hf-ii-full.wav` 可作对照；基线命令带 `-fflags +bitexact -flags:a +bitexact`，对照只比 PCM SHA256）；soxr 列入未来方向。
+- **重采样器**：降采样用 soxr 28 bit；`async=1:first_pts=0` 的时间轴补偿在源采样率上进行，仍由 swr 完成。2026-10-14 在 HF II 整片对比：6 kHz 以下两者差异比信号低约 79 dB，差别集中在 7.8–8 kHz（swr 残留 −8.3 dB，soxr −44.9 dB，即 swr 边缘的折叠残留），削波无差别（各 1–2 个样本）；改用默认 swr 时派生 WAV 与基线 `hf-ii-full.wav` 的 PCM SHA256 一致（票据 02 已核对），改 soxr 后不再一致，用户接受。对识别率的影响未用模型验证，预计可忽略。
 
 "无损"的边界：① 是严格无损（字节级流复制），只作归档；② 是推理输入，下混与重采样必然改变样本。
 
@@ -286,7 +286,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | `kototoki/__main__.py`、`job.py`（批次、阶段推进、续跑、锁） | 新写；锁与 Job Object 取自 `translation_v3/procs.py` |
 | `config.py`（读 `kototoki.toml`，§10）、`recipes.py`（VAD／ASR／MMS／cue／媒体的配方常量与 hash，**不含翻译配方**） | 新写，`tomllib` 读取；配方常量取自各 demo 的 `RECIPE`／`recipes.py` |
 | `artifacts.py`（产物路径、身份、匹配跳过、原子写与 Windows 重试、`failure.json`、`published.json`）、`workers/protocol.py`（`--jobs` 格式、增量结果、`failed_windows`、退出码） | 新写；原子写取自 `translation_v3/common.py` |
-| `media.py`（ffprobe／ffmpeg 流复制与派生 WAV） | 新写；下混与重采样参数取自 `experiments/corpus/prepare_round2.py`，保持默认 swr |
+| `media.py`（ffprobe／ffmpeg 流复制与派生 WAV） | 新写；下混与重采样参数取自 `experiments/corpus/prepare_round2.py`，重采样改 soxr 28 bit（2026-10-14 用户裁定） |
 | `vad.py` | `w0_demo/vad_candidates.py` 的 `CurrentPyannoteVad` + `chunk_intervals` |
 | `asr_whisper.py` | `w0_demo/asr.py`（torch 特征链不变，去掉私有 DLL 目录逻辑，显式 torch 先于 ctranslate2 导入） |
 | `asr_qwen.py` | `x0_demo/asr.py` + `experiments/qwen/run_qwen.py` 的资产身份常量、`checkpoint_identity`、`check_gpu`（复制，不导入历史包） |
@@ -404,7 +404,7 @@ seed  = 20261008
 - **用 HF transformers Whisper 替换 CTranslate2**，解除 CUDA 12 锁定（§7.2）。
 - **重复／幻觉守卫**：W0 移植的 WhisperX 路径没有温度回退与压缩比检查，长重复输出目前只能靠 VAD 过滤减少；后续可加 n-gram 重复检测并标记。
 - **利用视频内嵌日文字幕**：probe 已记录字幕流；检测到可用的日文字幕轨时跳过 STT 直接翻译，是 1.1 版最值得做的功能。
-- **soxr 重采样**、**双单声道（主／副音声）识别**、**粗回退按 VAD 子段分配时间**。
+- **双单声道（主／副音声）识别**、**粗回退按 VAD 子段分配时间**。
 - **VAD 跑 CPU** 以让出显存；**升级后的回归与容差**；**单阶段子命令与 CLI**。
 
 ## 12. 实施里程碑
@@ -433,5 +433,7 @@ seed  = 20261008
 2026-10-14（第三轮，独立评审，用户全部采纳）：`offset_s` 恒为 0、零点由 `first_pts=0` 补齐（原方案双重计时且参考零点错）；产物坐标系写明；5.1 `pan` 常量与不削波；时长校验对视频流、verbose 日志入工作目录；翻译 run 目录按 `ja.srt` SHA 分键；发布覆盖规则按 `published.json` SHA 判定；输出目录锁；worker 按文件重启；x0 触顶窗口置空；票据 03 门禁加时间容差；`recipes.py` 归属拆分、05 依赖 02；产品测试放 `tests/` 并由 00 接线；AGENTS／workflow／ADR-0005 反向链接随 01／06 交付；`break_stale_lock` 改环境变量；删 `[vad] device`；语言标签归一化；小端 PCM 才映射 `.wav`；毫秒取整、`fallback` 命名、边缘插值、双语换行；DLL 共存证据修正与干净 PATH smoke、stock 引擎响应字段断言、smoke 各自子进程；启动 llama-server 前查空闲显存；清理 CUDA 13 时代残留文字。`forced_align` 在本机 torchaudio 2.11.0+cu128 只读核实存在。
 
 2026-10-14（票据 01 实施）：四项环境 smoke 完成；torchcodec 改取 PyPI；VAD worker 不需要 FFmpeg PATH（§7.1 删除该条）；CT2 自带 cuDNN 调度器与 torch 子库并存经用户接受，§7.1／§7.2／§9 表述随之修正；MMS 分词器多出 `|` 记入票据 03。
+
+2026-10-14（票据 02 实施）：用户裁定重采样由默认 swr 改为 soxr 28 bit（§1.2、§2.2；ADR-0007 中"重采样保持默认 swr"一句为当时裁定，不改写）；swr 在 verbose 下只报告部分补偿，`extract` 另记净补偿（§2.2）。
 
 2026-10-14（票据 04 实施）：`max_gap_s` 初值 0.4 → 1.0（前 5 分钟观感：0.4 时 ≤2 字条目 374 条，1.0 时 123 条）；整窗 `fallback` 每字符时长上限 `FALLBACK_MAX_CHAR_S = 0.25` s 归入 cue 配方 hash（票据 02 收编）；`rules` 为与 `[cues]` 表同形的映射；`max_chars` 计入附着标点、非词汇串分配、cue 时间只取词汇字符、零时长补 1 ms 等实现细节经用户确认，见[日文 cue](../architecture/modules/japanese-cues.md)。
