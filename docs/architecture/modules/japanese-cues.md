@@ -46,7 +46,8 @@
 - 代码：`kototoki/cues.py`（`build_cues`、`is_lexical`、`FALLBACK_MAX_CHAR_S`）。
 - 测试（core，`just test`）：`tests/test_cues.py`——插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、lead-out 不重叠、min-duration、空输入、全 `text_only` 窗、纯标点、♪ 附着、非零 `offset_s` 只加一次、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。
 - 离线观感（2026-10-14，规格 §5.2 原初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（规格 §5.2）。记录见票据 04 Comments。
-- 未验证：Qwen（x0）输出标点密度下的切分效果（票据 07）；整片双语观感（票据 08）。
+- x0 标点密度离线对照（2026-10-14，票据 07；现有同窗 X0／W0 研究期 `result.json`，hf-ii／hf-iii 各 6 个冻结窗口中两引擎都有结果的 11 个，同一组 101 个 VAD 窗口，默认 `[cues]`）：x0 每 100 个词汇字符有 7.7 个句末标点、2.5 个逗号，w0 为 2.3 与 0.6；cue 数 626 对 591，平均每条 9.9 对 9.8 字、p90 均为 18、触及 24 字上限 4 对 3 条，平均时长 1.84 s 对 1.99 s；以句末标点收尾的 cue 占 69% 对 20%，w0 其余多在时间间隔或硬切处断开。结论：x0 的标点主要改变断点位置（更多落在句末），不改变条目长度，现有初值无需按引擎区分。
+- 未验证：x0 标点密度下的观感（只有统计，未人工看）；整片双语观感（票据 08）。
 
 ## 变更与决策来源
 

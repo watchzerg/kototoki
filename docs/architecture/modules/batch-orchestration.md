@@ -1,6 +1,6 @@
 # 批次编排
 
-状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03）的 jobs 约定调用，x0（票据 07）、翻译子系统与合并（票据 05／09）尚未实现，后者按[目标架构](../bilingual-pipeline-architecture.md)的接口调用；只经伪 worker 与伪翻译模块离线验证。
+状态：current（票据 06 交付，2026-10-14）；GPU worker 按 [STT worker](stt-workers.md)（票据 03、07）的 jobs 约定调用，翻译子系统与合并（票据 05／09）尚未实现，后者按[目标架构](../bilingual-pipeline-architecture.md)的接口调用；只经伪 worker 与伪翻译模块离线验证。
 
 ## 定位与阅读
 

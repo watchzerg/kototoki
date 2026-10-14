@@ -2,7 +2,7 @@
 
 ## 定位与阅读
 
-负责 X0 基线：用根项目轻量环境的父进程，依次在已配置的隔离环境中启动 plan、asr、align 三个子进程，完成分段计划 → Qwen3-ASR 逐窗纯文字识别 → 共享 MMS 对齐，并汇总进程成本。不运行 VAD（只导入外部 manifest）、不复制 MMS 实现。
+负责 X0 基线：用根项目轻量环境的父进程，依次在已配置的隔离环境中启动 plan、asr、align 三个子进程，完成分段计划 → Qwen3-ASR 逐窗纯文字识别 → 共享 MMS 对齐，并汇总进程成本。不运行 VAD（只导入外部 manifest）、不复制 MMS 实现。双语字幕流水线的产品实现复制了本页的 Qwen ASR 边界，作为 ASR worker 的 x0 适配器，触顶改为窗口级失败，见 [STT worker](stt-workers.md)；本页仍描述研究期代码。
 
 上级总览见[架构总览](../INDEX.md)。行为契约以 [X0 契约](../../specs/x0-reusable-demo.md) 为准，使用方法见 [X0 demo README](../../../experiments/x0_demo/README.md)，组件定义见[当前 STT 基准线](../stt-candidate-pipelines.md)。
 
