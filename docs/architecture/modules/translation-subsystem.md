@@ -64,7 +64,8 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 
 - 代码：`kototoki/translate/`、`kototoki/merge.py`。
 - 测试（core，`just test`）：`tests/test_translate.py`（伪 server／伪客户端：正常（首个请求与按冻结配方构造的请求逐字节相同）、损坏的中间行报错、每批后 `run.json` 已记批次数、意外异常记 `session_error` 并停 server、译文空行按解析失败、整批共用一个 session、按批次续跑与截掉写了一半的行、全部完成不启动 server、OOM 重启即新 session、两次重启后放弃、缓存校验失败、空场景、`ja.srt` 变化换目录、seed 变化另起 run、显存轮询超时、server 起不来时本批其余影片直接失败、混合失败不标记不可用、启动失败后成功、批次终态失败）；`tests/test_translate_recipes.py`（v3 `b10-joint` hash 钉子、提示／grammar／请求 SHA256 钉子、与冻结 v3 函数逐字节对照）；`tests/test_translate_server.py`（stock 加载日志驻留解析、显存轮询、OOM 识别、冻结命令行、模型核对、引擎文件 SHA 核对）；`tests/test_merge.py`。
-- 未验证：真实 llama-server 下的整片运行、墙钟与显存峰值（票据 05 完成标准第二项，GPU 重任务，待用户确认后运行）；显存阈值 14300 MiB 在桌面占用较高时是否过严。
+- 真实运行（2026-10-14，票据 05 完成标准第二项）：HF II 的 W0 对齐结果按默认 `[cues]` 切出 1112 条 `ja.srt`，stock b11583 单 session 112 批全部一次通过（无重试、无触顶），`zh.srt` 覆盖 1112/1112，`ja-zh.srt` 1112 条且每条恰好两行。墙钟 176 s（含模型 SHA 首次全量核对 16.7 s、冷加载 7.1 s）；输入 75408、输出 19272 token；首个请求 `cache_n == 0`；启动前空闲 15112 MiB，会话峰值 15687 MiB（桌面基线约 880 MiB，即 server 自身约 14800 MiB）。输出只写在仓库外的会话临时目录。
+- 未验证：与编排器的真实联调（票据 08）；空闲显存阈值 14300 MiB 低于本次实测 server 自身约 14800 MiB，过阈值不保证加载成功。
 
 ## 变更与决策来源
 
