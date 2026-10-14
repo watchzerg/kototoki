@@ -3,7 +3,8 @@
 状态：已接受。  
 日期：2026-10-07。  
 配方更新：2026-10-08，用户明确采纳官方30B采样、4096输出上限和提示缓存。  
-替代：[ADR-0004 的 Q3_K_M 采纳决定](0004-hy-mt2-translation-baseline.md)。
+替代：[ADR-0004 的 Q3_K_M 采纳决定](0004-hy-mt2-translation-baseline.md)。  
+被部分替代：2026-10-14 起"继续使用 b11429 兼容 loader、不以 stock 引擎替代"的引擎条款由 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 替代（产品改用官方 llama.cpp b11583 win-cuda-13.4 构建）；模型、采样、提示与 context 身份不变。下文保留当时的引擎表述。
 
 用户在阅读[四量化实测报告](../research/2026-10-07-hy30-four-quantization-results.md)后明确决定：翻译流程的模型基线改为 **Hy-MT2 30B-A3B APEX-I-Compact**，candidate 为 `hy-mt2-30b-a3b-apex-i-compact`。后续字幕翻译 demo、优化和回归以此为基准；GrahLnn Q3_K_M 留作历史对照。该决定仅适用于独立翻译流程，STT 仍保留原语言。
 
