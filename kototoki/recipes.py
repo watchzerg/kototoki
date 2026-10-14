@@ -150,6 +150,8 @@ CUES: dict[str, Any] = {
     "untimed_fill": {"inner": "linear interpolation between timed neighbours (time_source=interpolated)",
                      "edge": "extrapolate at the neighbour per-character duration, clipped to the window",
                      "failed_window": "distribute over the window's VAD segments (time_source=fallback)"},
+    # 整窗回退每字符时长上限（秒）；cues.FALLBACK_MAX_CHAR_S 是使用处，测试钉住两者相等（票据 04）
+    "fallback_max_char_s": 0.25,
     "lead_out": "extend end by lead_out_s without crossing the next cue start",
     "millisecond_rounding": "floor(x * 1000 + 0.5)",
 }

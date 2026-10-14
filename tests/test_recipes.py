@@ -5,7 +5,7 @@ from decimal import Decimal
 import re
 import unittest
 
-from kototoki import recipes
+from kototoki import cues, recipes
 from kototoki.artifacts import object_hash
 
 # ffmpeg 标准下混权重：前左右 1、中置 0.707、环绕 0.707、LFE 丢弃；按声道序号。
@@ -82,6 +82,7 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(recipes.X0["generate"], {"max_new_tokens": 4096, "do_sample": False})
         self.assertEqual(recipes.MMS["dtype"], "float32")
         self.assertEqual(recipes.MEDIA["offset_s"], 0)
+        self.assertEqual(recipes.CUES["fallback_max_char_s"], cues.FALLBACK_MAX_CHAR_S)
         self.assertEqual(recipes.MEDIA["timeline_filter"], "aresample=async=1:first_pts=0")
         self.assertEqual(recipes.MEDIA["resample_filter"], "aresample=16000:resampler=soxr:precision=28")
 

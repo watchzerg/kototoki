@@ -5,7 +5,9 @@ import tempfile
 import tomllib
 import unittest
 
-from kototoki import config
+from dataclasses import asdict
+
+from kototoki import config, cues
 
 MINIMAL = '[paths]\ninput_dir = "in"\noutput_dir = "out"\n'
 
@@ -32,9 +34,13 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(cfg.run.stable_check_s, 10.0)
         self.assertEqual(cfg.input.audio_language, "jpn")
         self.assertEqual(cfg.input.video_extensions, (".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"))
-        self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 0.4, "。！？!?", "、，,", 0.3))
+        self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 1.0, "。！？!?", "、，,", 0.3))
         self.assertEqual(cfg.translate, config.TranslateConfig(port=8080, seed=20261008))
         self.assertEqual(cfg.source, self.root / "kototoki.toml")
+
+    def test_cue_rules_have_the_shape_build_cues_expects(self) -> None:
+        rules = asdict(config.load(self.write(MINIMAL), environ={}).cues)
+        self.assertEqual(set(rules), cues.RULE_KEYS)
 
     def test_user_relative_paths_resolve_against_config_dir(self) -> None:
         cfg = config.load(self.write(MINIMAL + 'models_root = "models"\nffmpeg = "bin/ffmpeg.exe"\n'), environ={})

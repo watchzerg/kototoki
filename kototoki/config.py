@@ -48,7 +48,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "asr.x0": {"model": "qwen3-asr-1.7b-hf"},
     "align": {"model": "mms-1b-all"},
     "cues": {
-        "max_chars": 24, "max_duration_s": 6.0, "min_duration_s": 0.8, "max_gap_s": 0.4,
+        "max_chars": 24, "max_duration_s": 6.0, "min_duration_s": 0.8, "max_gap_s": 1.0,
         "sentence_endings": "。！？!?", "soft_breaks": "、，,", "lead_out_s": 0.3,
     },
     "translate": {

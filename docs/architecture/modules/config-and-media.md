@@ -15,7 +15,7 @@
 - 路径：用户写出的相对路径按配置文件所在目录解析，省略键的默认相对路径按仓库根解析；`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]`、`[translate]` 的模型路径为相对路径时相对于 `paths.models_root`（绝对路径原样）。
 - 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`（`Config.gpu_lock`）；`Config.break_stale_lock` 只在环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1` 时为真。没有 `break_stale_lock` 与 `[vad] device` 键（写了即为未知键）。
 
-**配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`MMS`、`CUES` 六个字典，`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）：VAD 固定设备 `cuda:0`、Pyannote revision `e66f3d3b…`、`source-span-merge-v1`；w0 beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链；x0 BF16、SDPA、greedy、4096；MMS FP32、`jpn` adapter、字典按模型类数过滤；cue 的切分顺序、回填方式与毫秒取整（数值规则在配置 `[cues]`，作为影响输出的配置键另入身份）。
+**配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`MMS`、`CUES` 六个字典，`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）：VAD 固定设备 `cuda:0`、Pyannote revision `e66f3d3b…`、`source-span-merge-v1`；w0 beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链；x0 BF16、SDPA、greedy、4096；MMS FP32、`jpn` adapter、字典按模型类数过滤；cue 的切分顺序、回填方式、整窗回退每字符时长上限 0.25 s（与 `cues.FALLBACK_MAX_CHAR_S` 相等，有测试钉住）与毫秒取整（数值规则在配置 `[cues]`，`max_gap_s` 默认 1.0（票据 04），作为影响输出的配置键另入身份）。
 
 **下混常量**（`recipes.PAN`，进 `MEDIA` 因而进 hash）：单声道 `anull` 直通；双声道 `pan=mono|c0=0.5*c0+0.5*c1`（与基线证据相同）；`5.1`、`5.1(side)`、`6.1`、`7.1` 用前左右 1、中置 0.707、环绕 0.707、丢 LFE 的权重除以权重和、向下截到 6 位小数，系数和 ≤ 1，满幅同相输入不削波。表达式按声道序号引用；ffprobe 未给布局时按声道数取 `mono`／`stereo`／`5.1`／`7.1`；其它布局（如 `5.0`、`quad`）报 `MediaError`。不用 `-ac 1`。
 
