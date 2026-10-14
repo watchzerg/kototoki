@@ -1,5 +1,6 @@
 """翻译子系统伪客户端测试：正常、按批次续跑、基础设施失败重启即新 session、缓存校验、空场景、
-`ja.srt` 变化换目录、显存轮询超时、批次终态失败。不启动 llama-server，不占 GPU。"""
+`ja.srt` 变化换目录、显存轮询超时。批次终态失败的降级见 `test_translate_degrade.py`。
+不启动 llama-server，不占 GPU。"""
 
 from __future__ import annotations
 
@@ -49,7 +50,8 @@ class FakeServer:
 
 
 class FakeClient:
-    """token 即码点；按待译 JSON 回译文。`plan` 按本客户端的 completion 序号注入故障。"""
+    """token 即码点；按待译 JSON 回译文。`plan` 按本客户端的 completion 序号注入故障；
+    待译 ID 含 `harness.poison` 中任一条时返回非法 JSON（解析失败，用于降级测试）。"""
 
     def __init__(self, server: FakeServer, plan: dict[int, Any]):
         self.server, self.plan = server, plan
@@ -78,6 +80,8 @@ class FakeClient:
             return base | {"content": "{not json"}
         prompt = "".join(chr(t) for t in request["prompt"])
         target, _ = json.JSONDecoder().raw_decode(prompt.split("【待译 JSON】\n", 1)[1])
+        if self.server.harness.poison & set(target["translations"]):
+            return base | {"content": "{not json"}
         texts = {k: "译" + k + ("\n\n续" if behaviour == "blank_line" else "") for k in target["translations"]}
         return base | {"content": json.dumps({"translations": texts}, ensure_ascii=False)}
 
@@ -91,6 +95,7 @@ class Harness:
         self.plans: list[dict[int, Any]] = []  # 依次分给每个新客户端
         self.start_failures: list[Any] = []    # 依次用于每次 server 启动；None 表示正常
         self.first_cache_n = 0
+        self.poison: set[str] = set()
         self.servers: dict[str, FakeServer] = {}
         self.config = SimpleNamespace(paths=SimpleNamespace(output_dir=root / "out", llama_server=root / "x.exe"),
                                       models=SimpleNamespace(translate=root / "m.gguf"),
@@ -139,7 +144,7 @@ class TranslateDocumentTests(unittest.TestCase):
         result = self.h.translate(doc)
         self.assertEqual(result.translations, {cue.id: "译" + cue.id for cue in doc.cues})
         self.assertEqual(result.fallback_count, 0)
-        self.assertEqual(result.report["state"], "complete")
+        self.assertEqual(result.report["completion"]["state"], "complete")
         run = self.run_json(doc)
         self.assertEqual((run["recipe_hash"], run["seed"]), (RECIPE_HASH, SEED))
         self.assertEqual(run["source"]["ja_srt_sha256"], doc.source_sha256)
@@ -228,9 +233,10 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_blank_line_in_translation_is_a_parse_failure(self) -> None:
         doc = document(5)
         self.h.plans = [{1: "blank_line", 2: "blank_line"}]
-        with self.assertRaisesRegex(TranslateError, "parse"):
-            self.h.translate(doc)
-        self.assertFalse((self.h.run_root(doc) / "batches.jsonl").exists())
+        result = self.h.translate(doc)
+        self.assertEqual(result.fallback_count, 0)
+        (row,) = self.batch_lines(doc)
+        self.assertEqual(row["degrade"]["nodes"][0]["error_kind"], "parse")  # 按解析失败进入降级
 
     def test_rerun_of_a_complete_run_does_not_start_a_server(self) -> None:
         doc = document(12)
@@ -352,18 +358,6 @@ class TranslateDocumentTests(unittest.TestCase):
         self.h.start_failures = [crash]
         result = self.h.translate(document(5))
         self.assertEqual(len(result.translations), 5)
-
-    def test_terminal_batch_failure_fails_the_file_without_writing_the_batch(self) -> None:
-        doc = document(12)
-        self.h.plans = [{2: "bad_json", 3: "bad_json"}]
-        with self.assertRaisesRegex(TranslateError, "failed terminally"):
-            self.h.translate(doc)
-        self.assertEqual([row["index"] for row in self.batch_lines(doc)], [0])
-        evidence = list((self.h.run_root(doc) / "terminal-failures").glob("*.json"))
-        self.assertEqual(len(evidence), 1)
-        self.assertEqual(len(read_json(evidence[0])["request"]["attempts"]), 2)
-        self.assertEqual(self.h.events, ["start:1", "stop:1"])  # 终态失败不重启 server
-        self.assertEqual(len(self.h.translate(doc).translations), 12)  # 本票内重跑会再试
 
 
 if __name__ == "__main__":

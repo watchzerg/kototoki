@@ -3,7 +3,8 @@
 复制自 `experiments/translation_v3/recipes.py`，只保留 `b10-joint` 用到的字段与函数；去掉 terms／review／
 多样本／类别路由与配方文件加载。`Recipe.spec()` 的结构与 v3 相同，因此 `B10_JOINT.recipe_hash` 等于 v3
 `BUILTIN["b10-joint"]` 的原 hash（`tests/test_translate_recipes.py` 钉住），请求字节同样逐字节对照 v3。
-产品配方 `b10-joint-degrade-v1` 由票据 09 在本文件追加。
+产品配方 `b10-joint-degrade-v1`（票据 09）字段与 `b10-joint` 相同，只把 `overflow` 策略换成 10→5→1 降级与
+单条保留日文（见 `degrade.py`），因而另算 hash；提示、grammar、采样与请求字节不变。
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ JOINT_INSTRUCTION = ("先共同理解全部可见台词及跨条目的条件、�
                      "保留原文歧义和信息揭示顺序；每个值只承载对应源 ID，不搬运邻条事实、不提前补完后文。")
 
 SAMPLING_PROFILE = "official30b-cached-v1"
+OVERFLOW_V3 = "recorded-failure-no-truncation-no-auto-shrink"
+OVERFLOW_DEGRADE = "degrade-10-5-1-keep-source"
 
 
 def sampling(seed: int) -> dict[str, Any]:
@@ -49,7 +52,7 @@ def completion_request(tokens: list[int], seed: int, grammar: str) -> dict[str, 
 
 @dataclass(frozen=True)
 class Recipe:
-    """v3 配方字段（`b10-joint` 的取值）；`name` 是标签，不进身份。"""
+    """v3 配方字段（`b10-joint` 的取值）；`name` 是标签，不进身份；`overflow` 进 `fixed`（与 v3 位置相同）。"""
 
     name: str
     batch_count: int = 10
@@ -60,16 +63,17 @@ class Recipe:
     grammar_ws: str = "unbounded"
     preanalysis: None = None
     review: None = None
+    overflow: str = OVERFLOW_V3
 
     def spec(self) -> dict[str, Any]:
-        data = {key: value for key, value in asdict(self).items() if key != "name"}
+        data = {key: value for key, value in asdict(self).items() if key not in ("name", "overflow")}
         versions = {"adapters_render": "adapters.render(hy-mt2-30b)+id_grammar",
                     "joint": [JOINT_VERSION, sha256_bytes(JOINT_INSTRUCTION.encode())]}
         return {"schema": RECIPE_SCHEMA, "recipe": data, "versions": versions,
                 "fixed": {"sampling_profile": SAMPLING_PROFILE, "sampling": sampling(0) | {"seed": "<run seed>"},
                           "n_predict": N_PREDICT, "context_size": CONTEXT_SIZE, "guard_tokens": GUARD_TOKENS,
                           "cache_prompt": CACHE_PROMPT, "max_attempts": MAX_ATTEMPTS, "stop": STOP,
-                          "overflow": "recorded-failure-no-truncation-no-auto-shrink"}}
+                          "overflow": self.overflow}}
 
     @property
     def recipe_hash(self) -> str:
@@ -81,8 +85,9 @@ class Recipe:
 
 # 已采纳的翻译流程基线（ADR-0006）。
 B10_JOINT = Recipe("b10-joint")
-# 产品当前使用的配方；票据 09 改为 `b10-joint-degrade-v1`。
-PRODUCT = B10_JOINT
+# 产品配方（规格 §1.2）：批次终态失败按 `degrade.py` 拆批，单条仍失败保留日文。
+B10_JOINT_DEGRADE_V1 = Recipe("b10-joint-degrade-v1", overflow=OVERFLOW_DEGRADE)
+PRODUCT = B10_JOINT_DEGRADE_V1
 RECIPE_HASH = PRODUCT.recipe_hash
 
 

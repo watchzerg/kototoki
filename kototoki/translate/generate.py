@@ -8,11 +8,12 @@
   末尾不完整的一行视为未写入并截掉；`scene.json` 只在全部批次完成后写出。
 - 基础设施失败（OOM、传输、`cache_n` 校验、server 错误、server 启动失败）在同一次调用内停掉 server、
   启动新 session 重做，最多重启 `MAX_RESTARTS` 次；每次重启在 `run.json` 的 `sessions[]` 新增一项。
-- 批次终态失败（超出 context、生成触顶、解析失败）本票直接作为该影片失败抛出，不写入批次；
-  重跑同一命令会再试。三级降级由票据 09 加入。
+- 批次终态失败（超出 context、生成触顶、解析失败）按 `degrade.py` 拆批降级，单条仍失败保留日文；
+  降级完成的批次照常写入 `batches.jsonl`，回退对该配方 hash 与 seed 是终态，重跑不再尝试。
 
 布局：`<run_dir>/<配方名>__s<seed>/`（`run_dir` 即 `translate/srt-<sha12>/`）下有 `run.json`、`batches.jsonl`、
-`scene.json`、`transport/session-NN/`（逐请求原始交换）、`infra-failures/`、`terminal-failures/`。
+`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、`transport/session-NN/`
+（逐请求原始交换）、`infra-failures/`。
 server 的运行日志在 `<output_dir>/.work/translate-sessions/<时间戳>/session-NN/`，被整批影片共用。
 """
 
@@ -32,6 +33,7 @@ from kototoki.artifacts import atomic_write_json, object_hash, read_json, sha256
 from kototoki.config import Config
 from kototoki.srt import SourceDocument
 
+from . import degrade
 from . import recipes as R
 from .batching import Batch, build_batches, cue_positions
 from .client import LlamaClient
@@ -41,6 +43,8 @@ from .server import InfraFailure, ManagedServer, explicit_oom
 RUN_SCHEMA = "kototoki-translate-run-v1"
 SCENE_SCHEMA = "kototoki-translate-scene-v1"
 BATCHES = "batches.jsonl"
+DEGRADE = "degrade.jsonl"
+REPORT = "report.json"
 SESSIONS_DIR = "translate-sessions"
 MAX_RESTARTS = 2
 CLIENT_TIMEOUT_SECONDS = 600.0
@@ -246,11 +250,10 @@ def _open_run(root: Path, seed: int, document: SourceDocument, scene: Scene) -> 
     return run
 
 
-def _read_batches(root: Path, batches: list[Batch]) -> dict[int, dict[str, Any]]:
-    """读出已完成的批次；末尾不完整的一行（中断时写了一半）截掉，其余行必须与批次计划一致。"""
-    path = root / BATCHES
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """读出追加写的 JSONL；末尾不完整的一行（中断时写了一半）截掉，其余行损坏即报错。"""
     if not path.is_file():
-        return {}
+        return []
     data = path.read_bytes()
     complete = data[:data.rfind(b"\n") + 1]
     lines = complete.splitlines()
@@ -265,8 +268,14 @@ def _read_batches(root: Path, batches: list[Batch]) -> dict[int, dict[str, Any]]
     if len(complete) != len(data):
         with path.open("r+b") as stream:
             stream.truncate(len(complete))
+    return rows
+
+
+def _read_batches(root: Path, batches: list[Batch]) -> dict[int, dict[str, Any]]:
+    """读出已完成的批次；行必须与批次计划一致。"""
+    path = root / BATCHES
     done: dict[int, dict[str, Any]] = {}
-    for row in rows:
+    for row in _read_jsonl(path):
         index = row.get("index")
         plan = batches[index] if type(index) is int and 0 <= index < len(batches) else None
         if plan is None or row.get("batch_id") != plan.batch_id or row.get("target_ids") != list(plan.target_ids) \
@@ -274,6 +283,26 @@ def _read_batches(root: Path, batches: list[Batch]) -> dict[int, dict[str, Any]]
             raise ValueError(f"{path}: batch row {index!r} does not match the batch plan")
         done[index] = row
     return done
+
+
+def _read_degrade(root: Path, batches: list[Batch], done: dict[int, dict[str, Any]]
+                  ) -> dict[int, dict[str, dict[str, Any]]]:
+    """读出未完成批次的降级节点（批次序号 → batch_id → 行）；已完成批次的节点只是证据，不再使用。"""
+    path = root / DEGRADE
+    recorded: dict[int, dict[str, dict[str, Any]]] = {}
+    for row in _read_jsonl(path):
+        index = row.get("parent_index")
+        batch_id = str(row.get("batch_id"))
+        if type(index) is not int or not 0 <= index < len(batches) or not (
+                batch_id == batches[index].batch_id or batch_id.startswith(batches[index].batch_id + ".")):
+            raise ValueError(f"{path}: degrade row {row.get('batch_id')!r} does not match the batch plan")
+        if index in done:
+            continue
+        nodes = recorded.setdefault(index, {})
+        if row["batch_id"] in nodes:
+            raise ValueError(f"{path}: duplicate degrade row {row['batch_id']!r}")
+        nodes[row["batch_id"]] = row
+    return recorded
 
 
 def _append_line(path: Path, row: dict[str, Any]) -> None:
@@ -301,11 +330,17 @@ def _write_scene(root: Path, scene: Scene, batches: list[Batch], done: dict[int,
     translations: dict[str, str] = {}
     for index in range(len(batches)):
         translations.update(done[index]["translations"])
-    attempts = [a for row in done.values() for a in row["request"].get("attempts", [])]
+    # 降级批次的节点含原批次请求，因此按节点计；未降级批次只有一个请求。
+    requests = [node["request"] for row in done.values()
+                for node in (row["degrade"]["nodes"] if "degrade" in row else [row])]
+    attempts = [a for request in requests for a in request.get("attempts", [])]
+    degraded = [done[index] for index in range(len(batches)) if "degrade" in done[index]]
     atomic_write_json(root / "scene.json", {
         "schema": SCENE_SCHEMA, "scene_id": scene.scene_id, "status": "complete", "cue_ids": scene.ids,
         "positions": cue_positions(batches), "batches": [b.record() for b in batches], "translations": translations,
-        "totals": {"requests": len(done), "attempts": len(attempts),
+        "degradation": [{"batch_id": row["batch_id"], **row["degrade"]} for row in degraded],
+        "fallback_ids": [item["id"] for row in degraded for item in row["degrade"]["fallback"]],
+        "totals": {"requests": len(requests), "attempts": len(attempts),
                    "input_tokens": sum(a.get("input_tokens") or 0 for a in attempts),
                    "output_tokens": sum(a.get("output_tokens") or 0 for a in attempts),
                    "limit_failures": sum(bool(a.get("stopped_limit")) for a in attempts)}})
@@ -319,7 +354,9 @@ SESSION_ENGINE_KEYS = ("candidate", "model_path", "engine_sha256", "engine_ident
 def translate_document(document: SourceDocument, run_dir: Path, session: Session, config: Config) -> TranslateResult:
     """翻译一部影片的 `ja.srt`，返回 cue id → 译文；零条目文档不请求模型。
 
-    已完成的批次直接复用；全部完成时不启动 server。失败抛 `TranslateError`（证据留在 run 目录）。
+    已完成的批次（含降级完成的）直接复用；全部完成时不启动 server。批次终态失败按 `degrade` 降级，
+    回退条数进 `fallback_count`，`report` 即写入 `report.json` 的内容。基础设施失败用尽重启抛
+    `TranslateError`（证据留在 run 目录）。
     """
     seed = config.translate.seed
     root = Path(run_dir) / f"{R.PRODUCT.name}__s{seed}"
@@ -329,9 +366,16 @@ def translate_document(document: SourceDocument, run_dir: Path, session: Session
         run["completion"] = {"state": "complete", "batches_total": 0, "batches_complete": 0, "cues_total": 0,
                              "restarts_last_call": 0}
         atomic_write_json(root / "run.json", run)
-        return TranslateResult({}, 0, run["completion"])
+        report = degrade.build_report([], run["completion"])
+        atomic_write_json(root / REPORT, report)
+        return TranslateResult({}, 0, report)
     batches = build_batches(scene, R.PRODUCT)
     done = _read_batches(root, batches)
+    recorded = _read_degrade(root, batches, done)
+
+    def record(row: dict[str, Any]) -> None:
+        _append_line(root / DEGRADE, row)
+        recorded.setdefault(row["parent_index"], {})[row["batch_id"]] = row
     restarts = 0
     failure_kinds: list[str] = []
     while len(done) < len(batches):
@@ -350,10 +394,23 @@ def translate_document(document: SourceDocument, run_dir: Path, session: Session
             atomic_write_json(root / "run.json", run)
             client = session.client_factory(server.url, timeout=CLIENT_TIMEOUT_SECONDS,
                                             trace_dir=root / "transport" / f"session-{entry['index']:02d}")
+            number = entry["index"]
+
+            def attempt(node: Batch) -> dict[str, Any]:
+                try:
+                    return translate_batch(client, scene, node, seed, session.cache_state) | {"session": number}
+                except StepFailed as exc:
+                    if exc.kind in INFRA_KINDS:
+                        raise
+                    assert exc.record is not None
+                    return exc.record | {"error_kind": exc.kind, "error": str(exc)[:2000], "session": number}
+
             for batch in batches:
                 if batch.index in done:
                     continue
-                row = translate_batch(client, scene, batch, seed, session.cache_state) | {"session": entry["index"]}
+                row = degrade.translate_with_degrade(scene, batch, R.PRODUCT, attempt,
+                                                     recorded.setdefault(batch.index, {}), record)
+                row = row | {"session": number}
                 _append_line(root / BATCHES, row)
                 done[batch.index] = row
                 entry["batches_written"] += 1
@@ -362,11 +419,6 @@ def translate_document(document: SourceDocument, run_dir: Path, session: Session
         except (StepFailed, InfraFailure) as exc:
             kind = exc.kind if isinstance(exc, StepFailed) else "server_start"
             failure = {"kind": kind, "error": str(exc)[:2000], "at_utc": utc_now()}
-            if isinstance(exc, StepFailed) and kind not in INFRA_KINDS:
-                evidence = root / "terminal-failures" / f"{exc.record['batch_id']}--session-{entry['index']:02d}.json"
-                atomic_write_json(evidence, exc.record)
-                entry["stop_reason"] = kind
-                raise TranslateError(f"Batch {exc.record['batch_id']} failed terminally ({kind}): {exc}") from exc
             if entry is None:
                 run["server_start_failures"].append(failure)
             else:
@@ -395,4 +447,7 @@ def translate_document(document: SourceDocument, run_dir: Path, session: Session
                              cache_reset=dict(session.cache_state))
             _finish(root, run, batches, done, restarts)
     completion = _finish(root, run, batches, done, restarts)
-    return TranslateResult(_write_scene(root, scene, batches, done), 0, completion)
+    translations = _write_scene(root, scene, batches, done)
+    report = degrade.build_report([done[index] for index in range(len(batches))], completion)
+    atomic_write_json(root / REPORT, report)
+    return TranslateResult(translations, report["counts"]["fallback_cues"], report)

@@ -1,4 +1,5 @@
-"""翻译配方移植的身份钉子：v3 `b10-joint` 原 hash、与冻结 v3 实现逐字节一致的提示／grammar／请求。"""
+"""翻译配方移植的身份钉子：v3 `b10-joint` 原 hash、与冻结 v3 实现逐字节一致的提示／grammar／请求；
+产品配方 `b10-joint-degrade-v1` 只改 `overflow`、另算 hash，批次与请求字节与 `b10-joint` 相同。"""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from kototoki.translate.batching import build_batches, cue_positions
 from kototoki.translate.data import scene_from_document
 
 V3_B10_JOINT_HASH = "2ba680540f055b2ae0c8122faa3ba537418eb12720a552f53c3aa5b652d0969a"
+DEGRADE_V1_HASH = "994c0d03ac4c91fec437285b66f597c19ff28f09c2ecad5b0e9541437ca795fe"
 SEED = 20261008
 
 
@@ -29,7 +31,21 @@ class RecipeIdentityTests(unittest.TestCase):
         self.assertEqual(recipe.recipe_hash, V3_B10_JOINT_HASH)
 
     def test_product_recipe_hash_is_exported(self) -> None:
+        self.assertIs(R.PRODUCT, R.B10_JOINT_DEGRADE_V1)
         self.assertEqual(RECIPE_HASH, R.PRODUCT.recipe_hash)
+        self.assertEqual(RECIPE_HASH, DEGRADE_V1_HASH)
+
+    def test_degrade_v1_differs_from_b10_joint_only_in_overflow(self) -> None:
+        ours, base = R.B10_JOINT_DEGRADE_V1.spec(), R.B10_JOINT.spec()
+        self.assertEqual(ours["fixed"].pop("overflow"), "degrade-10-5-1-keep-source")
+        self.assertEqual(base["fixed"].pop("overflow"), "recorded-failure-no-truncation-no-auto-shrink")
+        self.assertEqual(ours, base)
+        self.assertNotEqual(R.B10_JOINT_DEGRADE_V1.recipe_hash, R.B10_JOINT.recipe_hash)
+
+    def test_degrade_v1_batches_equal_b10_joint(self) -> None:
+        # 提示、grammar 与请求的构造函数不取配方，字节由 RequestBytesTests 钉住；配方只经批次计划起作用。
+        scene = scene_from_document(document(23))
+        self.assertEqual(build_batches(scene, R.B10_JOINT_DEGRADE_V1), build_batches(scene, R.B10_JOINT))
 
 
 class RequestBytesTests(unittest.TestCase):
