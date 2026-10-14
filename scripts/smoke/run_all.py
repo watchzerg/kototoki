@@ -20,9 +20,9 @@ import time
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 GPU_LOCK = REPO / ".local/gpu.lock"
-SMOKES = ("forced_align", "vad_pyannote", "ct2_after_torch", "llama_stock", "stt_frozen_window")
+SMOKES = ("forced_align", "vad_pyannote", "ct2_after_torch", "llama_stock", "stt_frozen_window", "x0_frozen_window")
 # 不在 scripts/smoke/ 下的产品 full 测试，以模块方式运行（同样接受 --out）。
-MODULES = {"stt_frozen_window": "tests.stt_frozen_window"}
+MODULES = {"stt_frozen_window": "tests.stt_frozen_window", "x0_frozen_window": "tests.x0_frozen_window"}
 PRIVATE_DLL_DIR = "whisper-runtime-provisional"
 
 
