@@ -16,7 +16,7 @@ from unittest import mock
 
 import numpy as np
 
-from kototoki import artifacts, config, cues, recipes
+from kototoki import artifacts, config, cues, plan, recipes
 from kototoki.workers import align as align_worker
 from kototoki.workers import asr as asr_worker
 from kototoki.workers.protocol import EXIT_OK
@@ -219,7 +219,7 @@ class X0WorkerTest(WorkerTestCase):
         self.assertEqual(status, EXIT_OK)
         path = self.work_dir / artifacts.ASR
         vad_sha256 = artifacts.sha256_file(self.work_dir / artifacts.VAD)
-        self.assertTrue(artifacts.is_current(path, asr_worker.identity("x0", self.pcm_sha256, vad_sha256, MODELS)))
+        self.assertTrue(artifacts.is_current(path, plan.asr_identity("x0", self.pcm_sha256, vad_sha256, MODELS)))
         document = artifacts.read_json(path)
         self.assertEqual(document["engine"], "x0")
         self.assertEqual(document["original_segments"][1]["text"], "")
@@ -240,8 +240,8 @@ class X0WorkerTest(WorkerTestCase):
 
 class X0ShellTest(unittest.TestCase):
     def test_recipe_hash_and_model_files_follow_engine(self):
-        self.assertEqual(asr_worker.recipe_hash("x0"), recipes.recipe_hash(recipes.X0))
-        files = asr_worker.model_files("x0", {"x0": "q"})
+        self.assertEqual(plan.recipe_hash("asr", "x0"), recipes.recipe_hash(recipes.X0))
+        files = plan.model_files("asr", "x0", {"x0": "q"})
         self.assertEqual(len(files), 7)
         self.assertEqual(files["qwen3-asr-1.7b-hf/model.safetensors"][1],
                          "2db53c7d81bd9b8cbc6a074e89be2c968a0d373fb4ee68bb1b1e14f7042dfee1")

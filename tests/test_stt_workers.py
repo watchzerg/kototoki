@@ -1,7 +1,8 @@
 """三个 STT worker 壳（`kototoki.workers.{vad,asr,align}`）与共用的 `workers.gpu`：伪推理对象，离线。
 
-覆盖产物身份与坐标、输入身份重验、`failed_windows` 记账、退出码 0／1／2、CUDA 守卫、
-三阶段串起来的 `align.json` 能被 `cues.build_cues` 消费，以及壳模块导入时不加载 torch。
+覆盖产物身份与坐标（壳写出的身份与阶段计划模块 `kototoki.plan` 给出的期望身份逐字段相等，壳自身不再持有
+身份实现）、输入身份重验、`failed_windows` 记账、退出码 0／1／2、CUDA 守卫、三阶段串起来的 `align.json`
+能被 `cues.build_cues` 消费，以及壳模块导入时不加载 torch。
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import wave
 
 import numpy as np
 
-from kototoki import artifacts, config, cues, recipes
+from kototoki import artifacts, config, cues, plan, recipes
 from kototoki.align import map_records
 from kototoki.workers import align as align_worker
 from kototoki.workers import asr as asr_worker
@@ -124,7 +125,8 @@ class VadWorkerTest(WorkerTestCase):
     def test_writes_local_coordinate_windows_with_identity(self):
         self.assertEqual(self.run_vad(), EXIT_OK)
         path = self.work_dir / artifacts.VAD
-        expected = vad_worker.identity(self.pcm_sha256, MODELS)
+        expected = plan.vad_identity(self.pcm_sha256, MODELS)
+        self.assertEqual(artifacts.read_json(path)["identity"], expected)
         self.assertTrue(artifacts.is_current(path, expected))
         self.assertEqual(expected["recipe_hash"], recipes.recipe_hash(recipes.VAD))
         document = artifacts.read_json(path)
@@ -149,7 +151,9 @@ class AsrWorkerTest(WorkerTestCase):
         self.assertEqual(self.run_asr(), EXIT_OK)
         vad_sha256 = artifacts.sha256_file(self.work_dir / artifacts.VAD)
         path = self.work_dir / artifacts.ASR
-        self.assertTrue(artifacts.is_current(path, asr_worker.identity("w0", self.pcm_sha256, vad_sha256, MODELS)))
+        expected = plan.asr_identity("w0", self.pcm_sha256, vad_sha256, MODELS)
+        self.assertEqual(artifacts.read_json(path)["identity"], expected)
+        self.assertTrue(artifacts.is_current(path, expected))
         document = artifacts.read_json(path)
         self.assertEqual(document["engine"], "w0")
         self.assertEqual(document["offset_s"], 0)
@@ -174,7 +178,8 @@ class AsrWorkerTest(WorkerTestCase):
         self.assertEqual(artifacts.read_json(self.work_dir / artifacts.FAILURE)["stage"], "stage")
 
     def test_recipe_hash_follows_engine(self):
-        self.assertEqual(asr_worker.recipe_hash("w0"), recipes.recipe_hash(recipes.W0))
+        self.assertEqual(plan.recipe_hash("asr", "w0"), recipes.recipe_hash(recipes.W0))
+        self.assertEqual(plan.recipe_hash("asr", "x0"), recipes.recipe_hash(recipes.X0))
 
 
 class AlignWorkerTest(WorkerTestCase):
@@ -184,7 +189,9 @@ class AlignWorkerTest(WorkerTestCase):
         self.assertEqual(self.run_align(), EXIT_OK)
         asr_sha256 = artifacts.sha256_file(self.work_dir / artifacts.ASR)
         path = self.work_dir / artifacts.ALIGN
-        self.assertTrue(artifacts.is_current(path, align_worker.identity(self.pcm_sha256, asr_sha256, MODELS)))
+        expected = plan.align_identity(self.pcm_sha256, asr_sha256, MODELS)
+        self.assertEqual(artifacts.read_json(path)["identity"], expected)
+        self.assertTrue(artifacts.is_current(path, expected))
         document = artifacts.read_json(path)
         self.assertEqual(document["text"], "こんにちは。はい")
         self.assertEqual(len(document["units"]), len(document["text"]))
@@ -293,12 +300,18 @@ class GpuHelpersTest(unittest.TestCase):
             gpu.verify_models({"m": (model, "0" * 64)}, cache)
 
     def test_model_file_lists_cover_pinned_assets(self):
-        models = {"vad": "v/pytorch_model.bin", "w0": "w", "w0_mel_assets": "m", "align": "a"}
-        self.assertEqual(len(vad_worker.model_files(models)), 1)
-        w0 = asr_worker.model_files("w0", models)
+        models = {"vad": "v/pytorch_model.bin", "w0": "w", "w0_mel_assets": "m", "x0": "x", "align": "a"}
+        self.assertEqual(len(plan.model_files("vad", "w0", models)), 1)
+        w0 = plan.model_files("asr", "w0", models)
         self.assertIn("faster-whisper-large-v3/model.bin", w0)
         self.assertEqual(w0["w0-assets/mel_filters.npz"][1], recipes.W0["features"]["mel_sha256"])
-        self.assertIn("mms-1b-all/adapter.jpn.safetensors", align_worker.model_files(models))
+        self.assertIn("qwen3-asr-1.7b-hf/model.safetensors", plan.model_files("asr", "x0", models))
+        self.assertIn("mms-1b-all/adapter.jpn.safetensors", plan.model_files("align", "w0", models))
+
+    def test_shells_hold_no_identity_of_their_own(self):
+        for shell in (vad_worker, asr_worker, align_worker):
+            for name in ("identity", "model_files", "recipe_hash", "RECIPE_HASH"):
+                self.assertFalse(hasattr(shell, name), f"{shell.__name__}.{name}")
 
 
 class ImportBoundaryTest(unittest.TestCase):

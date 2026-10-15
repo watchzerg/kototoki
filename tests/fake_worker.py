@@ -1,4 +1,5 @@
-"""编排器测试用的假 GPU worker：按计划文件逐文件写出阶段产物，不加载任何模型。
+"""编排器测试用的假 GPU worker：按计划文件逐文件写出阶段产物，不加载任何模型；身份经 `kototoki.plan` 取得，
+PCM SHA256 与真 worker 一样由 `gpu.read_wav` 从 `audio-16k.wav` 算出。
 
 用法同真 worker：`python fake_worker.py <stage> --jobs <jobs.json>`。
 
@@ -21,11 +22,10 @@ import time
 # 作为脚本运行时 sys.path[0] 是 tests 目录；把仓库根放进去才能导入 kototoki。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from kototoki import artifacts  # noqa: E402
-from kototoki.workers import align, asr, vad  # noqa: E402
+from kototoki import artifacts, plan  # noqa: E402
+from kototoki.workers import gpu  # noqa: E402
 from kototoki.workers.protocol import FatalWorkerError, run_worker  # noqa: E402
 
-OUTPUT = {"vad": artifacts.VAD, "asr": artifacts.ASR, "align": artifacts.ALIGN}
 # 测试里 `gpu.verify_models` 被打补丁返回同一份映射，编排器与本 worker 算出的身份才一致。
 FAKE_MODELS = {"fake-model": "b" * 64}
 ENV_KEYS = ("PYTHONUTF8", "HF_HOME", "TORCH_HOME", "HF_HUB_OFFLINE")
@@ -62,8 +62,8 @@ def main(argv: list[str]) -> int:
     stage = argv[1]
     jobs_path = Path(argv[argv.index("--jobs") + 1])
     plan_path = os.environ.get("KOTOTOKI_FAKE_PLAN")
-    plan = json.loads(Path(plan_path).read_text(encoding="utf-8")) if plan_path and Path(plan_path).is_file() else {}
-    by_key = plan.get(stage, {})
+    actions_by_stage = json.loads(Path(plan_path).read_text(encoding="utf-8")) if plan_path and Path(plan_path).is_file() else {}
+    by_key = actions_by_stage.get(stage, {})
     actions = {**by_key, **{artifacts.work_id(key): action for key, action in by_key.items()}}
 
     def start(jobs):
@@ -85,14 +85,14 @@ def main(argv: list[str]) -> int:
             payload: dict = {"offset_s": 0}
             if stage == "vad":
                 payload["chunks"] = [] if action == "empty" else [{"start_s": 0.0, "end_s": 1.0}]
-            pcm = artifacts.read_json(job.work_dir / artifacts.PROBE)["extract"]["pcm_sha256"]
+            _, pcm = gpu.read_wav(job.inputs["wav"])  # 与真 worker 一样从 WAV 算 PCM SHA256
             if stage == "vad":
-                identity = vad.identity(pcm, FAKE_MODELS)
+                identity = plan.vad_identity(pcm, FAKE_MODELS)
             elif stage == "asr":
-                identity = asr.identity(jobs.config["engine"], pcm, artifacts.sha256_file(job.inputs["vad"]), FAKE_MODELS)
+                identity = plan.asr_identity(jobs.config["engine"], pcm, artifacts.sha256_file(job.inputs["vad"]), FAKE_MODELS)
             else:
-                identity = align.identity(pcm, artifacts.sha256_file(job.inputs["asr"]), FAKE_MODELS)
-            artifacts.write_artifact(job.work_dir / OUTPUT[stage], identity, payload)
+                identity = plan.align_identity(pcm, artifacts.sha256_file(job.inputs["asr"]), FAKE_MODELS)
+            artifacts.write_artifact(job.work_dir / plan.STAGE_OUTPUT[stage], identity, payload)
             return {"stage": stage}
 
         return process

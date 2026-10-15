@@ -15,6 +15,7 @@ import tempfile
 import types
 import unittest
 from unittest import mock
+import wave
 
 from kototoki import __main__ as cli
 from kototoki import artifacts, job, media
@@ -109,10 +110,15 @@ class JobCase(unittest.TestCase):
         if rel in self.extract_errors:
             raise media.MediaError(f"fake extract failure: {rel}")
         wav = Path(work_dir) / artifacts.AUDIO_16K
-        wav.write_bytes(b"RIFF")
+        pcm = hashlib.sha256(rel.encode()).digest()  # 每个文件不同的 16 个样本；伪 worker 从 WAV 重算同一 SHA
+        with wave.open(str(wav), "wb") as stream:
+            stream.setnchannels(1)
+            stream.setsampwidth(2)
+            stream.setframerate(16000)
+            stream.writeframes(pcm)
         return media.Extract(
             audio_copy=Path(work_dir) / "audio.m4a", wav=wav, log=Path(work_dir) / artifacts.EXTRACT_LOG,
-            sample_rate=16000, samples=160000, pcm_sha256=hashlib.sha256(rel.encode()).hexdigest(),
+            sample_rate=16000, samples=len(pcm) // 2, pcm_sha256=hashlib.sha256(pcm).hexdigest(),
             decoded_duration_s=10.0, video_duration_s=10.0, offset_s=0.0, pan="", compensation={}, warnings=())
 
     def _translate_document(self, document, run_dir, session, config):
@@ -511,6 +517,27 @@ class PublishTests(JobCase):
         again = self.run_job()
         self.assertEqual((again.up_to_date, again.published), (["a.mkv", "b.mkv", "c.mkv"], []))
         self.assertEqual(len(self.launches()), launches)
+
+
+class PlanCallTests(JobCase):
+    def test_next_stage_once_per_file_and_advance_once_per_stage_run(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.plan({"vad": {"b.mkv": "empty"}})
+        with mock.patch.object(job.plan, "next_stage", wraps=job.plan.next_stage) as next_stage,                 mock.patch.object(job.plan, "advance", wraps=job.plan.advance) as advance:
+            summary = self.run_job()
+            self.assertEqual(len(summary.published), 3)
+            self.assertEqual(next_stage.call_count, 3)
+            # a、c 各推进 vad／asr／align／cues 四次，b 只推进 vad 一次。
+            self.assertEqual(advance.call_count, 4 + 4 + 1)
+            self.assertEqual(sorted(call.args[0].stage for call in advance.call_args_list),
+                             ["align"] * 2 + ["asr"] * 2 + ["cues"] * 2 + ["vad"] * 3)
+
+            next_stage.reset_mock()
+            advance.reset_mock()
+            self.config.gpu_lock.unlink(missing_ok=True)
+            again = self.run_job()
+            self.assertEqual(again.up_to_date, ["a.mkv", "b.mkv", "c.mkv"])
+            self.assertEqual((next_stage.call_count, advance.call_count), (3, 0))
 
 
 class ImportAndOutputDirTests(JobCase):

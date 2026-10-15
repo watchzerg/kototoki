@@ -18,10 +18,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from kototoki import artifacts, config
-from kototoki.workers import align as align_worker
-from kototoki.workers import asr as asr_worker
-from kototoki.workers import vad as vad_worker
+from kototoki import artifacts, config, plan
 from kototoki.workers.protocol import FileJob, Jobs
 from tests.stt_frozen_window import AUDIO, LOCAL, child_env, compare, run_stage
 
@@ -47,14 +44,14 @@ def main() -> int:
     env = child_env(artifacts.work_root(out) / artifacts.CACHE_DIR)
 
     stages: dict[str, Any] = {}
-    plan = (
-        ("vad", vad_worker.RECIPE_HASH, {"models": models, "model_cache": model_cache}, {"wav": str(audio)}),
-        ("asr", asr_worker.recipe_hash("x0"), {"engine": "x0", "models": models, "model_cache": model_cache},
+    chain = (
+        ("vad", plan.recipe_hash("vad", ""), {"models": models, "model_cache": model_cache}, {"wav": str(audio)}),
+        ("asr", plan.recipe_hash("asr", "x0"), {"engine": "x0", "models": models, "model_cache": model_cache},
          {"wav": str(audio), "vad": str(work_dir / artifacts.VAD)}),
-        ("align", align_worker.RECIPE_HASH, {"models": models, "model_cache": model_cache},
+        ("align", plan.recipe_hash("align", ""), {"models": models, "model_cache": model_cache},
          {"wav": str(audio), "asr": str(work_dir / artifacts.ASR)}),
     )
-    for stage, recipe_hash, stage_config, inputs in plan:
+    for stage, recipe_hash, stage_config, inputs in chain:
         job = FileJob(work_dir.name, work_dir, {name: Path(path) for name, path in inputs.items()})
         stages[stage] = run_stage(stage, Jobs(stage, recipe_hash, stage_config, (job,)), out, env)
         if stages[stage]["exit_code"] != 0:

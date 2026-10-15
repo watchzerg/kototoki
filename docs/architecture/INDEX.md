@@ -22,7 +22,7 @@
 | [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py` |
 | [日文 cue](modules/japanese-cues.md) | 双语字幕流水线中把 `align.json` 字符时间回填（插值、外推、整窗 `fallback`）并切成日文 cue 的纯函数，产出 `ja-cues.json` payload 与 `ja.srt` 文本；时间轴上唯一加 `offset_s` 的地方 | `kototoki/cues.py` |
 | [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0／x0 逐窗转写（`asr.json`，窗口级 `failed_windows`，x0 触顶窗口置空）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
-| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志与发布记录 | `kototoki/__main__.py`、`kototoki/job.py` |
+| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志与发布记录。阶段计划模块 `plan` 持有阶段链、模型文件清单与各阶段期望身份，编排与 worker 壳共用 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/plan.py` |
 | [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：整批共用一个受管 llama-server session、`b10-joint` 批次请求（与 v3 逐字节相同）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
 | 历史实验代码（冻结或只作回归参考） | 不建模块页；复现历史时按各自 README 使用冻结配置与旧身份，见下方列表 | 见下 |
 
@@ -56,8 +56,11 @@ flowchart TB
   JOB -->|线程池直接调用| MEDIA["media（ffmpeg）"]
   JOB -->|直接调用| CUES["cues（纯函数）"]
   JOB -->|直接调用| MERGE["merge（纯函数）"]
+  JOB -->|next_stage / advance，期望身份| PLAN["plan（阶段计划）"]
   JOB -->|持有 session| TR["translate/（子系统）"]
   JOB -.->|子进程：--jobs 文件 + 退出码| WK["workers.vad / workers.asr / workers.align"]
+  WK -->|身份、模型清单| PLAN
+  PLAN -.->|RECIPE_HASH（延迟导入）| TR
   WK --> VAD["vad"]
   WK --> ASR["asr_whisper ／ asr_qwen"]
   WK --> ALIGN["align"]
@@ -65,6 +68,7 @@ flowchart TB
   MEDIA --> BASE
   CUES --> BASE
   MERGE --> BASE
+  PLAN --> BASE
   TR --> BASE
   WK --> BASE
   VAD --> BASE

@@ -7,10 +7,11 @@
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
     → ja-cues（进程内）→ translate（进程内，整批一个 session）→ 三份 SRT 一起发布
 
-每个阶段开始前按产物契约重算期望身份：产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。
-GPU 阶段产物（`vad.json`、`asr.json`、`align.json`）由 worker 写出，期望身份用 worker 壳的
-`identity`／`model_files` 计算（壳导入时不加载推理库）；CPU 阶段产物由本模块包装身份并写出。本模块不做任何
-时间换算，不导入任何推理模块（有测试守门）。
+阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
+某阶段跑完再 `advance` 继续核对；产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。GPU 阶段产物
+（`vad.json`、`asr.json`、`align.json`）由 worker 写出；CPU 阶段产物（`probe.json`、`ja-cues.json`）由本模块
+写出。模型文件 SHA256 的核对（size+mtime 缓存，每次运行每阶段最多一次）在本模块经 `workers/gpu.verify_models`
+完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）。
 
 锁：启动即取 `<output_dir>/.work/lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
 锁文件记录编排器、当前 worker 与 llama-server 的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
@@ -26,15 +27,16 @@ from dataclasses import asdict, dataclass, field
 import importlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import subprocess
 import sys
 import time
 from typing import Any, TextIO
 
-from kototoki import artifacts, cues, media, recipes, srt
+from kototoki import artifacts, cues, media, plan, srt
 from kototoki.config import REPO_ROOT, Config
-from kototoki.workers import align as align_worker, asr as asr_worker, gpu, vad as vad_worker
+from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
+from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, write_jobs
 
 EXIT_OK = 0
@@ -43,13 +45,6 @@ EXIT_CONFIG = 2           # 配置文件或输出目录不可用（__main__）
 EXIT_OUTPUT_LOCKED = 3    # 同一输出目录已有编排器在运行
 EXIT_GPU_LOCKED = 4       # `.local/gpu.lock` 被其他作业持有或残留
 
-GPU_STAGES = ("vad", "asr", "align")
-# GPU 阶段 worker 的产物与 jobs 输入（名 → 工作目录内文件）。
-STAGE_OUTPUT = {"vad": artifacts.VAD, "asr": artifacts.ASR, "align": artifacts.ALIGN}
-STAGE_INPUTS = {"vad": (("wav", artifacts.AUDIO_16K),),
-                "asr": (("wav", artifacts.AUDIO_16K), ("vad", artifacts.VAD)),
-                "align": (("wav", artifacts.AUDIO_16K), ("asr", artifacts.ASR))}
-JA_SRT = "ja.srt"          # ja-cues 阶段写出、翻译读取的日文 SRT（工作目录内）
 PUBLISH_DIR = "publish"    # 三份最终 SRT 的暂存目录（工作目录内），写完后一起移动到最终位置
 
 # worker 子进程的离线环境（沿用 experiments setup_runtime 的变量，不加私有 DLL 目录）。
@@ -286,10 +281,18 @@ class VideoFile:
     work_dir: Path
     finals: dict[str, Path]
     probe: media.Probe | None = None
+    probe_identity: dict[str, Any] | None = None
     pcm_sha256: str | None = None
-    identities: dict[str, Any] = field(default_factory=dict)  # 期望身份，逐阶段填入
-    no_speech: bool = False
+    plan: Plan | None = None      # CPU 阶段之后由阶段计划模块给出，某阶段跑完后推进
     failed: str | None = None     # 本次运行中失败的阶段
+
+    def target(self) -> plan.Target:
+        assert self.probe_identity is not None and self.pcm_sha256 is not None
+        return plan.Target(self.work_dir, self.finals, self.probe_identity, self.pcm_sha256)
+
+    @property
+    def no_speech(self) -> bool:
+        return self.plan is not None and self.plan.no_speech
 
 
 @dataclass
@@ -338,7 +341,7 @@ def stable_files(files: list[tuple[str, Path]], interval_s: float,
     return stable, [rel for rel, _ in unstable]
 
 
-# --- 期望身份 -----------------------------------------------------------------------------------
+# --- 翻译与合并的延迟导入、模型核对 ----------------------------------------------------------------
 
 def _translate_module() -> Any:
     return importlib.import_module("kototoki.translate")
@@ -348,107 +351,17 @@ def _merge_module() -> Any:
     return importlib.import_module("kototoki.merge")
 
 
-def probe_identity(config: Config, video: VideoFile) -> dict[str, Any]:
-    assert video.probe is not None
-    return {"video": artifacts.video_identity(config.paths.input_dir, video.relative, video.probe.ffprobe),
-            "recipe_hash": recipes.recipe_hash(recipes.MEDIA),
-            "config": {"audio_language": config.input.audio_language}}
-
-
-class PlanError(RuntimeError):
-    """重算某阶段期望身份时出错（如读不了上游产物）；`stage` 是正在核对的阶段。"""
-
-    def __init__(self, stage: str, error: Exception):
-        super().__init__(f"{type(error).__name__}: {error}")
-        self.stage = stage
-
-
-ModelSha = Callable[[str], Mapping[str, str]]  # 阶段名 → {模型文件名: SHA256}
-
-
 def model_sha_lookup(config: Config) -> ModelSha:
     """按阶段核对 worker 用到的模型文件 SHA256（size+mtime 缓存与 worker 共用），每次运行每阶段最多一次。"""
-    models = _worker_models(config)
+    models = plan.worker_models(config)
     cache_path = artifacts.model_cache_path(config.paths.output_dir)
-    files = {"vad": lambda: vad_worker.model_files(models),
-             "asr": lambda: asr_worker.model_files(config.engine, models),
-             "align": lambda: align_worker.model_files(models)}
     done: dict[str, Mapping[str, str]] = {}
 
     def lookup(stage: str) -> Mapping[str, str]:
         if stage not in done:
-            done[stage] = gpu.verify_models(files[stage](), cache_path)
+            done[stage] = gpu.verify_models(plan.model_files(stage, config.engine, models), cache_path)
         return done[stage]
     return lookup
-
-
-def _worker_models(config: Config) -> dict[str, str]:
-    m = config.models
-    return {"vad": str(m.vad), "w0": str(m.w0), "w0_mel_assets": str(m.w0_mel_assets), "x0": str(m.x0),
-            "align": str(m.align)}
-
-
-def next_stage(config: Config, video: VideoFile, models: ModelSha) -> str:
-    """从 vad 起逐阶段重算期望身份，返回第一个需要运行的阶段：
-
-    `vad`／`asr`／`align`／`cues`／`translate`／`publish`，或 `done`（已发布且身份匹配、最终文件未改动）。
-    `probe.json` 必须已当前（CPU 阶段之后调用）。无语音时跳过 asr 起的阶段，直接 `publish`。
-    出错时抛 `PlanError`，标明正在核对的阶段。
-    """
-    checking = ["vad"]
-    try:
-        return _next_stage(config, video, models, checking)
-    except Exception as error:
-        raise PlanError(checking[0], error) from error
-
-
-def _next_stage(config: Config, video: VideoFile, models: ModelSha, checking: list[str]) -> str:
-    work = video.work_dir
-    pcm = video.pcm_sha256
-    assert pcm is not None
-    ids = video.identities
-    ids["vad"] = vad_worker.identity(pcm, models("vad"))
-    if not artifacts.is_current(work / artifacts.VAD, ids["vad"]):
-        return "vad"
-    checking[0] = "asr"
-    video.no_speech = artifacts.read_json(work / artifacts.VAD).get("chunks") == []
-    if video.no_speech:
-        for stage in ("asr", "align", "ja_cues", "translate"):
-            ids.pop(stage, None)
-        return _publish_state(config, video)
-    ids["asr"] = asr_worker.identity(config.engine, pcm, artifacts.sha256_file(work / artifacts.VAD), models("asr"))
-    if not artifacts.is_current(work / artifacts.ASR, ids["asr"]):
-        return "asr"
-    checking[0] = "align"
-    ids["align"] = align_worker.identity(pcm, artifacts.sha256_file(work / artifacts.ASR), models("align"))
-    if not artifacts.is_current(work / artifacts.ALIGN, ids["align"]):
-        return "align"
-    checking[0] = "cues"
-    ids["ja_cues"] = artifacts.derived_identity(
-        upstream={artifacts.ALIGN: artifacts.sha256_file(work / artifacts.ALIGN)},
-        recipe_hash=recipes.recipe_hash(recipes.CUES), config=asdict(config.cues))
-    if not ((work / JA_SRT).is_file() and artifacts.is_current(work / artifacts.JA_CUES, ids["ja_cues"])):
-        return "cues"
-    checking[0] = "translate"
-    ids["translate"] = {"ja_srt_sha256": artifacts.sha256_file(work / JA_SRT),
-                        "recipe_hash": _translate_module().RECIPE_HASH, "seed": config.translate.seed}
-    return _publish_state(config, video)
-
-
-def _expected_sources(video: VideoFile) -> dict[str, Any]:
-    keys = ("probe", "vad") if video.no_speech else ("probe", "vad", "asr", "align", "ja_cues", "translate")
-    return {key: video.identities[key] for key in keys} | {"no_speech": video.no_speech}
-
-
-def _publish_state(config: Config, video: VideoFile) -> str:
-    record = artifacts.read_published(video.work_dir)
-    expected = _expected_sources(video)
-    if record is not None and {key: record["sources"].get(key) for key in expected} == json.loads(
-            artifacts.canonical(expected)):
-        if all(path.is_file() and artifacts.sha256_file(path) == record["sha256"][kind]
-               for kind, path in video.finals.items()):
-            return "done"
-    return "publish" if video.no_speech else "translate"
 
 
 # --- CPU 阶段：probe／extract -------------------------------------------------------------------
@@ -459,13 +372,13 @@ def probe_and_extract(config: Config, video: VideoFile) -> None:
     `probe.json` 在 extract 完成后写出，内容为 probe payload 加 `extract` 记录（PCM SHA256 等）。
     """
     video.probe = media.probe(video.path, config)
-    video.identities["probe"] = probe_identity(config, video)
+    video.probe_identity = plan.probe_identity(config, video.relative, video.probe.ffprobe)
     path = video.work_dir / artifacts.PROBE
-    if artifacts.is_current(path, video.identities["probe"]) and (video.work_dir / artifacts.AUDIO_16K).is_file():
+    if artifacts.is_current(path, video.probe_identity) and (video.work_dir / artifacts.AUDIO_16K).is_file():
         video.pcm_sha256 = artifacts.read_json(path)["extract"]["pcm_sha256"]
         return
     result = media.extract(video.path, video.work_dir, video.probe, config)
-    artifacts.write_artifact(path, video.identities["probe"], {**video.probe.payload(), "extract": result.payload()})
+    artifacts.write_artifact(path, video.probe_identity, {**video.probe.payload(), "extract": result.payload()})
     video.pcm_sha256 = result.pcm_sha256
 
 
@@ -516,11 +429,11 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
     root = artifacts.work_root(config.paths.output_dir)
     jobs_path = root / f"jobs-{stage}.json"
     write_jobs(jobs_path, Jobs(
-        stage=stage, recipe_hash=batch[0].identities[stage]["recipe_hash"],
-        config={"engine": config.engine, "models": _worker_models(config),
+        stage=stage, recipe_hash=plan.recipe_hash(stage, config.engine),
+        config={"engine": config.engine, "models": plan.worker_models(config),
                 "model_cache": str(artifacts.model_cache_path(config.paths.output_dir))},
-        files=tuple(FileJob(v.work_dir.name, v.work_dir, {name: v.work_dir / file for name, file in STAGE_INPUTS[stage]})
-                    for v in batch)))
+        files=tuple(FileJob(v.work_dir.name, v.work_dir,
+                            {name: v.work_dir / file for name, file in plan.STAGE_INPUTS[stage]}) for v in batch)))
     by_id = {v.work_dir.name: v for v in batch}
     stderr_path = root / f"run-{ctx.stamp}-{stage}.stderr.log"
     with stderr_path.open("ab") as stderr:
@@ -585,15 +498,22 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
         pending = pending[culprit_at + 1:]
         if pending:
             ctx.log(f"[{stage}] restarting worker for {len(pending)} remaining file(s)")
-    done = 0
-    for video in batch:
-        if video.failed:
-            continue
-        if artifacts.is_current(video.work_dir / STAGE_OUTPUT[stage], video.identities[stage]):
-            done += 1
-        else:
-            ctx.fail(video, stage, ArtifactMissing(f"{STAGE_OUTPUT[stage]} missing or not current after worker"))
+    done = sum(advance(ctx, video, stage) for video in batch if not video.failed)
     ctx.log(f"[{stage}] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
+
+
+def advance(ctx: _Context, video: VideoFile, stage: str) -> bool:
+    """`stage` 刚跑完：从它起继续核对；产物缺失或身份不符即记该阶段失败。返回是否推进成功。"""
+    assert video.plan is not None and video.plan.stage == stage
+    try:
+        video.plan = plan.advance(video.plan, video.target(), ctx.config, ctx.models)
+    except PlanError as error:
+        ctx.fail(video, error.stage, error)
+        return False
+    if video.plan.stage == stage:
+        ctx.fail(video, stage, ArtifactMissing(f"{plan.STAGE_OUTPUT[stage]} missing or not current after worker"))
+        return False
+    return True
 
 
 # --- ja-cues、翻译与发布 -------------------------------------------------------------------------
@@ -602,7 +522,8 @@ def build_ja_cues(config: Config, video: VideoFile) -> None:
     align = artifacts.read_json(video.work_dir / artifacts.ALIGN)
     payload, text = cues.build_cues(align, asdict(config.cues))
     srt.write_srt(text, video.work_dir / JA_SRT)
-    artifacts.write_artifact(video.work_dir / artifacts.JA_CUES, video.identities["ja_cues"], payload)
+    assert video.plan is not None
+    artifacts.write_artifact(video.work_dir / artifacts.JA_CUES, video.plan.identities["ja_cues"], payload)
 
 
 def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[dict[str, str], int, str]]:
@@ -656,7 +577,8 @@ def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate
         ctx.log(f"[publish] WARNING {video.relative}: final file(s) changed by user, not overwritten "
                 f"({', '.join(blockers)}); set [run] force = true to overwrite")
         return False
-    sources = _expected_sources(video) | {"translate_fallback_cues": fallback}
+    assert video.plan is not None
+    sources = video.plan.sources | {"translate_fallback_cues": fallback}
     artifacts.record_published(video.work_dir, video.finals, {k: artifacts.sha256_file(p) for k, p in staged.items()},
                                sources, translate_dir)
     for kind, path in staged.items():
@@ -729,20 +651,18 @@ def _run(ctx: _Context) -> None:
     def live() -> list[VideoFile]:
         return [video for video in ctx.files if not video.failed]
 
+    for video in live():  # 每文件一次：从 vad 起核对到第一个需要运行的阶段
+        try:
+            video.plan = plan.next_stage(video.target(), config, ctx.models)
+        except PlanError as error:
+            ctx.fail(video, error.stage, error)
+            continue
+        if video.plan.stage == "done":
+            summary.up_to_date.append(video.relative)
+            log(f"[scan] up to date: {video.relative}")
+
     def planned(stage: str) -> list[VideoFile]:
-        batch = []
-        for video in live():
-            try:
-                current = next_stage(config, video, ctx.models)
-            except PlanError as error:
-                ctx.fail(video, error.stage, error)
-                continue
-            if current == stage:
-                batch.append(video)
-            elif current == "done" and stage == "vad":
-                summary.up_to_date.append(video.relative)
-                log(f"[scan] up to date: {video.relative}")
-        return batch
+        return [video for video in live() if video.plan is not None and video.plan.stage == stage]
 
     for stage in GPU_STAGES:
         batch = planned(stage)
@@ -755,6 +675,8 @@ def _run(ctx: _Context) -> None:
             build_ja_cues(config, video)
         except Exception as error:
             ctx.fail(video, "cues", error)
+            continue
+        advance(ctx, video, "cues")
 
     to_translate = planned("translate")
     if any(srt.read_srt(v.work_dir / JA_SRT).cues for v in to_translate):
@@ -764,8 +686,8 @@ def _run(ctx: _Context) -> None:
 
     for video in live():
         try:
-            stage = next_stage(config, video, ctx.models)
-            if stage == "publish" and video.no_speech:
+            stage = video.plan.stage if video.plan is not None else None
+            if stage == "publish":
                 if publish(ctx, video, {kind: "" for kind in artifacts.FINAL_SUFFIXES}, "", 0):
                     summary.no_speech.append(video.relative)
             elif stage == "translate" and video.relative in translated:
