@@ -7,6 +7,7 @@
 | 模块 | 票据 | 作用 | 资源 |
 | --- | --- | --- | --- |
 | `telemetry_run.py` | 01 | 运行一条命令（如 `python -m kototoki`），旁路 0.5 s 采样整卡显存，按产品日志切阶段，写 `driver-result.json` | 随被测命令 |
+| `consistency.py` | 04 | 跨批一致性指标：同一作品内人名／专名的中文译法一致率（v4 run 或成对 SRT）；`precision` 子命令抽样送 Opus 核对精确率 | 离线（`precision` 消耗少量 Claude 配额） |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.quality_v5.<模块> ...`（各模块文件头有命令示例）。
 
