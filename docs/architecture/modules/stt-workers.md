@@ -8,7 +8,7 @@
 
 ## 当前行为规格
 
-**分两层**：推理模块（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`）只做"加载一次、按窗口推理"，输入输出是内存对象与 WAV 本地坐标，只依赖基础层、互不导入，不读写产物、不判断跳过、不打印；worker 壳（`kototoki/workers/{vad,asr,align}.py`）负责读输入、重验上游身份、组装 payload 与 `failed_windows` 记账，经 `protocol.run_worker` 运行，`__main__` 两行。三壳共用的命令行入口、读 WAV、模型文件核对、CUDA 守卫与写产物在 `kototoki/workers/gpu.py`。壳模块导入时不加载 torch 等推理库（推理模块在 `start` 里才导入，有测试钉住）。壳自身不持有身份、模型文件清单与配方 hash：这些归阶段计划模块 `kototoki/plan.py`（见[批次编排](batch-orchestration.md)），壳写进产物的身份与编排核对用的是同一个函数（`plan.vad_identity`／`asr_identity`／`align_identity`），`start` 用 `plan.recipe_hash(stage, engine)` 校验 jobs、用 `plan.model_files(stage, engine, models)` 取要核对的模型文件。
+**分两层**：推理模块（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`）只做"加载一次、按窗口推理"，输入输出是内存对象与 WAV 本地坐标，只依赖基础层、互不导入，不读写产物、不判断跳过、不打印；worker 壳（`kototoki/workers/{vad,asr,align}.py`）负责读输入、重验上游身份、组装 payload 与 `failed_windows` 记账，经 `protocol.run_worker` 运行，`__main__` 两行。三壳共用的命令行入口、读 WAV、模型文件核对、CUDA 守卫与写产物在 `kototoki/workers/gpu.py`。壳模块导入时不加载 torch 等推理库（推理模块在 `start` 里才导入，有测试钉住）。壳自身不持有身份、模型文件清单与配方 hash：这些归阶段计划模块 `kototoki/plan.py`（见[批次编排](batch-orchestration.md)），壳写进产物的身份与编排核对用的是同一个函数（`plan.vad_identity`／`asr_identity`／`align_identity`），`start` 用 `plan.recipe_hash(stage, engine=…)` 校验 jobs（asr 引擎不可用即启动失败）、用 `plan.model_files(stage, models, engine=…)` 取要核对的模型文件。
 
 **jobs 约定**（2026-10-14 用户认可；在协议的 `{"stage", "recipe_hash", "config", "files"}` 之上）：`recipe_hash` 必须等于该 worker 写进身份的配方 hash（VAD、MMS 各一个，ASR 按引擎），否则启动失败；`config` 需要 `models`（`Config.models` 的同名键，路径字符串：`vad`、`w0`、`w0_mel_assets`、`x0`、`align`）、`model_cache`（`.work/cache/model-verification.json`），ASR 另需 `engine`（`w0` 或 `x0`，其它值启动失败；w0 只读 `w0`／`w0_mel_assets`，x0 只读 `x0`）；每个文件的 `inputs`：VAD `wav`，ASR `wav`＋`vad`，对齐 `wav`＋`asr`。
 

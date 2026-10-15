@@ -240,8 +240,8 @@ class X0WorkerTest(WorkerTestCase):
 
 class X0ShellTest(unittest.TestCase):
     def test_recipe_hash_and_model_files_follow_engine(self):
-        self.assertEqual(plan.recipe_hash("asr", "x0"), recipes.recipe_hash(recipes.X0))
-        files = plan.model_files("asr", "x0", {"x0": "q"})
+        self.assertEqual(plan.recipe_hash("asr", engine="x0"), recipes.recipe_hash(recipes.X0))
+        files = plan.model_files("asr", {"x0": "q"}, engine="x0")
         self.assertEqual(len(files), 7)
         self.assertEqual(files["qwen3-asr-1.7b-hf/model.safetensors"][1],
                          "2db53c7d81bd9b8cbc6a074e89be2c968a0d373fb4ee68bb1b1e14f7042dfee1")

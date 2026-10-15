@@ -45,10 +45,10 @@ def main() -> int:
 
     stages: dict[str, Any] = {}
     chain = (
-        ("vad", plan.recipe_hash("vad", ""), {"models": models, "model_cache": model_cache}, {"wav": str(audio)}),
-        ("asr", plan.recipe_hash("asr", "x0"), {"engine": "x0", "models": models, "model_cache": model_cache},
+        ("vad", plan.recipe_hash("vad"), {"models": models, "model_cache": model_cache}, {"wav": str(audio)}),
+        ("asr", plan.recipe_hash("asr", engine="x0"), {"engine": "x0", "models": models, "model_cache": model_cache},
          {"wav": str(audio), "vad": str(work_dir / artifacts.VAD)}),
-        ("align", plan.recipe_hash("align", ""), {"models": models, "model_cache": model_cache},
+        ("align", plan.recipe_hash("align"), {"models": models, "model_cache": model_cache},
          {"wav": str(audio), "asr": str(work_dir / artifacts.ASR)}),
     )
     for stage, recipe_hash, stage_config, inputs in chain:

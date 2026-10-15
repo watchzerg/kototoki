@@ -53,9 +53,9 @@ def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu
 
 
 def start(jobs: Jobs) -> Any:
-    gpu.require_recipe(jobs, plan.recipe_hash(STAGE, ""))
+    gpu.require_recipe(jobs, plan.recipe_hash(STAGE))
     models = jobs.config["models"]
-    model_sha256 = gpu.verify_models(plan.model_files(STAGE, "", models), Path(jobs.config["model_cache"]))
+    model_sha256 = gpu.verify_models(plan.model_files(STAGE, models), Path(jobs.config["model_cache"]))
     from kototoki.align import MmsAligner
 
     started = time.perf_counter()

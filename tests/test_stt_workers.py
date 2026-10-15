@@ -178,8 +178,8 @@ class AsrWorkerTest(WorkerTestCase):
         self.assertEqual(artifacts.read_json(self.work_dir / artifacts.FAILURE)["stage"], "stage")
 
     def test_recipe_hash_follows_engine(self):
-        self.assertEqual(plan.recipe_hash("asr", "w0"), recipes.recipe_hash(recipes.W0))
-        self.assertEqual(plan.recipe_hash("asr", "x0"), recipes.recipe_hash(recipes.X0))
+        self.assertEqual(plan.recipe_hash("asr", engine="w0"), recipes.recipe_hash(recipes.W0))
+        self.assertEqual(plan.recipe_hash("asr", engine="x0"), recipes.recipe_hash(recipes.X0))
 
 
 class AlignWorkerTest(WorkerTestCase):
@@ -301,12 +301,12 @@ class GpuHelpersTest(unittest.TestCase):
 
     def test_model_file_lists_cover_pinned_assets(self):
         models = {"vad": "v/pytorch_model.bin", "w0": "w", "w0_mel_assets": "m", "x0": "x", "align": "a"}
-        self.assertEqual(len(plan.model_files("vad", "w0", models)), 1)
-        w0 = plan.model_files("asr", "w0", models)
+        self.assertEqual(len(plan.model_files("vad", models)), 1)
+        w0 = plan.model_files("asr", models, engine="w0")
         self.assertIn("faster-whisper-large-v3/model.bin", w0)
         self.assertEqual(w0["w0-assets/mel_filters.npz"][1], recipes.W0["features"]["mel_sha256"])
-        self.assertIn("qwen3-asr-1.7b-hf/model.safetensors", plan.model_files("asr", "x0", models))
-        self.assertIn("mms-1b-all/adapter.jpn.safetensors", plan.model_files("align", "w0", models))
+        self.assertIn("qwen3-asr-1.7b-hf/model.safetensors", plan.model_files("asr", models, engine="x0"))
+        self.assertIn("mms-1b-all/adapter.jpn.safetensors", plan.model_files("align", models))
 
     def test_shells_hold_no_identity_of_their_own(self):
         for shell in (vad_worker, asr_worker, align_worker):

@@ -124,7 +124,8 @@ class ChainTests(PlanCase):
         self.publish(current)
         done = plan.advance(current, self.target, self.config, models)
         self.assertEqual(done.stage, "done")
-        self.assertIs(plan.advance(done, self.target, self.config, models), done)
+        with self.assertRaises(ValueError):
+            plan.advance(done, self.target, self.config, models)
 
     def test_no_speech_goes_straight_to_publish_then_done(self) -> None:
         self.write_vad(chunks=[])
@@ -196,10 +197,10 @@ class StageTableTests(unittest.TestCase):
         self.assertEqual(plan.STAGE_INPUTS["align"], (("wav", artifacts.AUDIO_16K), ("asr", artifacts.ASR)))
         self.assertEqual(plan.STAGE_OUTPUT["cues"], artifacts.JA_CUES)
         self.assertEqual([plan.IDENTITY_KEY[s] for s in plan.STAGES], ["vad", "asr", "align", "ja_cues", "translate"])
-        with self.assertRaises(ValueError):
-            plan.recipe_hash("cues", "w0")
-        with self.assertRaises(ValueError):
-            plan.model_files("cues", "w0", {})
+        for bad in (lambda: plan.recipe_hash("cues"), lambda: plan.model_files("cues", {}),
+                    lambda: plan.recipe_hash("asr"), lambda: plan.model_files("asr", {}, engine="x9")):
+            with self.assertRaises(ValueError):
+                bad()
 
 
 if __name__ == "__main__":

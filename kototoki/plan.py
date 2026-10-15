@@ -82,14 +82,16 @@ def worker_models(config: Config) -> dict[str, str]:
             "align": str(m.align)}
 
 
-def model_files(stage: str, engine: str, models: Mapping[str, str]) -> dict[str, tuple[Path, str]]:
-    """GPU 阶段加载前要核对的模型文件：{名称: (路径, 期望 SHA256)}；`engine` 只对 asr 有意义。"""
+def model_files(stage: str, models: Mapping[str, str], *, engine: str | None = None) -> dict[str, tuple[Path, str]]:
+    """GPU 阶段加载前要核对的模型文件：{名称: (路径, 期望 SHA256)}；只有 asr 需要 `engine`。"""
     if stage == "vad":
         return {"pyannote-segmentation-3.0/pytorch_model.bin": (Path(models["vad"]), VAD_CHECKPOINT_SHA256)}
     if stage == "align":
         return {f"mms-1b-all/{name}": (Path(models["align"]) / name, sha256) for name, sha256 in MMS_FILES.items()}
     if stage != "asr":
         raise ValueError(f"{stage!r} is not a GPU stage")
+    if engine not in ASR_RECIPES:
+        raise ValueError(f"ASR engine {engine!r} is not available")
     if engine == "x0":
         return {f"qwen3-asr-1.7b-hf/{name}": (Path(models["x0"]) / name, sha256) for name, sha256 in X0_FILES.items()}
     files = {f"faster-whisper-large-v3/{name}": (Path(models["w0"]) / name, sha256) for name, sha256 in W0_FILES.items()}
@@ -98,13 +100,15 @@ def model_files(stage: str, engine: str, models: Mapping[str, str]) -> dict[str,
     return files
 
 
-def recipe_hash(stage: str, engine: str) -> str:
-    """GPU 阶段写进身份与 jobs 文件的配方 hash；asr 按引擎。"""
+def recipe_hash(stage: str, *, engine: str | None = None) -> str:
+    """GPU 阶段写进身份与 jobs 文件的配方 hash；只有 asr 需要 `engine`。"""
     if stage == "vad":
         return recipes.recipe_hash(recipes.VAD)
     if stage == "align":
         return recipes.recipe_hash(recipes.MMS)
     if stage == "asr":
+        if engine not in ASR_RECIPES:
+            raise ValueError(f"ASR engine {engine!r} is not available")
         return recipes.recipe_hash(ASR_RECIPES[engine])
     raise ValueError(f"{stage!r} is not a GPU stage")
 
@@ -119,17 +123,17 @@ def probe_identity(config: Config, relative: str | PurePosixPath, ffprobe: Mappi
 
 def vad_identity(pcm_sha256: str, model_sha256: Mapping[str, str]) -> dict[str, Any]:
     return artifacts.derived_identity(upstream={artifacts.AUDIO_16K: pcm_sha256},
-                                      recipe_hash=recipe_hash("vad", ""), models=model_sha256)
+                                      recipe_hash=recipe_hash("vad"), models=model_sha256)
 
 
 def asr_identity(engine: str, pcm_sha256: str, vad_sha256: str, model_sha256: Mapping[str, str]) -> dict[str, Any]:
     return artifacts.derived_identity(upstream={artifacts.AUDIO_16K: pcm_sha256, artifacts.VAD: vad_sha256},
-                                      recipe_hash=recipe_hash("asr", engine), models=model_sha256)
+                                      recipe_hash=recipe_hash("asr", engine=engine), models=model_sha256)
 
 
 def align_identity(pcm_sha256: str, asr_sha256: str, model_sha256: Mapping[str, str]) -> dict[str, Any]:
     return artifacts.derived_identity(upstream={artifacts.AUDIO_16K: pcm_sha256, artifacts.ASR: asr_sha256},
-                                      recipe_hash=recipe_hash("align", ""), models=model_sha256)
+                                      recipe_hash=recipe_hash("align"), models=model_sha256)
 
 
 def cues_identity(align_sha256: str, config: Config) -> dict[str, Any]:
@@ -189,7 +193,7 @@ def next_stage(target: Target, config: Config, models: ModelSha) -> Plan:
 def advance(previous: Plan, target: Target, config: Config, models: ModelSha) -> Plan:
     """`previous.stage` 跑完之后从该阶段继续核对：其产物不当前时返回的 `stage` 不变（调用方据此记失败）。"""
     if previous.stage not in STAGES:
-        return previous
+        raise ValueError(f"Plan is already at {previous.stage!r}; nothing to advance from")
     return _check_from(target, config, models, previous)
 
 

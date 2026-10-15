@@ -26,15 +26,15 @@
 | 产物 | 身份（`plan` 的函数） |
 | --- | --- |
 | `probe.json` | `probe_identity`：`video_identity`（相对路径、大小、`mtime_ns`、ffprobe 指纹）＋ `MEDIA` 配方 hash ＋ `audio_language` |
-| `vad.json`／`asr.json`／`align.json` | `vad_identity`／`asr_identity`／`align_identity`：上游 PCM 与上游产物 SHA256、配方 hash（`recipe_hash(stage, engine)`）、模型文件 SHA256；worker 壳写进产物的是同一个函数的结果，见 [STT worker](stt-workers.md) |
+| `vad.json`／`asr.json`／`align.json` | `vad_identity`／`asr_identity`／`align_identity`：上游 PCM 与上游产物 SHA256、配方 hash（`recipe_hash(stage, engine=…)`，只有 asr 需要引擎）、模型文件 SHA256；worker 壳写进产物的是同一个函数的结果，见 [STT worker](stt-workers.md) |
 | `ja-cues.json` | `cues_identity`：上游 `align.json` ＋ `CUES` 配方 hash ＋ `[cues]` 规则 |
 | 翻译 | `translate_identity`：`ja.srt` SHA256 ＋ `translate.RECIPE_HASH` ＋ seed（翻译子系统用到时才导入） |
 
-`Plan` 是不可变值：`stage`、`identities`（`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `published.json` 的 `sources`）、`no_speech`，以及发布记录用的 `sources`。`next_stage(target, config, models)` 从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果；`vad.json` 的 `chunks` 为空即无语音，跳到发布判定；全部当前时对照 `published.json`：`sources` 与期望相同且三份最终文件 SHA 等于记录即 `done`，否则 `translate`（无语音时 `publish`）。`advance(previous, …)` 从 `previous.stage` 继续同一核对，不改写入参；对同一目录连续调用结果相同。核对途中出错抛 `PlanError`（带正在核对的阶段，编排记为该阶段失败）；损坏的产物不是错误，只是"不当前"。阶段表 `STAGE_INPUTS`／`STAGE_OUTPUT`、`worker_models`、`model_files(stage, engine, models)` 供编排写 jobs 文件、壳核对模型。
+`Plan` 是不可变值：`stage`、`identities`（`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `published.json` 的 `sources`）、`no_speech`，以及发布记录用的 `sources`。`next_stage(target, config, models)` 从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果；`vad.json` 的 `chunks` 为空即无语音，跳到发布判定；全部当前时对照 `published.json`：`sources` 与期望相同且三份最终文件 SHA 等于记录即 `done`，否则 `translate`（无语音时 `publish`）。`advance(previous, …)` 从 `previous.stage` 继续同一核对，不改写入参；对同一目录连续调用结果相同。核对途中出错抛 `PlanError`（带正在核对的阶段，编排记为该阶段失败）；损坏的产物不是错误，只是"不当前"。阶段表 `STAGE_INPUTS`／`STAGE_OUTPUT`、`worker_models`、`model_files(stage, models, engine=…)` 供编排写 jobs 文件、壳核对模型；`advance` 对已到终态的计划报错。
 
 模型文件 SHA256 由编排的 `model_sha_lookup` 经 `gpu.verify_models`（`plan.model_files` 给出期望值，size+mtime 缓存与 worker 共用 `.work/cache/model-verification.json`）按阶段每次运行最多核对一次；模型缺失或不符时需要该阶段核对的文件记失败。`published.json` 的 `sources` 记录上表全部身份与 `no_speech`（另记 `translate_fallback_cues`，不参与比较）。
 
-**GPU worker 调度**：命令 `sys.executable -m kototoki.workers.<stage> --jobs <.work/jobs-<stage>.json>`，`cwd` 为仓库根；jobs 按 [STT worker](stt-workers.md) 的约定：`recipe_hash` 为 `plan.recipe_hash(stage, engine)`，`config` 为 `{"engine", "models": plan.worker_models(config), "model_cache"}`，`inputs` 按 `plan.STAGE_INPUTS`（vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）；worker 用 `plan` 的身份函数写入身份，编排用同一函数核对。子进程环境在当前环境上加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<output_dir>/.work/cache/`；stdout 逐行读进度 JSON 写入运行日志，stderr 追加到 `.work/run-<时间戳>-<stage>.stderr.log`。
+**GPU worker 调度**：命令 `sys.executable -m kototoki.workers.<stage> --jobs <.work/jobs-<stage>.json>`，`cwd` 为仓库根；jobs 按 [STT worker](stt-workers.md) 的约定：`recipe_hash` 为 `plan.recipe_hash(stage, engine=…)`，`config` 为 `{"engine", "models": plan.worker_models(config), "model_cache"}`，`inputs` 按 `plan.STAGE_INPUTS`（vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）；worker 用 `plan` 的身份函数写入身份，编排用同一函数核对。子进程环境在当前环境上加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<output_dir>/.work/cache/`；stdout 逐行读进度 JSON 写入运行日志，stderr 追加到 `.work/run-<时间戳>-<stage>.stderr.log`。
 
 **崩溃与重启**（按文件计）：
 
@@ -58,7 +58,7 @@
 
 ## 代码与验证入口
 
-- 代码：`kototoki/__main__.py`（`main`、`check_output_dir`）、`kototoki/job.py`（`run`、`Summary`、`model_sha_lookup`、`run_gpu_stage`、`advance`、`ProcessLock`、`contain_children`）、`kototoki/plan.py`（`Target`、`Plan`、`next_stage`、`advance`、`PlanError`、各阶段身份函数、`STAGE_INPUTS`／`STAGE_OUTPUT`、`model_files`、`recipe_hash`、`worker_models`）。锁、进程身份与 Job Object 复制自 `experiments/translation_v3/procs.py`（未导入）。
+- 代码：`kototoki/__main__.py`（`main`、`check_output_dir`）、`kototoki/job.py`（`run`、`Summary`、`model_sha_lookup`、`run_gpu_stage`、`advance_or_fail`、`ProcessLock`、`contain_children`）、`kototoki/plan.py`（`Target`、`Plan`、`next_stage`、`advance`、`PlanError`、各阶段身份函数、`STAGE_INPUTS`／`STAGE_OUTPUT`、`model_files`、`recipe_hash`、`worker_models`）。锁、进程身份与 Job Object 复制自 `experiments/translation_v3/procs.py`（未导入）。
 - 测试（core，`just test`）：`tests/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`、伪翻译与合并模块、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖扫描与镜像、大小采样稳定性、发布前置判定与 `force`、阶段顺序、崩溃文件隔离与按文件重启、失败隔离、中断后续跑、输出目录锁与 GPU 锁冲突退出码、无语音路径、一起发布、子进程环境、禁止导入清单与输出目录位置检查，以及一次整批运行中每文件 `plan.next_stage` 恰一次、每个跑过的阶段 `plan.advance` 恰一次；伪 worker 与真 worker 一样从 WAV 算 PCM SHA256 并经 `plan` 取身份。`tests/test_plan.py` 直接测计划模块：阶段链逐级推进、cues 阶段同时要求 `ja-cues.json` 与 `ja.srt`、无语音直达 `publish` 再 `done`、最终文件改动或身份改变即重新发布、`advance` 停在未写出产物的阶段、连续调用结果相同且不改写入参、`PlanError` 标明阶段、损坏产物视为不当前。
 - 真实运行：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（Heaven's Feel II／III 各以 w0、x0 整批运行，12 份 SRT 齐全；首轮翻译因空闲显存低于启动阈值失败，重跑时 STT 按产物身份全部跳过、只做翻译与发布）。
 - 真实失败路径：[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)——asr 阶段强杀编排器后 worker 随 Job Object 退出、残留锁默认拒绝（退出码 3）、`KOTOTOKI_BREAK_STALE_LOCK=1` 后从 vad 产物续跑；无语音视频、损坏文件隔离、子目录镜像、用户改动最终文件的拒绝与 `force` 覆盖、重跑逐字节一致均通过。

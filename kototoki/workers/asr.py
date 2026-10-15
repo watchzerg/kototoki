@@ -49,10 +49,8 @@ def compute(asr: Any, engine: str, model_sha256: Mapping[str, str], load_s: floa
 
 def start(jobs: Jobs) -> Any:
     engine, models = jobs.config["engine"], jobs.config["models"]
-    if engine not in plan.ASR_RECIPES:
-        raise ValueError(f"ASR engine {engine!r} is not available")
-    gpu.require_recipe(jobs, plan.recipe_hash(STAGE, engine))
-    model_sha256 = gpu.verify_models(plan.model_files(STAGE, engine, models), Path(jobs.config["model_cache"]))
+    gpu.require_recipe(jobs, plan.recipe_hash(STAGE, engine=engine))  # 引擎不可用即启动失败
+    model_sha256 = gpu.verify_models(plan.model_files(STAGE, models, engine=engine), Path(jobs.config["model_cache"]))
     started = time.perf_counter()
     if engine == "x0":
         from kototoki.asr_qwen import QwenAsr

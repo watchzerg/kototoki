@@ -359,7 +359,7 @@ def model_sha_lookup(config: Config) -> ModelSha:
 
     def lookup(stage: str) -> Mapping[str, str]:
         if stage not in done:
-            done[stage] = gpu.verify_models(plan.model_files(stage, config.engine, models), cache_path)
+            done[stage] = gpu.verify_models(plan.model_files(stage, models, engine=config.engine), cache_path)
         return done[stage]
     return lookup
 
@@ -429,7 +429,7 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
     root = artifacts.work_root(config.paths.output_dir)
     jobs_path = root / f"jobs-{stage}.json"
     write_jobs(jobs_path, Jobs(
-        stage=stage, recipe_hash=plan.recipe_hash(stage, config.engine),
+        stage=stage, recipe_hash=plan.recipe_hash(stage, engine=config.engine),
         config={"engine": config.engine, "models": plan.worker_models(config),
                 "model_cache": str(artifacts.model_cache_path(config.paths.output_dir))},
         files=tuple(FileJob(v.work_dir.name, v.work_dir,
@@ -498,11 +498,11 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
         pending = pending[culprit_at + 1:]
         if pending:
             ctx.log(f"[{stage}] restarting worker for {len(pending)} remaining file(s)")
-    done = sum(advance(ctx, video, stage) for video in batch if not video.failed)
+    done = sum(advance_or_fail(ctx, video, stage) for video in batch if not video.failed)
     ctx.log(f"[{stage}] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
 
 
-def advance(ctx: _Context, video: VideoFile, stage: str) -> bool:
+def advance_or_fail(ctx: _Context, video: VideoFile, stage: str) -> bool:
     """`stage` 刚跑完：从它起继续核对；产物缺失或身份不符即记该阶段失败。返回是否推进成功。"""
     assert video.plan is not None and video.plan.stage == stage
     try:
@@ -676,7 +676,7 @@ def _run(ctx: _Context) -> None:
         except Exception as error:
             ctx.fail(video, "cues", error)
             continue
-        advance(ctx, video, "cues")
+        advance_or_fail(ctx, video, "cues")
 
     to_translate = planned("translate")
     if any(srt.read_srt(v.work_dir / JA_SRT).cues for v in to_translate):
