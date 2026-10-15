@@ -104,7 +104,7 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 | 09 | 低温＋MBR | 未开始 | — | — |
 | 10 | 按作品术语表 | 未开始 | — | — |
 | 11 | VAD 召回 | resolved 2026-10-16 | 6 组 × 2 部无一组两部都优于当前，不建议改默认：换阈值时窗口扰动主导，只加窗口时删除降但插入（幻觉、语气声）涨得更多 | `experiments/quality_v5/vad_sweep.py`；`.local/quality-exploration-v5/11/` |
-| 12 | ASR 候选第二轮 | 未开始 | — | — |
+| 12 | ASR 候选第二轮 | resolved 2026-10-16 | 无新日语开放权重 ASR；两个动漫微调都不如 w0：anime-whisper 29.4／25.4%，Qwen3 动漫微调 21.7／20.3%（33 窗生成循环）；不换基线 | `experiments/quality_v5/asr_round2.py`；`.local/quality-exploration-v5/12/` |
 | 13 | 结题报告 | 未开始 | — | — |
 
 ## 7. 各步结论
@@ -223,12 +223,30 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 - 成本：GPU 约 45 分钟（6 组 × ASR 约 5 分钟＋对齐约 1.6 分钟，加分数缓存）；配额 0。
 - 对后续的影响：VAD 一侧没有可采纳的改动；漏检的瓶颈是 ASR 对短弱语音与窗口边界的稳健性，交给 12。新增短窗的幻觉过滤作为可能的后续写入 §8。
 
+### 12 ASR 候选第二轮
+
+- 调研（sonnet 子 agent 只读联网，本会话用 HF API 逐个核对许可、revision、大小）：2026-10-05 之后没有新的实质性日语开放权重 ASR，只有已有模型的格式转换；值得测的是动漫／游戏语音领域微调。作者自报 BENCH 上最强的 `efwkjn/whisper-ja-1.5B`／`-760M`／`whisper-ja-anime-v0.3`／`cohere-asr-ja` 在 HF 上**没有许可声明**，按 §3 预授权不下载，只记录。通过条件的候选里选 2 个：`jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame-hf`（Apache-2.0，4.1 GB，与 x0 同接口）与 `litagin/anime-whisper`（MIT，3.0 GB，kotoba-whisper-v2.0 底座）；kotoba-whisper-v2.0、reazonspeech-nemo-v2、parakeet-ja、Fun-ASR、Voxtral 自报不如 large-v3，不选。
+- 做法（`experiments/quality_v5/asr_round2.py`）：在 01 产品的同一份 `vad.json` 窗口上逐窗独立转写（Qwen 复用产品 `QwenAsr` 只换 checkpoint；anime-whisper 用 Transformers FP16 greedy、`no_repeat_ngram_size=5`、无初始 prompt），写产品形状 `asr.json`，用产品对齐 worker 与 `kototoki_eval` 评分。根 `.venv` 已有 transformers 5.19，不装新包。hf_xet 下载通道停滞，改走 HTTPS。
+
+| 路线 | II CER（S／D／I） | III CER（S／D／I） | 可测 II／III | ASR 墙钟（两部） | 显存峰值 | 失败窗 |
+| --- | --- | --- | --- | --- | --- | --- |
+| w0（01 产品） | **16.81%**（876／676／260） | **13.77%**（777／444／342） | 645／690 | 323 s | 5265 MiB（整卡） | 0 |
+| x0（01 产品） | 18.27%（1105／645／220） | 14.99%（1005／485／212） | 622／672 | 903 s | 5420 MiB（整卡） | 0 |
+| anime-whisper | 29.42%（1346／1392／434） | 25.35%（1226／968／684） | 565／594 | 146 s | 1498 MiB（分配） | 0 |
+| Qwen3 动漫微调 | 21.71%（1030／1054／257） | 20.29%（915／1118／271） | 606／598 | 7766 s | 4534 MiB（分配） | 13＋20 |
+
+- 判定：**两个候选都不如 w0，也不如 x0，不换基线。** anime-whisper 窗内措辞常更准，但 ≤30 s 长窗上漏句与幻觉，并转写参考字幕不收的语气声。Qwen3 动漫微调替换比 x0 少、人名更准，但在安静／情绪化窗口生成循环到 4096 token（33 窗），既丢字又慢（ASR 墙钟为 x0 的 8.6 倍）；即使把丢的字按 x0 全部算回也只与 x0 持平。
+- 成本：下载 7.2 GB（≤30 GB）；GPU 约 2 小时 20 分。
+- 对后续的影响：STT 侧（11、12）都没有可采纳的改动，产品 STT 保持 w0。STT 侧剩余的空间在 ASR 稳健性（短窗幻觉、窗口边界漏句、领域微调的生成循环），需要另开研究；许可不明的模型是否可用归 §8。按 06 的顺序进入翻译侧（07）。
+
 ## 8. 待用户裁定
 
 （执行中追加；用户裁定后写明日期与结果，移到第 7 节对应小节。）
 
 1. **（可选）填写第 5 步观感抽查表** `.local/quality-exploration-v5/05/sheet.md`：不填不影响其他步骤；填了可佐证第 3 步的短 cue（26–28% 正好 0.8 s）与行长问题是否值得改 cue 规则或发布排版。
 2. **（不建议改默认，记录可能的后续）VAD 召回**（第 11 步）：6 组参数无一组两部都优于当前，产品 VAD 默认保持不变。若要继续，可另开票试"只为漏检语音加窗口＋短窗幻觉过滤（黑名单与语音／文本长度比）"，须在两部上同时降低 CER 才谈改默认（改默认需 ADR）。
+3. **（需裁定才能继续）许可未声明的日语 ASR 权重**（第 12 步）：`efwkjn/whisper-ja-1.5B`（4.9 GB，另有 CT2 转换 `TransWithAI/whisper-ja-1.5B-ct2`）、`whisper-ja-760M`、`whisper-ja-anime-v0.3`、`cohere-asr-ja` 在作者自报的视觉小说语音 BENCH 上明显好于 large-v3（nekopara 21 对 62），但 Hugging Face 上没有许可声明，按预授权未下载。是否接受这类权重做本地评测由你决定；接受则可按 `asr_round2.py` 原样测（whisper-ja-1.5B 是 large-v3 微调，CT2 版可直接替换 w0 checkpoint）。
+4. **（可能的后续）Qwen3 动漫微调加循环防护**（第 12 步）：它在可用窗口上替换比 x0 少、人名更准，问题是 33 窗生成循环。加 `repetition_penalty`／`no_repeat_ngram_size` 或更短的 `max_new_tokens` 后重测，可能到 x0 以上，但改的是 x0 解码配方，需要单独立项。
 
 ## 9. 产物与复现
 
