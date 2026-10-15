@@ -1,12 +1,43 @@
-"""按源顺序从第 0 条起分批，前后带只读邻文（复制自 `experiments/translation_v3/batching.py`，只留按条数分批）。"""
+"""翻译输入与分批：一部影片的 `ja.srt` 即一个场景（`Scene`／`Cue` 复制自 `experiments/translation_v3/data.py`），
+按源顺序从第 0 条起分批、前后带只读邻文（复制自 `translation_v3/batching.py`，只留按条数分批）。
+
+`source_key` 是翻译子系统对一份 `ja.srt` 的唯一键 `srt-<sha12>`：既是场景 ID（与 v3 `translate-srt` 的 delivery
+标签同形），也是 run 目录在 `translate/` 下的分键，只在这里拼一次。
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from .data import Scene
+from kototoki.srt import SourceDocument
+
 from .recipes import Recipe
+
+
+def source_key(ja_srt_sha256: str) -> str:
+    return f"srt-{ja_srt_sha256[:12]}"
+
+
+@dataclass(frozen=True)
+class Cue:
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class Scene:
+    scene_id: str
+    cues: tuple[Cue, ...]
+
+    @property
+    def ids(self) -> list[str]:
+        return [cue.id for cue in self.cues]
+
+
+def scene_from_document(document: SourceDocument) -> Scene:
+    """场景 ID 取 `source_key`，cue ID 是 `srt.py` 的 `<sha8>-cue-<n>` 别名。"""
+    return Scene(source_key(document.source_sha256), tuple(Cue(cue.id, cue.text) for cue in document.cues))
 
 
 @dataclass(frozen=True)

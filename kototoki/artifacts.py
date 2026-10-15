@@ -18,7 +18,7 @@
 
 JSON 产物的顶层固定为 `{"identity": {...}, ...payload}`。身份只由内容摘要、配方 hash 与
 影响输出的配置键组成，绝对路径不参与；身份匹配即跳过，不匹配时原地原子替换
-（`translate/` 目录按 `ja.srt` 的 SHA 分键另建，不替换，见票据 05）。
+（翻译 run 目录由翻译子系统按 `ja.srt` 的 SHA 分键另建，不替换）。
 """
 
 from __future__ import annotations
@@ -49,7 +49,6 @@ VAD = "vad.json"
 ASR = "asr.json"
 ALIGN = "align.json"
 JA_CUES = "ja-cues.json"
-TRANSLATE_DIR = "translate"
 PUBLISHED = "published.json"
 FAILURE = "failure.json"
 
@@ -178,11 +177,6 @@ def final_srt_paths(output_dir: Path, relative: str | PurePosixPath) -> dict[str
     rel = _relative(relative)
     base = Path(output_dir).joinpath(*rel.parent.parts)
     return {kind: base / f"{rel.stem}{suffix}" for kind, suffix in FINAL_SUFFIXES.items()}
-
-
-def translate_run_dir(work_dir: Path, ja_srt_sha256: str) -> Path:
-    """翻译 run 目录按 `ja.srt` 的 SHA256 前 12 位分键：`translate/srt-<sha12>/`。"""
-    return Path(work_dir) / TRANSLATE_DIR / f"srt-{_sha256(ja_srt_sha256, 'ja.srt')[:12]}"
 
 
 # --- 身份 ---------------------------------------------------------------------------------

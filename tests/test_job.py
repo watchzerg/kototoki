@@ -66,6 +66,7 @@ class JobCase(unittest.TestCase):
         self.calls: list[str] = []
         self.translate_snapshots: list[dict] = []
         self.translate_errors: set[str] = set()  # work id
+        self.translate_done: set[str] = set()    # work id：伪 run 已完成，再计划即 needs_model=False
         self.fallback = 0
         case = self
 
@@ -85,6 +86,7 @@ class JobCase(unittest.TestCase):
         translate = types.ModuleType("kototoki.translate")
         translate.RECIPE_HASH = "a" * 64
         translate.Session = Session
+        translate.plan = self._translate_plan
         translate.translate_document = self._translate_document
         merge = types.ModuleType("kototoki.merge")
         merge.merge = self._merge
@@ -121,17 +123,30 @@ class JobCase(unittest.TestCase):
             sample_rate=16000, samples=len(pcm) // 2, pcm_sha256=hashlib.sha256(pcm).hexdigest(),
             decoded_duration_s=10.0, video_duration_s=10.0, offset_s=0.0, pan="", compensation={}, warnings=())
 
-    def _translate_document(self, document, run_dir, session, config):
-        identifier = Path(run_dir).parent.parent.name
+    def _translate_plan(self, work_dir, document, config):
+        """伪计划：目录键与真实子系统同形；已翻译过（`translate_done`）或零条目即不需要模型。"""
+        run_dir = Path(work_dir) / "translate" / f"srt-{document.source_sha256[:12]}" / f"fake__s{config.translate.seed}"
+        return types.SimpleNamespace(
+            work_dir=Path(work_dir), run_dir=run_dir, document=document,
+            needs_model=bool(document.cues) and Path(work_dir).name not in self.translate_done,
+            identity={"ja_srt_sha256": document.source_sha256, "recipe_hash": "a" * 64, "seed": config.translate.seed},
+            relative=run_dir.relative_to(work_dir).as_posix())
+
+    def _translate_document(self, plan, session):
+        identifier = plan.work_dir.name
         self.calls.append(f"translate:{identifier}")
         gpu_lock = self.config.gpu_lock
         self.translate_snapshots.append({
             "processed": [(e["stage"], e["id"]) for e in self.entries("file")],
             "lock": json.loads(gpu_lock.read_text(encoding="utf-8")) if gpu_lock.is_file() else None,
-            "finals": [p for p in self.output.rglob("*.srt") if ".work" not in p.relative_to(self.output).parts]})
+            "finals": [p for p in self.output.rglob("*.srt") if ".work" not in p.relative_to(self.output).parts],
+            "session": session is not None})
+        if plan.needs_model and session is None:
+            raise AssertionError("a plan that needs the model was translated without a session")
         if identifier in self.translate_errors:
             raise RuntimeError("fake translate failure")
-        return types.SimpleNamespace(translations={cue.id: "你好" for cue in document.cues},
+        self.translate_done.add(identifier)
+        return types.SimpleNamespace(translations={cue.id: "你好" for cue in plan.document.cues},
                                      fallback_count=self.fallback)
 
     def _merge(self, document, translations) -> str:
@@ -495,6 +510,7 @@ class PublishTests(JobCase):
                 self.assertEqual(artifacts.sha256_file(path), record["sha256"][kind])
             self.assertEqual(record["sources"]["translate_fallback_cues"], 1)
             self.assertTrue(record["translate_dir"].startswith("translate/srt-"))
+            self.assertTrue(record["translate_dir"].endswith("/fake__s" + str(self.config.translate.seed)))
             self.assertEqual(list((self.work_dir(rel) / job.PUBLISH_DIR).iterdir()), [])
         self.assertIn("[summary] 2 video(s): 2 published", console.getvalue())
 
@@ -538,6 +554,42 @@ class PlanCallTests(JobCase):
             again = self.run_job()
             self.assertEqual(again.up_to_date, ["a.mkv", "b.mkv", "c.mkv"])
             self.assertEqual((next_stage.call_count, advance.call_count), (3, 0))
+
+
+class TranslatePlanTests(JobCase):
+    def test_completed_runs_republish_without_gpu_lock_or_session(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.run_job()
+        self.assertEqual(self.translate_snapshots[-1]["session"], True)
+        self.final("a.mkv", "zh").unlink()  # 用户删掉最终文件：只需重新发布
+        self.final("b.mkv", "ja-zh").unlink()
+        self.calls.clear()
+        self.translate_snapshots.clear()
+        launches = len(self.launches())
+        self.config.gpu_lock.unlink(missing_ok=True)
+
+        summary = self.run_job()
+        self.assertEqual((summary.published, summary.up_to_date, summary.failed), (["a.mkv", "b.mkv"], [], {}))
+        self.assertEqual(len(self.launches()), launches)
+        self.assertEqual(self.calls, [f"translate:{i}" for i in self.ids("a.mkv", "b.mkv")] + ["merge"] * 2)
+        self.assertNotIn("session_enter", self.calls)
+        for snapshot in self.translate_snapshots:
+            self.assertIsNone(snapshot["lock"])  # 未取 GPU 锁
+            self.assertFalse(snapshot["session"])
+        self.assertEqual(self.final("a.mkv", "zh").read_text(encoding="utf-8"), SRT_ZH)
+
+    def test_zero_cue_documents_never_take_the_gpu_lock_for_translation(self) -> None:
+        self.make_inputs("a.mkv")
+        self.enterContext(mock.patch("kototoki.job.cues.build_cues", return_value=({"cues": []}, "")))
+        self.run_job()
+        self.final("a.mkv", "ja-zh").unlink()
+        self.calls.clear()
+        self.config.gpu_lock.unlink(missing_ok=True)
+        summary = self.run_job()
+        self.assertEqual(summary.published, ["a.mkv"])
+        self.assertEqual(self.calls, [f"translate:{self.ids('a.mkv')[0]}"])  # 零条目：无 session、无 merge
+        self.assertIsNone(self.translate_snapshots[-1]["lock"])
+        self.assertEqual(self.final("a.mkv", "ja-zh").stat().st_size, 0)
 
 
 class ImportAndOutputDirTests(JobCase):

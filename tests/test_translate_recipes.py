@@ -10,8 +10,7 @@ from kototoki.artifacts import sha256_bytes
 from kototoki.srt import format_srt, parse_srt
 from kototoki.translate import RECIPE_HASH
 from kototoki.translate import recipes as R
-from kototoki.translate.batching import build_batches, cue_positions
-from kototoki.translate.data import scene_from_document
+from kototoki.translate.batching import build_batches, cue_positions, scene_from_document
 
 V3_B10_JOINT_HASH = "2ba680540f055b2ae0c8122faa3ba537418eb12720a552f53c3aa5b652d0969a"
 DEGRADE_V1_HASH = "994c0d03ac4c91fec437285b66f597c19ff28f09c2ecad5b0e9541437ca795fe"

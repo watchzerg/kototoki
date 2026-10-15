@@ -11,10 +11,11 @@
 - 批次终态失败（超出 context、生成触顶、解析失败）按 `degrade.py` 拆批降级，单条仍失败保留日文；
   降级完成的批次照常写入 `batches.jsonl`，回退对该配方 hash 与 seed 是终态，重跑不再尝试。
 
-布局：`<run_dir>/<配方名>__s<seed>/`（`run_dir` 即 `translate/srt-<sha12>/`）下有 `run.json`、`batches.jsonl`、
-`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、`transport/session-NN/`
-（逐请求原始交换）、`infra-failures/`。
-server 的运行日志在 `<output_dir>/.work/translate-sessions/<时间戳>/session-NN/`，被整批影片共用。
+run 目录由本子系统的 `plan` 决定：`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>/`（`ja.srt` 的 SHA、配方名、
+seed 三级分键；同名配方内容变化时 `run.json` 的 hash 不符即拒绝续跑，删除该目录可重跑），下有 `run.json`、
+`batches.jsonl`、`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、`transport/session-NN/`
+（逐请求原始交换）、`infra-failures/`。`TranslatePlan.needs_model` 告诉编排器是否要取 GPU 锁：零条目或 `run.json`
+已记完成时不需要。server 的运行日志在 `<output_dir>/.work/translate-sessions/<时间戳>/session-NN/`，被整批影片共用。
 """
 
 from __future__ import annotations
@@ -35,11 +36,11 @@ from kototoki.srt import SourceDocument
 
 from . import degrade
 from . import recipes as R
-from .batching import Batch, build_batches, cue_positions
+from .batching import Batch, Scene, build_batches, cue_positions, scene_from_document, source_key
 from .client import LlamaClient
-from .data import Scene, scene_from_document
 from .server import InfraFailure, ManagedServer, explicit_oom
 
+TRANSLATE_DIR = "translate"  # 工作目录内的翻译根目录
 RUN_SCHEMA = "kototoki-translate-run-v1"
 SCENE_SCHEMA = "kototoki-translate-scene-v1"
 BATCHES = "batches.jsonl"
@@ -70,6 +71,33 @@ class TranslateResult:
     translations: dict[str, str]
     fallback_count: int
     report: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TranslatePlan:
+    """一部影片的翻译计划：run 目录、期望身份（进编排器的 `published.json`）、是否需要模型。"""
+    work_dir: Path
+    run_dir: Path                  # <work_dir>/translate/srt-<sha12>/<配方名>__s<seed>
+    identity: dict[str, Any]       # {"ja_srt_sha256", "recipe_hash", "seed"}
+    needs_model: bool              # 零条目或全部批次已完成时为 False
+    document: SourceDocument
+
+    @property
+    def relative(self) -> str:
+        """run 目录相对工作目录的 posix 路径（写进 `published.json` 的 `translate_dir`）。"""
+        return self.run_dir.relative_to(self.work_dir).as_posix()
+
+
+def plan(work_dir: Path, document: SourceDocument, config: Config) -> TranslatePlan:
+    """只读：决定 run 目录、身份与 `needs_model`，不写文件。run 目录已存在且配方／seed／来源不符时抛 `ValueError`。"""
+    seed = config.translate.seed
+    run_dir = Path(work_dir) / TRANSLATE_DIR / source_key(document.source_sha256) / f"{R.PRODUCT.name}__s{seed}"
+    identity = {"ja_srt_sha256": document.source_sha256, "recipe_hash": R.PRODUCT.recipe_hash, "seed": seed}
+    needs_model = bool(document.cues)
+    if needs_model and (run_dir / "run.json").is_file():
+        run = _check_run(run_dir, seed, _source(document, scene_from_document(document)))
+        needs_model = run["completion"].get("state") != "complete"
+    return TranslatePlan(Path(work_dir), run_dir, identity, needs_model, document)
 
 
 # --- session --------------------------------------------------------------------------------
@@ -235,14 +263,21 @@ def _source(document: SourceDocument, scene: Scene) -> dict[str, Any]:
     return {"ja_srt_sha256": document.source_sha256, "scene_id": scene.scene_id, "cue_ids": scene.ids}
 
 
+def _check_run(root: Path, seed: int, source: dict[str, Any]) -> dict[str, Any]:
+    """读已存在的 `run.json`，配方 hash／seed／来源必须与本次相同（同名配方内容变化即在此拒绝）。"""
+    path = root / "run.json"
+    run = read_json(path)
+    if run["recipe_hash"] != R.PRODUCT.recipe_hash or run["seed"] != seed or run["source"] != source:
+        raise ValueError(f"{path} differs in recipe/seed/source; the run directory is keyed by them. "
+                         f"Delete {root} to translate this ja.srt again with the current recipe")
+    return run
+
+
 def _open_run(root: Path, seed: int, document: SourceDocument, scene: Scene) -> dict[str, Any]:
     path = root / "run.json"
     source = _source(document, scene)
     if path.is_file():
-        run = read_json(path)
-        if run["recipe_hash"] != R.PRODUCT.recipe_hash or run["seed"] != seed or run["source"] != source:
-            raise ValueError(f"{path} differs in recipe/seed/source; the run directory is keyed by them")
-        return run
+        return _check_run(root, seed, source)
     run = {"schema": RUN_SCHEMA, "recipe": R.PRODUCT.to_json(), "recipe_hash": R.PRODUCT.recipe_hash, "seed": seed,
            "source": source, "created_at_utc": utc_now(), "sessions": [], "server_start_failures": [],
            "resumed": False, "completion": {"state": "not_started"}, "wall_clock_seconds": None}
@@ -351,15 +386,15 @@ SESSION_ENGINE_KEYS = ("candidate", "model_path", "engine_sha256", "engine_ident
                        "cold_load_seconds", "residency", "model_verification", "free_vram_mib_before_start")
 
 
-def translate_document(document: SourceDocument, run_dir: Path, session: Session, config: Config) -> TranslateResult:
-    """翻译一部影片的 `ja.srt`，返回 cue id → 译文；零条目文档不请求模型。
+def translate_document(plan: TranslatePlan, session: Session | None) -> TranslateResult:
+    """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文；零条目文档不请求模型。
 
-    已完成的批次（含降级完成的）直接复用；全部完成时不启动 server。批次终态失败按 `degrade` 降级，
-    回退条数进 `fallback_count`，`report` 即写入 `report.json` 的内容。基础设施失败用尽重启抛
-    `TranslateError`（证据留在 run 目录）。
+    已完成的批次（含降级完成的）直接复用；全部完成时不启动 server。`session` 只在 `plan.needs_model` 时使用，
+    编排器在不需要模型时可传 None；计划说不需要而批次仍未完成（`run.json` 与 `batches.jsonl` 不一致）时抛
+    `TranslateError`，不会在没有 GPU 锁的情况下起 server。批次终态失败按 `degrade` 降级，回退条数进
+    `fallback_count`，`report` 即写入 `report.json` 的内容。基础设施失败用尽重启抛 `TranslateError`（证据留在 run 目录）。
     """
-    seed = config.translate.seed
-    root = Path(run_dir) / f"{R.PRODUCT.name}__s{seed}"
+    document, root, seed = plan.document, plan.run_dir, plan.identity["seed"]
     scene = scene_from_document(document)
     run = _open_run(root, seed, document, scene)
     if not scene.cues:
@@ -372,6 +407,9 @@ def translate_document(document: SourceDocument, run_dir: Path, session: Session
     batches = build_batches(scene, R.PRODUCT)
     done = _read_batches(root, batches)
     recorded = _read_degrade(root, batches, done)
+    if len(done) < len(batches) and (session is None or not plan.needs_model):
+        raise TranslateError(f"{root} is recorded as complete but {len(batches) - len(done)} batch(es) are missing "
+                             f"from {BATCHES}; delete the run directory to translate again")
 
     def record(row: dict[str, Any]) -> None:
         _append_line(root / DEGRADE, row)

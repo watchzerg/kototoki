@@ -3,7 +3,8 @@
 编排器（`job`）与三个 worker 壳（`workers/{vad,asr,align}`）都从这里取身份：壳把它写进产物，编排用它核对
 产物是否当前（`artifacts.is_current`）。本模块只产出期望身份，不比对产物内容、不写文件、不加载模型；
 模型文件 SHA256 由调用方经 `ModelSha` 回调提供（编排用 `workers/gpu.verify_models` 加 size+mtime 缓存）。
-不依赖 torch、ffmpeg 与网络；翻译身份用到时才导入翻译子系统（`kototoki.translate.RECIPE_HASH`）。
+不依赖 torch、ffmpeg 与网络；翻译阶段的 run 目录、身份与"是否需要模型"归翻译子系统（`translate.plan`），
+核对到该阶段时才导入它。
 
 阶段链（规格 §3）::
 
@@ -22,7 +23,7 @@ import importlib
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from kototoki import artifacts, recipes
+from kototoki import artifacts, recipes, srt
 from kototoki.config import Config
 
 JA_SRT = "ja.srt"  # cues 阶段写出、翻译读取的日文 SRT（工作目录内）
@@ -141,9 +142,10 @@ def cues_identity(align_sha256: str, config: Config) -> dict[str, Any]:
                                       recipe_hash=recipes.recipe_hash(recipes.CUES), config=asdict(config.cues))
 
 
-def translate_identity(ja_srt_sha256: str, config: Config) -> dict[str, Any]:
+def translate_plan(work_dir: Path, config: Config) -> Any:
+    """翻译子系统的 `TranslatePlan`（run 目录、`identity`、`needs_model`）；读 `ja.srt`，不写文件。"""
     translate = importlib.import_module("kototoki.translate")
-    return {"ja_srt_sha256": ja_srt_sha256, "recipe_hash": translate.RECIPE_HASH, "seed": config.translate.seed}
+    return translate.plan(work_dir, srt.read_srt(work_dir / JA_SRT), config)
 
 
 # --- 计划 -------------------------------------------------------------------------------------------
@@ -172,11 +174,13 @@ class Target:
 class Plan:
     """`stage` 是第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`translate`），或终态
     `publish`（无语音，直接发布零条目 SRT）／`done`（已发布且身份匹配、最终文件未改动）。
-    `identities` 是 `probe` 与从 vad 起到 `stage`（含）各阶段的期望身份，键同 `published.json` 的 `sources`。
+    `identities` 是 `probe` 与从 vad 起到 `stage`（含）各阶段的期望身份，键同 `published.json` 的 `sources`；
+    `translate` 是核对到翻译阶段后翻译子系统给出的计划（run 目录、是否需要模型），此前为 None。
     """
     stage: str
     identities: Mapping[str, Any]
     no_speech: bool
+    translate: Any = None  # kototoki.translate.TranslatePlan
 
     @property
     def sources(self) -> dict[str, Any]:
@@ -204,17 +208,18 @@ def _check_from(target: Target, config: Config, models: ModelSha, plan: Plan) ->
     try:
         for stage in STAGES[STAGES.index(plan.stage):]:
             key = IDENTITY_KEY[stage]
+            if stage == "translate":
+                translate = translate_plan(work, config)
+                ids[key] = translate.identity
+                return _publish_state(target, Plan(stage, ids, False, translate))
             if stage == "vad":
                 ids[key] = vad_identity(pcm, models("vad"))
             elif stage == "asr":
                 ids[key] = asr_identity(config.engine, pcm, artifacts.sha256_file(work / artifacts.VAD), models("asr"))
             elif stage == "align":
                 ids[key] = align_identity(pcm, artifacts.sha256_file(work / artifacts.ASR), models("align"))
-            elif stage == "cues":
-                ids[key] = cues_identity(artifacts.sha256_file(work / artifacts.ALIGN), config)
             else:
-                ids[key] = translate_identity(artifacts.sha256_file(work / JA_SRT), config)
-                break
+                ids[key] = cues_identity(artifacts.sha256_file(work / artifacts.ALIGN), config)
             current = artifacts.is_current(work / STAGE_OUTPUT[stage], ids[key])
             if stage == "cues":
                 current = current and (work / JA_SRT).is_file()
@@ -222,7 +227,7 @@ def _check_from(target: Target, config: Config, models: ModelSha, plan: Plan) ->
                 return Plan(stage, ids, False)
             if stage == "vad" and artifacts.read_json(work / artifacts.VAD).get("chunks") == []:
                 return _publish_state(target, Plan("publish", {k: ids[k] for k in ("probe", "vad")}, True))
-        return _publish_state(target, Plan("translate", ids, False))
+        raise AssertionError(f"stage chain ended without reaching translate (from {plan.stage!r})")
     except Exception as error:
         raise PlanError(stage, error) from error
 

@@ -61,7 +61,7 @@
 | 产物坐标系 | 各阶段 JSON 一律本地秒（与 WAV 一致）＋顶层 `offset_s`；cue 时间只在 ja-cues 阶段加一次 offset（§4） |
 | 5.1 下混 | 每种声道布局的 `pan` 表达式写死为配方常量，含归一化系数，禁止削波（§2.2） |
 | 时长校验 | 对照视频流时长：解码短于视频超过 1 s 判失败，长于视频只告警；ffmpeg verbose 日志入工作目录（§2.2） |
-| 翻译 run 目录 | 按 `translate/srt-<sha12>/` 分键，`published.json` 指向当前使用的那份（§4） |
+| 翻译 run 目录 | 按 `translate/srt-<sha12>/<配方名>__s<seed>/` 分键，键由翻译子系统 `translate.plan` 唯一给出，`published.json` 指向当前使用的那份（§4，票据 15） |
 | 发布与覆盖 | 对照 `published.json` 的 SHA256：三份最终文件未被改动即替换，任一被改动且非 `force` 才拒绝，并在扫描阶段提前判定（§4） |
 | 输出目录锁 | 启动即取 `<output_dir>/.work/lock`，GPU 锁在 GPU 阶段前取（§3.3） |
 | worker 重启 | 按文件计：崩溃时正在处理的文件记该阶段失败，从下一文件重启；不再"整阶段只重启一次"（§3.1） |
@@ -178,7 +178,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4]  [translate 1 2 3 4]
     align.json           权威 STT 证据：全文、units、text_only、对齐记录
     ja-cues.json         cue ↔ unit 映射、时间回填记账、未渲染文字记账
     translate/srt-<sha12>/<配方名>__s<seed>/   v3 风格 run，按 ja.srt 的 SHA256 分键、再按配方与 seed 分目录：run.json、batches.jsonl、scene.json、transport；可续跑
-    published.json       三份最终 SRT 的 SHA256 与来源产物身份（含当前使用的 translate 目录）
+    published.json       三份最终 SRT 的 SHA256 与来源产物身份（含当前使用的 translate run 目录，相对工作目录）
     failure.json         任一阶段失败时写，记录阶段、异常与已完成产物
 ```
 

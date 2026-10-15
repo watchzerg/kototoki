@@ -17,8 +17,7 @@ from kototoki import artifacts
 from kototoki.artifacts import read_json
 from kototoki.translate import generate
 from kototoki.translate import recipes as R
-from kototoki.translate.batching import build_batches
-from kototoki.translate.data import scene_from_document
+from kototoki.translate.batching import build_batches, scene_from_document
 from kototoki.translate.degrade import children
 from tests.test_job import JobCase
 from tests.test_translate import SEED, Harness, document
@@ -230,11 +229,13 @@ class DegradeTests(unittest.TestCase):
 class PublishedFallbackCountTests(JobCase):
     """编排器 + 真实 `translate_document`（伪 server／伪客户端）：回退计数进 `published.json` 与控制台汇总。"""
 
-    def _translate_document(self, document, run_dir, session, config):
+    _translate_plan = staticmethod(generate.plan)  # 真实计划：run 目录与 needs_model 由子系统决定
+
+    def _translate_document(self, plan, session):
         harness = Harness(self.root)
-        harness.poison = {cue.id for cue in document.cues}
+        harness.poison = {cue.id for cue in plan.document.cues}
         with harness.session() as own:
-            return generate.translate_document(document, run_dir, own, harness.config)
+            return generate.translate_document(plan, own)
 
     def test_published_record_counts_fallback_cues(self) -> None:
         self.make_inputs("a.mkv")
@@ -243,8 +244,8 @@ class PublishedFallbackCountTests(JobCase):
         self.assertEqual((summary.published, summary.fallback_cues), (["a.mkv"], 1))
         record = artifacts.read_published(self.work_dir("a.mkv"))
         self.assertEqual(record["sources"]["translate_fallback_cues"], 1)
-        report = read_json(self.work_dir("a.mkv") / record["translate_dir"] / f"{R.PRODUCT.name}__s{SEED}"
-                           / "report.json")
+        self.assertTrue(record["translate_dir"].endswith(f"/{R.PRODUCT.name}__s{self.config.translate.seed}"))
+        report = read_json(self.work_dir("a.mkv") / record["translate_dir"] / "report.json")
         self.assertEqual(report["counts"]["fallback_cues"], 1)
         self.assertIn("1 fallback cue(s)", console.getvalue())
 

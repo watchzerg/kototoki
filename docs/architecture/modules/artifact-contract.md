@@ -8,7 +8,7 @@
 
 ## 当前行为规格
 
-**布局**（`kototoki/artifacts.py`）：最终 SRT 镜像输入目录层级，`S1/ep01.mkv` → `<out>/S1/ep01.{ja,zh,ja-zh}.srt`（`final_srt_paths`）。每个视频的工作目录是 `<out>/.work/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`）；`register_work_dir` 在 `.work/index.json` 登记 id ↔ 相对路径，同一 id 已登记为另一路径时报错（短 id 碰撞）。相对路径不得是绝对路径、含 `..` 或任何段含 `:`（盘符、NTFS 备用数据流）；`register_work_dir` 读改写 `index.json`，由编排器在扫描阶段串行调用。产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`PUBLISHED`、`FAILURE` 等）；翻译 run 目录为 `translate/srt-<ja.srt sha12>/`（`translate_run_dir`）。
+**布局**（`kototoki/artifacts.py`）：最终 SRT 镜像输入目录层级，`S1/ep01.mkv` → `<out>/S1/ep01.{ja,zh,ja-zh}.srt`（`final_srt_paths`）。每个视频的工作目录是 `<out>/.work/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`）；`register_work_dir` 在 `.work/index.json` 登记 id ↔ 相对路径，同一 id 已登记为另一路径时报错（短 id 碰撞）。相对路径不得是绝对路径、含 `..` 或任何段含 `:`（盘符、NTFS 备用数据流）；`register_work_dir` 读改写 `index.json`，由编排器在扫描阶段串行调用。产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`PUBLISHED`、`FAILURE` 等）；翻译 run 目录的键归翻译子系统（`translate.plan`，见[翻译子系统](translation-subsystem.md)），本模块不拼它。
 
 **坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）；只有 `align.json` 的 `units[].start/end` 含 offset；`ja-cues.json` 与 SRT 的 cue 时间是最终 SRT 时间。
 
@@ -22,7 +22,7 @@
 **失败与发布**：
 
 - `write_failure(work_dir, stage, error)` 写 `failure.json`：阶段、异常类型与消息、当时已存在的阶段产物，不含音频与转写内容。
-- `record_published(work_dir, final_paths, sha256, sources, translate_dir)` 在 `publish_blockers` 放行后、移动三份最终 SRT **之前**写 `published.json`（三份 SHA256、来源产物身份、当前 `translate/srt-<sha12>` 目录），并把此刻最终位置上已有文件的 SHA 记为 `previous_sha256`。
+- `record_published(work_dir, final_paths, sha256, sources, translate_dir)` 在 `publish_blockers` 放行后、移动三份最终 SRT **之前**写 `published.json`（三份 SHA256、来源产物身份、当前翻译 run 目录 `translate/srt-<sha12>/<配方名>__s<seed>`，相对工作目录），并把此刻最终位置上已有文件的 SHA 记为 `previous_sha256`。
 - `publish_blockers(final_paths, work_dir, force=...)`：现有最终文件不存在、或 SHA256 等于当前或上一份记录，视为未改动；否则（含没有记录时已存在的文件）视为用户改动并列为阻止项。`force=True` 时恒为空。编排器在扫描阶段调用它（票据 06）。记录磁盘上的旧 SHA 是为了"写记录后、移动完成前崩溃"（包括连续多次）时，最终位置上残留的旧文件不被误判为用户改动（规格 §4，2026-10-14 用户采纳）。
 
 **原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；Windows `PermissionError`（播放器或扫描器占用）重试 20 次、间隔递增至 0.5 s；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。

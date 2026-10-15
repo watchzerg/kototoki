@@ -5,7 +5,8 @@
     扫描（大小采样稳定性、镜像、短 id、发布前置判定）
     → probe/extract（线程池，整批完成）
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
-    → ja-cues（进程内）→ translate（进程内，整批一个 session）→ 三份 SRT 一起发布
+    → ja-cues（进程内）→ translate（进程内，整批一个 session；翻译子系统的计划说要模型时才取 GPU 锁、建 session）
+    → 三份 SRT 一起发布
 
 阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
 某阶段跑完再 `advance` 继续核对；产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。GPU 阶段产物
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 import concurrent.futures
+import contextlib
 import ctypes
 from dataclasses import asdict, dataclass, field
 import importlib
@@ -527,38 +529,35 @@ def build_ja_cues(config: Config, video: VideoFile) -> None:
 
 
 def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[dict[str, str], int, str]]:
-    """整批一个 session；返回 相对路径 → (译文, 回退条数, translate 目录相对工作目录)。零条目文档不请求模型。"""
+    """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 回退条数, run 目录相对工作目录)。
+
+    只有某个文件 `needs_model` 时才建 session（零条目或 run 已完成的文件不需要模型，直接读回译文）。
+    """
     results: dict[str, tuple[dict[str, str], int, str]] = {}
-    documents = {}
-    for video in batch:
-        document = srt.read_srt(video.work_dir / JA_SRT)
-        run_dir = artifacts.translate_run_dir(video.work_dir, document.source_sha256)
-        documents[video.relative] = (document, run_dir)
-        if not document.cues:
-            results[video.relative] = ({}, 0, run_dir.relative_to(video.work_dir).as_posix())
-    needed = [v for v in batch if v.relative not in results]
-    if not needed:
+    if not batch:
         return results
     started = time.perf_counter()
-    ctx.log(f"[translate] start: {len(needed)} file(s)")
+    ctx.log(f"[translate] start: {len(batch)} file(s)")
     translate = _translate_module()
-    try:
-        session = translate.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid))
-    except Exception as error:
-        for video in needed:
-            ctx.fail(video, "translate", error)
-        return results
+    session: Any = contextlib.nullcontext()
+    if any(v.plan.translate.needs_model for v in batch if v.plan is not None):
+        try:
+            session = translate.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid))
+        except Exception as error:
+            for video in batch:
+                ctx.fail(video, "translate", error)
+            return results
     with session:
-        for video in needed:
-            document, run_dir = documents[video.relative]
+        for video in batch:
+            assert video.plan is not None
+            tplan = video.plan.translate
             try:
-                result = translate.translate_document(document, run_dir, session, ctx.config)
+                result = translate.translate_document(tplan, session if tplan.needs_model else None)
             except Exception as error:
                 ctx.fail(video, "translate", error)
                 continue
-            results[video.relative] = (dict(result.translations), int(result.fallback_count),
-                                       run_dir.relative_to(video.work_dir).as_posix())
-            ctx.log(f"[translate] done {video.relative}: {len(document.cues)} cue(s), "
+            results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
+            ctx.log(f"[translate] done {video.relative}: {len(tplan.document.cues)} cue(s), "
                     f"{result.fallback_count} fallback")
     ctx.gpu_lock.update(server_pid=None)
     ctx.log(f"[translate] end: {time.perf_counter() - started:.1f}s")
@@ -679,7 +678,7 @@ def _run(ctx: _Context) -> None:
         advance_or_fail(ctx, video, "cues")
 
     to_translate = planned("translate")
-    if any(srt.read_srt(v.work_dir / JA_SRT).cues for v in to_translate):
+    if any(v.plan.translate.needs_model for v in to_translate if v.plan is not None):
         ctx.ensure_gpu_lock()
     translated = translate_batch(ctx, to_translate)
     ctx.gpu_lock.release()
@@ -692,7 +691,7 @@ def _run(ctx: _Context) -> None:
                     summary.no_speech.append(video.relative)
             elif stage == "translate" and video.relative in translated:
                 translations, fallback, translate_dir = translated[video.relative]
-                document = srt.read_srt(video.work_dir / JA_SRT)
+                document = video.plan.translate.document
                 texts = {"ja": (video.work_dir / JA_SRT).read_text(encoding="utf-8"),
                          "zh": srt.render_srt(document, translations),
                          "ja-zh": _merge_module().merge(document, translations) if document.cues else ""}

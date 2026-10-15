@@ -1,5 +1,5 @@
-"""翻译子系统伪客户端测试：正常、按批次续跑、基础设施失败重启即新 session、缓存校验、空场景、
-`ja.srt` 变化换目录、显存轮询超时。批次终态失败的降级见 `test_translate_degrade.py`。
+"""翻译子系统伪客户端测试：`plan` 的 run 键与 `needs_model`、正常、按批次续跑、基础设施失败重启即新 session、
+缓存校验、空场景、`ja.srt` 变化换目录、显存轮询超时。批次终态失败的降级见 `test_translate_degrade.py`。
 不启动 llama-server，不占 GPU。"""
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from typing import Any
 import unittest
 from urllib.error import HTTPError
 
-from kototoki import artifacts
 from kototoki.artifacts import read_json
 from kototoki.srt import format_srt, parse_srt
-from kototoki.translate import RECIPE_HASH, Session, TranslateError, translate_document
+from kototoki.translate import RECIPE_HASH, Session, TranslateError, TranslatePlan, translate_document
+from kototoki.translate import plan as translate_plan
 from kototoki.translate import recipes as R
 from kototoki.translate.server import InfraFailure, wait_for_free_vram
 
@@ -113,17 +113,19 @@ class Harness:
         return Session(self.config, on_server_pid=self.pids.append, server_factory=server_factory,
                        client_factory=client_factory)
 
-    def run_dir(self, doc) -> Path:
-        return artifacts.translate_run_dir(self.root / "out/.work/abc", doc.source_sha256)
+    work_dir = property(lambda self: self.root / "out/.work/abc")
+
+    def plan(self, doc) -> TranslatePlan:
+        return translate_plan(self.work_dir, doc, self.config)
 
     def translate(self, doc, session: Session | None = None):
         if session is not None:
-            return translate_document(doc, self.run_dir(doc), session, self.config)
+            return translate_document(self.plan(doc), session)
         with self.session() as own:
-            return translate_document(doc, self.run_dir(doc), own, self.config)
+            return translate_document(self.plan(doc), own)
 
     def run_root(self, doc) -> Path:
-        return self.run_dir(doc) / f"{R.PRODUCT.name}__s{SEED}"
+        return self.plan(doc).run_dir
 
 
 class TranslateDocumentTests(unittest.TestCase):
@@ -158,8 +160,7 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual(self.h.pids, [1001, None])
         self.assertEqual(self.h.events, ["start:1", "stop:1"])
         # 首个请求即第 0 批按冻结配方构造的完整 completion 请求。
-        from kototoki.translate.batching import build_batches
-        from kototoki.translate.data import scene_from_document
+        from kototoki.translate.batching import build_batches, scene_from_document
         scene = scene_from_document(doc)
         window = build_batches(scene, R.PRODUCT)[0].to_window(scene)
         prompt = R.render_translation(window)
@@ -240,10 +241,44 @@ class TranslateDocumentTests(unittest.TestCase):
 
     def test_rerun_of_a_complete_run_does_not_start_a_server(self) -> None:
         doc = document(12)
+        self.assertTrue(self.h.plan(doc).needs_model)
         self.h.translate(doc)
         self.h.events.clear()
-        result = self.h.translate(doc)
+        plan = self.h.plan(doc)
+        self.assertFalse(plan.needs_model)
+        result = translate_document(plan, None)  # 不需要模型时编排器不建 session
         self.assertEqual(len(result.translations), 12)
+        self.assertEqual(self.h.events, [])
+
+    def test_plan_keys_run_dir_by_ja_srt_recipe_and_seed(self) -> None:
+        doc = document(3)
+        plan = self.h.plan(doc)
+        self.assertEqual(plan.run_dir, self.h.work_dir / "translate" / f"srt-{doc.source_sha256[:12]}"
+                         / f"{R.PRODUCT.name}__s{SEED}")
+        self.assertEqual(plan.relative, f"translate/srt-{doc.source_sha256[:12]}/{R.PRODUCT.name}__s{SEED}")
+        self.assertEqual(plan.identity, {"ja_srt_sha256": doc.source_sha256, "recipe_hash": RECIPE_HASH, "seed": SEED})
+        self.assertIs(plan.document, doc)
+        self.assertFalse(plan.run_dir.exists())  # 计划不写文件
+
+    def test_plan_rejects_a_run_recorded_under_another_recipe_hash(self) -> None:
+        doc = document(3)
+        self.h.translate(doc)
+        path = self.h.run_root(doc) / "run.json"
+        run = read_json(path)
+        run["recipe_hash"] = "f" * 64
+        path.write_text(json.dumps(run), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Delete .* to translate"):
+            self.h.plan(doc)
+
+    def test_incomplete_batches_under_a_complete_run_json_fail_instead_of_starting_a_server(self) -> None:
+        doc = document(23)
+        self.h.translate(doc)
+        (self.h.run_root(doc) / "batches.jsonl").unlink()
+        plan = self.h.plan(doc)
+        self.assertFalse(plan.needs_model)
+        self.h.events.clear()
+        with self.assertRaisesRegex(TranslateError, "recorded as complete"):
+            translate_document(plan, None)
         self.assertEqual(self.h.events, [])
 
     def test_oom_restarts_the_server_as_a_new_session(self) -> None:
@@ -294,19 +329,26 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_changed_ja_srt_uses_a_new_directory_and_keeps_the_old(self) -> None:
         old, new = document(5), document(5, "変")
         self.h.translate(old)
+        self.assertTrue(self.h.plan(new).needs_model)
         self.h.translate(new)
-        self.assertNotEqual(self.h.run_dir(old), self.h.run_dir(new))
-        self.assertTrue(self.h.run_dir(new).name.startswith("srt-"))
+        self.assertNotEqual(self.h.plan(old).run_dir, self.h.plan(new).run_dir)
+        self.assertEqual(self.h.plan(new).run_dir.parent.name, f"srt-{new.source_sha256[:12]}")
+        self.assertFalse(self.h.plan(old).needs_model)
         self.assertEqual(self.run_json(old)["completion"]["state"], "complete")
         self.assertEqual(self.run_json(new)["source"]["ja_srt_sha256"], new.source_sha256)
 
     def test_seed_change_uses_its_own_run(self) -> None:
         doc = document(5)
         self.h.translate(doc)
+        first = self.h.plan(doc)
         self.h.config.translate.seed = SEED + 1
+        second = self.h.plan(doc)
+        self.assertTrue(second.needs_model)
+        self.assertEqual(second.run_dir, first.run_dir.with_name(f"{R.PRODUCT.name}__s{SEED + 1}"))
+        self.assertEqual(second.identity["seed"], SEED + 1)
         self.h.translate(doc)
-        self.assertTrue((self.h.run_dir(doc) / f"{R.PRODUCT.name}__s{SEED + 1}" / "run.json").is_file())
-        self.assertTrue(self.h.run_root(doc).is_dir())
+        self.assertTrue((second.run_dir / "run.json").is_file())
+        self.assertTrue(first.run_dir.is_dir())
 
     def test_vram_poll_timeout_is_an_infrastructure_failure(self) -> None:
         doc = document(5)

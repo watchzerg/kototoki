@@ -60,7 +60,7 @@ flowchart TB
   JOB -->|持有 session| TR["translate/（子系统）"]
   JOB -.->|子进程：--jobs 文件 + 退出码| WK["workers.vad / workers.asr / workers.align"]
   WK -->|身份、模型清单| PLAN
-  PLAN -.->|RECIPE_HASH（延迟导入）| TR
+  PLAN -.->|translate.plan（延迟导入）| TR
   WK --> VAD["vad"]
   WK --> ASR["asr_whisper ／ asr_qwen"]
   WK --> ALIGN["align"]

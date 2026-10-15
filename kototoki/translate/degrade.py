@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .batching import Batch
-from .data import Scene
+from .batching import Batch, Scene
 from .recipes import Recipe
 
 REPORT_SCHEMA = "kototoki-translate-report-v1"

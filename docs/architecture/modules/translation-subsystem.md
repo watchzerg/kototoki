@@ -4,14 +4,15 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[模块边界](../module-boundaries.md#产品包的责任边界)）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：受管 llama-server 的生命周期、`b10-joint` 批次请求、按批次落盘与续跑、基础设施失败的重启、批次终态失败的三级降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`zh.srt`／`ja-zh.srt` 的写出与发布（编排器）、run 目录的位置（[产物契约](artifact-contract.md) `translate_run_dir`）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。v3 实验侧的同名流程见[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是其产品移植，不导入它。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[模块边界](../module-boundaries.md#产品包的责任边界)）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：受管 llama-server 的生命周期、`b10-joint` 批次请求、按批次落盘与续跑、基础设施失败的重启、批次终态失败的三级降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`zh.srt`／`ja-zh.srt` 的写出与发布（编排器）、工作目录 `.work/<id>/` 本身的位置（[产物契约](artifact-contract.md)）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。v3 实验侧的同名流程见[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是其产品移植，不导入它。
 
 ## 当前行为规格
 
 **对编排器的接口**（`kototoki.translate`）：
 
 - `Session(config, on_server_pid=None)`：上下文管理器，整批影片共用。第一次真正需要请求模型时才启动 llama-server（已全部完成的影片不启动）；`on_server_pid(pid)` 在 server 进程一启动（加载之前）、`on_server_pid(None)` 在进程结束后回调，供编排器写进 GPU 锁；退出时总是停掉 server。
-- `translate_document(document, run_dir, session, config) -> TranslateResult`：`document` 是 `srt.read_srt` 读出的 `ja.srt`，`run_dir` 是 `translate/srt-<sha12>/`。返回 `translations`（cue id → 译文，精确覆盖全部 cue；回退的 cue 为日文原文）、`fallback_count`（回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues` 并在控制台汇总）与 `report`（即 `report.json` 的内容）。基础设施失败用尽重启时抛 `TranslateError`（编排器记为该文件翻译失败）；模型或引擎缺失等配置问题按原异常抛出。
+- `plan(work_dir, document, config) -> TranslatePlan`：`document` 是 `srt.read_srt` 读出的 `ja.srt`。只读、不写文件，返回 `run_dir`（`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>/`，`relative` 为相对工作目录的 posix 串，发布记录的 `translate_dir` 即它）、`identity`（`{ja_srt_sha256, recipe_hash, seed}`，阶段计划模块 `plan.py` 的 translate 身份由此取得，不再自算）、`needs_model`（零条目文档或 `run.json` 已记 `complete` 时为 False；编排器据此决定要不要取 GPU 锁、建 `Session`）与 `document`。`run.json` 已存在但配方 hash／seed／来源不符时抛 `ValueError`，消息含"删除该目录可重译"。
+- `translate_document(plan, session) -> TranslateResult`：`plan` 来自上一条；`needs_model` 为 False 时 `session` 可为 `None`，只读回已完成的 run（run 记为完成而批次文件缺失即抛 `TranslateError`，不起 server）。返回 `translations`（cue id → 译文，精确覆盖全部 cue；回退的 cue 为日文原文）、`fallback_count`（回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues` 并在控制台汇总）与 `report`（即 `report.json` 的内容）。基础设施失败用尽重启时抛 `TranslateError`（编排器记为该文件翻译失败）；模型或引擎缺失等配置问题按原异常抛出。
 - `RECIPE_HASH`：产品翻译配方 `b10-joint-degrade-v1` 的 hash `994c0d03…95fe`，进编排器的翻译身份。该配方字段与 v3 `b10-joint` 相同，只把 `fixed.overflow` 由 `recorded-failure-no-truncation-no-auto-shrink` 换成 `degrade-10-5-1-keep-source`，因而另算 hash；`b10-joint` 仍保留并钉住 v3 原 hash `2ba68054…0969a`。
 
 **请求**：每部影片是一个场景，cue ID 用 `srt.py` 的 `<sha8>-cue-<n>` 别名；按源顺序每批 10 条、前后各 1 条只读邻文；提示、grammar、采样（`official30b-cached-v1`、seed 取 `[translate] seed`）与 completion 请求与 v3 `b10-joint` 逐字节相同。每个请求先 `/tokenize`，输入超过 4032 token 即判 `context`，不截断；同一请求最多 2 次。批次级的缩小只经下面的降级发生。
@@ -28,7 +29,7 @@
 
 **session**：一个 server 进程即一个 session。`cache_n == 0` 校验在每个 session 的首个 completion 做一次（之后的影片复用 KV 前缀属正常）。每次重启都是新 session：影片 `run.json` 的 `sessions[]` 新增一项、`cache_state` 重置、写过批次或遇到基础设施失败的 session 超过一个时 `resumed = true`。server 启动失败（`server_start`）不新增 `sessions[]` 项，记入 `server_start_failures[]`；端口被占、模型核对失败、驻留校验失败等按原异常抛出，不重试。server 启动前用 `nvidia-smi memory.free` 轮询，达到 14700 MiB 才启动（整片实测 server 自身约 14800 MiB，整片验收中 server 加载后桌面占用由约 1236 降到约 597 MiB、翻译正常；2026-10-15 用户裁定由 14900 下调），120 s 超时按 `server_start` 失败处理并写明最后读数。某部影片的重启额度全部耗在 `server_start` 上（GPU 被占或 server 起不来）时，`Session` 记为不可用，本批其余影片直接抛 `TranslateError`，不再逐片等待；混有其他种类的失败不触发这一点。
 
-**run 目录与续跑**：`<run_dir>/<配方名>__s<seed>/`（配方或 seed 变化即另一个 run，`ja.srt` 变化由产物契约换成新的 `srt-<sha12>`，旧目录都保留）：
+**run 目录与续跑**：`translate/srt-<sha12>/<配方名>__s<seed>/`，键由本子系统的 `plan` 唯一决定（`batching.source_key` 给出 `srt-<sha12>`，同时是场景 ID）：`ja.srt` 变化换 `srt-<sha12>`，配方名或 seed 变化换子目录，旧目录都保留。配方**内容**变了而名字未变（hash 不符）不自动另开目录，`plan` 拒绝并提示删除该目录（票据 15 裁定维持此规则：零迁移、与 v3 "同名配方内容不同拒绝续跑"一致；候选方案"目录名含 hash 自动另开"会让现有整片 run 全部失效，未采纳）：
 
 - `run.json`：只含该影片；配方、hash、seed、来源（`ja.srt` SHA256、场景 ID、cue ID 列表）、`sessions[]`（引擎身份摘要、`server_session` 指向的运行日志目录、写入批次数、停止原因、基础设施失败与证据、缓存校验结果、墙钟）、`server_start_failures[]`、`resumed`、`completion`。已存在且配方／seed／来源不符时报错（同名配方改了 hash 属此情形；票据 09 用新配方名因而另起目录）。
 - `batches.jsonl`：每完成一批追加一行并 fsync，随即重写 `run.json`（进程被强杀时 `sessions[]` 仍反映已写批次）（批次计划字段、译文、请求与逐次尝试记录、所属 session；降级完成的批次不带顶层请求，改为 `degrade`：各节点（`nodes[0]` 是原批次）的 ID、层级、状态、失败种类、尝试次数与完整请求记录，以及回退 cue 的 ID、原因、错误与累计尝试次数）。续跑时末尾不完整的一行截掉，其余行须与批次计划一致，从第一个未写入的批次继续。
@@ -53,7 +54,7 @@
 | `recipes.py` | `translation_v3/recipes.py` | 只留 `b10-joint` 字段与 joint 提示；`Recipe.spec()` 结构不变以保持原 hash；去掉 terms／review／多样本／类别路由／配方文件；新增 `overflow` 字段（进 `fixed`，与 v3 位置相同）与产品配方 `b10-joint-degrade-v1` |
 | `degrade.py` | 新增（v3 实验不缩批） | 拆分规则、降级树与回退、`report.json` 内容；不导入 `generate`，由其传入请求函数与降级日志 |
 | `adapters.py` | `translation_demo/adapters.py` | 只留 `hy-mt2-30b` 用到的 `render`、`id_grammar`、`translations`、`strict_json` |
-| `batching.py`、`data.py` | `translation_v3` | 只留按条数分批；`Scene`／`Cue` 由 `ja.srt` 构造 |
+| `batching.py` | `translation_v3` | 只留按条数分批；`Scene`／`Cue` 由 `ja.srt` 构造，`source_key` 是 `srt-<sha12>` 的唯一出处（原 `data.py` 并入，票据 15） |
 | `generate.py` | `translation_v3/generate.py` | `run_step` 判定不变；`Session` 取代 v3 每次运行新开 server 的 session factory；按批次追加落盘；同调用内重启 |
 | `server.py` | `translation_v3/server.py`、`translation_demo_runtime.py`、`translation_demo/run.py` | 去掉 `GpuLock`；模型路径来自配置，资产清单文件改为冻结资产常量；`validate_residency` 去掉"允许 CPU 卸载"开关；新增空闲显存轮询 |
 | `client.py` | `translation_demo/client.py` | 原样 |
@@ -63,7 +64,7 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 
 ## 接口与依赖
 
-依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `paths.output_dir`、`paths.llama_server`、`models.translate`、`translate.port`／`seed`）、`kototoki.srt`。编排器只导入包顶层的 `Session`、`translate_document`、`RECIPE_HASH` 与 `kototoki.merge`；`server`、`client`、`batching`、`generate`、`procs` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换 server 与 HTTP 客户端。
+依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `paths.output_dir`、`paths.llama_server`、`models.translate`、`translate.port`／`seed`）、`kototoki.srt`。编排器只导入包顶层的 `Session`、`plan`／`TranslatePlan`、`translate_document`、`RECIPE_HASH` 与 `kototoki.merge`，阶段计划模块 `kototoki/plan.py` 延迟导入 `plan` 取翻译身份与 `needs_model`；`server`、`client`、`batching`、`generate`、`procs` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换 server 与 HTTP 客户端。
 
 ## 代码与验证入口
 

@@ -60,11 +60,6 @@ class WorkDirTests(TempCase):
         self.assertEqual(paths, {"ja": self.root / "S1/ep01.ja.srt", "zh": self.root / "S1/ep01.zh.srt",
                                  "ja-zh": self.root / "S1/ep01.ja-zh.srt"})
 
-    def test_translate_run_dir_keyed_by_ja_srt_sha12(self) -> None:
-        self.assertEqual(a.translate_run_dir(self.root, SHA_A), self.root / "translate" / f"srt-{'a' * 12}")
-        with self.assertRaises(ValueError):
-            a.translate_run_dir(self.root, "not-a-sha")
-
 
 class IdentityTests(TempCase):
     def video(self) -> Path:

@@ -44,6 +44,9 @@ class PlanCase(unittest.TestCase):
         self.target = plan.Target(self.work, self.finals, PROBE_IDENTITY, PCM)
         translate = types.ModuleType("kototoki.translate")
         translate.RECIPE_HASH = "a" * 64
+        translate.plan = lambda work_dir, document, config: types.SimpleNamespace(
+            work_dir=work_dir, run_dir=work_dir / "translate" / "x", document=document, needs_model=bool(document.cues),
+            identity={"ja_srt_sha256": document.source_sha256, "recipe_hash": "a" * 64, "seed": config.translate.seed})
         self.enterContext(mock.patch.dict(sys.modules, {"kototoki.translate": translate}))
 
     # --- 逐级写出产物 ---------------------------------------------------------------------------
@@ -77,6 +80,11 @@ class PlanCase(unittest.TestCase):
     def next(self) -> plan.Plan:
         return plan.next_stage(self.target, self.config, models)
 
+    def next_from_scratch_before_translate(self) -> plan.Plan:
+        """同一目录、改用另一 cue 配置：计划停在 cues，翻译计划尚不存在。"""
+        changed = replace(self.config, cues=replace(self.config.cues, max_chars=1))
+        return plan.next_stage(self.target, changed, models)
+
 
 class ChainTests(PlanCase):
     def test_first_needed_stage_follows_the_artifacts(self) -> None:
@@ -97,6 +105,9 @@ class ChainTests(PlanCase):
         self.assertEqual(current.identities["translate"],
                          {"ja_srt_sha256": artifacts.sha256_file(self.work / plan.JA_SRT), "recipe_hash": "a" * 64,
                           "seed": self.config.translate.seed})
+        self.assertIs(current.translate.identity, current.identities["translate"])
+        self.assertTrue(current.translate.needs_model)
+        self.assertIsNone(self.next_from_scratch_before_translate().translate)
         self.assertEqual(set(current.sources), {"probe", "vad", "asr", "align", "ja_cues", "translate", "no_speech"})
         self.publish(current)
         self.assertEqual(self.next().stage, "done")

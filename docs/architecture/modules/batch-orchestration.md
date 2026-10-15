@@ -18,7 +18,7 @@
 4. 计划：CPU 阶段之后对每个文件调用一次 `plan.next_stage`，从 vad 起逐阶段核对产物身份，得到第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`translate`）或终态（`publish`：无语音；`done`：已是最新）。
 5. vad → asr → align：计划落在本阶段的文件组成一批，交给一个 worker 子进程；没有文件需要 GPU 时不取 GPU 锁。worker 结束后对每个文件 `plan.advance`，从刚跑完的阶段继续核对：产物缺失或身份不符即记该阶段失败（`ArtifactMissing`），否则计划推进到下一个需要运行的阶段。
 6. ja-cues（进程内）：`cues.build_cues(align, [cues] 规则)`，写 `ja.srt` 后写 `ja-cues.json`，随后 `plan.advance`。
-7. translate（进程内）：整批一个 `translate.Session`；`ja.srt` 零条目的文件不请求模型；单文件异常记该文件失败并继续。
+7. translate（进程内）：每文件的 `TranslatePlan` 已在计划里（`plan.translate`）；只有任一文件 `needs_model` 时才取 GPU 锁、建整批共用的 `translate.Session`，`translate_document(plan, session)` 对不需要模型的文件传 `None`（零条目、或 run 已完成而只是最终文件被删）；单文件异常记该文件失败并继续。
 8. 发布：三份文本写到 `.work/<id>/publish/`，再次 `publish_blockers` 放行 → `record_published` → 逐个移动到最终位置（`replace_with_retry`，带 `PermissionError` 重试）→ 删除该文件的 `failure.json`。
 
 **阶段计划与期望身份**（`kototoki/plan.py`，续跑与跳过的唯一判据）：
@@ -28,9 +28,9 @@
 | `probe.json` | `probe_identity`：`video_identity`（相对路径、大小、`mtime_ns`、ffprobe 指纹）＋ `MEDIA` 配方 hash ＋ `audio_language` |
 | `vad.json`／`asr.json`／`align.json` | `vad_identity`／`asr_identity`／`align_identity`：上游 PCM 与上游产物 SHA256、配方 hash（`recipe_hash(stage, engine=…)`，只有 asr 需要引擎）、模型文件 SHA256；worker 壳写进产物的是同一个函数的结果，见 [STT worker](stt-workers.md) |
 | `ja-cues.json` | `cues_identity`：上游 `align.json` ＋ `CUES` 配方 hash ＋ `[cues]` 规则 |
-| 翻译 | `translate_identity`：`ja.srt` SHA256 ＋ `translate.RECIPE_HASH` ＋ seed（翻译子系统用到时才导入） |
+| 翻译 | `translate_plan`：调用翻译子系统 `translate.plan(work_dir, ja.srt, config)`（核对到该阶段时才导入），身份 `{ja_srt_sha256, recipe_hash, seed}`、run 目录与 `needs_model` 都由它给出，计划把整个 `TranslatePlan` 带在 `Plan.translate` 上 |
 
-`Plan` 是不可变值：`stage`、`identities`（`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `published.json` 的 `sources`）、`no_speech`，以及发布记录用的 `sources`。`next_stage(target, config, models)` 从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果；`vad.json` 的 `chunks` 为空即无语音，跳到发布判定；全部当前时对照 `published.json`：`sources` 与期望相同且三份最终文件 SHA 等于记录即 `done`，否则 `translate`（无语音时 `publish`）。`advance(previous, …)` 从 `previous.stage` 继续同一核对，不改写入参；对同一目录连续调用结果相同。核对途中出错抛 `PlanError`（带正在核对的阶段，编排记为该阶段失败）；损坏的产物不是错误，只是"不当前"。阶段表 `STAGE_INPUTS`／`STAGE_OUTPUT`、`worker_models`、`model_files(stage, models, engine=…)` 供编排写 jobs 文件、壳核对模型；`advance` 对已到终态的计划报错。
+`Plan` 是不可变值：`stage`、`identities`（`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `published.json` 的 `sources`）、`no_speech`、`translate`（核对到翻译阶段后才有的 `TranslatePlan`，否则 `None`），以及发布记录用的 `sources`。`next_stage(target, config, models)` 从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果；`vad.json` 的 `chunks` 为空即无语音，跳到发布判定；全部当前时对照 `published.json`：`sources` 与期望相同且三份最终文件 SHA 等于记录即 `done`，否则 `translate`（无语音时 `publish`）。`advance(previous, …)` 从 `previous.stage` 继续同一核对，不改写入参；对同一目录连续调用结果相同。核对途中出错抛 `PlanError`（带正在核对的阶段，编排记为该阶段失败）；损坏的产物不是错误，只是"不当前"。阶段表 `STAGE_INPUTS`／`STAGE_OUTPUT`、`worker_models`、`model_files(stage, models, engine=…)` 供编排写 jobs 文件、壳核对模型；`advance` 对已到终态的计划报错。
 
 模型文件 SHA256 由编排的 `model_sha_lookup` 经 `gpu.verify_models`（`plan.model_files` 给出期望值，size+mtime 缓存与 worker 共用 `.work/cache/model-verification.json`）按阶段每次运行最多核对一次；模型缺失或不符时需要该阶段核对的文件记失败。`published.json` 的 `sources` 记录上表全部身份与 `no_speech`（另记 `translate_fallback_cues`，不参与比较）。
 
@@ -46,7 +46,7 @@
 
 **无语音**：`vad.json` 的 `chunks` 为空列表时跳过 asr／align／ja-cues／翻译，直接发布三份零条目 SRT。
 
-**锁**：GPU 锁是 `config.gpu_lock`（仓库内 `.local/gpu.lock`），第一个需要 GPU 的阶段前获取，持有到翻译结束；锁文件记录编排器 pid 与创建时间，worker 运行期间记 `worker_pid`／`worker_stage`（`Popen.pid`；用 venv 的 `python.exe` 启动时这是启动器进程，真正的 worker 是它的子进程），翻译期间记 `server_pid`（由 `Session` 的 `on_server_pid` 回调提供）。持有者存活即拒绝，残留锁默认拒绝，`KOTOTOKI_BREAK_STALE_LOCK=1` 时移除残留锁（对输出目录锁同样适用）；从不抢占存活的持有者。
+**锁**：GPU 锁是 `config.gpu_lock`（仓库内 `.local/gpu.lock`），第一个需要 GPU 的阶段前获取，持有到翻译结束，翻译阶段只在有文件 `needs_model` 时才取（全部 run 已完成或零条目时整批不占 GPU）；锁文件记录编排器 pid 与创建时间，worker 运行期间记 `worker_pid`／`worker_stage`（`Popen.pid`；用 venv 的 `python.exe` 启动时这是启动器进程，真正的 worker 是它的子进程），翻译期间记 `server_pid`（由 `Session` 的 `on_server_pid` 回调提供）。持有者存活即拒绝，残留锁默认拒绝，`KOTOTOKI_BREAK_STALE_LOCK=1` 时移除残留锁（对输出目录锁同样适用）；从不抢占存活的持有者。
 
 **`failure.json` 清理**：该文件本次成功发布后删除；重跑时不看 `failure.json`，只按产物身份决定从哪个阶段继续，新的失败覆盖旧记录。
 
@@ -54,7 +54,7 @@
 
 ## 接口与依赖
 
-导入 `artifacts`、`config`、`srt`、`workers.protocol`、`media`、`cues`、`plan` 与 `workers.gpu`（只用 `verify_models`，导入时不加载推理库），不再导入 worker 壳；翻译子系统与合并在用到时以 `importlib` 导入 `kototoki.translate`（`RECIPE_HASH`、`Session(config, on_server_pid=...)` 上下文管理器、`translate_document(document, run_dir, session, config)` 返回带 `translations`（cue id → 译文）与 `fallback_count` 的结果）与 `kototoki.merge`（`merge(ja_document, translations) -> srt_text`），二者由票据 05／09 实现。不导入任何推理模块与 `experiments.*`：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。
+导入 `artifacts`、`config`、`srt`、`workers.protocol`、`media`、`cues`、`plan` 与 `workers.gpu`（只用 `verify_models`，导入时不加载推理库），不再导入 worker 壳；翻译子系统与合并在用到时以 `importlib` 导入 `kototoki.translate`（`Session(config, on_server_pid=...)` 上下文管理器、`translate_document(plan, session | None)` 返回带 `translations`（cue id → 译文）与 `fallback_count` 的结果；`plan(...)` 与 `RECIPE_HASH` 由阶段计划模块使用）与 `kototoki.merge`（`merge(ja_document, translations) -> srt_text`），二者由票据 05／09 实现。不导入任何推理模块与 `experiments.*`：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。
 
 ## 代码与验证入口
 
