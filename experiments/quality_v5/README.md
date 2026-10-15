@@ -10,6 +10,7 @@
 | `asr_source.py` | 02 | 参考源与 ASR 源翻译按时间对齐成单元、按日文 CER 分桶；成对盲评 profile `v5-asr-pairwise-v1` 与校准；分桶外推 ASR 带来的中文错误占比 | 离线；`judge` 消耗 Claude 配额（退出码 75＝配额耗尽，可续跑） |
 | `readability.py` | 03 | 中文 CPS、行长、显示时长、每条行数、中日长度比的分布与超阈值占比；`v4ref` 子命令给字幕组参考的同口径基准 | 离线 |
 | `spot_check.py` | 05 | 人工观感抽查表：每部开头／中段最密处／结尾各 2 分钟，列产品中文、ASR 日文与参考日文 | 离线 |
+| `vad_sweep.py` | 11 | Pyannote 重叠平均分数每部缓存一次（`scores`，GPU）；离线扫 onset／offset／min duration／两端 pad 并以参考字幕时间轴筛选（`screen`）；选中参数物化成产品 `vad.json` 与 asr／align jobs 文件（`materialize`），整片后汇总 CER 与重建 cue（`report`） | `scores` GPU 约 16 s／部；其余离线 |
 | `consistency.py` | 04 | 跨批一致性指标：同一作品内人名／专名的中文译法一致率（v4 run 或成对 SRT）；`precision` 子命令抽样送 Opus 核对精确率 | 离线（`precision` 消耗少量 Claude 配额） |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.quality_v5.<模块> ...`（各模块文件头有命令示例）。
