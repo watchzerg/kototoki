@@ -105,6 +105,22 @@ class VideoDurationTests(unittest.TestCase):
                 video = stream(0, "video", tags={key: "01:57:08.021000000"})
                 self.assertEqual(self.duration(video, {"duration": "7028.043"}), (7028.021, "stream.tags.DURATION"))
 
+    def test_exact_duration_tag_beats_language_statistics_tag(self) -> None:
+        # `-c copy` 剪片：原片全长的 DURATION-eng 排在前，真实片段时长在 DURATION
+        video = stream(0, "video", tags={"DURATION-eng": "01:57:08.021000000", "DURATION": "00:00:23.000000000"})
+        self.assertEqual(self.duration(video, {"duration": "23.5"}), (23.0, "stream.tags.DURATION"))
+
+    def test_language_statistics_tag_is_used_alone(self) -> None:
+        video = stream(0, "video", tags={"DURATION-jpn": "00:00:23.500000000"})
+        self.assertEqual(self.duration(video, {"duration": "23.5"}), (23.5, "stream.tags.DURATION"))
+
+    def test_tag_contradicting_container_takes_smaller_and_warns(self) -> None:
+        video = stream(0, "video", tags={"DURATION": "02:02:05.000000000"})  # 7325 s
+        probe = media.parse_probe({"streams": [video, audio(1, "jpn")], "format": {"duration": "303"}}, "jpn")
+        self.assertEqual((probe.video_duration_s, probe.video_duration_source), (303.0, "format.duration"))
+        self.assertEqual(len(probe.warnings), 1)
+        self.assertIn("stream.tags.DURATION", probe.warnings[0])
+
     def test_falls_back_to_container_duration_with_warning(self) -> None:
         probe = media.parse_probe({"streams": [stream(0, "video"), audio(1, "jpn")], "format": {"duration": "12.5"}},
                                   "jpn")
@@ -159,7 +175,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("-map") + 1], "0:3")
         self.assertEqual(command[command.index("-af") + 1],
                          "aresample=async=1:first_pts=0,pan=mono|c0=0.5*c0+0.5*c1,"
-                         "aresample=16000:resampler=soxr:precision=28")
+                         "aresample=16000")
         self.assertEqual(command[command.index("-c:a") + 1], "pcm_s16le")
         self.assertNotIn("-ac", command)
         self.assertNotIn("-ar", command)

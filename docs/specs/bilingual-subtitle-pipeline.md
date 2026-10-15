@@ -49,7 +49,7 @@
 | 输出目录 | 镜像输入目录的子目录层级 |
 | 里程碑 | 由实现方拆分并建票（§12） |
 | 下混 | 单声道直通；双声道沿用 0.5/0.5；5.1 以上用 ffmpeg 标准矩阵含中置 |
-| 重采样器 | soxr 28 bit（`aresample=16000:resampler=soxr:precision=28`，2026-10-14 用户裁定替代原"保持默认 swr"）；派生 WAV 不再与基线 `hf-ii-full.wav` 逐字节一致 |
+| 重采样器 | ffmpeg 默认 swr（`aresample=16000`，2026-10-15 用户裁定由 soxr 28 bit 改回，票据 10）；派生 WAV 与基线 `hf-ii-full.wav` 逐字节一致 |
 | 翻译引擎 | 官方 llama.cpp b11583 win-cuda-13.4 替代 ADR-0005 的 b11429 兼容引擎条款 |
 | 产品翻译配方 | `b10-joint-degrade-v1` |
 
@@ -111,9 +111,9 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 
 - **为什么 ② 不从 ① 派生**：`.ac3`／`.eac3`／`.dts`／`.mp3`／ADTS AAC 等裸码流容器没有时间戳，流复制后丢掉音轨相对视频的起始延迟与中途间隙（广播 `.ts` 常见），AAC 的编码器预延迟处理也不同。② 直接从视频容器解码，`async=1:first_pts=0` 补齐起始静音，让 WAV 的 sample 0 对齐视频 0 秒。
 - **零点与 `offset_s`**（2026-10-14 第三轮修订）：补齐静音后 WAV 已经是视频坐标，因此 `offset_s` 恒为 0，各阶段不再把音轨 `start_time` 加到时间上（否则同一延迟会在 `map_records` 里算两次）。ffmpeg 默认把输入的 `format.start_time` 平移到 0，广播 `.ts` 的音轨 `start_time` 是绝对值，直接当偏移会整体后移一秒多；而音频先于视频的负延迟又无法用非负 offset 表达。`start_time`（音轨与容器）只进 `probe.json` 作诊断。现有 W0 链路的 `offset_s` 参数保留，产品固定传 0；票据 02 的"延迟音轨"合成测试必须断言最终 cue 时间等于视频时间。
-- **丢样与时长校验**：`async=1` 是硬补偿（插静音／丢样本），时间戳回绕或 PTS 断裂时会静默丢音频，因此解码用 `-loglevel verbose` 并把日志写入 `extract.log`，记录补偿量（票据 02 实测：swr 在 verbose 下报告 `adding N audio samples of silence`，但只报出一部分，合成 2 s 间隙只报约 0.63 s，因此另按 ffmpeg 结束统计的输入样本数记净补偿 `net_padding_s`，见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)）。校验对象是**视频流时长**而不是 `format.duration`（TS 内 VBR 音频的容器时长是估算值）：解码短于视频超过 1 s 视为截断失败，长于视频只告警。
+- **丢样与时长校验**：`async=1` 是硬补偿（插静音／丢样本），时间戳回绕或 PTS 断裂时会静默丢音频，因此解码用 `-loglevel verbose` 并把日志写入 `extract.log`，记录补偿量（票据 02 实测：swr 在 verbose 下报告 `adding N audio samples of silence`，但只报出一部分，合成 2 s 间隙只报约 0.63 s，因此另按 ffmpeg 结束统计的输入样本数记净补偿 `net_padding_s`，见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)）。校验对象是**视频流时长**而不是 `format.duration`（TS 内 VBR 音频的容器时长是估算值）：解码短于视频超过 1 s 视为截断失败，长于视频只告警。视频流时长的来源按优先级取 `stream.duration`、精确的 `DURATION` 标签、mkvmerge 统计标签 `DURATION-<lang>`、`format.duration`；标签来源与 `format.duration` 相差超过容差时取较小者并告警（票据 11：ffmpeg `-c copy` 剪辑会保留原片的 `DURATION-eng`，曾把合法片段误判为截断）。
 - **下混按声道布局**：每种布局的 `pan` 表达式在 `recipes.py` 写死并进配方 hash。单声道直通；双声道沿用基线证据的 `pan=mono|c0=0.5*c0+0.5*c1`；5.1 及以上用 ffmpeg 标准系数（前左右 1、中置 0.707、环绕 0.707、丢 LFE）并除以系数和归一化，禁止削波，不能只取左右前；`-ac 1` 的隐式矩阵不用，因为它的系数与归一化不在配方里。合成 5.1 测试断言满幅输入不削波。日本广播双单声道（主／副音声）无法自动识别，第一版按双声道处理并记为已知限制。
-- **重采样器**：降采样用 soxr 28 bit；`async=1:first_pts=0` 的时间轴补偿在源采样率上进行，仍由 swr 完成。2026-10-14 在 HF II 整片对比：6 kHz 以下两者差异比信号低约 79 dB，差别集中在 7.8–8 kHz（swr 残留 −8.3 dB，soxr −44.9 dB，即 swr 边缘的折叠残留），削波无差别（各 1–2 个样本）；改用默认 swr 时派生 WAV 与基线 `hf-ii-full.wav` 的 PCM SHA256 一致（票据 02 已核对），改 soxr 后不再一致，用户接受。对识别率的影响未用模型验证，预计可忽略。
+- **重采样器**：降采样用 ffmpeg 默认 swr（`aresample=16000`），与 `async=1:first_pts=0` 的时间轴补偿同为 swr。2026-10-14 曾裁定改 soxr 28 bit，2026-10-15 最终验收发现 soxr 版派生 WAV 使 Pyannote 少保留约 9–10% 语音、产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点，而产品 VAD 在 swr 版 WAV 上与基线窗口完全相等，用户裁定改回（票据 10）。保留 2026-10-14 的频谱对比供参考：在 HF II 整片对比中，6 kHz 以下两者差异比信号低约 79 dB，差别集中在 7.8–8 kHz（swr 残留 −8.3 dB，soxr −44.9 dB，即 swr 边缘的折叠残留），削波无差别（各 1–2 个样本）；默认 swr 时派生 WAV 与基线 `hf-ii-full.wav` 的 PCM SHA256 一致（票据 02 与票据 10 均核对为 `ee4e2da3…`）。频谱上更干净没有换来识别率：Pyannote 对 soxr 版音频更保守，这是改回的直接原因。
 
 "无损"的边界：① 是严格无损（字节级流复制），只作归档；② 是推理输入，下混与重采样必然改变样本。
 
@@ -203,7 +203,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 | `max_chars` | 24 | 单条 cue 的日文字符数上限（按 Unicode 码点计，不含空白）。日本商业字幕常用每行 13–16 字、最多两行；双语显示时日文只占一行，取 24 作为单行可读上限 |
 | `max_duration_s` | 6.0 | 单条 cue 显示时长上限 |
 | `min_duration_s` | 0.8 | 低于此值且后方有间隙时向后延长，不与下一条重叠 |
-| `max_gap_s` | 1.0 | 相邻词汇字符之间的正间隔超过此值即断开。原初值 0.4 在 CTC 字间间隔处把词切碎，2026-10-14 按票据 04 离线观感改为 1.0（用户采纳） |
+| `max_gap_s` | 1.0 | 相邻词汇字符之间的正间隔超过此值且该间隔不整个落在同一个 VAD 子段内时断开（票据 12：CTC 发射点稀疏，拖长音会在词内留下超过阈值的假间隙，只有跨非语音区的间隔才算句界）。原初值 0.4 在 CTC 字间间隔处把词切碎，2026-10-14 按票据 04 离线观感改为 1.0（用户采纳） |
 | `sentence_endings` | `。！？!?` | 遇到即断开 |
 | `soft_breaks` | `、，,` | 超过 `max_chars` 时优先在这些字符后断 |
 | `lead_out_s` | 0.3 | 每条 cue 结束时间向后延长的秒数（CTC 给的是发声结束，整片证据中比参考字幕结束中位早约 0.34 s），不越过下一条起点 |
@@ -287,7 +287,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | `kototoki/__main__.py`、`job.py`（批次、阶段推进、续跑、锁） | 新写；锁与 Job Object 取自 `translation_v3/procs.py` |
 | `config.py`（读 `kototoki.toml`，§10）、`recipes.py`（VAD／ASR／MMS／cue／媒体的配方常量与 hash，**不含翻译配方**） | 新写，`tomllib` 读取；配方常量取自各 demo 的 `RECIPE`／`recipes.py` |
 | `artifacts.py`（产物路径、身份、匹配跳过、原子写与 Windows 重试、`failure.json`、`published.json`）、`workers/protocol.py`（`--jobs` 格式、增量结果、`failed_windows`、退出码） | 新写；原子写取自 `translation_v3/common.py` |
-| `media.py`（ffprobe／ffmpeg 流复制与派生 WAV） | 新写；下混与重采样参数取自 `experiments/corpus/prepare_round2.py`，重采样改 soxr 28 bit（2026-10-14 用户裁定） |
+| `media.py`（ffprobe／ffmpeg 流复制与派生 WAV） | 新写；下混与重采样参数取自 `experiments/corpus/prepare_round2.py`（2026-10-14 曾改 soxr 28 bit，2026-10-15 改回默认 swr，票据 10） |
 | `vad.py` | `w0_demo/vad_candidates.py` 的 `CurrentPyannoteVad` + `chunk_intervals` |
 | `asr_whisper.py` | `w0_demo/asr.py`（torch 特征链不变，去掉私有 DLL 目录逻辑，显式 torch 先于 ctranslate2 导入） |
 | `asr_qwen.py` | `x0_demo/asr.py` + `experiments/qwen/run_qwen.py` 的资产身份常量、`checkpoint_identity`、`check_gpu`（复制，不导入历史包） |
@@ -316,7 +316,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | pyannote.audio | 4.0.7（2026-06-30） | — | ≥3.10 | `torch>=2.8`、`torchaudio>=2.8`、`torchcodec>=0.7`；4.x 改用 torchcodec I/O、`token=`、`revision=`；直接加载 `segmentation-3.0` UNVERIFIED（仓库门控） |
 | llama.cpp | b11583（2026-10-13） | 官方 `llama-b11583-bin-win-cuda-13.4-x64.zip` + `cudart-…-cuda-13.4` | — | PR #25395（2026-07-13）合并 `hy_v3`；源码构建 sm_120 用 `CMAKE_CUDA_ARCHITECTURES=120a-real` |
 | Python | 3.15.0（2026-10-09） | — | — | 3.15 不可用（CT2／torchaudio／torchcodec 无 wheel）；3.14 核心栈齐全但 av／tokenizers／safetensors 未核；3.13 保守 |
-| ffmpeg | 本机 git-20261001 full build | — | — | 含 libsoxr，`-af aresample=resampler=soxr` 可用 |
+| ffmpeg | 本机 git-20261001 full build | — | — | 只用默认 swr 重采样，不要求 libsoxr |
 
 ## 8. 仍开放的问题
 
@@ -443,6 +443,6 @@ seed  = 20261008
 
 2026-10-14（票据 05 实施）：翻译 run 目录在 `srt-<sha12>/` 下再按 `<配方名>__s<seed>/` 分目录（与 v3 run_id 同形），否则改 seed 重试会被 run.json 不一致拒绝；llama-server 由整批共用，运行日志放 `.work/translate-sessions/`（§4）。见[翻译子系统与双语合并](../architecture/modules/translation-subsystem.md)。
 
-2026-10-15（最终验收）：soxr 28 bit 的派生 WAV 使 Pyannote 少保留约 9–10% 语音，产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点（删除增多）；见[最终验收](../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)，是否改回 swr 待用户裁定。流复制剪辑的 `DURATION-<lang>` 统计标签会触发误判为截断，待修。
+2026-10-15（最终验收）：soxr 28 bit 的派生 WAV 使 Pyannote 少保留约 9–10% 语音，产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点（删除增多）；见[最终验收](../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)。随后用户裁定三项并建票：重采样改回默认 swr（票据 10，§1.2、§2.2，`MEDIA` 配方 hash 变化、已有 `.work` 整条链重跑）；`DURATION-<lang>` 误判修复（票据 11，§2.2 时长来源优先级）；间隔断句只在跨 VAD 子段时成立（票据 12，§5.2，`CUES` 配方 hash 变化；样本中 1969 s 处的两字落在 VAD 漏检的拖长音上，新规则未能合并，需要词边界信息，留待后续）。
 
 2026-10-14（票据 09 实施）：降级的单条子批次命名为 `父ID.a.1`…（§6 只规定了两半的 `父ID.a`／`父ID.b`）；奇数条批次前半多 1 条，只有 1 条的批次失败即回退；降级中各节点结果追加写 `degrade.jsonl`，续跑不重做已有结果的节点；`report.json` 放在 `<配方名>__s<seed>/` run 目录内（每个配方与 seed 各一份）。用户裁定删去 §6 的“`force = true` 重跑整个翻译阶段”：`force` 只管最终文件覆盖，回退的 cue 只经改 seed 重试（最小设计，不为罕见的回退另加重译开关）。

@@ -68,7 +68,7 @@ class RecipeHashTests(unittest.TestCase):
         changed_pan = copy.deepcopy(recipes.MEDIA)
         changed_pan["pan"]["stereo"] = "pan=mono|c0=c0"
         changed_rate = copy.deepcopy(recipes.MEDIA)
-        changed_rate["resample_filter"] = "aresample=16000"
+        changed_rate["resample_filter"] = "aresample=16000:resampler=soxr:precision=28"
         self.assertNotEqual(recipes.recipe_hash(changed_pan), base)
         self.assertNotEqual(recipes.recipe_hash(changed_rate), base)
         self.assertIs(recipes.MEDIA["pan"], recipes.PAN)
@@ -84,7 +84,7 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(recipes.MEDIA["offset_s"], 0)
         self.assertEqual(recipes.CUES["fallback_max_char_s"], cues.FALLBACK_MAX_CHAR_S)
         self.assertEqual(recipes.MEDIA["timeline_filter"], "aresample=async=1:first_pts=0")
-        self.assertEqual(recipes.MEDIA["resample_filter"], "aresample=16000:resampler=soxr:precision=28")
+        self.assertEqual(recipes.MEDIA["resample_filter"], "aresample=16000")
 
     def test_no_translation_recipe_here(self) -> None:
         names = {name.lower() for name in vars(recipes)}

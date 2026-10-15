@@ -137,14 +137,23 @@ def _float(value: Any) -> float | None:
 
 
 def _tag_duration(stream: Mapping[str, Any]) -> float | None:
-    """Matroska 把流时长写在 `tags.DURATION`；mkvmerge 统计标签写作 `DURATION-<lang>`（`HH:MM:SS.fffffffff`）。"""
+    """Matroska 把流时长写在 `tags.DURATION`（`HH:MM:SS.fffffffff`）；mkvmerge 统计标签 `DURATION-<lang>` 只作后备：
+    `-c copy` 剪出的片段会保留原片全长的 `DURATION-<lang>`，所以必须先取精确的 `DURATION`。"""
+    exact = fallback = None
     for key, value in (stream.get("tags") or {}).items():
-        if (key.upper() == "DURATION" or key.upper().startswith("DURATION-")) and isinstance(value, str):
-            match = _SEXAGESIMAL.fullmatch(value.strip())
-            if match:
-                hours, minutes, seconds = match.groups()
-                return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-    return None
+        upper = key.upper()
+        if not isinstance(value, str) or not (upper == "DURATION" or upper.startswith("DURATION-")):
+            continue
+        match = _SEXAGESIMAL.fullmatch(value.strip())
+        if not match:
+            continue
+        hours, minutes, seconds = match.groups()
+        seconds_total = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        if upper == "DURATION":
+            exact = seconds_total
+        elif fallback is None:
+            fallback = seconds_total
+    return exact if exact is not None else fallback
 
 
 def _stream_duration(stream: Mapping[str, Any]) -> tuple[float | None, str]:
@@ -199,6 +208,14 @@ def parse_probe(ffprobe: dict[str, Any], language: str) -> Probe:
         if duration is None:
             raise MediaError("Video stream duration is unknown (no stream, tag or container duration)")
         warnings.append("Video stream has no duration; using the container duration")
+    # 流时长（尤其是标签）可能与容器时长矛盾（如 `-c copy` 残留的原片标签）：取较小者并告警，不失败
+    container = _float((ffprobe.get("format") or {}).get("duration"))
+    if (source != "format.duration" and container is not None
+            and abs(duration - container) > recipes.MEDIA["duration_tolerance_s"]):
+        warnings.append(f"Video duration from {source} ({duration:.3f} s) disagrees with the container duration "
+                        f"({container:.3f} s); using the smaller one")
+        if container < duration:
+            duration, source = container, "format.duration"
     subtitles = tuple({"index": int(stream["index"]), "codec_name": stream.get("codec_name"),
                        "language": (stream.get("tags") or {}).get("language"),
                        "default": bool((stream.get("disposition") or {}).get("default")),

@@ -159,13 +159,30 @@ class BackfillTests(CueTestCase):
 
 
 class SplittingTests(CueTestCase):
-    def test_gap_breaks_cue(self):
-        far = make_align([window(0, 10, timed("あい", 0.0) + timed("うえ", 1.4))])
+    def test_gap_across_vad_segments_breaks_cue(self):
+        chars = timed("あい", 0.0) + timed("うえ", 1.4)
+        far = make_align([window(0, 10, chars, [[0.0, 0.5], [1.3, 10.0]])])
         payload, _ = build_cues(far, rules(**PLAIN))
         self.assertEqual(spans(payload), [(0, 400, "あい"), (1400, 1800, "うえ")])
-        near = make_align([window(0, 10, timed("あい", 0.0) + timed("うえ", 0.7))])
+        near = make_align([window(0, 10, timed("あい", 0.0) + timed("うえ", 0.7), [[0.0, 0.5], [0.6, 10.0]])])
         payload, _ = build_cues(near, rules(**PLAIN))
         self.assertEqual(spans(payload), [(0, 1100, "あいうえ")])
+
+    def test_gap_inside_one_vad_segment_does_not_break(self):
+        """票据 12：CTC 发射点之间的词内假间隙（拖长音）不切。"""
+        chars = timed("あい", 0.0) + timed("うえ", 1.4)
+        same_span = make_align([window(0, 10, chars)])
+        payload, _ = build_cues(same_span, rules(**PLAIN))
+        self.assertEqual(spans(payload), [(0, 1800, "あいうえ")])
+        # 子段首尾相接（中间没有非语音区）同样不切。
+        touching = make_align([window(0, 10, chars, [[0.0, 0.4], [0.4, 10.0]])])
+        payload, _ = build_cues(touching, rules(**PLAIN))
+        self.assertEqual(spans(payload), [(0, 1800, "あいうえ")])
+
+    def test_gap_across_windows_breaks_cue(self):
+        align = make_align([window(0, 0.5, timed("あい", 0.0)), window(1.3, 10, timed("うえ", 1.4))])
+        payload, _ = build_cues(align, rules(**PLAIN))
+        self.assertEqual(spans(payload), [(0, 400, "あい"), (1400, 1800, "うえ")])
 
     def test_sentence_ending_breaks_cue_and_stays_attached(self):
         for mark in "。！?":
@@ -200,7 +217,7 @@ class SplittingTests(CueTestCase):
 
 class TimingAdjustmentTests(CueTestCase):
     def test_lead_out_extends_end_but_not_past_next_start(self):
-        align = make_align([window(0, 10, timed("あい", 1.0) + timed("うえ", 1.9))])
+        align = make_align([window(0, 10, timed("あい", 1.0) + timed("うえ", 1.9), [[1.0, 1.4], [1.9, 10.0]])])
         for lead_out, expected in ((0.3, [(1000, 1700), (1900, 2600)]),
                                    (1.0, [(1000, 1900), (1900, 3300)])):
             with self.subTest(lead_out_s=lead_out):
@@ -210,7 +227,8 @@ class TimingAdjustmentTests(CueTestCase):
 
     def test_min_duration_extends_forward_without_overlap(self):
         chars = [("あ", 1.0, 1.1), ("い", 1.6, 1.7), ("う", 5.0, 5.1)]
-        payload, srt_text = build_cues(make_align([window(0, 10, chars)]),
+        segments = [[1.0, 1.1], [1.6, 1.7], [5.0, 5.1]]
+        payload, srt_text = build_cues(make_align([window(0, 10, chars, segments)]),
                                        rules(lead_out_s=0.0, min_duration_s=0.8))
         self.assertEqual(spans(payload), [(1000, 1600, "あ"), (1600, 2400, "い"), (5000, 5800, "う")])
         self.assertWellFormed(payload, srt_text)
@@ -261,7 +279,8 @@ class EmptyAndSymbolTests(CueTestCase):
 
     def test_note_without_space_attaches_to_previous_cue_at_gap(self):
         chars = [("ね", 1.0, 1.2), ("♪", None), ("い", 2.0, 2.2), ("つ", 2.2, 2.4), ("も", 2.4, 2.6)]
-        payload, srt_text = build_cues(make_align([window(0, 10, chars)]), rules(**PLAIN))
+        align = make_align([window(0, 10, chars, [[1.0, 1.3], [1.9, 10.0]])])
+        payload, srt_text = build_cues(align, rules(**PLAIN))
         self.assertEqual(spans(payload), [(1000, 1200, "ね♪"), (2000, 2600, "いつも")])
         self.assertWellFormed(payload, srt_text)
 

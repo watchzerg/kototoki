@@ -39,9 +39,9 @@ MEDIA: dict[str, Any] = {
     # 起始静音补齐、间隙补零，sample 0 即视频 0 秒；offset_s 恒为 0
     "timeline_filter": "aresample=async=1:first_pts=0",
     "pan": PAN,
-    # 降采样用 soxr 28 bit（2026-10-14 用户裁定，替代默认 swr；8 kHz 边缘无折叠残留）。
-    # 时间轴补偿（timeline_filter，同采样率只插静音／丢样）仍由 swr 完成。
-    "resample_filter": f"aresample={SAMPLE_RATE}:resampler=soxr:precision=28",
+    # 降采样用 ffmpeg 默认 swr，与基线证据（hf-ii-full.wav）逐字节一致。2026-10-14 曾改 soxr 28 bit，
+    # 最终验收发现 soxr 使 Pyannote 少保留约 10% 语音、CER 高于基线，2026-10-15 用户裁定改回（票据 10）。
+    "resample_filter": f"aresample={SAMPLE_RATE}",
     "codec": "pcm_s16le",
     "output_flags": ["-fflags", "+bitexact", "-flags:a", "+bitexact"],
     "sample_rate": SAMPLE_RATE,
@@ -147,6 +147,8 @@ MMS: dict[str, Any] = {
 CUES: dict[str, Any] = {
     "id": "ja-cues-v1",
     "split_order": "sentence endings and gaps, then soft breaks, then hard character split",
+    # 票据 12：词内拖长音在 CTC 发射点之间留下假间隙，间隔只在跨 VAD 子段时断句
+    "gap_break": "a gap over max_gap_s breaks only when it is not inside one VAD segment",
     "untimed_fill": {"inner": "linear interpolation between timed neighbours (time_source=interpolated)",
                      "edge": "extrapolate at the neighbour per-character duration, clipped to the window",
                      "failed_window": "distribute over the window's VAD segments (time_source=fallback)"},
