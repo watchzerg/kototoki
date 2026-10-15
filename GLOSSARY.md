@@ -52,6 +52,10 @@ _Avoid_: b10-joint（指产品配方时）
 **回退 cue**：
 降级到单条仍失败、译文保留日文原文的 cue；对该配方 hash 与 seed 是终态，重跑不再尝试，只有改 seed 才重译；数量记入 `translate/report.json` 与 `published.json`。
 
+**阶段计划**：
+双语字幕流水线中对一个文件从 vad 起逐阶段核对产物身份、给出"下一个要跑的阶段"（或终态 `publish`／`done`）与各阶段期望身份的模块（`kototoki/plan.py`）；编排只负责问，worker 壳从它取写进产物的身份。
+_Avoid_: 计划器, 调度计划
+
 **产物身份**：
 写在每个中间产物里的身份（上游 SHA256、配方 hash、模型 SHA256、相关配置），续跑时与期望身份相同即跳过、不同即原地替换；不含绝对路径。翻译阶段没有单一产物文件，其身份（`ja.srt` SHA256、配方 hash、seed）与 run 目录键由翻译子系统的 `translate.plan` 给出。
 

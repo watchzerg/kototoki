@@ -11,7 +11,7 @@
 **对编排器的接口**（`kototoki.translate`）：
 
 - `Session(config, on_server_pid=None)`：上下文管理器，整批影片共用。第一次真正需要请求模型时才启动 llama-server（已全部完成的影片不启动）；`on_server_pid(pid)` 在 server 进程一启动（加载之前）、`on_server_pid(None)` 在进程结束后回调，供编排器写进 GPU 锁；退出时总是停掉 server。
-- `plan(work_dir, document, config) -> TranslatePlan`：`document` 是 `srt.read_srt` 读出的 `ja.srt`。只读、不写文件，返回 `run_dir`（`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>/`，`relative` 为相对工作目录的 posix 串，发布记录的 `translate_dir` 即它）、`identity`（`{ja_srt_sha256, recipe_hash, seed}`，阶段计划模块 `plan.py` 的 translate 身份由此取得，不再自算）、`needs_model`（零条目文档或 `run.json` 已记 `complete` 时为 False；编排器据此决定要不要取 GPU 锁、建 `Session`）与 `document`。`run.json` 已存在但配方 hash／seed／来源不符时抛 `ValueError`，消息含"删除该目录可重译"。
+- `plan(work_dir, document, config) -> TranslatePlan`：`document` 是 `srt.read_srt` 读出的 `ja.srt`。只读、不写文件，返回 `run_dir`（`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>/`，`relative` 为相对工作目录的 posix 串，发布记录的 `translate_dir` 即它）、`identity`（`{ja_srt_sha256, recipe_hash, seed}`，[阶段计划](stage-plan.md)的 translate 身份由此取得，不再自算）、`needs_model`（零条目文档或 `run.json` 已记 `complete` 时为 False；编排器据此决定要不要取 GPU 锁、建 `Session`）与 `document`。`run.json` 已存在但配方 hash／seed／来源不符时抛 `ValueError`，消息含"删除该目录可重译"。
 - `translate_document(plan, session) -> TranslateResult`：`plan` 来自上一条；`needs_model` 为 False 时 `session` 可为 `None`，只读回已完成的 run（run 记为完成而批次文件缺失即抛 `TranslateError`，不起 server）。返回 `translations`（cue id → 译文，精确覆盖全部 cue；回退的 cue 为日文原文）、`fallback_count`（回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues` 并在控制台汇总）与 `report`（即 `report.json` 的内容）。基础设施失败用尽重启时抛 `TranslateError`（编排器记为该文件翻译失败）；模型或引擎缺失等配置问题按原异常抛出。
 - `RECIPE_HASH`：产品翻译配方 `b10-joint-degrade-v1` 的 hash `994c0d03…95fe`，进编排器的翻译身份。该配方字段与 v3 `b10-joint` 相同，只把 `fixed.overflow` 由 `recorded-failure-no-truncation-no-auto-shrink` 换成 `degrade-10-5-1-keep-source`，因而另算 hash；`b10-joint` 仍保留并钉住 v3 原 hash `2ba68054…0969a`。
 
@@ -64,7 +64,7 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 
 ## 接口与依赖
 
-依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `paths.output_dir`、`paths.llama_server`、`models.translate`、`translate.port`／`seed`）、`kototoki.srt`。编排器只导入包顶层的 `Session`、`plan`／`TranslatePlan`、`translate_document`、`RECIPE_HASH` 与 `kototoki.merge`，阶段计划模块 `kototoki/plan.py` 延迟导入 `plan` 取翻译身份与 `needs_model`；`server`、`client`、`batching`、`generate`、`procs` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换 server 与 HTTP 客户端。
+依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `paths.output_dir`、`paths.llama_server`、`models.translate`、`translate.port`／`seed`）、`kototoki.srt`。编排器只导入包顶层的 `Session`、`translate_document` 与 `kototoki.merge`，[阶段计划](stage-plan.md)延迟导入包顶层的 `plan` 取 `TranslatePlan`（翻译身份与 `needs_model`）；`RECIPE_HASH` 也在包顶层导出，当前只有测试使用；`server`、`client`、`batching`、`generate`、`procs` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换 server 与 HTTP 客户端。
 
 ## 代码与验证入口
 
@@ -76,6 +76,4 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 
 ## 变更与决策来源
 
-票据 `.scratch/bilingual-subtitle-pipeline/issues/05-translate-and-merge.md`、`09-translate-degrade.md`；规格 §1.2（含第三轮裁定表）、§3.3、§4、§5.2、§6、§7.3；[ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)；stock 引擎的 `run_step` 假设与驻留日志由票据 01 smoke #4 验证。
-
-目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。
+票据 `.scratch/bilingual-subtitle-pipeline/issues/05-translate-and-merge.md`、`09-translate-degrade.md`、`15-translate-run-key.md`（run 键、身份与 `needs_model` 归本子系统的 `plan`；`data.py` 并入 `batching.py`）；规格 §1.2（含第三轮裁定表）、§3.3、§4、§5.2、§6、§7.3；[ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)；stock 引擎的 `run_step` 假设与驻留日志由票据 01 smoke #4 验证。

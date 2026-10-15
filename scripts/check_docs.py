@@ -6,6 +6,7 @@
 
 import argparse
 import re
+import sys
 import unicodedata
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -144,6 +145,8 @@ def main() -> int:
         help="项目根目录；默认是本脚本所在 scripts/ 的上级，从别处调用时传目标项目根",
     )
     args = parser.parse_args()
+    # 错误信息含中文与文档里的任意字符；控制台代码页不是 UTF-8（本机默认 cp1252）时转义而不崩溃。
+    sys.stdout.reconfigure(errors="backslashreplace")
     root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     errors, documents, links = check_documents(root)
     if errors:

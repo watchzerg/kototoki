@@ -1,6 +1,6 @@
 # 中日双语字幕批量生产流水线：技术设计
 
-状态：implemented（2026-10-14，票据 00–09 交付；两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
+状态：implemented（2026-10-14，票据 00–09 交付，两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)；2026-10-15 最终验收后票据 10–15 完成，票据 13 裁定不实现，见 §13）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
 日期：2026-10-13  
 范围：第一个正式产品形态，命令行工具，输入一批日语视频，输出日文 SRT、中文 SRT 与中日双语 SRT。不含 UI、流式、打包、非日语输入。
 
@@ -140,11 +140,11 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 
 ### 3.3 GPU 内部顺序与并发
 
-- GPU 阶段严格串行，由 `.local/gpu.lock`（沿用现有互斥语义：不抢占、不杀进程、死锁需显式 `KOTOTOKI_BREAK_STALE_LOCK=1`，一次性生效）保护。GPU 锁在第一个 GPU 阶段前获取，整批 GPU 阶段期间持有。
+- GPU 阶段严格串行，由 `.local/gpu.lock`（沿用现有互斥语义：不抢占、不杀进程、死锁需显式 `KOTOTOKI_BREAK_STALE_LOCK=1`，一次性生效）保护。GPU 锁在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；翻译阶段只在有文件需要模型（`needs_model`：非零条目且 run 未完成）时才取锁、建 session，全部 run 已完成或零条目时整批不占 GPU（票据 15）。
 - 同一 `output_dir` 同时只允许一个编排器：启动即取 `<output_dir>/.work/lock`（同 `ProcessLock` 语义），否则两个编排器会在 GPU 锁之前并发写同一 `.work/index.json` 与工作目录。
 - 启动 llama-server 前用 `nvidia-smi` 轮询空闲显存：上一 worker 退出后 WDDM 释放显存有延迟，直接启动可能分配失败并白白消耗重启额度；空闲量低于阈值超时则按基础设施失败处理，错误信息写明当时的空闲量。
 - 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立；并发只会争抢算力与显存，没有吞吐收益。
-- 翻译阶段：llama-server 单槽、`cache_prompt`，沿用 v3 `generate.py` 的批次与续跑语义，一次 session 顺序翻完本批所有 SRT（每个 SRT 是一个 scene）。
+- 翻译阶段：llama-server 单槽、`cache_prompt`，沿用 v3 `generate.py` 的批次与续跑语义，一次 session 顺序翻完本批所有需要模型的 SRT（每个 SRT 是一个 scene）；不需要模型的文件（零条目、run 已完成）只读回译文；锁或 session 建不起来只让需要模型的文件失败，server 一直起不来时本批其余需要模型的文件直接失败（票据 15；见[翻译子系统](../architecture/modules/translation-subsystem.md)）。
 
 ### 3.4 时间线示意（4 部电影、w0）
 
@@ -278,7 +278,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 ### 7.3 代码布局
 
-各模块的接口以模块页为准，依赖方向、接缝裁定与责任边界以[模块边界](../architecture/module-boundaries.md#产品包的责任边界)为准（原目标架构页于票据 08 并入后删除），本节只列文件与来源。
+各模块的接口以模块页为准，依赖方向、接缝裁定与责任边界以[模块边界](../architecture/module-boundaries.md#产品包的责任边界)为准（原目标架构页于票据 08 并入后删除）。下表是实现时（票据 00–09）的文件与来源对照，**冻结于 2026-10-14，不再随后续票据维护**；当前文件布局以[架构总览的模块地图](../architecture/INDEX.md#模块地图)为准。票据 14 新增 `kototoki/plan.py`（阶段链与期望身份从 `job.py` 与三个 worker 壳迁出，见[阶段计划](../architecture/modules/stage-plan.md)），票据 15 把 `translate/data.py` 并入 `batching.py`。
 
 新建产品包 `kototoki/`，从 `experiments/` 复制并精简已验证的实现（历史目录保持冻结，产品包不导入它们）：
 
@@ -410,7 +410,7 @@ seed  = 20261008
 
 ## 12. 实施里程碑
 
-票据在 `.scratch/bilingual-subtitle-pipeline/issues/`（本地 tracker，不进 Git），编号与下表一致；依赖关系写在票据的 `Blocked by`。每张票交付时按[随交付同步](../agents/documentation.md#随交付同步)更新对应模块页，不把全部文档推到 08。
+票据在 `.scratch/bilingual-subtitle-pipeline/issues/`（本地 tracker，不进 Git），编号与下表一致；依赖关系写在票据的 `Blocked by`。每张票交付时按[随交付同步](../agents/documentation.md#随交付同步)更新对应模块页，不把全部文档推到 08。下表只列设计时规划的票据 00–09；最终验收后的票据 10–15（重采样改回 swr、`DURATION` 标签优先级、间隔断句跨子段、cue 词边界调研、阶段计划模块、翻译 run 键）在 §13 记录裁定，细节在各模块页"变更与决策来源"。
 
 | 票据 | 里程碑 | 内容 | 完成标准 | Blocked by |
 | --- | --- | --- | --- | --- |
@@ -443,6 +443,12 @@ seed  = 20261008
 
 2026-10-14（票据 05 实施）：翻译 run 目录在 `srt-<sha12>/` 下再按 `<配方名>__s<seed>/` 分目录（与 v3 run_id 同形），否则改 seed 重试会被 run.json 不一致拒绝；llama-server 由整批共用，运行日志放 `.work/translate-sessions/`（§4）。见[翻译子系统与双语合并](../architecture/modules/translation-subsystem.md)。
 
-2026-10-15（最终验收）：soxr 28 bit 的派生 WAV 使 Pyannote 少保留约 9–10% 语音，产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点（删除增多）；见[最终验收](../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)。随后用户裁定三项并建票：重采样改回默认 swr（票据 10，§1.2、§2.2，`MEDIA` 配方 hash 变化、已有 `.work` 整条链重跑）；`DURATION-<lang>` 误判修复（票据 11，§2.2 时长来源优先级）；间隔断句只在跨 VAD 子段时成立（票据 12，§5.2，`CUES` 配方 hash 变化；样本中 1969 s 处的两字落在 VAD 漏检的拖长音上，新规则未能合并，需要词边界信息，留待后续）。
-
 2026-10-14（票据 09 实施）：降级的单条子批次命名为 `父ID.a.1`…（§6 只规定了两半的 `父ID.a`／`父ID.b`）；奇数条批次前半多 1 条，只有 1 条的批次失败即回退；降级中各节点结果追加写 `degrade.jsonl`，续跑不重做已有结果的节点；`report.json` 放在 `<配方名>__s<seed>/` run 目录内（每个配方与 seed 各一份）。用户裁定删去 §6 的“`force = true` 重跑整个翻译阶段”：`force` 只管最终文件覆盖，回退的 cue 只经改 seed 重试（最小设计，不为罕见的回退另加重译开关）。
+
+2026-10-15（最终验收）：soxr 28 bit 的派生 WAV 使 Pyannote 少保留约 9–10% 语音，产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点（删除增多）；见[最终验收](../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)。随后用户裁定三项并建票：重采样改回默认 swr（票据 10，§1.2、§2.2，`MEDIA` 配方 hash 变化、已有 `.work` 整条链重跑）；`DURATION-<lang>` 误判修复（票据 11，§2.2 时长来源优先级）；间隔断句只在跨 VAD 子段时成立（票据 12，§5.2，`CUES` 配方 hash 变化；样本中 1969 s 处的两字落在 VAD 漏检的拖长音上，新规则未能合并）。
+
+2026-10-15（票据 13 调研）：把 ASR token 边界带进 cue 切分的方案经四部整片离线统计只减 12 条 ≤2 字条目且引入 >6 s 条目，不能修复票据 12 的样本（Whisper 日文 token 接近单字）；用户裁定不实现，根因归 VAD 召回。见[cue token 边界调研](../research/2026-10-15-cue-token-boundary-study.md)。
+
+2026-10-15（票据 14 实施）：阶段链、worker 输入名、模型文件清单与各阶段期望身份从 `job.py`、三个 worker 壳与伪 worker 收进新模块 `kototoki/plan.py`（§4 身份归属随改）；身份字段、键名与取值逐字节不变，现有工作目录续跑不受影响。review 修订：`engine` 改为可选关键字、`advance` 对终态报错、编排侧改名 `advance_or_fail`。见[阶段计划](../architecture/modules/stage-plan.md)。
+
+2026-10-15（票据 15 实施）：翻译 run 目录键、翻译身份与"是否需要模型"归翻译子系统 `translate.plan`（§1.2 已记）；`translate/data.py` 并入 `batching.py`。review 修订：GPU 锁的翻译阶段获取移进 `translate_batch` 并只在有文件 `needs_model` 时发生，session 失败只影响需要模型的文件，`TranslatePlan` 类型化（§3.3 随改）。配方内容变了而名字未变时 `plan` 拒绝并提示删目录，不自动另开目录（零迁移，与 v3 一致）。

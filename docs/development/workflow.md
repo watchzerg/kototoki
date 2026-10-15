@@ -36,7 +36,7 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 
 ## 测试分层与资源边界
 
-- core：`tests/` 下的产品 `unittest` 离线测试，`just test` 以 `discover -s tests -t .` 收录（目录需保留 `tests/__init__.py`）；当前覆盖产品包 `kototoki/` 的产物契约、worker 协议与 SRT 读写（见[产物契约](../architecture/modules/artifact-contract.md)），以及配置、配方与媒体提取（见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)；媒体测试调用本机 `D:/bin/ffmpeg.exe` 合成秒级小样本，不读真实视频）。`just check` 编译 `kototoki`、`kototoki_eval` 与 `experiments`。
+- core：`tests/` 下的产品 `unittest` 离线测试，`just test` 以 `discover -s tests -t .` 收录（目录需保留 `tests/__init__.py`）；覆盖产品包 `kototoki/` 的全部模块，各模块的测试清单与覆盖行为见其模块页"代码与验证入口"（[架构总览的模块地图](../architecture/INDEX.md#模块地图)）；GPU 阶段由 `tests/fake_worker.py` 子进程顶替、翻译用伪 server／伪客户端、媒体测试调用本机 `D:/bin/ffmpeg.exe` 合成秒级小样本，不读真实视频、不加载模型。整套 333 个用例约 36 s（2026-10-16 实测），其中编排测试因启动伪 worker 子进程约 30 s。`just check` 编译 `kototoki`、`kototoki_eval` 与 `experiments`。
 - 研究期测试（只读保留，不属于产品门禁）：`experiments/tests/` 只保留评分器测试 `test_evaluator.py`（守护仍在使用的 `kototoki_eval`；其余 41 个 Codex 时代测试于 2026-10-14 经用户决定删除），与各 `experiments/*/test_*.py` 一同由 `just experiments-test` 按目录 discover，翻译相关三个 recipe 按模块列举。这些 recipe 用 `legacy` 解释器（无 NumPy 和 Torch），依赖它们的测试照旧显式跳过，在对应隔离环境中按 demo README 的 discover 命令补测；它们守护的是冻结代码，不在产品环境中运行，也不随产品依赖升级。冻结的 `experiments/translation_flow/test_v2_common_diagnostics.py` 与 `test_v2_confirmation_evaluation.py` 仍 `from tests import …` 引用旧位置，不再可导入；二者已从 `translation-flow-v2-test` 的模块列表移除，文件按冻结证据规则原样保留。
 - full：真实模型推理。产品环境的 full 入口是 `just test-full`（`scripts/smoke/`）；研究期 demo（W0、X0、VAD 阶段、`translation-baseline`、`translation-srt`）的 smoke 或回归仍按各 README 手动运行。每次运行都须用户批准。
 - 独占资源：GPU，由 `.local/gpu.lock` 标记运行中的作业；同一时间一个作业，不抢占、不删除活跃锁，先用 PowerShell `Get-Process` 核实真实进程。llama-server 默认占用 8080 端口。运行产物写入 `.local/` 下的新目录，拒绝覆盖。

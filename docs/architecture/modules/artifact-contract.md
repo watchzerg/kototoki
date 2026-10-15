@@ -35,7 +35,7 @@
 
 ## 接口与依赖
 
-只依赖标准库；不导入 `experiments`、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归阶段计划模块 `kototoki/plan.py`（[批次编排](batch-orchestration.md)），worker 壳与编排都向它取。worker 中 CUDA 粘性错误的识别与包装为 `FatalWorkerError` 由各 worker 负责（票据 03／07）。`.work/lock`、GPU 锁与 worker 子进程重启归编排器（票据 06）。
+只依赖标准库；不导入 `experiments`、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)（`kototoki/plan.py`），worker 壳与编排都向它取。worker 中 CUDA 粘性错误的识别与包装为 `FatalWorkerError` 由各 worker 负责（票据 03／07）。`.work/lock`、GPU 锁与 worker 子进程重启归编排器（票据 06）。
 
 ## 代码与验证入口
 
@@ -47,5 +47,3 @@
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/00-foundation.md`；规格 §4、§6、§7.1、§1.2 第三轮裁定表。原子写取自 `experiments/translation_v3/common.py`，模型哈希缓存取自 `experiments/translation_v3/server.py::verify_model`。
-
-目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。

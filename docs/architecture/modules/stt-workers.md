@@ -8,7 +8,7 @@
 
 ## 当前行为规格
 
-**分两层**：推理模块（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`）只做"加载一次、按窗口推理"，输入输出是内存对象与 WAV 本地坐标，只依赖基础层、互不导入，不读写产物、不判断跳过、不打印；worker 壳（`kototoki/workers/{vad,asr,align}.py`）负责读输入、重验上游身份、组装 payload 与 `failed_windows` 记账，经 `protocol.run_worker` 运行，`__main__` 两行。三壳共用的命令行入口、读 WAV、模型文件核对、CUDA 守卫与写产物在 `kototoki/workers/gpu.py`。壳模块导入时不加载 torch 等推理库（推理模块在 `start` 里才导入，有测试钉住）。壳自身不持有身份、模型文件清单与配方 hash：这些归阶段计划模块 `kototoki/plan.py`（见[批次编排](batch-orchestration.md)），壳写进产物的身份与编排核对用的是同一个函数（`plan.vad_identity`／`asr_identity`／`align_identity`），`start` 用 `plan.recipe_hash(stage, engine=…)` 校验 jobs（asr 引擎不可用即启动失败）、用 `plan.model_files(stage, models, engine=…)` 取要核对的模型文件。
+**分两层**：推理模块（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`）只做"加载一次、按窗口推理"，输入输出是内存对象与 WAV 本地坐标，只依赖基础层、互不导入，不读写产物、不判断跳过、不打印；worker 壳（`kototoki/workers/{vad,asr,align}.py`）负责读输入、重验上游身份、组装 payload 与 `failed_windows` 记账，经 `protocol.run_worker` 运行，`__main__` 两行。三壳共用的命令行入口、读 WAV、模型文件核对、CUDA 守卫与写产物在 `kototoki/workers/gpu.py`。壳模块导入时不加载 torch 等推理库（推理模块在 `start` 里才导入，有测试钉住）。壳自身不持有身份、模型文件清单与配方 hash：这些归[阶段计划](stage-plan.md)（`kototoki/plan.py`），壳写进产物的身份与编排核对用的是同一个函数（`plan.vad_identity`／`asr_identity`／`align_identity`），`start` 用 `plan.recipe_hash(stage, engine=…)` 校验 jobs（asr 引擎不可用即启动失败）、用 `plan.model_files(stage, models, engine=…)` 取要核对的模型文件。
 
 **jobs 约定**（2026-10-14 用户认可；在协议的 `{"stage", "recipe_hash", "config", "files"}` 之上）：`recipe_hash` 必须等于该 worker 写进身份的配方 hash（VAD、MMS 各一个，ASR 按引擎），否则启动失败；`config` 需要 `models`（`Config.models` 的同名键，路径字符串：`vad`、`w0`、`w0_mel_assets`、`x0`、`align`）、`model_cache`（`.work/cache/model-verification.json`），ASR 另需 `engine`（`w0` 或 `x0`，其它值启动失败；w0 只读 `w0`／`w0_mel_assets`，x0 只读 `x0`）；每个文件的 `inputs`：VAD `wav`，ASR `wav`＋`vad`，对齐 `wav`＋`asr`。
 
@@ -42,7 +42,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 ## 接口与依赖
 
-推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。`schema` 属基础层，只依赖标准库：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。壳依赖 `artifacts`、`plan`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`（`plan` 只在算翻译身份时才导入翻译子系统，壳不会触发）。子进程环境（`PYTHONUTF8=1`、`HF_HUB_OFFLINE` 等离线变量、`HF_HOME`／`TORCH_HOME = <output_dir>/.work/cache/`）由编排传入，worker 不自行设置（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。pyannote 与 transformers 的告警和加载进度条写 stderr，不干扰 stdout 上的协议进度行。
+推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。`schema` 属基础层，只依赖标准库：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。壳依赖 `artifacts`、[阶段计划](stage-plan.md)的 `plan`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`（`plan` 只在算翻译身份时才导入翻译子系统，壳不会触发）。子进程环境（`PYTHONUTF8=1`、`HF_HUB_OFFLINE` 等离线变量、`HF_HOME`／`TORCH_HOME = <output_dir>/.work/cache/`）由编排传入，worker 不自行设置（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。pyannote 与 transformers 的告警和加载进度条写 stderr，不干扰 stdout 上的协议进度行。
 
 ## 代码与验证入口
 
@@ -56,6 +56,4 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 ## 变更与决策来源
 
-票据 `.scratch/bilingual-subtitle-pipeline/issues/03-stt-workers.md`、`07-x0-engine.md`；规格 §1.2、§4、§6、§7.1、§7.3、§12；票据 01 smoke #1–#3（`.local/smoke/20261014T045328Z/`）。来源代码：`experiments/w0_demo/vad_candidates.py`（`CurrentPyannoteVad`、`chunk_intervals`）、`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`（`check_gpu`）、`experiments/w0_demo/alignment.py`、`experiments/w0_demo/pipeline.py`（units 不变量）、`kototoki_eval/schema.py`。共用的 CUDA 守卫放在新文件 `workers/gpu.py`（2026-10-14 用户裁定，不改票据 00 的 `protocol.py`）。三壳各自的 `identity`／`model_files`／`RECIPE_HASH` 于票据 `14-stage-plan-module.md`（2026-10-15）迁入 `kototoki/plan.py`，取值不变。
-
-目标架构页（`docs/architecture/bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入[架构总览](../INDEX.md)，依赖方向、责任边界与接缝并入[模块边界](../module-boundaries.md)；本模块的接口以本页"接口与依赖"节为准。
+票据 `.scratch/bilingual-subtitle-pipeline/issues/03-stt-workers.md`、`07-x0-engine.md`；规格 §1.2、§4、§6、§7.1、§7.3、§12；票据 01 smoke #1–#3（`.local/smoke/20261014T045328Z/`）。来源代码：`experiments/w0_demo/vad_candidates.py`（`CurrentPyannoteVad`、`chunk_intervals`）、`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`（`check_gpu`）、`experiments/w0_demo/alignment.py`、`experiments/w0_demo/pipeline.py`（units 不变量）、`kototoki_eval/schema.py`。共用的 CUDA 守卫放在新文件 `workers/gpu.py`（2026-10-14 用户裁定，不改票据 00 的 `protocol.py`）。三壳各自的 `identity`／`model_files`／`RECIPE_HASH` 于票据 `14-stage-plan-module.md`（2026-10-15）迁入[阶段计划](stage-plan.md)，取值不变。

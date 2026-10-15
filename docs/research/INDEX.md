@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-15：最终验收后用户裁定：重采样改回默认 swr（票据 10）、修 `DURATION-<lang>` 误判（票据 11）、间隔断句只在跨 VAD 子段时成立（票据 12）；[cue token 边界调研](2026-10-15-cue-token-boundary-study.md)结论为不实现（票据 13）。同日架构评审后阶段链与期望身份收进 `kototoki/plan.py`（票据 14）、翻译 run 键与 `needs_model` 归翻译子系统（票据 15），行为与身份取值不变。
+
 2026-10-15：双语字幕流水线最终验收完成（[验收记录](acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)）：工程行为全部通过；质量回归未达基线，根因为 soxr 重采样影响 Pyannote，待用户裁定；另发现 `DURATION-<lang>` 缺陷与 cue 内切词。
 
 2026-10-14：双语字幕流水线（票据 00–09）实现完成，规格改为 implemented；两部整片 × w0／x0 验收见[验收记录](acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)。用户裁定的产品翻译配方为 `b10-joint-degrade-v1`（字段同 `b10-joint`，只多 10→5→1 降级），重采样改 soxr 28 bit。
@@ -143,6 +145,10 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 - [Hy30 流程 v1／v2 经验提炼](2026-10-10-hy30-flow-v1-v2-lessons.md)：对既有证据的提炼，作为 v3 先验；数值来自旧裁判 `gpt-6.1-sol`，与后续 Claude 裁判分数不可比，不是采纳决定
 - [Hy30 流程 v3 报告](2026-10-10-hy30-flow-v3-report.md)：19 个配方、Claude MQM 裁判，0 个通过确认，b10-joint 在确认集未复现（后续因工程选择被采纳，见 ADR-0006）；确认集现已开封，再做确认须新建独立确认集
 - [Hy30 流程 v4 报告](2026-10-11-hy30-flow-v4-report.md)：`mbr8c`（每批 8 个样本、逐条 chrF-MBR）通过确认，Δ −0.016，约 6 倍墙钟；`t03` 未通过，基线仍为 b10-joint，由用户决定是否替换
+
+### 双语字幕流水线 cue 规则（2026-10-15）
+
+- [cue 间隔断句引入 ASR token 边界](2026-10-15-cue-token-boundary-study.md)：两个引擎的 token 都能稳定映射到窗口字符，但 Whisper 日文 token 接近单字，"同一 token 内不断句"在四部整片只减 12 条 ≤2 字条目且新增 >6 s 条目，不能修复票据 12 的样本；用户裁定不实现，根因归 VAD 召回。只有离线统计，无人工观感
 
 ## 验收记录
 

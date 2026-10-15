@@ -22,7 +22,8 @@
 | [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py` |
 | [日文 cue](modules/japanese-cues.md) | 双语字幕流水线中把 `align.json` 字符时间回填（插值、外推、整窗 `fallback`）并切成日文 cue 的纯函数，产出 `ja-cues.json` payload 与 `ja.srt` 文本；时间轴上唯一加 `offset_s` 的地方 | `kototoki/cues.py` |
 | [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0／x0 逐窗转写（`asr.json`，窗口级 `failed_windows`，x0 触顶窗口置空）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
-| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志与发布记录。阶段计划模块 `plan` 持有阶段链、模型文件清单与各阶段期望身份，编排与 worker 壳共用 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/plan.py` |
+| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志与发布记录 | `kototoki/__main__.py`、`kototoki/job.py` |
+| [阶段计划](modules/stage-plan.md) | 双语字幕流水线的阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段期望身份，以及按产物身份判定"下一个要跑的阶段"与发布状态（`next_stage`／`advance`）；编排与 worker 壳共用，翻译阶段的身份转问翻译子系统 | `kototoki/plan.py` |
 | [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：整批共用一个受管 llama-server session、`b10-joint` 批次请求（与 v3 逐字节相同）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
 | 历史实验代码（冻结或只作回归参考） | 不建模块页；复现历史时按各自 README 使用冻结配置与旧身份，见下方列表 | 见下 |
 
@@ -77,7 +78,7 @@ flowchart TB
   BASE["基础层：config · recipes · artifacts · srt · workers/protocol · schema"]
 ```
 
-依赖只允许向下；四条硬规则（编排不导入推理模块、推理模块互不导入、基础层不依赖 torch／ffmpeg／网络、产品包不导入 `experiments.*`）与责任边界见[模块边界](module-boundaries.md#依赖方向)。产品与研究入口之间没有导入关系：产品代码从实验代码复制而来，不引用。
+依赖只允许向下；四条硬规则（编排不导入推理模块、推理模块互不导入、基础层不依赖 torch／ffmpeg／网络、产品包不导入 `experiments.*`）与责任边界见[模块边界](module-boundaries.md#依赖方向)。产品与研究入口之间没有导入关系：产品代码从实验代码复制而来，不引用。设计期的目标架构页（`bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入本页，依赖方向、责任边界与接缝并入模块边界；各产品模块的接口以其模块页"接口与依赖"节为准。
 
 箭头从使用方指向被依赖方。VAD manifest、`result.json`、参考 JSON 等文件契约在图中未画出：外部 VAD 阶段写出的 manifest 由 W0／X0 读取；W0／X0 的 `result.json` 由评分 CLI 读取；语料准备产出 WAV 与参考 JSON，各 demo 只读取文件，不导入语料模块。
 
