@@ -94,7 +94,7 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 | # | 票据 | 状态 | 结论一句话 | 证据 |
 | --- | --- | --- | --- | --- |
 | 01 | 产品整片重跑（swr）与 STT 回归重测 | resolved 2026-10-16 | 回到基线：w0 CER 与基线逐项相同（II 16.81%、III 13.77%），x0 差 ≤0.15 pp；派生 WAV PCM 与基线一致；翻译降级与回退 0 | [swr 回归记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)；`.local/quality-exploration-v5/01/` |
-| 02 | 瓶颈定位 | 未开始 | — | — |
+| 02 | 瓶颈定位 | resolved 2026-10-16 | ASR 带来的中文错误占比 r_all 0.76（CI90 0.70–0.82），r_text 0.68；校准通过；翻译侧在产品输入上的收益上限约 1% | `experiments/quality_v5/asr_source.py`；`.local/quality-exploration-v5/02/estimate.json` |
 | 03 | 可读性与 cue 统计 | resolved 2026-10-16 | CPS 与人工字幕相当（>9 CPS 1.3–2.4%），不需约束；行长 >16 字 11–13%、26–28% 的 cue 卡在 0.8 s 下限，待观感佐证 | `experiments/quality_v5/readability.py`；`.local/quality-exploration-v5/03/` |
 | 04 | 跨批一致性指标 | resolved 2026-10-16 | 指标可用但粗：精确率样本外 24／24，参考 ≈0.01、对照 0.04–0.055、A/A SE 0.009–0.015；与 v4 MQM 只在 tctx30 上吻合；产品整片 0.09–0.28 | `experiments/quality_v5/consistency.py`；`.local/quality-exploration-v5/04/` |
 | 05 | 人工观感抽查 | resolved 2026-10-16（待用户可选填写） | 抽样表已生成：w0 两部 × 开头／中段最密／结尾各 2 分钟，141 条 | `experiments/quality_v5/spot_check.py`；`.local/quality-exploration-v5/05/sheet.md` |
@@ -123,6 +123,30 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 
 - 判定：**回到基线**。w0 的 S／D／I 与时间指标逐项相同，派生 WAV PCM SHA 与基线语料一致（II `ee4e2da3…`、III `e8e841fd…`）；x0 差异属 Qwen 环境性 token 差异。翻译 477 批降级 0、回退 0。
 - 对后续的影响：`.local/quality-exploration-v5/01/out-{w0,x0}/` 是后续各步的产品输入（cue 数 w0 1099／1219、x0 1173／1269，翻译 seed 20261008）。最终验收"待决 1"已加补记指向本记录。
+
+### 02 瓶颈定位：ASR 源 vs 参考源
+
+- 假设：产品中文字幕的错误有相当一部分由 ASR 带入；量化为"ASR 带来的中文错误占比"r，决定先投 STT 侧还是翻译侧。
+- 做法（`experiments/quality_v5/asr_source.py`）：同一入口（`translation-srt` 的 `b10-joint`，seed 20261051–53）分别翻译 HF II／III 的参考日文 SRT 与产品 w0 的 `ja.srt`（12 个 run，各 150–180 s）。参考 cue 与产品 cue 按时间重叠连成单元，逐单元日文 CER（`kototoki_eval` 规范化）分桶：exact 811、light（≤0.25）510、heavy 407、missed 92；inserted 70 不判。新 profile `v5-asr-pairwise-v1`（Opus 5.5，提示 sha256 `e226cbe5…`）每条给参考日文、前后语境与盲序两份中文，输出两侧错误列表（minor 1／major 5／critical 10）与偏好。r ＝ Σ N_b·(py−px)_b ／ Σ N_b·py_b，桶内 bootstrap。与第 5 节提示的差异：主估计用错误惩罚差而非偏好率（偏好率不能换算成占比），偏好率作交叉检查。
+- 校准：同一译文两份 32 条全部平局、惩罚相等；参考源 seed 对 seed 64 条偏好 14% 对 17%、平均差 −0.08；原样重判 40 条胜负一致 90%。
+
+| 桶 | 判 n／单元 | 参考源惩罚 | ASR 源惩罚 | 偏好 参考源／ASR 源／平 |
+| --- | --- | ---: | ---: | --- |
+| exact | 60／811 | 0.43 | 0.82 | 25%／10%／65% |
+| light | 80／510 | 0.53 | 2.25 | 50%／9%／41% |
+| heavy | 80／407 | 0.64 | 3.96 | 66%／13%／21% |
+| missed | 40／92 | 0.23 | 4.20 | 98%／0%／3% |
+
+| 估计 | 点估计 | CI90 |
+| --- | ---: | --- |
+| r_all（四桶） | **0.764** | 0.699–0.822 |
+| r_text（light＋heavy＋missed） | 0.682 | 0.603–0.759 |
+| II／III r_all | 0.70／0.81 | 0.59–0.80／0.73–0.87 |
+
+- 判定：**STT 侧是主瓶颈**。外推总惩罚 ASR 源约为参考源的 4.2 倍。ASR 源的主要错误是 heavy 桶的误译（major 24、critical 12，多为误识别的词被照译）、missed 桶的整句漏译（32 条 major），以及人名误识（110 条 major 以上错误中 22 条涉及人名：遠坂→东坂、士郎→四郎、さくら→萨克）。exact 桶也有约 0.4 分的差，来自 cue 切分与批次语境不同。一致性指标上 ASR 源比参考源多约 0.04（II 0.19 对 0.14、III 0.10 对 0.08），但职阶名摇摆在参考源上已经存在，属翻译侧。
+- 两侧收益上限：STT 侧至多约 76%（ASR 完美时），其中 heavy＋missed 占 ASR 多出惩罚的约 66%；翻译侧以 v4 `mbr8c` 在干净源上的约 4%（电影约 0%）作用于剩余 24%，约 1%。
+- 成本：GPU 生成约 32 分钟；裁判 50 次调用、$2.16、约 15 分钟。
+- 对后续的影响：按 §3 投向规则 r ≥ 40%，第 6 步应排 STT 侧（11 → 12）先做。missed 桶直接对应 VAD 召回（11），heavy 桶对应 ASR 候选（12）。
 
 ### 03 可读性与 cue 统计
 
