@@ -14,7 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
-2026-10-16：立项[字幕质量探索第五轮（v5）](2026-10-16-quality-exploration-v5.md)：先补产品 swr 基线并定位 ASR 与翻译各自的误差占比，再按用户裁定投向省成本 MBR／术语表或 VAD 召回／ASR 候选；方案、判定纪律、记录协议与进度表都在该文档，执行票据在 `.scratch/quality-exploration-v5/`（不进 Git）。尚未开始执行。
+2026-10-16：立项[字幕质量探索第五轮（v5）](2026-10-16-quality-exploration-v5.md)：先补产品 swr 基线并定位 ASR 与翻译各自的误差占比，再按用户裁定投向省成本 MBR／术语表或 VAD 召回／ASR 候选；方案、判定纪律、记录协议与进度表都在该文档，执行票据在 `.scratch/quality-exploration-v5/`（不进 Git）。2026-10-16 开始执行，进度见该文档第 6 节；第 1 步已确认改回 swr 后产品 STT 回到基线（[swr 回归记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)）。
 
 2026-10-15：最终验收后用户裁定：重采样改回默认 swr（票据 10）、修 `DURATION-<lang>` 误判（票据 11）、间隔断句只在跨 VAD 子段时成立（票据 12）；[cue token 边界调研](2026-10-15-cue-token-boundary-study.md)结论为不实现（票据 13）。同日架构评审后阶段链与期望身份收进 `kototoki/plan.py`（票据 14）、翻译 run 键与 `needs_model` 归翻译子系统（票据 15），行为与身份取值不变。
 
@@ -160,5 +160,6 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 条目格式：`[主题 日期](acceptance/文件.md)：验收范围与未覆盖项`
 
+- [双语字幕流水线 swr 回归重测 2026-10-16](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)：改回 swr 后 HF II／III 各以 w0、x0 整批重跑 `python -m kototoki`：派生 WAV 与基线 PCM 逐字节一致，w0 CER 与 2026-10-05 基线逐项相同（16.81%／13.77%），x0 差 ≤0.15 个百分点；477 个翻译批次降级与回退 0；记录各阶段墙钟与显存峰值。未覆盖：翻译质量评分、失败路径重跑。
 - [双语字幕流水线最终验收 2026-10-15](acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)：同一评分器下产品 STT 与 2026-10-05 基线回归（CER 高 0.5–3.5 个百分点，根因为 soxr 派生 WAV 使 Pyannote 少保留语音，GPU 核实）；cue 规则统计与人工抽看；真实环境的无语音、5.1、损坏文件、强杀与残留锁、`force` 覆盖、确定性全部通过；发现 `DURATION-<lang>` 标签缺陷与 cue 内切词。未覆盖：翻译裁判评分、worker 退出码 2 真实路径、6.1／7.1 与广播 `.ts`。
 - [双语字幕流水线两部整片 2026-10-14](acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)：Heaven's Feel II／III 各以 w0、x0 整批运行 `python -m kototoki`，12 份 SRT 齐全、STT 零失败、降级与回退 0；记录各阶段墙钟、显存峰值、失败清单与磁盘占用。首轮翻译因桌面占显存低于启动阈值而失败，经进程内临时阈值 14700 MiB 续跑成功。未覆盖：质量与基线回归、真实降级路径、GPU 阶段中途中断、强杀与其他声道布局。

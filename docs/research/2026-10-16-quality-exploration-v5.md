@@ -1,6 +1,6 @@
 # 字幕质量探索第五轮（v5）：方案、进度与结论
 
-状态：exploratory（2026-10-16 立项，尚未开始执行）  
+状态：exploratory（2026-10-16 立项并开始执行，进度以第 6 节为准）  
 范围：双语字幕流水线（`python -m kototoki`）交付的中文字幕质量。产品配方固定为 w0＋新 Pyannote＋MMS＋`b10-joint-degrade-v1`，本轮**不换 STT 模型、不换翻译模型与量化、不自动替换任何基线**；每一步的结论由用户裁定是否进入产品。  
 编号说明：v1–v4 只覆盖翻译流程；本轮把 STT 与 cue 规则一并纳入，沿用编号以保持时间线连续。  
 执行载体：tracker 目录 `.scratch/quality-exploration-v5/`（spec、map、票据；Git 忽略，只在本机）。**本文是唯一进 Git 的进度与结论记录**，每完成一张票据就更新"进度与结论"并提交；中途停止时，本文加票据里的执行记录足以让下一个会话接续。  
@@ -93,7 +93,7 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 
 | # | 票据 | 状态 | 结论一句话 | 证据 |
 | --- | --- | --- | --- | --- |
-| 01 | 产品整片重跑（swr）与 STT 回归重测 | 未开始 | — | — |
+| 01 | 产品整片重跑（swr）与 STT 回归重测 | resolved 2026-10-16 | 回到基线：w0 CER 与基线逐项相同（II 16.81%、III 13.77%），x0 差 ≤0.15 pp；派生 WAV PCM 与基线一致；翻译降级与回退 0 | [swr 回归记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)；`.local/quality-exploration-v5/01/` |
 | 02 | 瓶颈定位 | 未开始 | — | — |
 | 03 | 可读性与 cue 统计 | 未开始 | — | — |
 | 04 | 跨批一致性指标 | 未开始 | — | — |
@@ -110,6 +110,19 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 ## 7. 各步结论
 
 （按票据追加小节：假设 → 做法 → 数字表 → 判定 → 对后续步骤的影响。数字以 `.local/quality-exploration-v5/` 下的 JSON 为准，不进 Git。）
+
+### 01 产品整片重跑（swr）与 STT 回归
+
+- 假设：票据 10 改回 swr 后，产品整片 CER 回到 2026-10-05 基线（差 ≤ 0.3 pp）。
+- 做法：main `b6d0dc4` 在 HF II／III 上各跑一次 w0、x0 整批 `python -m kototoki`（`experiments/quality_v5/telemetry_run.py` 旁路记录阶段墙钟与整卡显存），`kototoki_eval` 同口径评分。详见[验收记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)。
+
+| 路线 | II CER（基线） | III CER（基线） | 整批墙钟 s | 显存峰值 MiB |
+| --- | --- | --- | ---: | ---: |
+| w0 | 16.81%（16.81%） | 13.77%（13.77%） | 890 | 15648 |
+| x0 | 18.27%（18.30%） | 14.99%（15.14%） | 1421 | 15547 |
+
+- 判定：**回到基线**。w0 的 S／D／I 与时间指标逐项相同，派生 WAV PCM SHA 与基线语料一致（II `ee4e2da3…`、III `e8e841fd…`）；x0 差异属 Qwen 环境性 token 差异。翻译 477 批降级 0、回退 0。
+- 对后续的影响：`.local/quality-exploration-v5/01/out-{w0,x0}/` 是后续各步的产品输入（cue 数 w0 1099／1219、x0 1173／1269，翻译 seed 20261008）。最终验收"待决 1"已加补记指向本记录。
 
 ## 8. 待用户裁定
 
