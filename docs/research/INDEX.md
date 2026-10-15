@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-16：立项[字幕质量探索第五轮（v5）](2026-10-16-quality-exploration-v5.md)：先补产品 swr 基线并定位 ASR 与翻译各自的误差占比，再按用户裁定投向省成本 MBR／术语表或 VAD 召回／ASR 候选；方案、判定纪律、记录协议与进度表都在该文档，执行票据在 `.scratch/quality-exploration-v5/`（不进 Git）。尚未开始执行。
+
 2026-10-15：最终验收后用户裁定：重采样改回默认 swr（票据 10）、修 `DURATION-<lang>` 误判（票据 11）、间隔断句只在跨 VAD 子段时成立（票据 12）；[cue token 边界调研](2026-10-15-cue-token-boundary-study.md)结论为不实现（票据 13）。同日架构评审后阶段链与期望身份收进 `kototoki/plan.py`（票据 14）、翻译 run 键与 `needs_model` 归翻译子系统（票据 15），行为与身份取值不变。
 
 2026-10-15：双语字幕流水线最终验收完成（[验收记录](acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)）：工程行为全部通过；质量回归未达基线，根因为 soxr 重采样影响 Pyannote，待用户裁定；另发现 `DURATION-<lang>` 缺陷与 cue 内切词。
@@ -149,6 +151,10 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 ### 双语字幕流水线 cue 规则（2026-10-15）
 
 - [cue 间隔断句引入 ASR token 边界](2026-10-15-cue-token-boundary-study.md)：两个引擎的 token 都能稳定映射到窗口字符，但 Whisper 日文 token 接近单字，"同一 token 内不断句"在四部整片只减 12 条 ≤2 字条目且新增 >6 s 条目，不能修复票据 12 的样本；用户裁定不实现，根因归 VAD 召回。只有离线统计，无人工观感
+
+### 字幕质量探索第五轮（2026-10-16）
+
+- [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：13 步探索（产品 swr 重跑 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性统计、人工观感 → 用户裁定投向 → 省成本 MBR／语义效用／低温组合／术语表，或 VAD 召回／ASR 候选 → 结题）；exploratory，每步 resolved 后在文内更新结论，中途停止以文内进度表为准
 
 ## 验收记录
 
