@@ -67,11 +67,14 @@ class JobCase(unittest.TestCase):
         self.translate_snapshots: list[dict] = []
         self.translate_errors: set[str] = set()  # work id
         self.translate_done: set[str] = set()    # work id：伪 run 已完成，再计划即 needs_model=False
+        self.session_error: Exception | None = None  # 设置后 Session() 构造即抛
         self.fallback = 0
         case = self
 
         class Session:
             def __init__(self, config, on_server_pid):
+                if case.session_error is not None:
+                    raise case.session_error
                 self.on_server_pid = on_server_pid
 
             def __enter__(self):
@@ -577,6 +580,20 @@ class TranslatePlanTests(JobCase):
             self.assertIsNone(snapshot["lock"])  # 未取 GPU 锁
             self.assertFalse(snapshot["session"])
         self.assertEqual(self.final("a.mkv", "zh").read_text(encoding="utf-8"), SRT_ZH)
+
+    def test_session_failure_only_fails_files_that_need_the_model(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.run_job()
+        self.final("a.mkv", "zh").unlink()      # a：run 已完成，只需重新发布
+        self.final("b.mkv", "zh").unlink()
+        self.translate_done.discard(self.ids("b.mkv")[0])  # b：伪 run 视为未完成，需要模型
+        self.session_error = RuntimeError("llama-server unavailable")
+        self.calls.clear()
+        summary = self.run_job()
+        self.assertEqual(summary.published, ["a.mkv"])
+        self.assertEqual(list(summary.failed), ["b.mkv"])
+        self.assertEqual(summary.failed["b.mkv"], "translate")
+        self.assertEqual(self.calls, [f"translate:{self.ids('a.mkv')[0]}", "merge"])
 
     def test_zero_cue_documents_never_take_the_gpu_lock_for_translation(self) -> None:
         self.make_inputs("a.mkv")

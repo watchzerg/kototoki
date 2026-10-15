@@ -33,11 +33,14 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from kototoki import artifacts, cues, media, plan, srt
 from kototoki.config import REPO_ROOT, Config
 from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
+
+if TYPE_CHECKING:  # 翻译子系统运行时才以 importlib 导入
+    from kototoki.translate import TranslatePlan
 from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, write_jobs
 
@@ -296,6 +299,12 @@ class VideoFile:
     def no_speech(self) -> bool:
         return self.plan is not None and self.plan.no_speech
 
+    @property
+    def translate_plan(self) -> TranslatePlan:
+        """核对到翻译阶段之后才存在（`plan.stage` 为 translate／publish／done 且有 cue）。"""
+        assert self.plan is not None and self.plan.translate is not None
+        return self.plan.translate
+
 
 @dataclass
 class Summary:
@@ -531,7 +540,8 @@ def build_ja_cues(config: Config, video: VideoFile) -> None:
 def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[dict[str, str], int, str]]:
     """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 回退条数, run 目录相对工作目录)。
 
-    只有某个文件 `needs_model` 时才建 session（零条目或 run 已完成的文件不需要模型，直接读回译文）。
+    只有某个文件 `needs_model` 时才取 GPU 锁、建 session（零条目或 run 已完成的文件不需要模型，直接读回译文）；
+    session 建不起来只让需要模型的文件失败。
     """
     results: dict[str, tuple[dict[str, str], int, str]] = {}
     if not batch:
@@ -539,18 +549,20 @@ def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[di
     started = time.perf_counter()
     ctx.log(f"[translate] start: {len(batch)} file(s)")
     translate = _translate_module()
+    needed = [video for video in batch if video.translate_plan.needs_model]
     session: Any = contextlib.nullcontext()
-    if any(v.plan.translate.needs_model for v in batch if v.plan is not None):
+    if needed:
         try:
+            ctx.ensure_gpu_lock()
             session = translate.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid))
         except Exception as error:
-            for video in batch:
+            for video in needed:
                 ctx.fail(video, "translate", error)
-            return results
     with session:
         for video in batch:
-            assert video.plan is not None
-            tplan = video.plan.translate
+            if video.failed:
+                continue
+            tplan = video.translate_plan
             try:
                 result = translate.translate_document(tplan, session if tplan.needs_model else None)
             except Exception as error:
@@ -677,10 +689,7 @@ def _run(ctx: _Context) -> None:
             continue
         advance_or_fail(ctx, video, "cues")
 
-    to_translate = planned("translate")
-    if any(v.plan.translate.needs_model for v in to_translate if v.plan is not None):
-        ctx.ensure_gpu_lock()
-    translated = translate_batch(ctx, to_translate)
+    translated = translate_batch(ctx, planned("translate"))
     ctx.gpu_lock.release()
 
     for video in live():

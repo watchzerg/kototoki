@@ -21,10 +21,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 import importlib
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kototoki import artifacts, recipes, srt
 from kototoki.config import Config
+
+if TYPE_CHECKING:  # 运行时延迟导入，见 translate_plan
+    from kototoki.translate import TranslatePlan
 
 JA_SRT = "ja.srt"  # cues 阶段写出、翻译读取的日文 SRT（工作目录内）
 
@@ -142,7 +145,7 @@ def cues_identity(align_sha256: str, config: Config) -> dict[str, Any]:
                                       recipe_hash=recipes.recipe_hash(recipes.CUES), config=asdict(config.cues))
 
 
-def translate_plan(work_dir: Path, config: Config) -> Any:
+def translate_plan(work_dir: Path, config: Config) -> TranslatePlan:
     """翻译子系统的 `TranslatePlan`（run 目录、`identity`、`needs_model`）；读 `ja.srt`，不写文件。"""
     translate = importlib.import_module("kototoki.translate")
     return translate.plan(work_dir, srt.read_srt(work_dir / JA_SRT), config)
@@ -180,7 +183,7 @@ class Plan:
     stage: str
     identities: Mapping[str, Any]
     no_speech: bool
-    translate: Any = None  # kototoki.translate.TranslatePlan
+    translate: TranslatePlan | None = None  # 核对到翻译阶段后才有
 
     @property
     def sources(self) -> dict[str, Any]:

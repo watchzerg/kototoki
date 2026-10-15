@@ -18,7 +18,7 @@
 4. 计划：CPU 阶段之后对每个文件调用一次 `plan.next_stage`，从 vad 起逐阶段核对产物身份，得到第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`translate`）或终态（`publish`：无语音；`done`：已是最新）。
 5. vad → asr → align：计划落在本阶段的文件组成一批，交给一个 worker 子进程；没有文件需要 GPU 时不取 GPU 锁。worker 结束后对每个文件 `plan.advance`，从刚跑完的阶段继续核对：产物缺失或身份不符即记该阶段失败（`ArtifactMissing`），否则计划推进到下一个需要运行的阶段。
 6. ja-cues（进程内）：`cues.build_cues(align, [cues] 规则)`，写 `ja.srt` 后写 `ja-cues.json`，随后 `plan.advance`。
-7. translate（进程内）：每文件的 `TranslatePlan` 已在计划里（`plan.translate`）；只有任一文件 `needs_model` 时才取 GPU 锁、建整批共用的 `translate.Session`，`translate_document(plan, session)` 对不需要模型的文件传 `None`（零条目、或 run 已完成而只是最终文件被删）；单文件异常记该文件失败并继续。
+7. translate（进程内）：每文件的 `TranslatePlan` 已在计划里（`plan.translate`）；只有任一文件 `needs_model` 时才取 GPU 锁、建整批共用的 `translate.Session`，`translate_document(plan, session)` 对不需要模型的文件传 `None`（零条目、或 run 已完成而只是最终文件被删）；锁或 session 建不起来只让需要模型的文件失败，其余照常读回；单文件异常记该文件失败并继续。
 8. 发布：三份文本写到 `.work/<id>/publish/`，再次 `publish_blockers` 放行 → `record_published` → 逐个移动到最终位置（`replace_with_retry`，带 `PermissionError` 重试）→ 删除该文件的 `failure.json`。
 
 **阶段计划与期望身份**（`kototoki/plan.py`，续跑与跳过的唯一判据）：
