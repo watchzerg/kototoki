@@ -443,4 +443,6 @@ seed  = 20261008
 
 2026-10-14（票据 05 实施）：翻译 run 目录在 `srt-<sha12>/` 下再按 `<配方名>__s<seed>/` 分目录（与 v3 run_id 同形），否则改 seed 重试会被 run.json 不一致拒绝；llama-server 由整批共用，运行日志放 `.work/translate-sessions/`（§4）。见[翻译子系统与双语合并](../architecture/modules/translation-subsystem.md)。
 
+2026-10-15（最终验收）：soxr 28 bit 的派生 WAV 使 Pyannote 少保留约 9–10% 语音，产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点（删除增多）；见[最终验收](../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)，是否改回 swr 待用户裁定。流复制剪辑的 `DURATION-<lang>` 统计标签会触发误判为截断，待修。
+
 2026-10-14（票据 09 实施）：降级的单条子批次命名为 `父ID.a.1`…（§6 只规定了两半的 `父ID.a`／`父ID.b`）；奇数条批次前半多 1 条，只有 1 条的批次失败即回退；降级中各节点结果追加写 `degrade.jsonl`，续跑不重做已有结果的节点；`report.json` 放在 `<配方名>__s<seed>/` run 目录内（每个配方与 seed 各一份）。用户裁定删去 §6 的“`force = true` 重跑整个翻译阶段”：`force` 只管最终文件覆盖，回退的 cue 只经改 seed 重试（最小设计，不为罕见的回退另加重译开关）。
