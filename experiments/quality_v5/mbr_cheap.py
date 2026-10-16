@@ -28,8 +28,8 @@ BASE = "mbr8"
 SELECTOR = "mbr-chrf-cue"
 
 
-def base_runs(root: Path, scope: str = "dev") -> list[Path]:
-    return sorted(p for p in (root / "runs").glob(f"{BASE}__s*__{scope}") if (p / "run.json").is_file())
+def base_runs(root: Path, scope: str = "dev", base: str = BASE) -> list[Path]:
+    return sorted(p for p in (root / "runs").glob(f"{base}__s*__{scope}") if (p / "run.json").is_file())
 
 
 def batch_samples(row: dict[str, Any], batch: dict[str, Any], total: int) -> list[tuple[int, dict[str, str]]]:

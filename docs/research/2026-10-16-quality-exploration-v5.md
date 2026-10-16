@@ -101,7 +101,7 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 | 06 | 裁定投向 | resolved 2026-10-16 | r_all 0.76（CI95 0.68–0.83），保守 r_text 0.68 ≥ 40%：先 STT 侧（11 → 12），后翻译侧（07 → 10） | 02 的 `estimate.json` |
 | 07 | 更省的 MBR | resolved 2026-10-16 | ≤3 倍目标未达成：mbr4c 无效应；mbr6c（4.68 倍）与早停 es3m70（2.95 倍）dev 显著但重复 seed 不复现（电影翻正）；并行槽位墙钟 −25%（质量未验证）；一致率无变化；mbr8c 仍是唯一复现的 MBR | `experiments/quality_v5/mbr_cheap.py`、`parallel_probe.py`；`.local/quality-exploration-v5/07/` |
 | 08 | 语义效用函数 | resolved 2026-10-16 | bge-m3 余弦效用在同一批 8 样本上优于 chrF：vs mbr8c Δ −0.014（dev p 0.026、重复 p 0.064），vs b10-joint −0.035／−0.038（p 0.003／0.001），两类都为负；`mbr8s` 列为确认候选（确认待 09／10 后统一做） | `experiments/quality_v5/mbr_semantic.py`、`diff_judge.py`；`.local/quality-exploration-v5/08/` |
-| 09 | 低温＋MBR | 未开始 | — | — |
+| 09 | 低温＋MBR | resolved 2026-10-16 | 不叠加：t03mbr8c vs b10-joint −0.021（p 0.058），与 t03、mbr8c 单独相同（差 ≤0.001），成本 6.4 倍；低温样本更集中（两两 chrF 0.85 vs 0.72）；不列确认候选 | `experiments/quality_v5/diversity.py`；`.local/quality-exploration-v5/09/` |
 | 10 | 按作品术语表 | 未开始 | — | — |
 | 11 | VAD 召回 | resolved 2026-10-16 | 6 组 × 2 部无一组两部都优于当前，不建议改默认：换阈值时窗口扰动主导，只加窗口时删除降但插入（幻觉、语气声）涨得更多 | `experiments/quality_v5/vad_sweep.py`；`.local/quality-exploration-v5/11/` |
 | 12 | ASR 候选第二轮 | resolved 2026-10-16 | 无新日语开放权重 ASR；两个动漫微调都不如 w0：anime-whisper 29.4／25.4%，Qwen3 动漫微调 21.7／20.3%（33 窗生成循环）；不换基线 | `experiments/quality_v5/asr_round2.py`；`.local/quality-exploration-v5/12/` |
@@ -240,6 +240,23 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 - 一致率（04 指标）：mbr8s 与 mbr8c 相同（相对 b10-joint +0.006／−0.001），未触及护栏。
 - 成本：裁判 6 run、364 包（约 $36）；GPU 约 25 s（embedding）。
 - 未验证：bge-m3 显存未测；进产品还需要把语义选择器做成正式配方字段（v3 配方目前只接受 chrF 选择器）。
+
+### 09 低温＋MBR
+
+- 假设（v4 标记未做）：低温（temperature 0.3）样本多样性小，逐条 MBR 在其上收益有限，两者不叠加。
+- 做法：新配方 `t03mbr8`（v4 `t03` 上取 8 个样本，hash `9026f974…`）在 07 的评测根上真实生成 dev 3 seed，离线派生逐条 chrF `t03mbr8c`（v4 `derive.py`，hash `ca682f9f…`）与语义选择 `t03mbr8s`（08 的选择器）；`t03mbr8c` 全判，`t03mbr8s` 只判与其不同的窗口。多样性 = 每条 cue 8 个样本两两 chrF 的均值（`experiments/quality_v5/diversity.py`）。
+
+| 配方（dev 3 seed） | 成本（× 对照） | Δ vs b10-joint（剧集／电影） | p | 判定 |
+| --- | --- | --- | --- | --- |
+| t03（v4） | ≈1 | −0.021（−0.035／−0.007） | 0.039 | promising（v4 已确认） |
+| mbr8c（v4） | 6.15 | −0.021（−0.034／−0.009） | 0.041 | promising（v4 已确认） |
+| t03mbr8c | 6.4 | −0.021（−0.052／+0.011） | 0.058 | promising；vs t03 +0.001、vs mbr8c +0.001（p≈0.5） |
+| t03mbr8s（次要） | 6.4 | −0.026（−0.063／+0.012） | 0.028 | vs t03mbr8c −0.005（p 0.27） |
+
+- 判定：**不叠加，假设成立**。组合的收益与两者各自相同，不是相加，却要 6.4 倍成本；不列确认候选。
+- 机制：低温样本两两 chrF 0.849–0.851、30–34% 的 cue 8 个样本全同（默认温度 0.715–0.728、14–17%）；语义与 chrF 选择的分歧从 20–22% 降到 10%，08 的语义增益也随之缩小（−0.014 → −0.005）。
+- 一致率（不一致率 vs b10-joint）：t03 −0.016（SE 0.006）、t03mbr8c −0.012、t03mbr8s −0.012。低温本身改善译名一致，MBR 不再加分。
+- 成本：GPU 生成 6197 s（约 1 小时 43 分；样本 0 比 mbr8 的慢约 24%，原因未拆）；裁判 392 包（约 $39）。
 
 ### 11 VAD 召回
 

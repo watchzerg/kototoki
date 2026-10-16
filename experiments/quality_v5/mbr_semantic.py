@@ -3,11 +3,12 @@
 embedding 用本地 `BAAI/bge-m3`（dense，CLS 池化后 L2 归一化；权重与 sha256 见
 `.local/models/embedding-v5/bge-m3-ready.json`）。每条 cue 取前 n 个成功样本，选与其余样本平均余弦最高的一个，
 并列取最小序号（同 v3 `mbr_index`）。不新增生成：v3 配方只接受 chrF 选择器，所以伪 run
-`<name>__s<seed>__<scope>` 沿用 `mbr{n}c` 的配方与 hash（只换 name，同 07 的早停伪 run），`pseudo.kind` 记为
-`semantic-selection`、`pseudo.selector` 记语义选择器名，并记与同 n 的 chrF 逐条选择（`mbr{n}c`）选中文本不同的 cue 比例和选择器耗时。
+`<name>__s<seed>__<scope>` 沿用同一基准 run、同 n 的逐条 chrF 派生配方（name 末尾 s 换成 c，如 mbr8s → mbr8c、
+t03mbr8s → t03mbr8c）与其 hash（只换 name，同 07 的早停伪 run），`pseudo.kind` 记为
+`semantic-selection`、`pseudo.selector` 记语义选择器名，并记与该 chrF 逐条选择选中文本不同的 cue 比例和选择器耗时。
 
 命令（仓库根目录，`.venv`；embedding 用 GPU，约 2.3 GB 权重）：
-  python -X utf8 -m experiments.quality_v5.mbr_semantic --root ROOT --n 6 --name mbr6s [--scope dev]
+  python -X utf8 -m experiments.quality_v5.mbr_semantic --root ROOT --n 8 --name mbr8s [--base mbr8] [--scope dev]
 """
 
 from __future__ import annotations
@@ -62,8 +63,8 @@ def derive_semantic(root: Path, base_run: Path, name: str, n: int,
     from experiments.translation_v3.recipes import load_recipe
     from experiments.translation_v4.derive import derived_recipe
 
-    recipe = derived_recipe(load_recipe(BASE, root), f"mbr{n}c", n, CHRF_SELECTOR)
     run = read_json(base_run / "run.json")
+    recipe = derived_recipe(load_recipe(run["recipe"]["name"], root), name[:-1] + "c", n, CHRF_SELECTOR)
     total = run["recipe"]["recipe"]["candidates"]
     run_id = f"{name}__s{run['seed']}__{run['scope']}"
     out = root / "runs" / run_id
@@ -112,10 +113,11 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--n", type=int, required=True)
     parser.add_argument("--name", required=True)
+    parser.add_argument("--base", default=BASE, help="多样本基准配方名（默认 mbr8）")
     parser.add_argument("--scope", choices=("dev", "confirm"), default="dev")
     args = parser.parse_args()
     encode = load_encoder()
-    for base_run in base_runs(args.root, args.scope):
+    for base_run in base_runs(args.root, args.scope, args.base):
         print(json.dumps(derive_semantic(args.root, base_run, args.name, args.n, encode)), flush=True)
     return 0
 
