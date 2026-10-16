@@ -4,6 +4,7 @@
 
 与 v3 的关系：本包**导入** `experiments.translation_v3` 的生成、裁判、统计函数。为 v4 需要，v3 包做了向后兼容的扩展：
 - `recipes.Recipe` 新增 `sampling`（覆盖 temperature／top_p／top_k／min_p／samplers）、`target_context`（注入本场景前 K 条自己的译文，日+中，只读）、`candidates` + `selector`（每批 N 个样本，本地 chrF-MBR 选择，`mbr.py`）。这些字段取默认值时不进入 `spec()`，v3 全部配方 hash 不变（`test_v4.RecipeFieldsTest` 用 v3 run 记录的 hash 固定）。
+- v5（[`quality_v5`](../quality_v5/README.md) 第 10 步）再加 `glossary`：`{work_id: [{source, translation}]}`，每批只注入日文上下文里出现的条目（`work-glossary-v1`），内容进 hash；默认 None 时不进 `spec()`，已有配方 hash 不变。
 - `judge.CliBackend` 可传入别的系统提示和 schema（默认仍是裁判 profile），供参考复核复用 CLI 执行面。
 
 v2 冻结代码、translation_judge／translation_eval 链不导入也不修改。

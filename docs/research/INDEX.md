@@ -14,7 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
-2026-10-16：立项[字幕质量探索第五轮（v5）](2026-10-16-quality-exploration-v5.md)：先补产品 swr 基线并定位 ASR 与翻译各自的误差占比，再按用户裁定投向省成本 MBR／术语表或 VAD 召回／ASR 候选；方案、判定纪律、记录协议与进度表都在该文档，执行票据在 `.scratch/quality-exploration-v5/`（不进 Git）。2026-10-16 开始执行，进度见该文档第 6 节；第 1 步已确认改回 swr 后产品 STT 回到基线（[swr 回归记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)）。
+2026-10-16：[字幕质量探索第五轮（v5）](2026-10-16-quality-exploration-v5.md)立项、执行并结题：产品中文错误约四分之三来自 ASR（r_all 0.76），但 VAD 召回与两个动漫微调 ASR 都不如当前，产品 STT 保持 w0；翻译侧 8 样本＋bge-m3 语义逐条 MBR（`mbr8s`）在全新剧集确认集上确认（剧集 Δ −0.036、约 −7%，p 0.0004，电影无材料未确认），代价约 6.3 倍翻译墙钟，未采纳、待用户裁定；更省的 MBR（N＜8、早停）不复现，低温＋MBR 不叠加，按作品术语表提高一致率但准确性变差。第 1 步确认改回 swr 后产品 STT 回到基线（[swr 回归记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)）。
 
 2026-10-15：最终验收后用户裁定：重采样改回默认 swr（票据 10）、修 `DURATION-<lang>` 误判（票据 11）、间隔断句只在跨 VAD 子段时成立（票据 12）；[cue token 边界调研](2026-10-15-cue-token-boundary-study.md)结论为不实现（票据 13）。同日架构评审后阶段链与期望身份收进 `kototoki/plan.py`（票据 14）、翻译 run 键与 `needs_model` 归翻译子系统（票据 15），行为与身份取值不变。
 
@@ -154,7 +154,7 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 ### 字幕质量探索第五轮（2026-10-16）
 
-- [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：13 步探索（产品 swr 重跑 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性统计、人工观感 → 用户裁定投向 → 省成本 MBR／语义效用／低温组合／术语表，或 VAD 召回／ASR 候选 → 结题）；exploratory，每步 resolved 后在文内更新结论，中途停止以文内进度表为准
+- [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），进产品与否及其余后续列在第 8 节
 
 ## 验收记录
 
