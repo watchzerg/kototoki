@@ -191,7 +191,7 @@ def translate_scene(client: Any, scene: Scene, recipe: Recipe, seed: int, cache_
             stage = "translation"
             history = ([{"ja": text_of[key], "zh": row["translations"][key]} for key in scene.ids[:batch.start]]
                        if recipe.target_context else None)
-            prompt = R.render_translation(recipe, window, terms, history)
+            prompt = R.render_translation(recipe, window, terms, history, scene.work_id)
             info = row["batches"][batch.index]
             if recipe.candidates == 1:
                 record = {"stage": stage, "batch_index": batch.index}
@@ -202,6 +202,8 @@ def translate_scene(client: Any, scene: Scene, recipe: Recipe, seed: int, cache_
                 result = _multi_sample(client, prompt, R.translation_grammar(recipe, ids), seed, ids, recipe,
                                        cache_state, row, info, batch.index)
             info["terms_injected"] = len(R.terms_for_window(terms, window))
+            if recipe.glossary:
+                info["glossary_injected"] = len(R.glossary_for_window(recipe, scene.work_id, window))
             if recipe.review == "risk-trigger":
                 triggered = R.risk_triggered([cue.text for cue in scene.cues if cue.id in batch.target_ids])
                 info["review_triggered"] = triggered

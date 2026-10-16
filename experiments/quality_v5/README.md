@@ -19,6 +19,7 @@
 | `mbr_semantic.py` | 08 | 同一批 mbr8 样本，逐条 MBR 的效用换成本地 bge-m3 embedding 余弦，写伪 run（如 `mbr8s`）并统计与 chrF 选择不同的比例 | GPU（embedding，秒级） |
 | `diff_judge.py` | 08 | 候选 run 只判计分 cue 与同 seed 基准 run 不同的窗口，其余窗口复制基准判分（合成包文件标 `copied_from`），之后 v4 `compare` 照常读取 | Claude 配额（退出码 75 可续跑） |
 | `diversity.py` | 09 | 多样本 run 里每条 cue 的样本两两 chrF 均值与"全部样本相同"占比（样本多样性） | 离线 |
+| `glossary.py` | 10 | 第一遍译文 → 每部作品人名／专名的多数票译法 → 写带 `glossary` 字段的配方（v3 `Recipe.glossary`，每批只注入上下文里出现的条目） | 离线 |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.quality_v5.<模块> ...`（各模块文件头有命令示例）。
 

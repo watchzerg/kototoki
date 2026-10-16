@@ -59,6 +59,11 @@ RISK_CONDITIONAL = re.compile(r"たら|れば|なら|ても|でも|ないと|な
 
 # v4 target-side context: the model's own earlier translations of the same scene, read-only.
 TARGET_CONTEXT_VERSION = "target-context-v1"
+# v5 work glossary (quality_v5 step 10): per-work {source, translation} pairs fixed before generation; a batch
+# sees only the entries whose source appears in its visible Japanese context.
+GLOSSARY_VERSION = "work-glossary-v1"
+GLOSSARY_INJECTION = ("以下是本作品统一采用的人名与专有名词译法，出现时请照此翻译以保持全片一致；"
+                      "它们不是待译条目，不要输出：\n")
 TARGET_CONTEXT_INJECTION = ("以下是本场景中紧接在待译台词之前、已经完成的译文，仅供保持人名、称呼、术语和语气前后一致。"
                             "它们不是待译条目，不要重新翻译或输出：\n")
 # v4 multi-sample generation: sample k uses seed (seed + k * SAMPLE_SEED_STRIDE) mod 2**32 (k = 0 is the run seed).
@@ -128,6 +133,8 @@ class Recipe:
     target_context: int = 0
     candidates: int = 1
     selector: str | None = None
+    # v5 field: {work_id: [{"source": ja, "translation": zh}, ...]}; the content is part of the hash.
+    glossary: dict[str, list[dict[str, str]]] | None = None
 
     def __post_init__(self) -> None:
         safe_name(self.name, "recipe name")
@@ -156,6 +163,12 @@ class Recipe:
         from .mbr import SELECTORS
         if (self.candidates > 1) != (self.selector is not None) or (self.selector and self.selector not in SELECTORS):
             raise ValueError(f"candidates > 1 requires a selector from {SELECTORS} (and only then)")
+        if self.glossary is not None:
+            if not isinstance(self.glossary, dict) or not self.glossary or not all(
+                    isinstance(rows, list) and all(isinstance(row, dict) and set(row) == {"source", "translation"}
+                                                   and all(isinstance(v, str) and v.strip() for v in row.values())
+                                                   for row in rows) for rows in self.glossary.values()):
+                raise ValueError("glossary must map work ids to lists of {source, translation} non-empty strings")
         if self.category_overrides is not None:
             if not isinstance(self.category_overrides, dict) or not self.category_overrides:
                 raise ValueError("category_overrides must be a non-empty object")
@@ -197,6 +210,8 @@ class Recipe:
                                   RISK_NEGATION.pattern, RISK_CONDITIONAL.pattern]
         if self.sampling:
             versions["sampling"] = dict(self.sampling)
+        if self.glossary:
+            versions["glossary"] = [GLOSSARY_VERSION, sha256_bytes(GLOSSARY_INJECTION.encode())]
         if self.target_context:
             versions["target_context"] = [TARGET_CONTEXT_VERSION, sha256_bytes(TARGET_CONTEXT_INJECTION.encode())]
         if self.candidates > 1:
@@ -241,7 +256,7 @@ BUILTIN: dict[str, Recipe] = {recipe.name: recipe for recipe in (
 )}
 _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,
-                               "selector": None}
+                               "selector": None, "glossary": None}
 
 
 def compose(name: str, base: str | Recipe, **overrides: Any) -> Recipe:
@@ -287,8 +302,9 @@ def inject(prompt: str, extra: str) -> str:
 
 
 def render_translation(recipe: Recipe, window: dict[str, Any], terms: list[dict[str, Any]] | None = None,
-                       history: list[dict[str, str]] | None = None) -> str:
-    """``history``: earlier {ja, zh} pairs of the scene (target_context recipes), oldest first."""
+                       history: list[dict[str, str]] | None = None, work_id: str | None = None) -> str:
+    """``history``: earlier {ja, zh} pairs of the scene (target_context recipes), oldest first;
+    ``work_id``: selects the work's glossary (glossary recipes)."""
     prompt = adapters.render(FAMILY, window)
     if recipe.prompt == "joint":
         if prompt.count(C0_INSTRUCTION) != 1:
@@ -302,7 +318,17 @@ def render_translation(recipe: Recipe, window: dict[str, Any], terms: list[dict[
         prompt = inject(prompt, TARGET_CONTEXT_INJECTION + json.dumps(
             {"previous_translations": [{"ja": h["ja"], "zh": h["zh"]} for h in history[-recipe.target_context:]]},
             ensure_ascii=False))
+    entries = glossary_for_window(recipe, work_id, window)
+    if entries:
+        prompt = inject(prompt, GLOSSARY_INJECTION + json.dumps({"glossary": entries}, ensure_ascii=False))
     return prompt
+
+
+def glossary_for_window(recipe: Recipe, work_id: str | None, window: dict[str, Any]) -> list[dict[str, str]]:
+    if not recipe.glossary or work_id is None:
+        return []
+    text = "\n".join(cue["text"] for cue in window["context"])
+    return [dict(row) for row in recipe.glossary.get(work_id, []) if row["source"] in text]
 
 
 def translation_grammar(recipe: Recipe, ids: list[str]) -> str:
