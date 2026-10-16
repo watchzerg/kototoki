@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         sets = [[int(x) for x in part.split(",")] for part in args.seed_sets.split("/")]
         out = v7.pooled(args.variant, sets, against=args.against)
         out = {"cues": out.get("cues"), "accuracy": (out.get("full") or {}).get("accuracy", {}).get("delta"),
-               "ci90": {k: v["ci90"] for k, v in ((out.get("full") or {}).get("accuracy", {}).get("bootstrap") or {}).items() if v}}
+               "ci90": {k: v["ci90"] for k, v in ((out.get("full") or {}).get("accuracy", {}).get("bootstrap") or {}).items() if isinstance(v, dict)}}
     elif args.round == "v7":
         out = v7.compare(args.variant, args.seeds, against=args.against, against_seeds=args.control_seeds,
                          label=args.label)
