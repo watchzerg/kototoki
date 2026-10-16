@@ -30,12 +30,16 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--variant", required=True)
         if name == "judge":
             p.add_argument("--parallel", type=int, default=3)
+            p.add_argument("--candidate-only", action="store_true", help="skip the control copy (v7: judged once)")
     c = sub.add_parser("compare", help="offline paired comparison on the affected subset")
     c.add_argument("--variant", required=True)
     c.add_argument("--seeds", type=int, nargs="+", required=True)
     c.add_argument("--control-seeds", type=int, nargs="+")
     c.add_argument("--label", default="")
     c.add_argument("--against", default=q2.CONTROL_COPY, help="v7: another variant instead of the control copy")
+    jc = sub.add_parser("judge-control", help="v7: judge the control copy of a seed on the full set")
+    jc.add_argument("--seed", type=int, required=True)
+    jc.add_argument("--parallel", type=int, default=3)
     pl = sub.add_parser("pooled", help="v7: mean paired difference over independent seed sets")
     pl.add_argument("--variant", required=True)
     pl.add_argument("--seed-sets", required=True, help="e.g. 20261011,20261012,20261013/20261021,20261022,20261023")
@@ -63,7 +67,12 @@ def main(argv: list[str] | None = None) -> int:
         out = {k: v for k, v in out.items() if k not in ("affected_cues", "windows")} | {
             "affected": len(out["affected_cues"]), "windows": len(out["windows"])}
     elif args.command == "judge":
-        out = q2.judge(args.variant, args.seed, root=root, parallel=args.parallel, control_seed=args.control_seed)
+        out = q2.judge(args.variant, args.seed, root=root, parallel=args.parallel, control_seed=args.control_seed,
+                       candidate_only=args.candidate_only)
+        print(json.dumps({"exit_code": out["exit_code"]}))
+        return out["exit_code"]
+    elif args.command == "judge-control":
+        out = v7.judge_control(args.seed, parallel=args.parallel)
         print(json.dumps({"exit_code": out["exit_code"]}))
         return out["exit_code"]
     elif args.command == "pooled":

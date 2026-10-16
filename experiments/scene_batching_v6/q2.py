@@ -120,11 +120,12 @@ def subset_reference(root: Path, variant: str, seed: int) -> dict[str, Reference
 
 
 def judge(variant: str, seed: int, *, root: Path = V6_ROOT, parallel: int = 3, control_seed: int | None = None,
-          log=print) -> dict[str, Any]:
+          candidate_only: bool = False, log=print) -> dict[str, Any]:
     """Judge the subset windows in the candidate run and in the control copy (same packet layout)."""
     reference = subset_reference(root, variant, seed)
     results = []
-    for path in (run_dir(root, variant, seed), run_dir(root, CONTROL_COPY, control_seed or seed)):
+    paths = [run_dir(root, variant, seed)] + ([] if candidate_only else [run_dir(root, CONTROL_COPY, control_seed or seed)])
+    for path in paths:
         result = E.judge(root, path, ["A", "B"], parallel=parallel, reference=reference, log=log)
         results.append(result)
         if result["exit_code"]:

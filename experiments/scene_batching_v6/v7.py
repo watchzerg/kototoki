@@ -7,8 +7,8 @@ the candidate and the b10-joint control copy are judged on the full set with one
 control copy of a seed is judged once and serves all variants.
 
 ``compare`` pairs a variant with the control copy (or with another variant, ``against``) on every
-judged cue: full-set Δ per metric by category, the affected and unaffected parts (unaffected cues
-with identical translations give the judge noise floor), safety, delivery, cost and the batch-size
+judged cue: full-set Δ per metric by category, the affected/unaffected and changed/identical
+translation parts (cues with identical translations give the judge noise floor), safety, delivery, cost and the batch-size
 distribution. ``pooled`` averages the paired differences over independent seed sets.
 """
 
@@ -37,6 +37,12 @@ def subset(variant: str, seed: int, *, root: Path = V7_ROOT) -> dict[str, Any]:
     return q2.build_subset(variant, seed, root=root, full=True)
 
 
+def judge_control(seed: int, *, root: Path = V7_ROOT, parallel: int = 3, log=print) -> dict[str, Any]:
+    """Full-set judgement of the control copy (the packets equal those of every variant's full subset)."""
+    return E.judge(root, q2.run_dir(root, q2.CONTROL_COPY, seed), ["A", "B"], parallel=parallel,
+                   reference=E.reference_for(V4_ROOT, q2.SET), log=log)
+
+
 def _arm(root: Path, name: str, seed: int, windows: dict) -> dict[str, Any]:
     path = q2.run_dir(root, name, seed)
     metrics = run_metrics(path, windows)
@@ -51,6 +57,8 @@ def _delta_block(diffs: dict[str, float], layout: S4.Layout, reps: int) -> dict[
 def compare(variant: str, seeds: list[int], *, against: str = q2.CONTROL_COPY, against_seeds: list[int] | None = None,
             root: Path = V7_ROOT, v4_root: Path = V4_ROOT, label: str = "") -> dict[str, Any]:
     against_seeds = against_seeds or seeds
+    if len(against_seeds) != len(seeds):
+        raise ValueError("seeds and against_seeds must pair one to one")
     all_windows = E.reference_for(v4_root, q2.SET)
     cand: dict[str, dict[str, float]] = {}
     ctrl: dict[str, dict[str, float]] = {}
@@ -90,9 +98,9 @@ def compare(variant: str, seeds: list[int], *, against: str = q2.CONTROL_COPY, a
                                   "against": S4.aggregate({k: ctrl[k][metric] for k in keys}, full_layout),
                                   **_delta_block(diffs, full_layout, 10000)}
     parts = {"affected": [k for k in keys if k in affected],
-             "affected_changed_translation": [k for k in keys if k in affected and k not in identical],
-             "unaffected_identical_translation": [k for k in keys if k not in affected and k in identical],
-             "unaffected_changed_translation": [k for k in keys if k not in affected and k not in identical]}
+             "unaffected": [k for k in keys if k not in affected],
+             "changed_translation": [k for k in keys if k not in identical],
+             "identical_translation": [k for k in keys if k in identical]}  # judge noise floor
     for name, part in parts.items():
         if not part:
             report["parts"][name] = {"cues": 0}
@@ -135,7 +143,8 @@ def decision(report: dict[str, Any]) -> dict[str, Any]:
                          "noninferior": ci[1] < NONINFERIORITY_MARGIN,
                          "significantly_worse": ci[0] > 0, "significantly_better": ci[1] < 0}
     crit = report["safety"]["critical"]["delta"]["overall"]
-    out["critical_not_up"] = crit is not None and crit <= CRITICAL_MARGIN
+    out["critical_not_up"] = crit is not None and crit <= CRITICAL_MARGIN  # v6 rule: point estimate
+    out["critical"] = {"delta": crit, "ci90": (report["safety"]["critical"].get("bootstrap") or {}).get("overall", {}).get("ci90")}
     out["noninferior_both"] = out["anime_series"]["noninferior"] and out["animation_movie"]["noninferior"]
     return out
 
