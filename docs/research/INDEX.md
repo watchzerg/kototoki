@@ -14,7 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
-2026-10-16：[字幕质量探索第五轮（v5）](2026-10-16-quality-exploration-v5.md)立项、执行并结题：产品中文错误约四分之三来自 ASR（r_all 0.76），但 VAD 召回与两个动漫微调 ASR 都不如当前，产品 STT 保持 w0；翻译侧 8 样本＋bge-m3 语义逐条 MBR（`mbr8s`）在全新剧集确认集上确认（剧集 Δ −0.036、约 −7%，p 0.0004，电影无材料未确认），代价约 6.3 倍翻译墙钟，未采纳、待用户裁定；更省的 MBR（N＜8、早停）不复现，低温＋MBR 不叠加，按作品术语表提高一致率但准确性变差。第 1 步确认改回 swr 后产品 STT 回到基线（[swr 回归记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)）。
+2026-10-16：[字幕质量探索第五轮（v5）](2026-10-16-quality-exploration-v5.md)立项、执行并结题：产品中文错误约四分之三来自 ASR（r_all 0.76），但 VAD 召回与两个动漫微调 ASR 都不如当前，产品 STT 保持 w0；翻译侧 8 样本＋bge-m3 语义逐条 MBR（`mbr8s`）在全新剧集确认集上确认（剧集 Δ −0.036、约 −7%，p 0.0004，电影无材料未确认），代价约 6.3 倍翻译墙钟。用户当天裁定放弃 mbr8s 与 v4 的 mbr8c，今后不自动选用"翻译多次再挑选"的方法，除非用户明确要求（[ADR-0008](../adr/0008-no-multi-translation-selection.md)）；更省的 MBR（N＜8、早停）不复现，低温＋MBR 不叠加，按作品术语表提高一致率但准确性变差。第 1 步确认改回 swr 后产品 STT 回到基线（[swr 回归记录](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)）。
 
 2026-10-15：最终验收后用户裁定：重采样改回默认 swr（票据 10）、修 `DURATION-<lang>` 误判（票据 11）、间隔断句只在跨 VAD 子段时成立（票据 12）；[cue token 边界调研](2026-10-15-cue-token-boundary-study.md)结论为不实现（票据 13）。同日架构评审后阶段链与期望身份收进 `kototoki/plan.py`（票据 14）、翻译 run 键与 `needs_model` 归翻译子系统（票据 15），行为与身份取值不变。
 
@@ -24,7 +24,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 2026-10-13：项目进入实现阶段。用户确定第一个产品形态为配置文件驱动的中日双语字幕批量流水线，设计见[技术设计](../specs/bilingual-subtitle-pipeline.md)，架构取舍见 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)：默认 w0、新 Pyannote、MMS、b10-joint；GPU 阶段按"阶段 × 整批"推进；单一 CUDA 12.8 Python 环境（Python 3.13、torch 2.11.0+cu128，与 CTranslate2 共用 DLL，2026-10-14 由 CUDA 13 方案改定），llama.cpp 用官方 CUDA 13.4 构建；回归与容差推迟到实现之后。
 
-2026-10-12：v4 第四轮字幕翻译流程探索已完成，详见 [v4 报告](2026-10-11-hy30-flow-v4-report.md) 和 [v4 台账](../context/2026-10-11-hy30-flow-exploration-v4.md)。**1 个配方通过确认：`mbr8c`**，即每批 8 个样本，逐条用本地 chrF-MBR 选择。确认集上 Δ −0.016（约 4%，集中在剧集），Holm p 0.016，代价是约 6 倍墙钟。`t03`（temperature 0.3）在确认集上未通过。基线 b10-joint 不自动替换，等待用户决策。实现入口为 [translation_v4](../../experiments/translation_v4/README.md)。
+2026-10-12：v4 第四轮字幕翻译流程探索已完成，详见 [v4 报告](2026-10-11-hy30-flow-v4-report.md) 和 [v4 台账](../context/2026-10-11-hy30-flow-exploration-v4.md)。**1 个配方通过确认：`mbr8c`**，即每批 8 个样本，逐条用本地 chrF-MBR 选择。确认集上 Δ −0.016（约 4%，集中在剧集），Holm p 0.016，代价是约 6 倍墙钟。`t03`（temperature 0.3）在确认集上未通过。基线 b10-joint 不自动替换；2026-10-16 用户裁定放弃（[ADR-0008](../adr/0008-no-multi-translation-selection.md)）。实现入口为 [translation_v4](../../experiments/translation_v4/README.md)。
 
 2026-10-11：用户采纳 **b10-joint** 作为完整 SRT 流程基线（[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)，入口 `just translation-srt`）；模型和采样仍按 ADR-0005。这是工程选择：b10-joint 在 v3 确认集上没有通过显著性检验。下一轮见 [v4 计划](../plans/hy-mt2-translation-flow-exploration-v4.md)（proposed）。
 
@@ -154,7 +154,7 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 ### 字幕质量探索第五轮（2026-10-16）
 
-- [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），进产品与否及其余后续列在第 8 节
+- [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），用户已裁定放弃（ADR-0008）；其余后续列在第 8 节
 
 ## 验收记录
 

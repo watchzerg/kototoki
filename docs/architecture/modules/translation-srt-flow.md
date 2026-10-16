@@ -41,4 +41,4 @@
 
 ## 变更与决策来源
 
-[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)；[v3 计划](../../plans/hy-mt2-translation-flow-exploration-v3.md)、[v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)；后续探索 [v4 报告](../../research/2026-10-11-hy30-flow-v4-report.md)（`mbr8c` 已确认但未采纳）。
+[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)；[v3 计划](../../plans/hy-mt2-translation-flow-exploration-v3.md)、[v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)；后续探索 [v4 报告](../../research/2026-10-11-hy30-flow-v4-report.md)（`mbr8c` 已确认但放弃，见 [ADR-0008](../../adr/0008-no-multi-translation-selection.md)）。
