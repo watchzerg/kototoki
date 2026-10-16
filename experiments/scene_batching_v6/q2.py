@@ -167,6 +167,17 @@ def compare(variant: str, seeds: list[int], *, root: Path = V6_ROOT, control_see
             "candidate": _work_equal({k: cand_vals[k][metric] for k in keys}, layout),
             "control": _work_equal({k: ctrl_vals[k][metric] for k in keys}, layout),
             "delta": _work_equal(diffs, layout), "bootstrap": S4.bootstrap(diffs, layout, reps=10000)}
+    # safety metrics on affected cues (v4 definitions: critical count, major+ indicator)
+    safety: dict[str, dict[str, float]] = {"candidate": {}, "control": {}}
+    for seed, cseed in zip(seeds, control_seeds):
+        ref = {k: all_windows[k] for k in read_json(root / "subsets" / f"{variant}__s{seed}.json")["windows"]}
+        for arm, path in (("candidate", run_dir(root, variant, seed)), ("control", run_dir(root, CONTROL_COPY, cseed))):
+            for cue, row in S4.run_cues(path, ref)["values"].items():
+                safety[arm][cue] = row
+    for metric in ("critical", "major_plus"):
+        diffs = {k: safety["candidate"][k][metric] - safety["control"][k][metric] for k in keys}
+        report.setdefault("safety", {})[metric] = {"delta": _work_equal(diffs, layout),
+                                                   "bootstrap": S4.bootstrap(diffs, layout, reps=2000)}
     # judge noise on the subset: control re-judge minus original v4 judgement (same translations)
     rejudge = {k: ctrl_vals[k]["accuracy"] - orig_vals[k]["accuracy"] for k in keys if k in orig_vals}
     report["control_rejudge_minus_original"] = {"delta": _work_equal(rejudge, layout),
@@ -209,3 +220,42 @@ def _cost(path: Path) -> dict[str, Any]:
             "scene_seconds": sum(r.get("elapsed_seconds") or 0 for r in rows),
             "visible_max": max(sizes) if sizes else None,
             "visible_mean": statistics.fmean(sizes) if sizes else None, "peak_device_memory_mib": peaks}
+
+
+def pooled(variant: str, seed_sets: list[list[int]], *, root: Path = V6_ROOT, label: str = "pooled") -> dict[str, Any]:
+    """Mean of the paired differences over independent realizations (each set pairs candidate and
+    control with the same seeds); affected cues must be the same in every set (batching is seed-free)."""
+    all_windows = E.reference_for(V4_ROOT, SET)
+    per_set: list[dict[str, dict[str, float]]] = []
+    affected: set[str] | None = None
+    scenes: set[str] = set()
+    for seeds in seed_sets:
+        diffs: dict[str, dict[str, float]] = {}
+        keys: set[str] = set()
+        for seed in seeds:
+            subset = read_json(root / "subsets" / f"{variant}__s{seed}.json")
+            ref = {k: all_windows[k] for k in subset["windows"]}
+            cand = run_metrics(run_dir(root, variant, seed), ref)["values"]
+            ctrl = run_metrics(run_dir(root, CONTROL_COPY, seed), ref)["values"]
+            for k in subset["affected_cues"]:
+                diffs[k] = {m: cand[k][m] - ctrl[k][m] for m in METRICS}
+            keys |= set(subset["affected_cues"])
+            scenes |= set(read_json(run_dir(root, variant, seed) / "run.json")["scene_ids"])
+        if affected is not None and keys != affected:
+            raise ValueError("affected cues differ between seed sets")
+        affected = keys
+        per_set.append(diffs)
+    keys = sorted(affected or ())
+    layout = S4.Layout(all_windows, set(keys))
+    report: dict[str, Any] = {"variant": variant, "seed_sets": seed_sets, "affected_cues": len(keys), "affected": {}}
+    for metric in METRICS:
+        mean = {k: statistics.fmean(d[k][metric] for d in per_set) for k in keys}
+        report["affected"][metric] = {"delta": _work_equal(mean, layout), "bootstrap": S4.bootstrap(mean, layout, reps=10000)}
+    full_windows = {k: w for k, w in all_windows.items() if w.meta.scene_id in scenes}
+    full_cues = {u["id"] for w in full_windows.values() for u in w.units}
+    full_layout = S4.Layout(full_windows, full_cues)
+    full = {k: (statistics.fmean(d[k]["accuracy"] for d in per_set) if k in affected else 0.0) for k in full_cues}
+    report["full_set_guard"] = {"cues": len(full_cues), "delta": _work_equal(full, full_layout),
+                                "bootstrap": S4.bootstrap(full, full_layout, reps=10000)}
+    atomic_write_json(root / "summaries" / f"q2-{variant}-{label}.json", report)
+    return report
