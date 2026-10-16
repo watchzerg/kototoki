@@ -68,6 +68,9 @@ TARGET_CONTEXT_INJECTION = ("以下是本场景中紧接在待译台词之前、
                             "它们不是待译条目，不要重新翻译或输出：\n")
 # v4 multi-sample generation: sample k uses seed (seed + k * SAMPLE_SEED_STRIDE) mod 2**32 (k = 0 is the run seed).
 MULTI_VERSION = "multi-sample-v1"
+# v6: move batch cuts to silence gaps and drop read-only neighbours across gaps (batching.gap_cuts).
+GAP_SPLIT_VERSION = "gap-split-v1"
+GAP_SPLIT_KEYS = {"snap", "max", "cut_gap", "context_gap", "max_visible"}
 SAMPLE_SEED_STRIDE = 1_000_003
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "samplers")
 SAMPLER_NAMES = ("top_k", "top_p", "min_p", "temperature")
@@ -114,6 +117,23 @@ def _check_sampling(overrides: dict[str, Any]) -> None:
         raise ValueError(f"sampling.samplers must be a non-empty list from {SAMPLER_NAMES}")
 
 
+def _check_gap_split(split: Any, batch_count: int | None) -> None:
+    if batch_count is None:
+        raise ValueError("gap_split needs batch_count (the grid size)")
+    if not isinstance(split, dict) or set(split) != GAP_SPLIT_KEYS:
+        raise ValueError(f"gap_split needs exactly the keys {sorted(GAP_SPLIT_KEYS)}")
+    if any(type(split[k]) is not int for k in ("snap", "max", "max_visible")):
+        raise ValueError("gap_split.snap/max/max_visible must be integers")
+    if not 0 <= split["snap"] < batch_count or not batch_count <= split["max"] <= split["max_visible"]:
+        raise ValueError("gap_split: 0 <= snap < batch_count <= max <= max_visible")
+    for key in ("cut_gap", "context_gap"):
+        value = split[key]
+        if value is not None and (type(value) not in (int, float) or value <= 0):
+            raise ValueError(f"gap_split.{key} must be a positive number of seconds or null")
+    if split["cut_gap"] is None:
+        raise ValueError("gap_split.cut_gap is required")
+
+
 @dataclass(frozen=True)
 class Recipe:
     name: str
@@ -135,6 +155,8 @@ class Recipe:
     selector: str | None = None
     # v5 field: {work_id: [{"source": ja, "translation": zh}, ...]}; the content is part of the hash.
     glossary: dict[str, list[dict[str, str]]] | None = None
+    # v6 field: {"snap", "max", "cut_gap", "context_gap", "max_visible"} (see batching.gap_cuts).
+    gap_split: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         safe_name(self.name, "recipe name")
@@ -169,6 +191,8 @@ class Recipe:
                                                    and all(isinstance(v, str) and v.strip() for v in row.values())
                                                    for row in rows) for rows in self.glossary.values()):
                 raise ValueError("glossary must map work ids to lists of {source, translation} non-empty strings")
+        if self.gap_split is not None:
+            _check_gap_split(self.gap_split, self.batch_count)
         if self.category_overrides is not None:
             if not isinstance(self.category_overrides, dict) or not self.category_overrides:
                 raise ValueError("category_overrides must be a non-empty object")
@@ -212,6 +236,8 @@ class Recipe:
             versions["sampling"] = dict(self.sampling)
         if self.glossary:
             versions["glossary"] = [GLOSSARY_VERSION, sha256_bytes(GLOSSARY_INJECTION.encode())]
+        if self.gap_split:
+            versions["gap_split"] = GAP_SPLIT_VERSION
         if self.target_context:
             versions["target_context"] = [TARGET_CONTEXT_VERSION, sha256_bytes(TARGET_CONTEXT_INJECTION.encode())]
         if self.candidates > 1:
@@ -256,7 +282,7 @@ BUILTIN: dict[str, Recipe] = {recipe.name: recipe for recipe in (
 )}
 _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,
-                               "selector": None, "glossary": None}
+                               "selector": None, "glossary": None, "gap_split": None}
 
 
 def compose(name: str, base: str | Recipe, **overrides: Any) -> Recipe:

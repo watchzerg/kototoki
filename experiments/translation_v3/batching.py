@@ -2,6 +2,9 @@
 
 Packing matches v2 ``v2_prepare.pack_scene`` (offset 0, no common context); a test
 compares both. A single cue above the token target stays intact and is flagged.
+
+``recipe.gap_split`` (v6, ``gap-split-v1``) moves count cuts to nearby silence gaps (``gap_cuts``)
+and keeps a read-only neighbour only while the silence towards it is below ``context_gap``.
 """
 
 from __future__ import annotations
@@ -40,6 +43,62 @@ class Batch:
                 "single_cue_over_token_target": self.single_cue_over_token_target}
 
 
+def silence(scene: Scene, i: int) -> float | None:
+    """Seconds between cue i and cue i+1 (None when a timestamp is missing)."""
+    left, right = scene.cues[i], scene.cues[i + 1]
+    return None if left.end is None or right.start is None else right.start - left.end
+
+
+def gap_cuts(scene: Scene, target: int, split: dict[str, Any]) -> list[int]:
+    """Batch starts under gap-split-v1: the plain count grid (target, 2*target, ...) with each grid
+    point moved to the largest silence >= cut_gap within +-snap cues (ties: nearest to the grid point,
+    then earlier). A move is allowed only while no batch exceeds ``max`` cues; otherwise the grid point
+    stays. Batch count therefore equals plain count batching, and unchanged grid points keep their
+    batches."""
+    n = len(scene.cues)
+    cuts = [0]
+    for grid in range(target, n, target):
+        prev, best, best_key = cuts[-1], grid, None
+        last = grid + target >= n
+        for cut in range(max(prev + 1, grid - split["snap"]), min(grid + split["snap"], n - 1) + 1):
+            if cut - prev > split["max"] or (last and n - cut > split["max"]):
+                continue
+            gap = silence(scene, cut - 1)
+            if gap is None or gap < split["cut_gap"]:
+                continue
+            key = (gap, -abs(cut - grid), -cut)
+            if best_key is None or key > best_key:
+                best, best_key = cut, key
+        cuts.append(best)
+    return cuts
+
+
+def _neighbours(scene: Scene, start: int, stop: int, recipe: Recipe) -> tuple[int, int]:
+    """[left, right) visible range; with gap_split, neighbours stop at a gap >= context_gap and the
+    after-side is dropped first while more than max_visible cues would be visible."""
+    n = len(scene.cues)
+    left, right = max(0, start - recipe.context_before), min(n, stop + recipe.context_after)
+    split = recipe.gap_split
+    if split is None:
+        return left, right
+    if split["context_gap"] is not None:
+        def near(i: int) -> bool:
+            gap = silence(scene, i)
+            return gap is None or gap < split["context_gap"]
+        low = start
+        while low > left and near(low - 1):
+            low -= 1
+        high = stop
+        while high < right and near(high - 1):
+            high += 1
+        left, right = low, high
+    while right - left > split["max_visible"] and right > stop:
+        right -= 1
+    while right - left > split["max_visible"] and left < start:
+        left += 1
+    return left, right
+
+
 def build_batches(scene: Scene, recipe: Recipe, token_counts: dict[str, int] | None = None) -> list[Batch]:
     ids = scene.ids
     if not ids or len(ids) != len(set(ids)):
@@ -48,9 +107,12 @@ def build_batches(scene: Scene, recipe: Recipe, token_counts: dict[str, int] | N
         if token_counts is None or any(type(token_counts.get(key)) is not int or token_counts[key] < 1 for key in ids):
             raise ValueError("Token batching needs a positive measured count for every cue")
     batches: list[Batch] = []
+    cuts = gap_cuts(scene, recipe.batch_count, recipe.gap_split) + [len(ids)] if recipe.gap_split else None
     start = 0
     while start < len(ids):
-        if recipe.token_target is None:
+        if cuts is not None:
+            stop = cuts[len(batches) + 1]
+        elif recipe.token_target is None:
             stop = min(len(ids), start + recipe.batch_count)
         else:
             stop, total = start, 0
@@ -60,8 +122,7 @@ def build_batches(scene: Scene, recipe: Recipe, token_counts: dict[str, int] | N
                     break
                 total += count
                 stop += 1
-        left = max(0, start - recipe.context_before)
-        right = min(len(ids), stop + recipe.context_after)
+        left, right = _neighbours(scene, start, stop, recipe)
         targets = tuple(ids[start:stop])
         batches.append(Batch(
             index=len(batches), batch_id=f"{scene.scene_id}-b{len(batches) + 1:04d}", scene_id=scene.scene_id,
