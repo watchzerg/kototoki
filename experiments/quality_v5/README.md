@@ -16,6 +16,7 @@
 | `mbr_cheap.py` | 07 | 从 v4 `mbr8` 的 8 样本 run 离线派生逐条 MBR 的 N＝4、6（`derive`，带真实配方 hash）；按样本共识度模拟早停并写伪 run（`early-stop`）；统一口径的 N／早停成本表（`cost`） | 离线 |
 | `parallel_probe.py` | 07 | 运行时把 llama-server 改为 `-np P`、同批样本并发请求，再调用 v4 `generate`；比较串行与并行的墙钟与输出 | GPU |
 | `confirm_set.py` | 07 | 按 v4 `build_sets` 规则建 v5 剧集确认集：只取 v2／v3 与 v4 dev／confirm 都没碰过的整集（电影已无余量）；写入评测根 `sets/confirm` | 离线 |
+| `confirm_series.py` | 14 | 在只含剧集的确认集上运行 v4 `confirm`：运行时让 `overall` 取有值类别的均值（v4 缺一类时为 None），其余照 v4 原样 | 离线（只运行一次） |
 | `mbr_semantic.py` | 08 | 同一批 mbr8 样本，逐条 MBR 的效用换成本地 bge-m3 embedding 余弦，写伪 run（如 `mbr8s`）并统计与 chrF 选择不同的比例 | GPU（embedding，秒级） |
 | `diff_judge.py` | 08 | 候选 run 只判计分 cue 与同 seed 基准 run 不同的窗口，其余窗口复制基准判分（合成包文件标 `copied_from`），之后 v4 `compare` 照常读取 | Claude 配额（退出码 75 可续跑） |
 | `diversity.py` | 09 | 多样本 run 里每条 cue 的样本两两 chrF 均值与"全部样本相同"占比（样本多样性） | 离线 |
