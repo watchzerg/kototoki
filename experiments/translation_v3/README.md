@@ -32,6 +32,8 @@
 
 按类别路由：组合配方可加 `category_overrides`，例如 `{"name": "route", "base": "b10", "category_overrides": {"animation_movie": {"batch_count": 5}}}`：剧集场景用基础字段，电影场景用覆盖后的字段。路由信息进入 `recipe_hash`（`versions.routed`）；不带该字段的配方 hash 不变。场景类别取自源清单；`translate-srt` 对路由配方必须给 `--category`，否则在加载模型前报错。
 
+场景感知切法（v6，[研究文档](../../docs/research/2026-10-16-scene-aware-batching-v6.md)）：组合配方可加 `gap_split`，键为 `snap`、`max`、`cut_gap`、`context_gap`、`max_visible`，例如 `{"name": "gsnap5", "base": "b10-joint", "gap_split": {"snap": 2, "max": 12, "cut_gap": 5.0, "context_gap": 5.0, "max_visible": 12}}`。保留 `batch_count` 的切点网格，每个网格点在 ±snap 条内挪到最大的 ≥cut_gap 秒静默处（任何批不超过 max 条）；只读邻文只在静默 < context_gap 时才取，可见条数超过 max_visible 时先去后邻文。批数与纯计数分批相同。版本 `gap-split-v1` 进 `recipe_hash`；不带该字段的配方 hash 不变。
+
 C0 等价性：`test_recipes` 证明 v3 的 C0 prompt、grammar 和完整 completion 请求（序列化字节）与 v2 `v2_recipes.render_window("c0")`／`completion_request` 一致，批次划分与 `v2_prepare.pack_scene` 一致。
 
 ## 目录布局（根目录下）
