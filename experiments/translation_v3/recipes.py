@@ -71,6 +71,14 @@ MULTI_VERSION = "multi-sample-v1"
 # v6: move batch cuts to silence gaps and drop read-only neighbours across gaps (batching.gap_cuts).
 GAP_SPLIT_VERSION = "gap-split-v1"
 GAP_SPLIT_KEYS = {"snap", "max", "cut_gap", "context_gap", "max_visible"}
+# v7: globally optimal gap-aware packing per scene (batching.gap_pack_cuts), optionally from <1 s groups.
+GAP_PACK_VERSION = "gap-pack-v1"
+GAP_PACK_KEYS = {"min", "max", "soft_gap", "hard_gap", "soft_weight", "small_penalty", "group_gap", "group_max",
+                 "context_both_below", "context_before_below", "max_visible"}
+# v7: a read-only line without a cue ID at every visible silence >= min_gap (render_translation).
+PAUSE_MARK_VERSION = "pause-mark-v1"
+PAUSE_MARK_KEY = "pause"
+PAUSE_MARK_TEXT = "此处约{seconds}秒无台词"
 SAMPLE_SEED_STRIDE = 1_000_003
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "samplers")
 SAMPLER_NAMES = ("top_k", "top_p", "min_p", "temperature")
@@ -134,6 +142,30 @@ def _check_gap_split(split: Any, batch_count: int | None) -> None:
         raise ValueError("gap_split.cut_gap is required")
 
 
+def _check_gap_pack(pack: Any, batch_count: int | None) -> None:
+    if batch_count is None:
+        raise ValueError("gap_pack needs batch_count (the target batch size)")
+    if not isinstance(pack, dict) or set(pack) != GAP_PACK_KEYS:
+        raise ValueError(f"gap_pack needs exactly the keys {sorted(GAP_PACK_KEYS)}")
+    if any(type(pack[k]) is not int for k in ("min", "max", "group_max", "max_visible")):
+        raise ValueError("gap_pack.min/max/group_max/max_visible must be integers")
+    if not 1 <= pack["min"] <= batch_count <= pack["max"] <= pack["max_visible"] or pack["group_max"] > pack["max"]:
+        raise ValueError("gap_pack: 1 <= min <= batch_count <= max <= max_visible and group_max <= max")
+    for key in ("soft_gap", "hard_gap", "soft_weight", "small_penalty", "context_both_below", "context_before_below"):
+        if type(pack[key]) not in (int, float) or pack[key] < 0:
+            raise ValueError(f"gap_pack.{key} must be a nonnegative number")
+    if pack["group_gap"] is not None and (type(pack["group_gap"]) not in (int, float) or pack["group_gap"] <= 0):
+        raise ValueError("gap_pack.group_gap must be a positive number of seconds or null")
+    if not pack["soft_gap"] < pack["hard_gap"] or pack["context_both_below"] > pack["context_before_below"]:
+        raise ValueError("gap_pack: soft_gap < hard_gap and context_both_below <= context_before_below")
+
+
+def _check_pause_marks(marks: Any) -> None:
+    if (not isinstance(marks, dict) or set(marks) != {"min_gap"} or type(marks["min_gap"]) not in (int, float)
+            or marks["min_gap"] <= 0):
+        raise ValueError("pause_marks must be {'min_gap': positive seconds}")
+
+
 @dataclass(frozen=True)
 class Recipe:
     name: str
@@ -157,6 +189,9 @@ class Recipe:
     glossary: dict[str, list[dict[str, str]]] | None = None
     # v6 field: {"snap", "max", "cut_gap", "context_gap", "max_visible"} (see batching.gap_cuts).
     gap_split: dict[str, Any] | None = None
+    # v7 fields: gap_pack (batching.gap_pack_cuts) and pause_marks ({"min_gap": seconds}).
+    gap_pack: dict[str, Any] | None = None
+    pause_marks: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         safe_name(self.name, "recipe name")
@@ -193,6 +228,12 @@ class Recipe:
                 raise ValueError("glossary must map work ids to lists of {source, translation} non-empty strings")
         if self.gap_split is not None:
             _check_gap_split(self.gap_split, self.batch_count)
+        if self.gap_pack is not None:
+            if self.gap_split is not None:
+                raise ValueError("gap_pack and gap_split are alternative cut rules")
+            _check_gap_pack(self.gap_pack, self.batch_count)
+        if self.pause_marks is not None:
+            _check_pause_marks(self.pause_marks)
         if self.category_overrides is not None:
             if not isinstance(self.category_overrides, dict) or not self.category_overrides:
                 raise ValueError("category_overrides must be a non-empty object")
@@ -238,6 +279,10 @@ class Recipe:
             versions["glossary"] = [GLOSSARY_VERSION, sha256_bytes(GLOSSARY_INJECTION.encode())]
         if self.gap_split:
             versions["gap_split"] = GAP_SPLIT_VERSION
+        if self.gap_pack:
+            versions["gap_pack"] = GAP_PACK_VERSION
+        if self.pause_marks:
+            versions["pause_marks"] = [PAUSE_MARK_VERSION, PAUSE_MARK_KEY, sha256_bytes(PAUSE_MARK_TEXT.encode())]
         if self.target_context:
             versions["target_context"] = [TARGET_CONTEXT_VERSION, sha256_bytes(TARGET_CONTEXT_INJECTION.encode())]
         if self.candidates > 1:
@@ -282,7 +327,8 @@ BUILTIN: dict[str, Recipe] = {recipe.name: recipe for recipe in (
 )}
 _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,
-                               "selector": None, "glossary": None, "gap_split": None}
+                               "selector": None, "glossary": None, "gap_split": None,
+                               "gap_pack": None, "pause_marks": None}
 
 
 def compose(name: str, base: str | Recipe, **overrides: Any) -> Recipe:
@@ -328,10 +374,14 @@ def inject(prompt: str, extra: str) -> str:
 
 
 def render_translation(recipe: Recipe, window: dict[str, Any], terms: list[dict[str, Any]] | None = None,
-                       history: list[dict[str, str]] | None = None, work_id: str | None = None) -> str:
+                       history: list[dict[str, str]] | None = None, work_id: str | None = None,
+                       pauses: tuple[tuple[int, float], ...] = ()) -> str:
     """``history``: earlier {ja, zh} pairs of the scene (target_context recipes), oldest first;
-    ``work_id``: selects the work's glossary (glossary recipes)."""
+    ``work_id``: selects the work's glossary (glossary recipes); ``pauses``: (visible index, seconds)
+    pairs from ``Batch.pauses`` (pause_marks recipes)."""
     prompt = adapters.render(FAMILY, window)
+    if pauses:
+        prompt = mark_pauses(prompt, window, pauses)
     if recipe.prompt == "joint":
         if prompt.count(C0_INSTRUCTION) != 1:
             raise ValueError("Frozen C0 instruction changed; version the joint prompt")
@@ -348,6 +398,20 @@ def render_translation(recipe: Recipe, window: dict[str, Any], terms: list[dict[
     if entries:
         prompt = inject(prompt, GLOSSARY_INJECTION + json.dumps({"glossary": entries}, ensure_ascii=False))
     return prompt
+
+
+def mark_pauses(prompt: str, window: dict[str, Any], pauses: tuple[tuple[int, float], ...]) -> str:
+    """Insert ``{"pause": "此处约N秒无台词"}`` before visible item i for every (i, seconds) in the
+    read-only context list; the target JSON and the ID grammar are unchanged."""
+    plain = json.dumps(window["context"], ensure_ascii=False)
+    if prompt.count(plain) != 1:
+        raise ValueError("Read-only context must occur exactly once in the native prompt")
+    items: list[dict[str, str]] = list(window["context"])
+    for index, seconds in sorted(pauses, reverse=True):
+        if not 0 < index < len(items):
+            raise ValueError("A pause mark must sit between two visible cues")
+        items.insert(index, {PAUSE_MARK_KEY: PAUSE_MARK_TEXT.format(seconds=int(seconds + 0.5))})
+    return prompt.replace(plain, json.dumps(items, ensure_ascii=False), 1)
 
 
 def glossary_for_window(recipe: Recipe, work_id: str | None, window: dict[str, Any]) -> list[dict[str, str]]:

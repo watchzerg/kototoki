@@ -5,6 +5,9 @@ compares both. A single cue above the token target stays intact and is flagged.
 
 ``recipe.gap_split`` (v6, ``gap-split-v1``) moves count cuts to nearby silence gaps (``gap_cuts``)
 and keeps a read-only neighbour only while the silence towards it is below ``context_gap``.
+
+``recipe.gap_pack`` (v7, ``gap-pack-v1``) chooses all cuts of a scene at once by dynamic programming
+(``gap_pack_cuts``); ``recipe.pause_marks`` (v7) records the visible silences that get a pause line.
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ class Batch:
     stop: int
     source_token_count: int | None = None
     single_cue_over_token_target: bool = False
+    # (index into the visible list, seconds): a pause line goes before that visible cue (pause_marks).
+    pauses: tuple[tuple[int, float], ...] = ()
 
     def to_window(self, scene: Scene) -> dict[str, Any]:
         text = {cue.id: cue.text for cue in scene.cues}
@@ -37,10 +42,13 @@ class Batch:
                 "translate_ids": list(self.target_ids)}
 
     def record(self) -> dict[str, Any]:
-        return {"index": self.index, "batch_id": self.batch_id, "target_ids": list(self.target_ids),
-                "before_ids": list(self.before_ids), "after_ids": list(self.after_ids),
-                "start": self.start, "stop": self.stop, "source_token_count": self.source_token_count,
-                "single_cue_over_token_target": self.single_cue_over_token_target}
+        row = {"index": self.index, "batch_id": self.batch_id, "target_ids": list(self.target_ids),
+               "before_ids": list(self.before_ids), "after_ids": list(self.after_ids),
+               "start": self.start, "stop": self.stop, "source_token_count": self.source_token_count,
+               "single_cue_over_token_target": self.single_cue_over_token_target}
+        if self.pauses:
+            row["pauses"] = [list(p) for p in self.pauses]
+        return row
 
 
 def silence(scene: Scene, i: int) -> float | None:
@@ -73,10 +81,93 @@ def gap_cuts(scene: Scene, target: int, split: dict[str, Any]) -> list[int]:
     return cuts
 
 
+def gap_groups(scene: Scene, group_gap: float, group_max: int, target: int) -> list[int]:
+    """Starts of the gap-pack-v1 groups: runs of cues whose silences are all < group_gap (a missing
+    timestamp counts as no silence). A group longer than group_max is split into ceil(n/target)
+    near-equal parts, longer parts first."""
+    n = len(scene.cues)
+    runs = [0] + [i + 1 for i in range(n - 1) if (gap := silence(scene, i)) is not None and gap >= group_gap]
+    starts = []
+    for a, b in zip(runs, runs[1:] + [n]):
+        size = b - a
+        parts = -(-size // target) if size > group_max else 1
+        base, extra = divmod(size, parts)
+        for k in range(parts):
+            starts.append(a)
+            a += base + (k < extra)
+    return starts
+
+
+def gap_pack_cuts(scene: Scene, target: int, pack: dict[str, Any]) -> list[int]:
+    """Batch starts under gap-pack-v1: the cut set with the lowest total penalty, found by dynamic
+    programming over the scene. A batch [a, b) costs (b - a - target)**2, plus small_penalty when it is
+    shorter than ``min``, plus soft_weight * gap for every silence gap >= soft_gap between two of its
+    cues; it is infeasible above ``max`` cues or with a silence >= hard_gap inside. With group_gap set,
+    cuts fall only on gap_groups starts. Ties keep the earliest-found (shortest last batch) solution."""
+    n = len(scene.cues)
+    allowed = set(gap_groups(scene, pack["group_gap"], pack["group_max"], target)) if pack["group_gap"] else set(range(n))
+    allowed.add(n)
+    gaps = [silence(scene, i) for i in range(n - 1)]
+    best: list[tuple[float, int] | None] = [None] * (n + 1)
+    best[0] = (0.0, -1)
+    for stop in range(1, n + 1):
+        if stop not in allowed:
+            continue
+        inner = 0.0
+        for start in range(stop - 1, max(-1, stop - pack["max"] - 1), -1):
+            if start < stop - 1:
+                gap = gaps[start]
+                if gap is not None and gap >= pack["hard_gap"]:
+                    break
+                if gap is not None and gap >= pack["soft_gap"]:
+                    inner += pack["soft_weight"] * gap
+            if start not in allowed or best[start] is None:
+                continue
+            size = stop - start
+            cost = best[start][0] + (size - target) ** 2 + (pack["small_penalty"] if size < pack["min"] else 0) + inner
+            if best[stop] is None or cost < best[stop][0]:
+                best[stop] = (cost, start)
+    if best[n] is None:
+        raise ValueError(f"gap_pack: no feasible cut set for scene {scene.scene_id}")
+    cuts, at = [], n
+    while at > 0:
+        at = best[at][1]
+        cuts.append(at)
+    return cuts[::-1]
+
+
+def _pack_neighbours(scene: Scene, start: int, stop: int, recipe: Recipe) -> tuple[int, int]:
+    """gap-pack-v1 neighbours: the cue before is visible while its silence is < context_before_below,
+    the cue after only while its silence is < context_both_below (a missing timestamp counts as no
+    silence); above max_visible the after-side goes first."""
+    pack, n = recipe.gap_pack, len(scene.cues)
+    def below(i: int, limit: float) -> bool:
+        gap = silence(scene, i)
+        return gap is None or gap < limit
+    left, right = start, stop
+    while left > max(0, start - recipe.context_before) and below(left - 1, pack["context_before_below"]):
+        left -= 1
+    while right < min(n, stop + recipe.context_after) and below(right - 1, pack["context_both_below"]):
+        right += 1
+    while right - left > pack["max_visible"] and right > stop:
+        right -= 1
+    while right - left > pack["max_visible"] and left < start:
+        left += 1
+    return left, right
+
+
+def visible_pauses(scene: Scene, left: int, right: int, min_gap: float) -> tuple[tuple[int, float], ...]:
+    """(visible index, seconds) for every silence >= min_gap between two visible cues of [left, right)."""
+    return tuple((i + 1 - left, round(gap, 3)) for i in range(left, right - 1)
+                 if (gap := silence(scene, i)) is not None and gap >= min_gap)
+
+
 def _neighbours(scene: Scene, start: int, stop: int, recipe: Recipe) -> tuple[int, int]:
     """[left, right) visible range; with gap_split, neighbours stop at a gap >= context_gap and the
     after-side is dropped first while more than max_visible cues would be visible."""
     n = len(scene.cues)
+    if recipe.gap_pack is not None:
+        return _pack_neighbours(scene, start, stop, recipe)
     left, right = max(0, start - recipe.context_before), min(n, stop + recipe.context_after)
     split = recipe.gap_split
     if split is None:
@@ -108,6 +199,8 @@ def build_batches(scene: Scene, recipe: Recipe, token_counts: dict[str, int] | N
             raise ValueError("Token batching needs a positive measured count for every cue")
     batches: list[Batch] = []
     cuts = gap_cuts(scene, recipe.batch_count, recipe.gap_split) + [len(ids)] if recipe.gap_split else None
+    if recipe.gap_pack:
+        cuts = gap_pack_cuts(scene, recipe.batch_count, recipe.gap_pack) + [len(ids)]
     start = 0
     while start < len(ids):
         if cuts is not None:
@@ -130,7 +223,8 @@ def build_batches(scene: Scene, recipe: Recipe, token_counts: dict[str, int] | N
             start=start, stop=stop,
             source_token_count=sum(token_counts[k] for k in targets) if token_counts else None,
             single_cue_over_token_target=bool(recipe.token_target and len(targets) == 1
-                                              and token_counts[targets[0]] > recipe.token_target)))
+                                              and token_counts[targets[0]] > recipe.token_target),
+            pauses=visible_pauses(scene, left, right, recipe.pause_marks["min_gap"]) if recipe.pause_marks else ()))
         start = stop
     return batches
 

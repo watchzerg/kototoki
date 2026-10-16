@@ -8,7 +8,7 @@ Layout under ``<v6 root>``:
   subsets/<variant>__s<seed>.json           affected cues/windows for that pair
   summaries/q2-<variant>[-rep].json         paired comparison
 
-A batch is "changed" when its (targets, before, after) differs from the control batch holding the same
+A batch is "changed" when its (targets, before, after, pause marks) differs from the control batch holding the same
 targets; its targets are the affected cues. Judge windows are the v4 5-cue tiles containing at least
 one affected cue; all cues of these windows are judged in both arms, the endpoint uses affected cues.
 """
@@ -74,7 +74,8 @@ def _batch_map(run_path: Path) -> dict[str, dict[str, tuple]]:
     out = {}
     for path in sorted((run_path / "scenes").glob("*.json")):
         row = read_json(path)
-        out[row["scene_id"]] = {k: (tuple(b["target_ids"]), tuple(b["before_ids"]), tuple(b["after_ids"]))
+        out[row["scene_id"]] = {k: (tuple(b["target_ids"]), tuple(b["before_ids"]), tuple(b["after_ids"]),
+                                    tuple(tuple(p) for p in b.get("pauses", ())))
                                 for b in row["batches"] for k in b["target_ids"]}
     return out
 
@@ -87,8 +88,10 @@ def affected_cues(cand: dict[str, dict[str, tuple]], ctrl: dict[str, dict[str, t
     return sorted(k for scene in cand for k, b in cand[scene].items() if ctrl[scene][k] != b)
 
 
-def build_subset(variant: str, seed: int, *, root: Path = V6_ROOT, control_seed: int | None = None) -> dict[str, Any]:
-    """Affected cues and windows of one candidate run against the control run of ``control_seed``."""
+def build_subset(variant: str, seed: int, *, root: Path = V6_ROOT, control_seed: int | None = None,
+                 full: bool = False) -> dict[str, Any]:
+    """Affected cues and windows of one candidate run against the control run of ``control_seed``;
+    ``full`` (v7) keeps every window of the covered scenes."""
     cand_dir = run_dir(root, variant, seed)
     ctrl_dir = run_dir(root, CONTROL_COPY, control_seed or seed)
     cand, ctrl = _batch_map(cand_dir), _batch_map(ctrl_dir)
@@ -96,13 +99,13 @@ def build_subset(variant: str, seed: int, *, root: Path = V6_ROOT, control_seed:
     windows = E.reference_for(V4_ROOT, SET)
     scenes = set(cand)
     chosen = sorted(key for key, w in windows.items() if w.meta.scene_id in scenes
-                    and any(u["id"] in set(affected) for u in w.units))
+                    and (full or any(u["id"] in set(affected) for u in w.units)))
     cand_tr, _ = load_run_translations(cand_dir)
     ctrl_tr, _ = load_run_translations(ctrl_dir)
     unaffected = [k for scene in cand for k in cand[scene] if k not in set(affected)]
     identical = sum(cand_tr.get(k) == ctrl_tr.get(k) for k in unaffected)
     changed_batches = len({b for scene in cand for k, b in cand[scene].items() if k in set(affected)})
-    subset = {"variant": variant, "seed": seed, "control_seed": control_seed or seed,
+    subset = {"variant": variant, "seed": seed, "control_seed": control_seed or seed, "full": full,
               "affected_cues": affected, "windows": chosen, "scene_count": len(scenes),
               "cue_count": sum(len(v) for v in cand.values()), "changed_batches": changed_batches,
               "unaffected_cues": len(unaffected), "unaffected_identical_translation": identical,

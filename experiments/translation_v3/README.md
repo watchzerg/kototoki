@@ -34,6 +34,8 @@
 
 场景感知切法（v6，[研究文档](../../docs/research/2026-10-16-scene-aware-batching-v6.md)）：组合配方可加 `gap_split`，键为 `snap`、`max`、`cut_gap`、`context_gap`、`max_visible`，例如 `{"name": "gsnap5", "base": "b10-joint", "gap_split": {"snap": 2, "max": 12, "cut_gap": 5.0, "context_gap": 5.0, "max_visible": 12}}`。保留 `batch_count` 的切点网格，每个网格点在 ±snap 条内挪到最大的 ≥cut_gap 秒静默处（任何批不超过 max 条）；只读邻文只在静默 < context_gap 时才取，可见条数超过 max_visible 时先去后邻文。批数与纯计数分批相同。版本 `gap-split-v1` 进 `recipe_hash`；不带该字段的配方 hash 不变。
 
+按静默拼包与停顿标记（v7，[研究文档](../../docs/research/2026-10-16-gap-aware-batching-v7.md)）：`gap_pack` 键为 `min`、`max`、`soft_gap`、`hard_gap`、`soft_weight`、`small_penalty`、`group_gap`、`group_max`、`context_both_below`、`context_before_below`、`max_visible`，以 `batch_count` 为目标包大小，对每个场景用动态规划取总惩罚最低的切法（(大小−目标)²＋包内每个 ≥soft_gap 的间隔按秒乘 soft_weight＋小于 min 时加 small_penalty；含 ≥hard_gap 间隔或超过 max 条不可行）；`group_gap` 非空时只在该门槛以下连续 cue 组成的小组边界切（超过 group_max 的组等分为 ⌈n/目标⌉ 份）。邻文：前句在停顿 < context_before_below 时可见，后句在 < context_both_below 时可见，超过 max_visible 先去后句。`pause_marks`（`{"min_gap": 秒}`）在只读上下文列表里每个可见的 ≥min_gap 静默处插入 `{"pause": "此处约N秒无台词"}`，待译 JSON 与 grammar 不变，场景文件的批记录多一个 `pauses`。版本 `gap-pack-v1`、`pause-mark-v1` 进 `recipe_hash`；不带这两个字段的配方 hash 不变。`gap_pack` 与 `gap_split` 互斥。
+
 C0 等价性：`test_recipes` 证明 v3 的 C0 prompt、grammar 和完整 completion 请求（序列化字节）与 v2 `v2_recipes.render_window("c0")`／`completion_request` 一致，批次划分与 `v2_prepare.pack_scene` 一致。
 
 ## 目录布局（根目录下）

@@ -20,6 +20,15 @@
 
 两次独立实现的合并估计：`q2.pooled(variant, [[主 seed…], [重复 seed…]])`。
 
+## v7（按静默拼包、停顿标记与两级结构）
+
+[v7 研究文档](../../docs/research/2026-10-16-gap-aware-batching-v7.md)复用本包：所有命令加 `--round v7`（`python -m experiments.scene_batching_v6 --round v7 <命令>`），根目录改为 `.local/gap-aware-batching-v7/`。切法与标记在 `translation_v3` 的 `Recipe.gap_pack`／`pause_marks`。与 v6 的差别：
+
+- `subset` 列出受影响 cue（批次目标、邻文或停顿标记与对照不同），但保留覆盖场景的**全部**窗口，所以 `judge` 判全集；全集时包组成与 run 无关，每个 seed 的对照副本只判一次，三个变体共用。
+- `compare --variant R --seeds S… [--against R2] [--label L]`（`v7.py`）：全集配对 Δ（按类别、分指标）、受影响／未受影响（译文相同的未受影响 cue 即噪声底）两部分、critical／major+、对照重判 − v4 原判、非劣判定（每类 CI90 上界 < 0.05、critical ≤ +0.002）、交付与成本（批大小与可见 cue 分布）→ `summaries/v7-R-vs-R2[-L].json`。`--against` 可换成另一个变体做直接比较。
+- `pooled --variant R --seed-sets a,b,c/d,e,f [--against R2]`：两组独立 seed 的配对差取均值。
+- `simulate`（`sim7.py`，离线）：dev 与产品 `ja.srt`（`.local/quality-exploration-v5/01/out-w0/`）上的间隔分布与各配方的包大小分布 → `sim/sim.json`。
+
 ## 验证
 
-`uv run --locked --offline python -m unittest experiments.scene_batching_v6.test_v6`（离线 14 项：间隔分类、对比统计、已有配方 hash 不变、gap_split 校验与切批规则、随机场景不变量、受影响 cue 判定）。真实数据上的端到端运行记录在研究文档 §7、§9。
+`uv run --locked --offline python -m unittest experiments.scene_batching_v6.test_v6 experiments.scene_batching_v6.test_v7`（v6 离线 14 项：间隔分类、对比统计、已有配方 hash 不变、gap_split 校验与切批规则、随机场景不变量、受影响 cue 判定；v7 13 项：已有配方与 gsnap5 hash 不变、新字段进 hash 与校验、动态规划与暴力枚举一致、硬边界与小包不变量、小组拆分、邻文规则、标记位置与提示／grammar、生成链路发送标记、受影响 cue 计入标记、非劣判定、模拟计数）。真实数据上的端到端运行记录在研究文档 §7、§9。
