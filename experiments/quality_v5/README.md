@@ -16,6 +16,8 @@
 | `mbr_cheap.py` | 07 | 从 v4 `mbr8` 的 8 样本 run 离线派生逐条 MBR 的 N＝4、6（`derive`，带真实配方 hash）；按样本共识度模拟早停并写伪 run（`early-stop`）；统一口径的 N／早停成本表（`cost`） | 离线 |
 | `parallel_probe.py` | 07 | 运行时把 llama-server 改为 `-np P`、同批样本并发请求，再调用 v4 `generate`；比较串行与并行的墙钟与输出 | GPU |
 | `confirm_set.py` | 07 | 按 v4 `build_sets` 规则建 v5 剧集确认集：只取 v2／v3 与 v4 dev／confirm 都没碰过的整集（电影已无余量）；写入评测根 `sets/confirm` | 离线 |
+| `mbr_semantic.py` | 08 | 同一批 mbr8 样本，逐条 MBR 的效用换成本地 bge-m3 embedding 余弦，写伪 run（如 `mbr8s`）并统计与 chrF 选择不同的比例 | GPU（embedding，秒级） |
+| `diff_judge.py` | 08 | 候选 run 只判计分 cue 与同 seed 基准 run 不同的窗口，其余窗口复制基准判分（合成包文件标 `copied_from`），之后 v4 `compare` 照常读取 | Claude 配额（退出码 75 可续跑） |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.quality_v5.<模块> ...`（各模块文件头有命令示例）。
 

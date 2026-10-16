@@ -100,7 +100,7 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 | 05 | 人工观感抽查 | resolved 2026-10-16（待用户可选填写） | 抽样表已生成：w0 两部 × 开头／中段最密／结尾各 2 分钟，141 条 | `experiments/quality_v5/spot_check.py`；`.local/quality-exploration-v5/05/sheet.md` |
 | 06 | 裁定投向 | resolved 2026-10-16 | r_all 0.76（CI95 0.68–0.83），保守 r_text 0.68 ≥ 40%：先 STT 侧（11 → 12），后翻译侧（07 → 10） | 02 的 `estimate.json` |
 | 07 | 更省的 MBR | resolved 2026-10-16 | ≤3 倍目标未达成：mbr4c 无效应；mbr6c（4.68 倍）与早停 es3m70（2.95 倍）dev 显著但重复 seed 不复现（电影翻正）；并行槽位墙钟 −25%（质量未验证）；一致率无变化；mbr8c 仍是唯一复现的 MBR | `experiments/quality_v5/mbr_cheap.py`、`parallel_probe.py`；`.local/quality-exploration-v5/07/` |
-| 08 | 语义效用函数 | 未开始 | — | — |
+| 08 | 语义效用函数 | resolved 2026-10-16 | bge-m3 余弦效用在同一批 8 样本上优于 chrF：vs mbr8c Δ −0.014（dev p 0.026、重复 p 0.064），vs b10-joint −0.035／−0.038（p 0.003／0.001），两类都为负；`mbr8s` 列为确认候选（确认待 09／10 后统一做） | `experiments/quality_v5/mbr_semantic.py`、`diff_judge.py`；`.local/quality-exploration-v5/08/` |
 | 09 | 低温＋MBR | 未开始 | — | — |
 | 10 | 按作品术语表 | 未开始 | — | — |
 | 11 | VAD 召回 | resolved 2026-10-16 | 6 组 × 2 部无一组两部都优于当前，不建议改默认：换阈值时窗口扰动主导，只加窗口时删除降但插入（幻觉、语气声）涨得更多 | `experiments/quality_v5/vad_sweep.py`；`.local/quality-exploration-v5/11/` |
@@ -222,6 +222,24 @@ HF II／III 只有精确日文参考，没有中文参考，而 MQM 裁判需要
 - 确认：没有候选通过重复 seed，按 §3 不锁定、不建确认集。盘点结果：电影已被 v4 confirm 用尽（M05 隔离），只能建剧集确认集；`experiments/quality_v5/confirm_set.py` 按 v4 规则选 v2／v3 与 v4 都没碰过的整集（11 部各 2 集、2640 条），已备好未运行。
 - 成本：裁判 15 run、1375 包（约 $140），无错误包、无阻塞；GPU 只有并行探针 2 个 run（约 25 分钟）。
 - 对后续的影响：08、09 的"N 取 07 最优值"取 N＝8（mbr8c 的样本）。
+
+### 08 语义效用函数
+
+- 假设：chrF 只看字面重合，语义相近但措辞不同的样本会被分开；用 embedding 余弦作 MBR 效用能选出更"居中"的译文。
+- 做法：只换选择器、不新增生成。本地 `BAAI/bge-m3`（MIT，revision `5617a9f6…`，2.29 GB，按 §3 预授权下载，逐文件 sha256 见 `.local/models/embedding-v5/bge-m3-ready.json`；本轮累计下载 9.5 GB），dense CLS 池化、L2 归一化；同一批 mbr8 样本逐条选与其余 7 个平均余弦最高者（`experiments/quality_v5/mbr_semantic.py`，伪 run `mbr8s`，沿用 mbr8c 配方 hash，`pseudo.selector` 记语义选择器）。裁判只评计分 cue 与 mbr8c 不同的窗口（约 2／3），其余复制 mbr8c 判分（`diff_judge.py`；上下文 cue 可能不同，属近似）。
+
+| 比较 | Δ（剧集／电影） | SE | p | 判定 |
+| --- | --- | --- | --- | --- |
+| mbr8s vs mbr8c（dev） | −0.014（−0.020／−0.008） | 0.0072 | 0.026 | promising |
+| mbr8s vs mbr8c（重复 seed，双方重复） | −0.014（−0.015／−0.013） | 0.0093 | 0.064 | promising |
+| mbr8s vs b10-joint（dev） | −0.035（−0.049／−0.022） | 0.0126 | 0.003 | promising |
+| mbr8s vs b10-joint（重复 seed，双方重复） | −0.038（−0.054／−0.022） | 0.0125 | 0.001 | promising |
+
+- 判定：**语义效用优于 chrF，dev 与重复 seed 都复现，两类都为负**；相对 b10-joint 的收益比 mbr8c（−0.021／−0.024）大约 60%。`mbr8s` 列为确认候选；确认集等 09、10 的 dev 筛选结束后统一建，Holm 家族一起检验（只开封一次）。
+- 选中不同样本的 cue 占 20.0–21.7%。选择器耗时每 dev run：chrF 3.0–3.4 s，语义 embedding 1.5–1.8 s（GPU）＋余弦选择 4.6–5.3 s（纯 Python），模型加载约 13 s；生成成本与 mbr8c 相同（6.15 倍对照）。
+- 一致率（04 指标）：mbr8s 与 mbr8c 相同（相对 b10-joint +0.006／−0.001），未触及护栏。
+- 成本：裁判 6 run、364 包（约 $36）；GPU 约 25 s（embedding）。
+- 未验证：bge-m3 显存未测；进产品还需要把语义选择器做成正式配方字段（v3 配方目前只接受 chrF 选择器）。
 
 ### 11 VAD 召回
 
