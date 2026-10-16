@@ -22,9 +22,10 @@
 
 ## v7（按静默拼包、停顿标记与两级结构）
 
-[v7 研究文档](../../docs/research/2026-10-16-gap-aware-batching-v7.md)复用本包：所有命令加 `--round v7`（`python -m experiments.scene_batching_v6 --round v7 <命令>`），根目录改为 `.local/gap-aware-batching-v7/`。切法与标记在 `translation_v3` 的 `Recipe.gap_pack`／`pause_marks`。与 v6 的差别：
+[v7 研究文档](../../docs/research/2026-10-16-gap-aware-batching-v7.md)（已结题，结论见 §7.7）复用本包：所有命令加 `--round v7`（`python -m experiments.scene_batching_v6 --round v7 <命令>`），根目录改为 `.local/gap-aware-batching-v7/`。切法与标记在 `translation_v3` 的 `Recipe.gap_pack`／`pause_marks`。与 v6 的差别：
 
 - `subset` 列出受影响 cue（批次目标、邻文或停顿标记与对照不同），但保留覆盖场景的**全部**窗口，所以 `judge` 判全集；全集时包组成与 run 无关，每个 seed 的对照副本只判一次，三个变体共用。
+- `judge-control --seed S` 在全集上判对照副本；变体用 `judge --variant R --seed S --candidate-only`，不再碰对照的裁判锁。
 - `compare --variant R --seeds S… [--against R2] [--label L]`（`v7.py`）：全集配对 Δ（按类别、分指标）、受影响／未受影响（译文相同的未受影响 cue 即噪声底）两部分、critical／major+、对照重判 − v4 原判、非劣判定（每类 CI90 上界 < 0.05、critical ≤ +0.002）、交付与成本（批大小与可见 cue 分布）→ `summaries/v7-R-vs-R2[-L].json`。`--against` 可换成另一个变体做直接比较。
 - `pooled --variant R --seed-sets a,b,c/d,e,f [--against R2]`：两组独立 seed 的配对差取均值。
 - `simulate`（`sim7.py`，离线）：dev 与产品 `ja.srt`（`.local/quality-exploration-v5/01/out-w0/`）上的间隔分布与各配方的包大小分布 → `sim/sim.json`。
