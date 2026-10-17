@@ -322,8 +322,14 @@ BUILTIN: dict[str, Recipe] = {recipe.name: recipe for recipe in (
     Recipe("terms", preanalysis="terms"),
     Recipe("review", review="risk-trigger"),
     Recipe("bws", grammar_ws="bounded"),
-    # Adopted translation flow baseline (ADR-0006): b10 batching + joint-understanding prompt.
+    # Translation flow baseline 2026-10-11..16 (ADR-0006): b10 batching + joint-understanding prompt.
     Recipe("b10-joint", batch_count=10, prompt="joint"),
+    # Adopted translation flow baseline since 2026-10-17 (ADR-0009): b10-joint prompt, v7 gap-aware packing
+    # built from <1 s groups (soft 2 s, hard 10 s, 6-12 cues around 10).
+    Recipe("dp6-grp", batch_count=10, prompt="joint", gap_pack={
+        "min": 6, "max": 12, "soft_gap": 2.0, "hard_gap": 10.0, "soft_weight": 1.0, "small_penalty": 1000.0,
+        "group_gap": 1.0, "group_max": 12, "context_both_below": 1.0, "context_before_below": 5.0,
+        "max_visible": 12}),
 )}
 _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,

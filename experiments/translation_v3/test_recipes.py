@@ -179,3 +179,11 @@ class AdoptedBaselineTest(unittest.TestCase):
         self.assertEqual((recipe.batch_count, recipe.context_before, recipe.context_after, recipe.prompt),
                          (10, 1, 1, "joint"))
         self.assertEqual(recipe.recipe_hash, "2ba680540f055b2ae0c8122faa3ba537418eb12720a552f53c3aa5b652d0969a")
+
+    def test_dp6_grp_identity_is_pinned(self):
+        # ADR-0009: the adopted flow baseline keeps the hash of the v7 screening/replicate runs.
+        recipe = R.BUILTIN["dp6-grp"]
+        self.assertEqual((recipe.batch_count, recipe.context_before, recipe.context_after, recipe.prompt),
+                         (10, 1, 1, "joint"))
+        self.assertEqual(recipe.gap_pack["group_gap"], 1.0)
+        self.assertEqual(recipe.recipe_hash, "ae473cdce915b16379a838cec15fc53e444d24686cd36c706e5f9d379ba2061e")

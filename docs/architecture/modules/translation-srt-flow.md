@@ -2,14 +2,15 @@
 
 ## 定位与阅读
 
-负责把一份日文 SRT 按固定流程配方翻译为中文 SRT：配方定义批次、只读邻文、提示与 grammar，生成器在每个 session 新启动的托管 llama-server 上逐场景生成并可续跑，`translate-srt` 校验完整覆盖后保留原 cue 编号与时间写出。当前采纳的流程基线是 v3 内置配方 `b10-joint`。同一包内还有 v3 探索用的裁判、统计与校准命令，探索已完成，只作历史工具。不负责模型与采样身份（见[逐窗翻译运行时](translation-runtime.md)与 ADR-0005）。
+负责把一份日文 SRT 按固定流程配方翻译为中文 SRT：配方定义批次、只读邻文、提示与 grammar，生成器在每个 session 新启动的托管 llama-server 上逐场景生成并可续跑，`translate-srt` 校验完整覆盖后保留原 cue 编号与时间写出。当前采纳的流程基线是 v3 内置配方 `dp6-grp`（2026-10-17 起；之前为 `b10-joint`）。同一包内还有 v3 探索用的裁判、统计与校准命令，探索已完成，只作历史工具。不负责模型与采样身份（见[逐窗翻译运行时](translation-runtime.md)与 ADR-0005）。
 
-上级总览见[架构总览](../INDEX.md)；采纳决定见 [ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)；命令、配方列表、目录布局、恢复语义与统计规则见 [translation_v3 README](../../../experiments/translation_v3/README.md)；探索结果见 [v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)。
+上级总览见[架构总览](../INDEX.md)；采纳决定见 [ADR-0009](../../adr/0009-dp6-grp-translation-flow-baseline.md)（joint 提示见 [ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)）；命令、配方列表、目录布局、恢复语义与统计规则见 [translation_v3 README](../../../experiments/translation_v3/README.md)；探索结果见 [v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)。
 
 ## 当前行为规格
 
-- 入口：`just translation-srt --srt <ja.srt> --seed <S> --out <chn.srt> [--category anime_series|animation_movie]`，即 `python -m experiments.translation_v3 translate-srt --recipe b10-joint`；子命令可加 `--port`、`--break-stale-lock`。产物根目录 `--root`（默认 `.local/translation-evaluation/hy30-flow-v3/`）是顶层参数，须写在子命令之前，因此经 `just translation-srt` 追加的参数无法改变它。
-- `b10-joint`：每批 10 条目标 cue、前后各 1 条只读邻文、`joint-understanding-v1` 提示；固定项见 `recipes.py`（`N_PREDICT` 4096、`CONTEXT_SIZE` 8192、`GUARD_TOKENS` 64 即最大输入 4032 tokens、`CACHE_PROMPT`、每请求最多 2 次相同尝试、官方采样）。超出输入预算记为失败，不截断、不自动缩批。带 `category_overrides` 的配方必须给 `--category`，否则在加载模型前报错。
+- 入口：`just translation-srt --srt <ja.srt> --seed <S> --out <chn.srt> [--category anime_series|animation_movie]`，即 `python -m experiments.translation_v3 translate-srt --recipe dp6-grp`；子命令可加 `--port`、`--break-stale-lock`。产物根目录 `--root`（默认 `.local/translation-evaluation/hy30-flow-v3/`）是顶层参数，须写在子命令之前，因此经 `just translation-srt` 追加的参数无法改变它。
+- `dp6-grp`：`b10-joint` 的提示与固定项，加 `gap_pack`（`gap-pack-v1`）：切点只落在 <1 s 小组之间，动态规划拼成 6–12 条、目标 10 条的包，包内不跨 ≥10 s 停顿；前一条邻文在停顿 <5 s 时可见、后一条只在 <1 s 时可见，可见 ≤12。规则与取值见 [translation_v3 README](../../../experiments/translation_v3/README.md#配方)。
+- `b10-joint`（前任基线、v3–v7 对照）：每批 10 条目标 cue、前后各 1 条只读邻文、`joint-understanding-v1` 提示；固定项见 `recipes.py`（`N_PREDICT` 4096、`CONTEXT_SIZE` 8192、`GUARD_TOKENS` 64 即最大输入 4032 tokens、`CACHE_PROMPT`、每请求最多 2 次相同尝试、官方采样）。超出输入预算记为失败，不截断、不自动缩批。带 `category_overrides` 的配方必须给 `--category`，否则在加载模型前报错。
 - 流程：整份 SRT 作为一个场景（ID `srt-<源 SHA256 前 12 位>`），运行目录为 `<root>/deliveries/<recipe>__s<seed>__srt-<sha12>/`。已有同名 run 时核对 `recipe_hash`、seed、scope、源与场景列表，任一不同即拒绝；相同则续跑未完成部分。
 - 输出：场景完成且 `validate_translations` 判定每个源 ID 恰有一条非空、无空行的译文时，`write_srt` 以独占创建方式写出（拒绝覆盖已有文件或源 SRT），打印 run id、cue 数、墙钟和输出 SHA256 并返回 0；否则打印覆盖统计与失败原因并返回 1，不写残缺 SRT。
 - GPU 锁：持有 `.local/gpu.lock` 期间运行；存活持有者存在时退出码 3 且不杀进程；持有者已死时只报告，确认后加 `--break-stale-lock` 替换。
@@ -34,7 +35,7 @@
 ## 代码与验证入口
 
 - 源码：`experiments/translation_v3/cli.py::cmd_translate_srt`、`recipes.py`（`Recipe`、`BUILTIN`、`load_recipe`）、`batching.py`、`generate.py`（`run_generation`、`run_id_for`、`managed_session_factory`）、`server.py`（`ManagedServer`、`GpuLock`、`verify_model`）、`procs.py`、`common.py`。
-- 测试（离线，55 项，约 3–4 秒）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`。`test_recipes.py::AdoptedBaselineTest` 固定 `b10-joint` 的批次参数与 hash `2ba68054…`；`C0EquivalenceTest`、`RecipeIdentityTest`、`BatchingTest`、`CategoryRoutingTest` 覆盖配方；`test_generate.py::GenerationTest` 用伪客户端覆盖续跑、OOM、缓存校验、重试、上下文超限；`test_status.py` 覆盖锁、Job Object、原子写。
+- 测试（离线，56 项，约 3–4 秒）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`。`test_recipes.py::AdoptedBaselineTest` 固定 `dp6-grp`（hash `ae473cdc…`）与 `b10-joint`（`2ba68054…`）；`gap_pack` 的切法与 hash 不变测试在 `experiments/scene_batching_v6/test_v7.py`；`C0EquivalenceTest`、`RecipeIdentityTest`、`BatchingTest`、`CategoryRoutingTest` 覆盖配方；`test_generate.py::GenerationTest` 用伪客户端覆盖续跑、OOM、缓存校验、重试、上下文超限；`test_status.py` 覆盖锁、Job Object、原子写。
 - 已知限制：上述 v3 测试不在任何 just recipe 中（`just experiments-test`、`just translation-test` 都不包含 `experiments/translation_v3`），只能按 README 命令单独运行。
 - 已知差异：[translation_v3 README](../../../experiments/translation_v3/README.md#验证范围)「未验证」列出 "`translate-srt` 端到端"，而 [ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md#证据与已知代价如实记录) 记录了两份整片交付（1993 条电影、387 条剧集）完整完成。两者不一致，需确认 README 的未验证清单是否应更新（文档修正，不涉及代码）。
 - 未验证：新 Job Object／锁逻辑下的真实 llama-server 启动（README 明示）。

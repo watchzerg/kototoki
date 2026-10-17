@@ -24,7 +24,7 @@
 产品直接使用已采纳的基线，不做多种可选配置。基线身份与采纳依据：
 
 - **STT**：W0（faster-whisper＋新 Pyannote VAD＋MMS 日语 CTC）与 X0（Qwen-ASR＋新 Pyannote＋同一 MMS），均无降噪、无人声分离；定义见[当前基准线](docs/architecture/stt-candidate-pipelines.md)，采纳见 [ADR-0003](docs/adr/0003-new-pyannote-baselines.md)（旧 PyanNet、fixed30 与无 VAD cut-merge 为历史对照）。测试、benchmark 或对比基线先读[W0／X0 标准基线测试指南](docs/guides/baseline-testing.md)；demo 入口 [`experiments/w0_demo/`](experiments/w0_demo/README.md)、[`experiments/x0_demo/`](experiments/x0_demo/README.md) 与各自[契约](docs/specs/w0-reusable-demo.md)、[契约](docs/specs/x0-reusable-demo.md)。demo CLI 省略参数仍落到旧默认，运行最新基线须显式选择新 Pyannote。
-- **字幕翻译**：Hy-MT2 30B-A3B APEX-I-Compact、采样 `official30b-cached-v1`（[ADR-0005](docs/adr/0005-apex-i-compact-translation-baseline.md)），完整 SRT 流程 `b10-joint`（[ADR-0006](docs/adr/0006-b10-joint-translation-flow-baseline.md)，`just translation-srt`）；产品配方 `b10-joint-degrade-v1` 只多降级。demo 入口见[本地字幕翻译](experiments/translation_demo/README.md)。
+- **字幕翻译**：Hy-MT2 30B-A3B APEX-I-Compact、采样 `official30b-cached-v1`（[ADR-0005](docs/adr/0005-apex-i-compact-translation-baseline.md)），完整 SRT 流程 `dp6-grp`（[ADR-0009](docs/adr/0009-dp6-grp-translation-flow-baseline.md)，`just translation-srt`；按停顿与 <1 s 小组拼包，提示同 `b10-joint`）；产品配方仍为 `b10-joint-degrade-v1`（每批 10 条，只多降级）。demo 入口见[本地字幕翻译](experiments/translation_demo/README.md)。
 - **评估素材**：Heaven's Feel II／III 原版日文字幕为精确主参考，I 与 Black Panther 只作补充，见[评估素材](docs/testing/fatestay-reference.md)。
 
 模型比较、流程探索（翻译 v1–v4）、验收与各轮结论按时点登记在[调研索引](docs/research/INDEX.md)及其[决定与探索时间线](docs/research/INDEX.md#决定与探索时间线)；历史报告中的 W0／W1／X0 指当时身份，分数不直接归给当前基线。

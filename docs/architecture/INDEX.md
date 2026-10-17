@@ -17,7 +17,7 @@
 | [STT 评分与显示重放](modules/stt-evaluation.md) | 后端无关的转写 JSON 契约（`validate_transcript`）、完整分母 CER／时间评分、最小 SRT 显示重放 | `kototoki_eval/`、`experiments/display/replay.py` |
 | [语料与模型资产准备](modules/corpus-and-assets.md) | 冻结私有语料窗口与参考、生成样本精确 PCM 输入；联网获取固定 revision 的模型资产，与离线推理分离 | `experiments/corpus/`、`experiments/provision/`、`experiments/w0_demo/prepare_assets.py` |
 | [逐窗翻译运行时](modules/translation-runtime.md) | 托管一个本地 llama.cpp server（loopback），按冻结窗口 JSONL 生成并机械校验译文；ADR-0005 模型／采样基线入口 | `experiments/translation_demo_runtime.py`、`experiments/translation_demo/`、`experiments/translation_monitor.py` |
-| [完整 SRT 翻译流程](modules/translation-srt-flow.md) | v3 配方、批次、可续跑生成与 `translate-srt` 整片交付；ADR-0006 `b10-joint` 基线；拥有 v3 格式 `.local/gpu.lock` 与 v3 产物根目录 | `experiments/translation_v3/` |
+| [完整 SRT 翻译流程](modules/translation-srt-flow.md) | v3 配方、批次、可续跑生成与 `translate-srt` 整片交付；ADR-0009 `dp6-grp` 基线（ADR-0006 `b10-joint` 为前任）；拥有 v3 格式 `.local/gpu.lock` 与 v3 产物根目录 | `experiments/translation_v3/` |
 | [产物契约](modules/artifact-contract.md) | 双语字幕流水线共用的工作目录与产物身份、匹配跳过与原子替换、`failure.json`／`published.json` 与覆盖规则、worker `--jobs` 协议与 `failed_windows`、SRT 读写 | `kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py` |
 | [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py` |
 | [日文 cue](modules/japanese-cues.md) | 双语字幕流水线中把 `align.json` 字符时间回填（插值、外推、整窗 `fallback`）并切成日文 cue 的纯函数，产出 `ja-cues.json` payload 与 `ja.srt` 文本；时间轴上唯一加 `offset_s` 的地方 | `kototoki/cues.py` |
@@ -92,7 +92,7 @@ flowchart TB
 | `python -m experiments.x0_demo.run`／`just x0-demo` | 根 `.venv`，子进程用 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |
 | `python -m kototoki_eval`、`python -m experiments.display.replay` | 根 `.venv` | STT 评分与显示重放（离线） |
 | `just translation-baseline`／`just translation-demo` → `experiments.translation_demo_runtime` | 根 `.venv` + 本机 llama-server | 逐窗翻译运行时 |
-| `just translation-srt` → `experiments.translation_v3 translate-srt --recipe b10-joint` | 根 `.venv` + 本机 llama-server | 完整 SRT 翻译流程 |
+| `just translation-srt` → `experiments.translation_v3 translate-srt --recipe dp6-grp` | 根 `.venv` + 本机 llama-server | 完整 SRT 翻译流程 |
 
 产品入口的使用方式见仓库 [README](../../README.md#双语字幕流水线)；基线的完整命令序列见[标准基线测试指南](../guides/baseline-testing.md)。
 
@@ -120,7 +120,7 @@ flowchart TB
 | 改转写 JSON 字段、评分或字幕显示 | [STT 评分与显示重放](modules/stt-evaluation.md) → [评测器契约](../testing/evaluator-contract.md) |
 | 准备新语料窗口或获取模型 | [语料与模型资产准备](modules/corpus-and-assets.md) |
 | 逐窗翻译、换模型或采样配置 | [逐窗翻译运行时](modules/translation-runtime.md) → [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md) |
-| 整片 SRT 翻译或新流程配方 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) → [ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md) |
+| 整片 SRT 翻译或新流程配方 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) → [ADR-0009](../adr/0009-dp6-grp-translation-flow-baseline.md) |
 | 回归、benchmark 或比较改动后的 W0 | [W0 demo 验证](../testing/2026-10-05-w0-demo-validation.md)、[STT 评估方法](../testing/stt-evaluation.md) |
 | 回归当前 X0 实现 | [X0 demo 验证](../testing/2026-10-05-x0-demo-validation.md) |
 | 理解 X0 流程的采纳依据与质量主张的区别 | [ADR-0002](../adr/0002-x0-demo-flow.md) |

@@ -44,7 +44,7 @@ translation-baseline *args:
 
 # Adopted full-SRT flow baseline (ADR-0006): APEX + official30b-cached-v1 + v3 recipe b10-joint. GPU.
 translation-srt *args:
-    {{legacy}} python -X utf8 -m experiments.translation_v3 translate-srt --recipe b10-joint {{args}}
+    {{legacy}} python -X utf8 -m experiments.translation_v3 translate-srt --recipe dp6-grp {{args}}
 
 translation-eval *args:
     {{legacy}} python -m experiments.translation_eval {{args}}

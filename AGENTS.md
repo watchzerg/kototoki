@@ -29,7 +29,7 @@
 
 - **冻结的历史证据只读**：结果报告、`docs/context/*`、ADR 历史，以及 Codex 时代的翻译裁判链（`experiments/translation_judge/`、`experiments/translation_flow/v2_*`、`experiments/translation_eval/`、参考 prompt）带 sha256 自检和记录在案的 `gpt-6.1-sol`／`codex-cli` 身份。需要改动时新增带版本的文件；原文件不重命名、不重排版、不"现代化"。
 - 翻译代码中的 `reasoning_effort:no_think` 是 Hy-MT2 chat-template token，不是 agent 设置；`reasoning_effort` 不做批量替换。
-- 翻译基线保持 `b10-joint`，直到用户另行决定。
+- 翻译流程基线保持 `dp6-grp`（[ADR-0009](docs/adr/0009-dp6-grp-translation-flow-baseline.md)，2026-10-17 起；之前为 `b10-joint`），直到用户另行决定；产品配方仍为 `b10-joint-degrade-v1`。
 - **不自动选用"翻译多次再挑选"的方法**（多样本／多 seed＋MBR 或 reranking、best-of-N、多次全量翻译投票及其更省变体）：不提议、不列候选、不在无人值守时执行，除非用户明确要求；v4 `mbr8c`、v5 `mbr8s` 已放弃，边界情况先问（[ADR-0008](docs/adr/0008-no-multi-translation-selection.md)）。
 - v3、v4、v5（剧集）确认集已开封，新的确认须用全新隔离的集合。第二轮（v2）已停止并冻结：其台账 1300+ 行，只按节读取，其作业不再恢复；先验只取[v1/v2 教训](docs/research/2026-10-10-hy30-flow-v1-v2-lessons.md)。
 
@@ -68,6 +68,6 @@
 | 测试、benchmark 或对比 W0／X0 | [基线测试指南](docs/guides/baseline-testing.md) → demo README → 契约 → 验证记录 |
 | 运行或修改 W0（VAD、ASR、对齐）或 X0（分段、Qwen 输入、MMS） | W0：[demo](experiments/w0_demo/README.md) → [契约](docs/specs/w0-reusable-demo.md)；X0：[demo](experiments/x0_demo/README.md) → [契约](docs/specs/x0-reusable-demo.md)。复用并更新 `experiments/w0_demo/`、`experiments/x0_demo/`，`x0_flow` 与 `qwen` 只作回归参照；配方变更先出新版本并记录验证，再更新基线文档。CLI 省略参数会落到旧默认（旧 PyanNet／fixed30），须显式选择新 Pyannote（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)） |
 | 选择或对比 STT 引擎、模型、对齐器 | [推理选型原则](docs/development/inference-selection.md) |
-| 翻译基线 | 模型／采样：[ADR-0005](docs/adr/0005-apex-i-compact-translation-baseline.md)；完整 SRT 流程 `b10-joint`：[ADR-0006](docs/adr/0006-b10-joint-translation-flow-baseline.md)、`just translation-srt`；[翻译 demo](experiments/translation_demo/README.md) |
+| 翻译基线 | 模型／采样：[ADR-0005](docs/adr/0005-apex-i-compact-translation-baseline.md)；完整 SRT 流程 `dp6-grp`：[ADR-0009](docs/adr/0009-dp6-grp-translation-flow-baseline.md)（joint 提示见 [ADR-0006](docs/adr/0006-b10-joint-translation-flow-baseline.md)）、`just translation-srt`；[翻译 demo](experiments/translation_demo/README.md) |
 | 翻译流程探索历史（v3、v4 已完成） | v4：[报告](docs/research/2026-10-11-hy30-flow-v4-report.md)、[台账](docs/context/2026-10-11-hy30-flow-exploration-v4.md)、[`translation_v4`](experiments/translation_v4/README.md)，唯一确认配方 `mbr8c`（约 6 倍墙钟）已放弃（ADR-0008）；v3：[报告](docs/research/2026-10-10-hy30-flow-v3-report.md)、[计划](docs/plans/hy-mt2-translation-flow-exploration-v3.md)、[`translation_v3`](experiments/translation_v3/README.md)，裁判 profile `claude-opus-5-5-mqm-v1` |
 | 旧翻译评估（历史） | [评估方法](docs/testing/translation-model-evaluation.md) + [流程](docs/agents/subtitle-translation-evaluation.md)：冻结的 Codex 时代 `sol-high-auto-v1`，其分数不与 Claude 裁判分数混用 |

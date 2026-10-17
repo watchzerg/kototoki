@@ -28,7 +28,10 @@ identified controls.
 **Translation baseline**：
 Separate experiment, not part of the STT milestone: Hy-MT2 30B-A3B
 APEX-I-Compact, sampling recipe `official30b-cached-v1`; full-SRT flow baseline is the v3
-recipe `b10-joint` (ADR-0006: 10 targets/batch, 1 neighbour each side, joint-understanding prompt).
+recipe `dp6-grp` since 2026-10-17 (ADR-0009: joint-understanding prompt of `b10-joint`, cuts only between
+<1 s groups, DP packing of 6-12 targets around 10 that never crosses a >=10 s silence, gap-aware read-only
+neighbours). `b10-joint` (ADR-0006: 10 targets/batch, 1 neighbour each side) is the previous baseline and
+the control of rounds v3-v7.
 
 ### 双语字幕流水线
 
