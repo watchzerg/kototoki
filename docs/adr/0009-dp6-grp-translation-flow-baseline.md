@@ -1,6 +1,6 @@
 # ADR-0009：字幕翻译流程基线改为 dp6-grp
 
-状态：已接受。  
+状态：已被替代；同日（2026-10-17）由 [ADR-0010：dp10-cut 基线](0010-dp10-cut-translation-flow-baseline.md)替代。下文保留采纳 dp6-grp 时的理由，"当前基线"均指当时状态。  
 日期：2026-10-17。  
 替代：[ADR-0006](0006-b10-joint-translation-flow-baseline.md) 中关于完整 SRT 流程批次的部分。ADR-0006 的 joint 提示，以及 [ADR-0005](0005-apex-i-compact-translation-baseline.md) 的模型、引擎、采样（`official30b-cached-v1`）、context 和运行时参数**全部保持不变**。  
 范围：只改研究侧的完整 SRT 流程基线（`translation_v3`、`just translation-srt`、后续探索的对照）。产品包 `kototoki/` 的翻译配方 `b10-joint-degrade-v1` **不在本决定内**，仍按源顺序每批 10 条。

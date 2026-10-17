@@ -1,6 +1,6 @@
 # ADR-0006：字幕翻译流程基线改为 b10-joint
 
-状态：已被部分替代；2026-10-17 起完整 SRT 流程的批次部分由 [ADR-0009：dp6-grp 基线](0009-dp6-grp-translation-flow-baseline.md)替代，joint 提示仍有效。下文保留 2026-10-11 的采纳理由，"当前基线"均指当时状态。  
+状态：已被部分替代；2026-10-17 起完整 SRT 流程的批次部分由 [ADR-0009：dp6-grp 基线](0009-dp6-grp-translation-flow-baseline.md)替代（同日再由 [ADR-0010：dp10-cut](0010-dp10-cut-translation-flow-baseline.md) 替代），joint 提示仍有效。下文保留 2026-10-11 的采纳理由，"当前基线"均指当时状态。  
 日期：2026-10-11。  
 部分替代：[ADR-0005](0005-apex-i-compact-translation-baseline.md) 中关于完整 SRT 流程的批次与提示部分。ADR-0005 的模型、引擎、采样（`official30b-cached-v1`）、context 和运行时参数**全部保持不变**。
 

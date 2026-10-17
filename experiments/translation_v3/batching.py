@@ -7,7 +7,8 @@ compares both. A single cue above the token target stays intact and is flagged.
 and keeps a read-only neighbour only while the silence towards it is below ``context_gap``.
 
 ``recipe.gap_pack`` (v7, ``gap-pack-v1``) chooses all cuts of a scene at once by dynamic programming
-(``gap_pack_cuts``); ``recipe.pause_marks`` (v7) records the visible silences that get a pause line.
+(``gap_pack_cuts``); ``gap-pack-v2`` (ADR-0010) adds a per-cut penalty by the silence at the cut
+(``cut_penalty``). ``recipe.pause_marks`` (v7) records the visible silences that get a pause line.
 """
 
 from __future__ import annotations
@@ -103,16 +104,21 @@ def gap_pack_cuts(scene: Scene, target: int, pack: dict[str, Any]) -> list[int]:
     programming over the scene. A batch [a, b) costs (b - a - target)**2, plus small_penalty when it is
     shorter than ``min``, plus soft_weight * gap for every silence gap >= soft_gap between two of its
     cues; it is infeasible above ``max`` cues or with a silence >= hard_gap inside. With group_gap set,
-    cuts fall only on gap_groups starts. Ties keep the earliest-found (shortest last batch) solution."""
+    cuts fall only on gap_groups starts. With cut_penalty (gap-pack-v2) every inner cut also costs the
+    penalty of the first tier whose bound exceeds the silence at the cut (a missing timestamp: the first
+    tier). Ties keep the earliest-found (shortest last batch) solution."""
     n = len(scene.cues)
     allowed = set(gap_groups(scene, pack["group_gap"], pack["group_max"], target)) if pack["group_gap"] else set(range(n))
     allowed.add(n)
     gaps = [silence(scene, i) for i in range(n - 1)]
+    tiers = pack.get("cut_penalty", ())
     best: list[tuple[float, int] | None] = [None] * (n + 1)
     best[0] = (0.0, -1)
     for stop in range(1, n + 1):
         if stop not in allowed:
             continue
+        at_cut = gaps[stop - 1] if stop < n else None
+        cut = 0.0 if stop == n else next((p for below, p in tiers if at_cut is None or at_cut < below), 0.0)
         inner = 0.0
         for start in range(stop - 1, max(-1, stop - pack["max"] - 1), -1):
             if start < stop - 1:
@@ -124,7 +130,8 @@ def gap_pack_cuts(scene: Scene, target: int, pack: dict[str, Any]) -> list[int]:
             if start not in allowed or best[start] is None:
                 continue
             size = stop - start
-            cost = best[start][0] + (size - target) ** 2 + (pack["small_penalty"] if size < pack["min"] else 0) + inner
+            cost = (best[start][0] + (size - target) ** 2 + (pack["small_penalty"] if size < pack["min"] else 0)
+                    + inner + cut)
             if best[stop] is None or cost < best[stop][0]:
                 best[stop] = (cost, start)
     if best[n] is None:

@@ -187,3 +187,11 @@ class AdoptedBaselineTest(unittest.TestCase):
                          (10, 1, 1, "joint"))
         self.assertEqual(recipe.gap_pack["group_gap"], 1.0)
         self.assertEqual(recipe.recipe_hash, "ae473cdce915b16379a838cec15fc53e444d24686cd36c706e5f9d379ba2061e")
+
+    def test_dp10_cut_identity_is_pinned(self):
+        # ADR-0010: the adopted flow baseline since 2026-10-17 (at most 10 targets, visible <= 12, hard 20 s).
+        recipe = R.BUILTIN["dp10-cut"]
+        self.assertEqual((recipe.batch_count, recipe.context_before, recipe.context_after, recipe.prompt),
+                         (10, 1, 1, "joint"))
+        self.assertEqual((recipe.gap_pack["max"], recipe.gap_pack["max_visible"], recipe.gap_pack["hard_gap"]), (10, 12, 20.0))
+        self.assertEqual(recipe.recipe_hash, "ee72ce6683c89e5a1f83fd7ba99f54f3683966deed0e526c193780ad8c500b70")

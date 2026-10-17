@@ -26,6 +26,7 @@ GROUPED = PACK | {"group_gap": 1.0}
 DP6 = R.compose("dp6", "b10-joint", gap_pack=dict(PACK))
 GRP = R.compose("dp6-grp", "b10-joint", gap_pack=dict(GROUPED))
 MARK5 = R.compose("mark5", "b10-joint", pause_marks={"min_gap": 5.0})
+CUT = R.BUILTIN["dp10-cut"]
 
 
 def scene_from_gaps(gaps: list[float | None], name: str = "S") -> Scene:
@@ -55,6 +56,9 @@ def cost(scene: Scene, cuts: list[int], pack: dict, target: int = 10) -> float |
             return None
         total += (b - a - target) ** 2 + (pack["small_penalty"] if b - a < pack["min"] else 0)
         total += sum(pack["soft_weight"] * g for g in gaps if g >= pack["soft_gap"])
+        if b < len(scene.cues) and pack.get("cut_penalty"):
+            g = silence(scene, b - 1)
+            total += next((p for below, p in pack["cut_penalty"] if g is None or g < below), 0.0)
     return total
 
 
@@ -85,6 +89,47 @@ class HashTest(unittest.TestCase):
         for bad in ({}, {"min_gap": 0}, {"min_gap": 5, "x": 1}):
             with self.assertRaises(ValueError):
                 R.compose("x", "b10-joint", pause_marks=bad)
+
+
+class CutPenaltyTest(unittest.TestCase):
+    """gap-pack-v2 (ADR-0010): per-cut penalty by the silence at the cut, used by dp10-cut."""
+
+    def test_identity_and_validation(self):
+        self.assertEqual(CUT.spec()["versions"]["gap_pack"], R.GAP_PACK_V2_VERSION)
+        self.assertEqual(GRP.spec()["versions"]["gap_pack"], R.GAP_PACK_VERSION)
+        self.assertNotEqual(R.compose("x", "dp10-cut", gap_pack=CUT.gap_pack | {"cut_penalty": [[1.0, 3.0]]}).recipe_hash,
+                            CUT.recipe_hash)
+        for bad in ([], [[1.0]], [[1.0, 0]], [[1.0, 3.0], [0.5, 6.0]], [(0.5, 6.0)], "x"):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                R.compose("x", "dp10-cut", gap_pack=CUT.gap_pack | {"cut_penalty": bad})
+
+    def test_dp_matches_brute_force(self):
+        rng = random.Random(13)
+        pack = CUT.gap_pack
+        for trial in range(150):
+            n = rng.randint(1, 15)
+            scene = scene_from_gaps(random_gaps(rng, n))
+            best = min(c for r in range(n) for inner in itertools.combinations(range(1, n), r)
+                       if (c := cost(scene, [0, *inner], pack)) is not None)
+            self.assertAlmostEqual(cost(scene, gap_pack_cuts(scene, 10, pack), pack), best, msg=f"trial {trial}")
+
+    def test_cut_moves_to_longer_pause(self):
+        # 18 cues: without a cut penalty the best split is 9/9 at a 0.2 s pause; with it, 10/8 at the 1.5 s pause
+        scene = scene_from_gaps([0.2] * 9 + [1.5] + [0.2] * 7)
+        self.assertEqual(gap_pack_cuts(scene, 10, CUT.gap_pack | {"cut_penalty": [[0.0001, 1.0]]}), [0, 9])
+        self.assertEqual(gap_pack_cuts(scene, 10, CUT.gap_pack), [0, 10])
+
+    def test_random_scene_invariants(self):
+        rng = random.Random(17)
+        for _ in range(200):
+            scene = scene_from_gaps(random_gaps(rng, rng.randint(1, 80)))
+            batches = build_batches(scene, CUT)
+            self.assertEqual([k for b in batches for k in b.target_ids], scene.ids)
+            hard = {i + 1 for i in range(len(scene.cues) - 1) if (g := silence(scene, i)) is not None and g >= 20}
+            self.assertTrue(hard <= {b.start for b in batches})
+            for b in batches:
+                self.assertLessEqual(len(b.target_ids), 10)
+                self.assertLessEqual(len(b.before_ids) + len(b.target_ids) + len(b.after_ids), 12)
 
 
 class PackTest(unittest.TestCase):

@@ -75,6 +75,11 @@ GAP_SPLIT_KEYS = {"snap", "max", "cut_gap", "context_gap", "max_visible"}
 GAP_PACK_VERSION = "gap-pack-v1"
 GAP_PACK_KEYS = {"min", "max", "soft_gap", "hard_gap", "soft_weight", "small_penalty", "group_gap", "group_max",
                  "context_both_below", "context_before_below", "max_visible"}
+# 2026-10-17 (ADR-0010): gap-pack-v1 plus an optional cut_penalty, [[below_seconds, penalty], ...] by rising
+# below_seconds: a cut at a silence < below costs the penalty of its first matching tier (a missing timestamp
+# counts as no silence), so cuts drift to the longest nearby pause instead of being restricted to groups.
+GAP_PACK_V2_VERSION = "gap-pack-v2"
+GAP_PACK_V2_KEY = "cut_penalty"
 # v7: a read-only line without a cue ID at every visible silence >= min_gap (render_translation).
 PAUSE_MARK_VERSION = "pause-mark-v1"
 PAUSE_MARK_KEY = "pause"
@@ -145,8 +150,16 @@ def _check_gap_split(split: Any, batch_count: int | None) -> None:
 def _check_gap_pack(pack: Any, batch_count: int | None) -> None:
     if batch_count is None:
         raise ValueError("gap_pack needs batch_count (the target batch size)")
-    if not isinstance(pack, dict) or set(pack) != GAP_PACK_KEYS:
-        raise ValueError(f"gap_pack needs exactly the keys {sorted(GAP_PACK_KEYS)}")
+    if not isinstance(pack, dict) or set(pack) - {GAP_PACK_V2_KEY} != GAP_PACK_KEYS:
+        raise ValueError(f"gap_pack needs exactly the keys {sorted(GAP_PACK_KEYS)} (optionally {GAP_PACK_V2_KEY})")
+    if GAP_PACK_V2_KEY in pack:
+        tiers = pack[GAP_PACK_V2_KEY]
+        if (not isinstance(tiers, list) or not tiers
+                or any(not isinstance(t, list) or len(t) != 2 or any(type(x) not in (int, float) or x <= 0 for x in t)
+                       for t in tiers)
+                or any(a[0] >= b[0] for a, b in zip(tiers, tiers[1:]))):
+            raise ValueError("gap_pack.cut_penalty must be [[below_seconds, penalty], ...] of positive numbers, "
+                             "below_seconds rising")
     if any(type(pack[k]) is not int for k in ("min", "max", "group_max", "max_visible")):
         raise ValueError("gap_pack.min/max/group_max/max_visible must be integers")
     if not 1 <= pack["min"] <= batch_count <= pack["max"] <= pack["max_visible"] or pack["group_max"] > pack["max"]:
@@ -280,7 +293,7 @@ class Recipe:
         if self.gap_split:
             versions["gap_split"] = GAP_SPLIT_VERSION
         if self.gap_pack:
-            versions["gap_pack"] = GAP_PACK_VERSION
+            versions["gap_pack"] = GAP_PACK_V2_VERSION if GAP_PACK_V2_KEY in self.gap_pack else GAP_PACK_VERSION
         if self.pause_marks:
             versions["pause_marks"] = [PAUSE_MARK_VERSION, PAUSE_MARK_KEY, sha256_bytes(PAUSE_MARK_TEXT.encode())]
         if self.target_context:
@@ -324,12 +337,18 @@ BUILTIN: dict[str, Recipe] = {recipe.name: recipe for recipe in (
     Recipe("bws", grammar_ws="bounded"),
     # Translation flow baseline 2026-10-11..16 (ADR-0006): b10 batching + joint-understanding prompt.
     Recipe("b10-joint", batch_count=10, prompt="joint"),
-    # Adopted translation flow baseline since 2026-10-17 (ADR-0009): b10-joint prompt, v7 gap-aware packing
-    # built from <1 s groups (soft 2 s, hard 10 s, 6-12 cues around 10).
+    # Translation flow baseline on 2026-10-17 before dp10-cut (ADR-0009): b10-joint prompt, v7 gap-aware
+    # packing built from <1 s groups (soft 2 s, hard 10 s, 6-12 cues around 10).
     Recipe("dp6-grp", batch_count=10, prompt="joint", gap_pack={
         "min": 6, "max": 12, "soft_gap": 2.0, "hard_gap": 10.0, "soft_weight": 1.0, "small_penalty": 1000.0,
         "group_gap": 1.0, "group_max": 12, "context_both_below": 1.0, "context_before_below": 5.0,
         "max_visible": 12}),
+    # Adopted translation flow baseline since 2026-10-17 (ADR-0010): b10-joint prompt, gap-pack-v2 with at most
+    # 10 targets (visible <= 12), cuts anywhere but penalised at short silences, hard 20 s; not GPU-screened.
+    Recipe("dp10-cut", batch_count=10, prompt="joint", gap_pack={
+        "min": 6, "max": 10, "soft_gap": 2.0, "hard_gap": 20.0, "soft_weight": 1.0, "small_penalty": 1000.0,
+        "group_gap": None, "group_max": 10, "context_both_below": 1.0, "context_before_below": 5.0,
+        "max_visible": 12, "cut_penalty": [[0.5, 6.0], [1.0, 3.0], [2.0, 1.0]]}),
 )}
 _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,
