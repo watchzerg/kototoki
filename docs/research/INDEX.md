@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-18：[第八轮（v8）同一句话小组内语序重排](2026-10-18-group-reorder-v8.md)立项（proposed，等待执行会话）：包、切包、邻文、grammar、裁判全部沿用 `dp10-cut`，只在包内按 R2+（停顿 <1.0 s 且前一行无句末标点）划组、把 `groups` 注入提示并把 joint 提示的逐 ID 归属句改为"组内可按中文语序重新分配"（`joint-understanding-v2`）；唯一变体 `grp1`，对照 dp10-cut 本轮新生成。先判模型是否真的重排（重排率＋人工抽查），再看 accuracy 非劣与 fluency 改善，新增 CPU 读速／占比校验器作显示风险终点。划组规则来自同日的[离线统计](2026-10-18-reorder-group-offline-stats.md)。
+
 2026-10-17：用户裁定把完整 SRT 流程基线改为 `dp10-cut`（[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)）：每包 ≤10 条、可见 ≤12 条，分级切点（<0.5／<1／<2 s 切分别加 6／3／1 分）、不跨 ≥20 s；[离线模拟](2026-10-17-dynamic-cut-batching-simulation.md)显示平均每包 8.69 条（dev，dp6-grp 7.88）／7.83 条（产品，6.74），现有裁判数据测不出门槛效应，按逻辑推定，未做 GPU 筛选；产品配方不变。
 
 2026-10-17：用户裁定把完整 SRT 流程基线改为 `dp6-grp`（[ADR-0009](../adr/0009-dp6-grp-translation-flow-baseline.md)）：v7 两次合并与 b10-joint 无可分辨差异（剧集 −0.009、电影 +0.003），按 Q4 规则未达"两次都非劣"，用户按逻辑合理与可与语序工作共用边界采纳；产品配方 `b10-joint-degrade-v1` 不变。
@@ -165,6 +167,10 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 ### 字幕质量探索第五轮（2026-10-16）
 
 - [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），用户已裁定放弃（ADR-0008）；其余后续列在第 8 节
+
+### 字幕翻译流程第八轮：同一句话小组内语序重排（2026-10-18）
+
+- [方案、进度与结论](2026-10-18-group-reorder-v8.md)：proposed。四个问题：Q1 模型是否真的在组内重排（重排率＋30 组人工抽查）；Q2 相对 dp10-cut 全集 accuracy 是否非劣、fluency 是否改善、cue-attribution 是否上升；Q3 组内重排是否造成显示失衡（读速与占比校验器）；Q4 是否成为研究侧默认（accuracy 两次非劣、fluency 改善、cue-attribution 不升、校验器标记率 ≤ 对照 1.5 倍）。设计已在 §4 定死：R2+、1.0 s、包内划组、不设大组上限、不做 R3、`…` 不算句末，唯一 GPU 变体 `grp1`；执行者只填提示措辞、注入格式与阈值。备选路线（组级输出再切回）与产品门槛放宽登记在 §8
 
 ### 同一句话小组内语序重排：划组规则（2026-10-18）
 
