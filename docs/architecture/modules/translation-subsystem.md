@@ -80,3 +80,5 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/05-translate-and-merge.md`、`09-translate-degrade.md`、`15-translate-run-key.md`（run 键、身份与 `needs_model` 归本子系统的 `plan`；`data.py` 并入 `batching.py`）、`16-translate-dp10-cut.md`（产品配方合并 dp10-cut 切包）；规格 §1.2（含第三轮裁定表）、§3.3、§4、§5.2、§6、§7.3；[ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0011](../../adr/0011-dp10-cut-product-recipe.md)；stock 引擎的 `run_step` 假设与驻留日志由票据 01 smoke #4 验证。
+
+2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：新增真实模型验证 `just smoke translate_product`（未运行）；`MODEL_ASSET` 由 core 测试钉住等于 `assets.toml`。

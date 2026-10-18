@@ -49,3 +49,5 @@
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/02-config-and-media.md`、`10-resampler-swr.md`、`11-duration-tag.md`；规格 §1.2 第三轮裁定表、§2.1、§2.2、§10。下混与重采样参数取自 `experiments/corpus/prepare_round2.py`，配方常量取自 `experiments/w0_demo/`（`vad_candidates.py`、`asr.py`、`alignment.py`）、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`。
+
+2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：ffmpeg 默认路径改指项目内 `.local/tools/ffmpeg/<version>/bin/`，构建与身份锁在 `assets.toml`（[依赖布局与资产清单](../../development/dependencies.md)）；`test_media_ffmpeg` 移入 full 层。

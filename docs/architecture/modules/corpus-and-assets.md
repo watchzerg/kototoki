@@ -35,3 +35,5 @@
 ## 变更与决策来源
 
 [语料冻结记录](../../testing/2026-10-04-corpus-freeze.md)、[MMS 来源核验](../../research/2026-10-04-japanese-ctc-source-verification.md)、[环境清单](../../research/2026-10-04-runtime-inventory.md)。
+
+2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：产品模型与二进制的身份权威移交根目录 `assets.toml`，获取与核对由 `scripts/assets.py` 负责（[依赖布局与资产清单](../../development/dependencies.md)）。

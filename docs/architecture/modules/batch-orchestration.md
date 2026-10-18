@@ -57,3 +57,5 @@
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/06-batch-orchestration.md`、`14-stage-plan-module.md`（阶段链与身份拆出，见[阶段计划](stage-plan.md)）、`15-translate-run-key.md`（翻译阶段按 `needs_model` 取锁、session 失败只影响需要模型的文件）；规格 §3、§4、§6、§7.1 与 §1.2 第三轮裁定表。
+
+2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：`JobCase` 加 `FAKE_MEDIA` 接缝，新增 full 层端到端测试 `tests/full/test_job_ffmpeg.py`。

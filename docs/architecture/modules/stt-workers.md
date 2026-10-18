@@ -57,3 +57,5 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/03-stt-workers.md`、`07-x0-engine.md`；规格 §1.2、§4、§6、§7.1、§7.3、§12；票据 01 smoke #1–#3（`.local/smoke/20261014T045328Z/`）。来源代码：`experiments/w0_demo/vad_candidates.py`（`CurrentPyannoteVad`、`chunk_intervals`）、`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`（`check_gpu`）、`experiments/w0_demo/alignment.py`、`experiments/w0_demo/pipeline.py`（units 不变量）、`kototoki_eval/schema.py`。共用的 CUDA 守卫放在新文件 `workers/gpu.py`（2026-10-14 用户裁定，不改票据 00 的 `protocol.py`）。三壳各自的 `identity`／`model_files`／`RECIPE_HASH` 于票据 `14-stage-plan-module.md`（2026-10-15）迁入[阶段计划](stage-plan.md)，取值不变。
+
+2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：两个冻结窗口门禁从 `tests/` 移到 `scripts/smoke/`，改由真实模型验证入口 `just smoke` 运行；测试移入 `tests/core/`（分层见[测试设计与验收](../../agents/testing.md#分层)）。
