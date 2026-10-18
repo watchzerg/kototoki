@@ -12,6 +12,7 @@
 字幕翻译以 **Hy-MT2 30B-A3B APEX-I-Compact**（`hy-mt2-30b-a3b-apex-i-compact`）为基线，后续优化讨论与回归以此为准。原实验中的 Q3_K_M 仍是其冻结统计对照，历史报告不重新标记或重算。
 
 - [ADR-0005：当前基线决定与固定配方](../adr/0005-apex-i-compact-translation-baseline.md)：模型身份、兼容引擎、采纳理由及优化边界；[ADR-0004](../adr/0004-hy-mt2-translation-baseline.md)保留此前 Q3_K_M 采纳历史。
+- 完整 SRT 流程基线：`dp10-cut`（[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)，`just translation-srt`），产品配方 `dp10-cut-degrade-v1`（[ADR-0011](../adr/0011-dp10-cut-product-recipe.md)）；本页的评估方法与 Sol/high 分数属 Codex 时代，流程探索 v3 起改用 Claude 裁判，两者分数不混用（见[调研索引](../research/INDEX.md#决定与探索时间线)）。
 - [基线 demo 入口与运行命令](../../experiments/translation_demo/README.md#当前已采纳基线)：完整 smoke 命令及运行产物。
 - [四量化正式比较报告](../research/2026-10-07-hy30-four-quantization-results.md)：当前采纳所依据的质量、交付、性能与正式长跑证据及结论限制；此前[五候选报告](../research/2026-10-06-translation-model-comparison-results.md)保留历史范围。
 

@@ -56,13 +56,16 @@
 - ADR: [字幕翻译流程基线改为 dp6-grp](adr/0009-dp6-grp-translation-flow-baseline.md) — 已被 ADR-0010 替代（2026-10-17）；完整 SRT 流程按停顿与 <1 s 小组拼包，提示同 `b10-joint`；v7 两次合并与 b10-joint 无可分辨差异；产品配方不变。部分替代 ADR-0006。
 - ADR: [放弃多样本 MBR，不自动选用"翻译多次再挑选"](adr/0008-no-multi-translation-selection.md) — 已接受（2026-10-16）；放弃 v5 `mbr8s` 与 v4 `mbr8c`，翻译基线仍为 `b10-joint`；多样本选择、best-of-N、多次全量翻译投票等方法只在用户明确要求时使用，边界情况先问。
 - ADR: [双语字幕流水线架构](adr/0007-bilingual-subtitle-pipeline-architecture.md) — 已接受（2026-10-13）；阶段 × 整批的 GPU 调度、单一 CUDA 12.8 Python 环境（torch 2.11.0+cu128）与官方 llama.cpp、以日文 cue 为翻译单元、翻译 10→5→1 降级、配置文件驱动无 CLI；已实现（2026-10-14）。
+- ADR: [字幕翻译流程基线改为 b10-joint](adr/0006-b10-joint-translation-flow-baseline.md) — 已被部分替代；批次部分 2026-10-17 由 ADR-0009、再由 ADR-0010 替代，joint 提示仍有效。
+- ADR: [字幕翻译采用 APEX-I-Compact 基线](adr/0005-apex-i-compact-translation-baseline.md) — 已接受（2026-10-07，2026-10-08 更新采样配方）；模型、采样与运行时参数仍是当前翻译基线；引擎条款由 ADR-0007 替代，完整 SRT 流程部分先后由 ADR-0006／0009／0010 替代。
+- ADR: [字幕翻译采用 Hy-MT2 30B-A3B Q3_K_M 基线](adr/0004-hy-mt2-translation-baseline.md) — 历史决定；2026-10-07 被 ADR-0005 替代。
 - Specs: [中日双语字幕批量生产流水线：技术设计](specs/bilingual-subtitle-pipeline.md) — implemented（2026-10-14）；第一个正式产品形态（配置文件驱动）：固定配方、八阶段分解、CPU 流水线＋GPU 分阶段批处理、产物与续跑、统一 CUDA 12.8 环境、配置边界与里程碑。
 - Plans: [Hy30 四种量化大规模比较](plans/hy30-four-quantization-comparison.md) — 实测与评估完成；原 83 窗口及新增 1,200 窗口、完整自动评估、四轮性能与正式长跑，失败和缺分完整保留；[结果报告](research/2026-10-07-hy30-four-quantization-results.md)。
 - Specs: [字幕翻译共同设计](specs/subtitle-translation-common.md) — draft；四套流程共用的语义单元、上下文／术语、源文预分析、记忆、映射、恢复、可选反思与评测隔离；反思的审校／修订模型可配置，暂不固定。模型流程：[通用语言模型](specs/subtitle-translation-generic.md)、[Hy-MT2](specs/subtitle-translation-hy-mt2.md)、[TranslateGemma](specs/subtitle-translation-translategemma.md)、[Tower+](specs/subtitle-translation-tower-plus.md)；完整增强设计尚未全部实施，固定窗口实验子集已完成 smoke/dev 并冻结正式 test 配方，不改变当前 STT 里程碑。
 - Guides: [本地翻译模型资产](guides/local-translation-model-assets.md) — 共九个 GGUF 已下载并通过完整 SHA256，含新增 Hy30 APEX-I-Compact、i1-Q3_K_L、i1-Q3_K_M；本地路径、固定 revision、哈希、核验记录及两份资产清单入口。新增三款已完成固定窗口质量、四轮性能及正式长跑验证；官方 Q4 已完成与 Q3 的历史对照。
 - Plans: [第一批 ASR 两片整片比较](plans/asr-candidates-fullfilm.md) — 已完成；Cohere／Granite 基础版／Nemotron 与新运行 W0／X0，共同新 Pyannote／MMS、完整 II／III。
 - Testing: [YODAS2 国会讨论素材](testing/yodas2-parliament-reference.md) — 用户指定的 3 小时国会录音、1,371 条原字幕与 SRT 已获取；哈希、逐条转换、整段解码通过，听辨／ASR 待执行。
-- ADR: [W0／X0统一采用新Pyannote](adr/0003-new-pyannote-baselines.md) — 最新已接受决定；两条均新Pyannote＋MMS，区分采纳定义与待迁移CLI默认。
+- ADR: [W0／X0统一采用新Pyannote](adr/0003-new-pyannote-baselines.md) — 已接受；两条均新Pyannote＋MMS，区分采纳定义与待迁移CLI默认。
 - Plans: [W0／X0 四种 VAD 对照](plans/vad-baseline-comparison.md) — 十组合十二窗已执行；119 项完成、1 项触发生成上限，完整失败记账。
 - Plans: [新 Pyannote GPU 补测](plans/pyannote-gpu-comparison.md) — 保留 CPU 原始结果，仅重测两条 Pyannote 路线。
 - Guides: [W0／X0标准基线测试](guides/baseline-testing.md) — 当前统一入口；两套demo命令、环境、结果核验、评测及历史复现边界。

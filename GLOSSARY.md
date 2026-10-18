@@ -32,7 +32,11 @@ recipe `dp10-cut` since 2026-10-17 (ADR-0010: joint-understanding prompt of `b10
 6-10 targets around 10 with at most 12 visible cues, cuts penalised at short silences, never across a
 >=20 s silence, gap-aware read-only neighbours; not GPU-screened). `dp6-grp` (ADR-0009: cuts only between
 <1 s groups, 6-12 targets, never across >=10 s) briefly preceded it; `b10-joint` (ADR-0006: 10
-targets/batch, 1 neighbour each side) is the earlier baseline and the control of rounds v3-v7. The product
+targets/batch, 1 neighbour each side) is the earlier baseline and the control of rounds v3-v7; `dp10-cut`
+is the control of round v8. `gap_pack` is the recipe field for silence-aware packing (`gap-pack-v1` in
+`dp6-grp`, `gap-pack-v2` adds the tiered cut penalty of `dp10-cut`). `grp1` (v8: R2+ sentence groups
+injected into `dp10-cut` packs with the `joint-understanding-v2` prompt, `group-reorder-v1`) produced no
+reordering and the line was closed on 2026-10-18; it is kept as a recipe, not a baseline. The product
 recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carries the same packing into `kototoki/`.
 
 ### 双语字幕流水线

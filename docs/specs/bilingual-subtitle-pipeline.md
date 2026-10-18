@@ -1,6 +1,6 @@
 # 中日双语字幕批量生产流水线：技术设计
 
-状态：implemented（2026-10-14，票据 00–09 交付，两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)；2026-10-15 最终验收后票据 10–15 完成，票据 13 裁定不实现，见 §13）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
+状态：implemented（2026-10-14，票据 00–09 交付，两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)；2026-10-15 最终验收后票据 10–15 完成，票据 13 裁定不实现；2026-10-18 票据 16 把产品配方换成 `dp10-cut-degrade-v1`（[ADR-0011](../adr/0011-dp10-cut-product-recipe.md)）；见 §13）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
 日期：2026-10-13  
 范围：第一个正式产品形态，命令行工具，输入一批日语视频，输出日文 SRT、中文 SRT 与中日双语 SRT。不含 UI、流式、打包、非日语输入。
 
@@ -89,7 +89,7 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 | asr | 逐窗识别，纯文字 | `audio-16k.wav`+`vad.json` → `asr.json` | GPU | w0：加载 7 s，推理 150–170 s；x0：加载 19 s，推理 365–395 s |
 | align | 逐窗 CTC 对齐，字符时间 | `audio-16k.wav`+`asr.json` → `align.json`（现有 `result.json` 结构） | GPU | 加载 17 s，推理 53–56 s |
 | ja-cues | 字符 units → 日文 cue，含无时间字符的时间回填 | `align.json` → `ja.srt`+`ja-cues.json` | CPU | <1 s |
-| translate | b10-joint 整片翻译，续跑语义沿用 v3 | `ja.srt` → `zh.srt`+翻译 run 目录 | GPU（独占） | 1993 条约 270 s，387 条约 66 s；另加模型加载 |
+| translate | 产品配方 `dp10-cut-degrade-v1` 整片翻译（ADR-0011），续跑语义沿用 v3 | `ja.srt` → `zh.srt`+翻译 run 目录 | GPU（独占） | 1993 条约 270 s，387 条约 66 s；另加模型加载 |
 | merge | 按 cue 编号合并 | `ja.srt`+`zh.srt` → `ja-zh.srt` | CPU | <1 s |
 
 ### 2.1 流复制的容器映射
@@ -293,7 +293,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | `asr_qwen.py` | `x0_demo/asr.py` + `experiments/qwen/run_qwen.py` 的资产身份常量、`checkpoint_identity`、`check_gpu`（复制，不导入历史包） |
 | `align.py` | `w0_demo/alignment.py`（继续用 torchaudio `forced_align`，放宽 2.8.0 版本断言） |
 | `cues.py` | `display/replay.py` 的组 cue 规则 + 软断点 + 时间回填 |
-| `translate/`（含 `translate/recipes.py`，翻译配方与 `b10-joint-degrade-v1` 的唯一归属） | `translation_v3` 的 `recipes`、`batching`、`generate`（改为传入已建 session、按批次落盘）、`server`、`procs`、`common`（路径改配置）、`data`（`Scene`／`Cue`），`translation_demo` 的 `adapters`、`client`、`run`（`explicit_oom`、资产清单），`translation_demo_runtime` 的驻留解析；去掉 `mbr` 导入与裁判／统计命令；保留一条测试钉住 v3 `b10-joint` 的原 hash `2ba68054…`，证明移植没有改身份 |
+| `translate/`（含 `translate/recipes.py`，翻译配方与产品配方 `dp10-cut-degrade-v1` 的唯一归属；票据 09 的 `b10-joint-degrade-v1` 保留为已固定身份） | `translation_v3` 的 `recipes`、`batching`、`generate`（改为传入已建 session、按批次落盘）、`server`、`procs`、`common`（路径改配置）、`data`（`Scene`／`Cue`），`translation_demo` 的 `adapters`、`client`、`run`（`explicit_oom`、资产清单），`translation_demo_runtime` 的驻留解析；去掉 `mbr` 导入与裁判／统计命令；保留测试钉住 v3 `b10-joint` 的原 hash `2ba68054…`，证明移植没有改身份（票据 16 起同一测试文件另钉 `dp10-cut` 的 v3 hash 与产品配方 hash） |
 | `srt.py`、`merge.py` | `translation_flow/srt.py`（允许零条目） + 新写合并 |
 | `schema.py` | `kototoki_eval/schema.py` 的 `validate_transcript` |
 
@@ -417,7 +417,7 @@ seed  = 20261008
 
 ## 12. 实施里程碑
 
-票据在 `.scratch/bilingual-subtitle-pipeline/issues/`（本地 tracker，不进 Git），编号与下表一致；依赖关系写在票据的 `Blocked by`。每张票交付时按[随交付同步](../agents/documentation.md#随交付同步)更新对应模块页，不把全部文档推到 08。下表只列设计时规划的票据 00–09；最终验收后的票据 10–15（重采样改回 swr、`DURATION` 标签优先级、间隔断句跨子段、cue 词边界调研、阶段计划模块、翻译 run 键）在 §13 记录裁定，细节在各模块页"变更与决策来源"。
+票据在 `.scratch/bilingual-subtitle-pipeline/issues/`（本地 tracker，不进 Git），编号与下表一致；依赖关系写在票据的 `Blocked by`。每张票交付时按[随交付同步](../agents/documentation.md#随交付同步)更新对应模块页，不把全部文档推到 08。下表只列设计时规划的票据 00–09；最终验收后的票据 10–16（重采样改回 swr、`DURATION` 标签优先级、间隔断句跨子段、cue 词边界调研、阶段计划模块、翻译 run 键、产品配方换 `dp10-cut-degrade-v1`）在 §13 记录裁定，细节在各模块页"变更与决策来源"。
 
 | 票据 | 里程碑 | 内容 | 完成标准 | Blocked by |
 | --- | --- | --- | --- | --- |

@@ -2,6 +2,8 @@
 
 实现[v3 计划](../../docs/plans/hy-mt2-translation-flow-exploration-v3.md)：固定 Hy-MT2 30B-A3B APEX-I-Compact，在新的 Claude MQM 裁判（`claude-opus-5-5-mqm-v1`）下比较完整 `jpn.srt → chn.srt` 流程配方。执行状态以 [v3 台账](../../docs/context/2026-10-10-hy30-flow-exploration-v3.md) 和 `status` 命令为准。
 
+当前采纳的完整 SRT 流程基线是内置配方 `dp10-cut`（2026-10-17 起，[ADR-0010](../../docs/adr/0010-dp10-cut-translation-flow-baseline.md)），`just translation-srt` 即 `translate-srt --recipe dp10-cut`；前任 `dp6-grp`（ADR-0009）、`b10-joint`（ADR-0006）保留为内置配方。产品包 `kototoki/` 不导入本包，其配方 `dp10-cut-degrade-v1`（[ADR-0011](../../docs/adr/0011-dp10-cut-product-recipe.md)）是移植。
+
 与 v2 的关系：v2 的代码（`experiments/translation_flow/v2_*`）、目录和结果全部冻结，本包不写入、不修改。v3 只**导入**纯函数：`translation_demo.adapters`（原生模板、ID grammar、解析器）、`translation_demo.client`（loopback 客户端与原始交换记录）、`translation_demo.run`（资产清单、OOM 识别）、`translation_demo_runtime`（驻留证据与校验）、`translation_flow.srt`（SRT 读写）。v2 分数、裁判和 custody 体系不复用。
 
 ## 命令

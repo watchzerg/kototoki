@@ -1,6 +1,6 @@
 # ADR-0010：字幕翻译流程基线改为 dp10-cut
 
-状态：已接受。  
+状态：已接受；"后续"中关于产品配方 `b10-joint-degrade-v1` 的部分 2026-10-18 起由 [ADR-0011：产品配方 dp10-cut-degrade-v1](0011-dp10-cut-product-recipe.md) 替代。  
 日期：2026-10-17。  
 替代：[ADR-0009](0009-dp6-grp-translation-flow-baseline.md)（dp6-grp 的批次规则）。[ADR-0006](0006-b10-joint-translation-flow-baseline.md) 的 joint 提示，以及 [ADR-0005](0005-apex-i-compact-translation-baseline.md) 的模型、引擎、采样（`official30b-cached-v1`）、context 和运行时参数**全部保持不变**。  
 范围：只改研究侧的完整 SRT 流程基线（`translation_v3`、`just translation-srt`、后续探索的对照）。产品包 `kototoki/` 的翻译配方 `b10-joint-degrade-v1` **不在本决定内**。

@@ -42,7 +42,7 @@ translation-demo *args:
 translation-baseline *args:
     {{legacy}} python -X utf8 -m experiments.translation_demo_runtime {{args}} --candidate hy-mt2-30b-a3b-apex-i-compact --engine '.local/translation-evaluation/20261006-v1/hy30-compat/runtime/llama-server.exe' --engine-identity '.local/translation-evaluation/20261006-v1/hy30-compat/runtime/identity.json' --layers 99 --sampling-profile official30b-cached-v1 --n-predict 4096 --context-size 8192 --threads 8 --threads-batch 8
 
-# Adopted full-SRT flow baseline (ADR-0006): APEX + official30b-cached-v1 + v3 recipe b10-joint. GPU.
+# Adopted full-SRT flow baseline (ADR-0010): APEX + official30b-cached-v1 + v3 recipe dp10-cut. GPU.
 translation-srt *args:
     {{legacy}} python -X utf8 -m experiments.translation_v3 translate-srt --recipe dp10-cut {{args}}
 

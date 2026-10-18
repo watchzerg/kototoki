@@ -1,6 +1,6 @@
 # ADR-0007：中日双语字幕流水线的产品架构
 
-状态：已接受（用户于 2026-10-13 讨论中逐项裁定）；已实现（2026-10-14，票据 00–09，见[技术设计](../specs/bilingual-subtitle-pipeline.md)与[架构总览](../architecture/INDEX.md)）  
+状态：已接受（用户于 2026-10-13 讨论中逐项裁定）；已实现（2026-10-14，票据 00–09，见[技术设计](../specs/bilingual-subtitle-pipeline.md)与[架构总览](../architecture/INDEX.md)）；决定 4 中的产品翻译配方 2026-10-18 起由 [ADR-0011：dp10-cut-degrade-v1](0011-dp10-cut-product-recipe.md) 替代，三级降级仍有效  
 日期：2026-10-13  
 范围：第一个正式产品形态的工程架构。模型与配方身份不在此决定：STT 沿用 [ADR-0003](0003-new-pyannote-baselines.md)，翻译沿用 [ADR-0005](0005-apex-i-compact-translation-baseline.md)／[ADR-0006](0006-b10-joint-translation-flow-baseline.md)。完整设计见[技术设计](../specs/bilingual-subtitle-pipeline.md)。
 
