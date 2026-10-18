@@ -10,6 +10,7 @@
 | `checks.py` | v8 §4.4 重排率与 §4.5 显示校验器：读一个或两个 run 目录的译文与场景时间，按配方切包、包内 R2+ 划组 |
 | `coverage.py` | v8 票据 01：`grp1` 注入 `groups` 的包比例与每包输入 token 增量 |
 | `sample.py` | v8 票据 02（**GPU**）：挑多 cue 组多的包，各臂（`dp10-cut`、`grp1`、可选 `grp1-alt` 两步式措辞）各生成一次，写并排 Markdown 与重排率；`--dry-run` 只渲染提示 |
+| `merge_probe.py` | v8 票据 07（**GPU**）：备选路线预检。读票据 02 两份小样的 20 个包，把每个多 cue 组合成一个源条目（ID `<首条>~<行数>`，日文以全角空格连接），用 `dp10-cut` 原样的 joint v1 提示与合并后 ID 的 grammar 整句翻译；离线比对逐行对照的相似度、语序、标点切回可行性与 token；`--dry-run` 只渲染，`--reuse` 只重算比较 |
 
 ```bash
 PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.stats --local-root <有 .local 的 checkout>/.local [--json <输出.json>]
@@ -18,6 +19,7 @@ PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.checks --local-root <.
 PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.coverage --local-root <...>/.local --validate <run 目录> [--json <输出.json>]
 PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.sample [--dry-run] [--criterion covered|split] [--alt] \
     [--exclude <已有 sample.json>] [--seed 20261011] [--per-category 5] [--out .local/group-reorder-v8/02]
+PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.merge_probe [--dry-run] [--reuse <已有 probe.json>] \n    [--sample <标签> <sample.json> ...] [--seed 20261011] [--out .local/group-reorder-v8/02c]
 python -X utf8 -m unittest discover -s experiments/reorder_groups -t . -p "test_*.py"
 ```
 
@@ -27,6 +29,13 @@ python -X utf8 -m unittest discover -s experiments/reorder_groups -t . -p "test_
 - 生成：走 `translation_v3.generate.managed_session_factory` 与 `run_step`（`gpu.lock`、新启 llama-server、首个 completion `cache_n == 0`、两次尝试），不是 `run_generation` 的 run：没有 `run.json`／`scenes/`，不能用于裁判或配对，只用于观察。
 - `--alt` 加第三臂 `grp1-alt`：用 `ALT_INSTRUCTION`（两步式"先合句译再切回"）临时替换 `joint-understanding-v2` 的句子渲染；只在本脚本里，不改 `recipes.py`，`grp1` hash 不变。
 - 输出：`sample.json`（提示 sha256、译文、token、耗时、`checks.reorder` 的重排率）与 `sample.md`（日文与各臂译文并排，**含原文**，放 `.local` 下不入库）。
+
+## 合并预检（`merge_probe.py`，占 GPU）
+
+- 输入：默认 `02b/sample.json`（小样 B，主）与 `02/sample.json`（小样 A，对话对照）；按 `dp10-cut` 重新切包，目标与邻文 ID 须与 JSON 一致（取 cue 时间）。对照译文、`grp1` 臂译文与对照 token 直接取自 `sample.json`。
+- 渲染：只读邻文与单条目标不变；多 cue 组换成一个条目，`batch.groups` 为空、不注入 `groups`、不加新措辞，所以就是"程序合并 → 模型译一段"；不改 `recipes.py`／`batching.py`／`adapters.py`，配方 hash 不变。
+- 比较（每个多 cue 组）：对照逐行拼接对合并译文的 `SequenceMatcher` 相似度（噪声参照：同组 `grp1` 臂拼接对对照）、`zh_len` 字数、去标点后是否相同；语序：对照每行片段（去标点）在合并译文里的最长公共子串起点须 ≥ min(3, 片段长) 才算对齐，全部对齐时按起点是否递增判 `same_order`／`reordered`，否则 `unmatched`；切回：只在合并译文的中文标点（`，、。？！…；：`）之后切 n−1 刀，DP 最小化各行"字数占比 − 时长占比"的最大绝对值，≤ 0.3（`checks.SHARE_DEVIATION_MAX`）记为可切，否则（含标点不够）为需回退。
+- 输出：`probe.json`（提示 sha256、合并译文、token、耗时、逐组比较与汇总）与 `probe.md`（日文、对照逐行、合并译文按 DP 切点分段，**含原文**，放 `.local` 下不入库）。观察用，不是 `run_generation` 的 run，不能裁判。
 
 ## 重排率与显示校验（`checks.py`）
 
