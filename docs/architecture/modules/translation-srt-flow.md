@@ -20,7 +20,7 @@
 ## 实现设计
 
 - `recipes.py`：不可变 `Recipe`，`recipe_hash` 覆盖所有影响生成的字段与提示常量版本；`BUILTIN` 内置配方；`load_recipe` 支持 `<root>/recipes/<name>.json` 组合配方，同名内置配方内容不符即拒绝。提示与 grammar 复用 `translation_demo.adapters`。
-- `batching.py::build_batches`：按源顺序从第 0 条起分批，附只读邻文；`cue_positions` 记录批内位置。
+- `batching.py::build_batches`：按源顺序从第 0 条起分批，附只读邻文；`cue_positions` 记录批内位置。`sentence_groups`（v8 R2+ 划组：停顿 <门槛且前一行无句末标点）是唯一实现，研究配方 `grp1` 的 `groups` 字段与 `experiments/reorder_groups` 都调用它；不带 `groups` 的配方（含 `dp10-cut`）行为与 hash 不变。
 - `generate.py::run_generation`：逐场景原子写 `scenes/<id>.json`；`managed_session_factory` 每个 session 新启动服务器，首个 completion 必须 `timings.cache_n == 0`；session 只在服务器成功启动后记入 `run.json`；多于一个实际工作的 session 时标 `resumed: true`、`performance_comparable: false`。
 - `server.py`：`ManagedServer` 复现 `translation_demo_runtime` 的基线命令行（模块 docstring 列出全部参数），驻留解析直接导入该模块；`verify_model` 加载前对 GGUF 全量 SHA256 并按路径＋大小＋mtime 缓存；`resolve_model` 要求资产清单 SHA256 等于 `common.EXPECTED_MODEL_SHA256`。
 - `procs.py`：`ProcessLock`（pid＋进程创建时间，防 PID 复用）、`KillOnCloseJob`（Windows Job Object，Python 被强杀时服务器随之退出）、`list_llama_servers`。
@@ -36,7 +36,7 @@
 ## 代码与验证入口
 
 - 源码：`experiments/translation_v3/cli.py::cmd_translate_srt`、`recipes.py`（`Recipe`、`BUILTIN`、`load_recipe`）、`batching.py`、`generate.py`（`run_generation`、`run_id_for`、`managed_session_factory`）、`server.py`（`ManagedServer`、`GpuLock`、`verify_model`）、`procs.py`、`common.py`。
-- 测试（离线，57 项，约 3–5 秒）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`。`test_recipes.py::AdoptedBaselineTest` 固定 `dp10-cut`（hash `ee72ce66…`）、`dp6-grp`（`ae473cdc…`）与 `b10-joint`（`2ba68054…`）；`gap_pack` 的切法与 hash 不变测试在 `experiments/scene_batching_v6/test_v7.py`；`C0EquivalenceTest`、`RecipeIdentityTest`、`BatchingTest`、`CategoryRoutingTest` 覆盖配方；`test_generate.py::GenerationTest` 用伪客户端覆盖续跑、OOM、缓存校验、重试、上下文超限；`test_status.py` 覆盖锁、Job Object、原子写。
+- 测试（离线，62 项，约 3–5 秒）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`。`test_recipes.py::AdoptedBaselineTest` 固定 `dp10-cut`（hash `ee72ce66…`）、`dp6-grp`（`ae473cdc…`）与 `b10-joint`（`2ba68054…`），`GroupReorderTest` 固定加 `groups` 字段前全部 17 个内置配方的 hash；`gap_pack` 的切法与 hash 不变测试在 `experiments/scene_batching_v6/test_v7.py`；`C0EquivalenceTest`、`RecipeIdentityTest`、`BatchingTest`、`CategoryRoutingTest` 覆盖配方；`test_generate.py::GenerationTest` 用伪客户端覆盖续跑、OOM、缓存校验、重试、上下文超限；`test_status.py` 覆盖锁、Job Object、原子写。
 - 已知限制：上述 v3 测试不在任何 just recipe 中（`just experiments-test`、`just translation-test` 都不包含 `experiments/translation_v3`），只能按 README 命令单独运行。
 - 已知差异：[translation_v3 README](../../../experiments/translation_v3/README.md#验证范围)「未验证」列出 "`translate-srt` 端到端"，而 [ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md#证据与已知代价如实记录) 记录了两份整片交付（1993 条电影、387 条剧集）完整完成。两者不一致，需确认 README 的未验证清单是否应更新（文档修正，不涉及代码）。
 - 未验证：新 Job Object／锁逻辑下的真实 llama-server 启动（README 明示）。
