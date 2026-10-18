@@ -1,6 +1,6 @@
 """media 的纯函数部分：语言归一化、音轨选择、时长来源、容器映射、下混选择、命令行构造、补偿解析。
 
-用 ffmpeg 合成媒体的端到端测试在 test_media_ffmpeg.py。
+用 ffmpeg 合成媒体的测试属于 full 层，在 `tests/full/test_media_ffmpeg.py`。
 """
 
 from __future__ import annotations

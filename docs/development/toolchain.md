@@ -41,9 +41,9 @@ neighboring repository's selections are references, not existing installations.
 仅 Torch／TorchAudio 2.11.0 的构建由 `+cpu` 换为 `+cu128`；未升级 ASR／MMS 环境。
 清单与实测边界见[GPU 补测报告](../research/2026-10-05-pyannote-gpu-comparison.md)。
 
-当前 `just experiments-test` 覆盖研究期的评测器、语料、资产准备、各后端适配器、日语 CTC 映射与批次契约、W0／X0 可复用 demo、显示、实验汇总和性能汇总的离线测试；`just test` 只发现 `tests/` 下的产品测试（当前为 `kototoki/` 的产物契约、worker 协议与 SRT）；
+当前 `just experiments-test` 覆盖研究期的评测器、语料、资产准备、各后端适配器、日语 CTC 映射与批次契约、W0／X0 可复用 demo、显示、实验汇总和性能汇总的离线测试；`just test`、`just test-full` 分别发现 `tests/core/`、`tests/full/` 下的产品测试（分层见[开发工作流](workflow.md#测试分层与资源边界)）；
 研究期测试用 `justfile` 的 `legacy` 解释器（Python 3.12、无依赖，等同旧根环境），可选后端依赖缺失时照旧显式跳过，并在对应固定后端环境单独验证。
-根环境自票据 01 起是产品环境（Python 3.13，统一 CUDA 12.8：torch／torchaudio 2.11.0+cu128 走显式 `pytorch-cu128` 索引，其余来自 PyPI，版本见[技术选型](technology-stack.md#已选依赖)）；`just test-full` 在其中运行 `scripts/smoke/` 的环境 smoke。
+根环境自票据 01 起是产品环境（Python 3.13，统一 CUDA 12.8：torch／torchaudio 2.11.0+cu128 走显式 `pytorch-cu128` 索引，其余来自 PyPI，版本见[技术选型](technology-stack.md#已选依赖)）；`just smoke` 在其中运行 `scripts/smoke/` 的真实模型验证。
 `just check` 执行 Python 编译检查，不等同 lint 或类型检查。
 研究期隔离环境的实际版本、锁文件范围与离线恢复入口见[环境清单](../research/2026-10-04-runtime-inventory.md)。
 

@@ -69,7 +69,7 @@
 | 票据 03 门禁 | ASR 文字必须逐字符一致；unit 时间允许 ±20 ms（1 帧），超出另开票但不阻塞 05／06（§12） |
 | `break_stale_lock` | 不进配置文件，改为环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1` 一次性生效（§10） |
 | VAD 设备 | 第一版固定 `cuda:0`，不设配置键；CPU 仍列未来方向（§10） |
-| 产品测试位置 | `tests/`，由票据 00 建目录并把 `kototoki/` 接进 `just check`／`just test`（§12） |
+| 产品测试位置 | `tests/`，由票据 00 建目录并把 `kototoki/` 接进 `just check`／`just test`（§12）；2026-10-18 起分为 `tests/core/`（`just test`）与 `tests/full/`（`just test-full`），都不调用真实模型，真实模型验证走 `just smoke`（[开发工作流](../development/workflow.md#测试分层与资源边界)） |
 | 翻译配方归属 | 只住在 `kototoki/translate/recipes.py`（05 建、09 改）；`kototoki/recipes.py` 只放 STT／cue／媒体常量（§7.3） |
 
 ## 2. 阶段分解
@@ -297,7 +297,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | `srt.py`、`merge.py` | `translation_flow/srt.py`（允许零条目） + 新写合并 |
 | `schema.py` | `kototoki_eval/schema.py` 的 `validate_transcript` |
 
-产品测试放 `tests/`（workflow.md 规定的 core 层，`just test` 发现），不与模块同目录；票据 00 创建 `tests/__init__.py` 并把 `kototoki/` 接进 `just check`。现有 `kototoki_eval/` 保持评分用途不动。
+产品测试放 `tests/`（2026-10-18 起分为 `tests/core/` 与 `tests/full/`，分层见 workflow.md），不与模块同目录；票据 00 创建 `tests/__init__.py` 并把 `kototoki/` 接进 `just check`。现有 `kototoki_eval/` 保持评分用途不动。
 
 ### 7.4 上游版本核实（2026-10-13）
 
@@ -325,7 +325,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 ## 9. 验收（草案）
 
 - 离线单元测试：ffprobe 音轨选择与容器映射、派生 WAV 参数、产物身份与跳过逻辑、cue 切分与时间回填、SRT 解析／写出／合并、批次推进与失败隔离（伪 worker）。
-- 环境 smoke（票据 01，脚本入库到 `scripts/smoke/`，并接到 `just test-full`；每项各自在独立子进程运行，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在一个进程里相遇）：① torchaudio 2.11.0 配 torch 2.11.0+cu128 的 `forced_align`（合成序列＋一个真实冻结窗口）；② pyannote 4.0.7＋torchcodec 0.17 在产品环境导入并对内存波形推理，列出进程实际加载的 FFmpeg DLL（若没有任何 `avcodec*` 被加载，则 VAD worker 不需要 FFmpeg PATH，§7.1 的那条随之删除）；③ **在不含 `whisper-runtime-provisional` 的干净 PATH 下**，同一进程先 import torch（cu128）再用 CT2 解码一窗，打印实际加载的 cudnn／cublas／cudart 模块路径，除 CT2 wheel 自带的 `cudnn64_9.dll` 外均来自 torch 目录，并记录 cuDNN 版本与是否 PTX JIT；④ 官方 llama.cpp 加载 APEX GGUF，与兼容引擎比对 `/tokenize` 与固定 seed 短生成，再发**同一 session 的第二个 `cache_prompt` 请求**并断言 `timings.cache_n`、`tokens_evaluated`、`stop_type`／`stopped_limit`／`truncated` 的含义与 v3 `run_step` 的假设一致，保存一份 stock 引擎加载日志供 `residency_evidence` 回归，测一个 b10 批次的显存峰值。
+- 环境 smoke（票据 01，脚本入库到 `scripts/smoke/`，并接到 `just test-full`，2026-10-18 起改由真实模型验证入口 `just smoke` 运行；每项各自在独立子进程运行，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在一个进程里相遇）：① torchaudio 2.11.0 配 torch 2.11.0+cu128 的 `forced_align`（合成序列＋一个真实冻结窗口）；② pyannote 4.0.7＋torchcodec 0.17 在产品环境导入并对内存波形推理，列出进程实际加载的 FFmpeg DLL（若没有任何 `avcodec*` 被加载，则 VAD worker 不需要 FFmpeg PATH，§7.1 的那条随之删除）；③ **在不含 `whisper-runtime-provisional` 的干净 PATH 下**，同一进程先 import torch（cu128）再用 CT2 解码一窗，打印实际加载的 cudnn／cublas／cudart 模块路径，除 CT2 wheel 自带的 `cudnn64_9.dll` 外均来自 torch 目录，并记录 cuDNN 版本与是否 PTX JIT；④ 官方 llama.cpp 加载 APEX GGUF，与兼容引擎比对 `/tokenize` 与固定 seed 短生成，再发**同一 session 的第二个 `cache_prompt` 请求**并断言 `timings.cache_n`、`tokens_evaluated`、`stop_type`／`stopped_limit`／`truncated` 的含义与 v3 `run_step` 的假设一致，保存一份 stock 引擎加载日志供 `residency_evidence` 回归，测一个 b10 批次的显存峰值。
 - GPU smoke：1 个 5 分钟片段走完 8 阶段，产物齐全、SRT 合法、双语对齐。
 - 回归：II／III 上新环境与现有基线的 CER／时间指标对比（本期不做，§11）。
 - 整片：2 部电影批量运行一次，记录各阶段墙钟、显存峰值与失败清单。

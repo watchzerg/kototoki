@@ -3,7 +3,7 @@
 复制自 `experiments/translation_v3/recipes.py`，只保留 `b10-joint` 与 `dp10-cut` 用到的字段与函数；去掉
 terms／review／多样本／类别路由与配方文件加载。`Recipe.spec()` 的结构与 v3 相同（`gap_pack` 为 None 时不进
 `recipe`，有值时 `versions["gap_pack"]` 记 `gap-pack-v2`），因此 `B10_JOINT`、`DP10_CUT` 的 `recipe_hash` 等于
-v3 `BUILTIN` 同名配方的原 hash（`tests/test_translate_recipes.py` 钉住），请求字节同样逐字节对照 v3。
+v3 `BUILTIN` 同名配方的原 hash（`tests/core/test_translate_recipes.py` 钉住），请求字节同样逐字节对照 v3。
 产品配方只把 `overflow` 策略换成拆批降级与单条保留日文（见 `degrade.py`），因而另算 hash；提示、grammar、
 采样与请求字节不变：`b10-joint-degrade-v1`（票据 09）对应 `b10-joint`，`dp10-cut-degrade-v1`（票据 16，
 ADR-0011）对应 `dp10-cut`。

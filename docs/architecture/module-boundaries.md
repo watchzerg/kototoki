@@ -32,7 +32,7 @@
 - 允许：完整 SRT 流程 → 逐窗翻译运行时（`translation_demo.adapters`、`client`、`run`、`translation_demo_runtime` 的纯函数）。
 - 现存的当前→历史依赖（只读导入，不得扩大）：X0 → `experiments.qwen.run_qwen`（Qwen 资产身份常量与 `checkpoint_identity`、`check_gpu`）；完整 SRT 流程 → `experiments.translation_flow.srt`（SRT 读写与覆盖校验），其测试另导入冻结的 `translation_flow.v2_prepare`／`v2_recipes` 做 C0 等价核对；W0 测试导入 `experiments.framework_equivalence` 作数值参照，运行时不导入。
 - 产品包 `kototoki/`（分层图见[架构总览](INDEX.md#依赖与装配)）：依赖只向下，编排 `job` → 媒体、cue、合并、阶段计划 `plan`、翻译子系统 → 基础层（`config`、`recipes`、`artifacts`、`srt`、`workers/protocol`、`schema`）。`plan` 与 worker 壳同在中间层：壳导入 `plan` 取身份与模型清单；`plan` 只在核对翻译阶段时延迟导入翻译子系统（`translate.plan`），壳不会触发这条边。四条硬规则：
-  - **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动阶段 worker，与它们的全部通信是 jobs 文件、工作目录里的产物和退出码；`tests/test_job.py` 的禁止导入测试（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、任何 `experiments.*`）守门。编排不导入 worker 壳；期望身份来自 `plan`，模型核对只用 `workers/gpu.verify_models`（导入时不加载推理库）。
+  - **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动阶段 worker，与它们的全部通信是 jobs 文件、工作目录里的产物和退出码；`tests/core/test_job.py` 的禁止导入测试（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、任何 `experiments.*`）守门。编排不导入 worker 壳；期望身份来自 `plan`，模型核对只用 `workers/gpu.verify_models`（导入时不加载推理库）。
   - **推理模块互不导入。** `vad`、`asr_*`、`align` 只依赖基础层，各自在独立进程里加载模型；阶段之间只经产物文件交接。三壳共用的入口、读 WAV、模型核对与 CUDA 守卫在 `workers/gpu.py`，只被 worker 壳与编排导入，不属基础层。
   - **基础层不依赖 torch、ffmpeg、网络与上层。** 它是所有离线测试的根基，编排器可以直接导入。
   - **产品包不导入 `experiments.*`。** 历史实现只复制不引用；`kototoki_eval/` 继续承担评分，产品侧的 `validate_transcript` 复制在 `kototoki/schema.py`。

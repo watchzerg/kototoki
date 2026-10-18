@@ -321,7 +321,7 @@ class ImportBoundaryTest(unittest.TestCase):
                 "print([m for m in ('torch', 'ctranslate2', 'faster_whisper', 'transformers', 'pyannote', "
                 "'torchaudio', 'torchcodec') if m in sys.modules])")
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
-                                cwd=Path(__file__).resolve().parent.parent)
+                                cwd=Path(__file__).resolve().parents[2])
         self.assertEqual(result.stdout.strip(), "[]")
 
 

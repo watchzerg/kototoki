@@ -40,7 +40,7 @@
 ## 代码与验证入口
 
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
-- 测试（core，`just test`）：`tests/test_artifacts.py`（短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、覆盖规则四种组合与崩溃窗口、原子写重试与临时文件清理）、`tests/test_protocol.py`（jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`）、`tests/test_srt.py`（空 SRT、取整边界、严格解析、UTF-8 无 BOM）。
+- 测试（core，`just test`）：`tests/core/test_artifacts.py`（短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、覆盖规则四种组合与崩溃窗口、原子写重试与临时文件清理）、`tests/core/test_protocol.py`（jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`）、`tests/core/test_srt.py`（空 SRT、取整边界、严格解析、UTF-8 无 BOM）。
 - `failure.json` 的清理归编排器：该文件成功发布后删除（[批次编排](batch-orchestration.md)，票据 06）。
 - 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟。worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
 

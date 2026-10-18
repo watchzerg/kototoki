@@ -20,7 +20,7 @@ from kototoki import artifacts, config, cues, plan, recipes
 from kototoki.workers import align as align_worker
 from kototoki.workers import asr as asr_worker
 from kototoki.workers.protocol import EXIT_OK
-from tests.test_stt_workers import MODELS, FakeAligner, WorkerTestCase
+from tests.core.test_stt_workers import MODELS, FakeAligner, WorkerTestCase
 
 FAKE = ("torch", "transformers")
 TARGET = "kototoki.asr_qwen"

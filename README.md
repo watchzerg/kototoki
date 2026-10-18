@@ -15,7 +15,7 @@
 
 ## 开发
 
-- 工具链：mise、uv、just；`just --list` 列出全部 recipe，命令、门禁与测试分层见[开发工作流](docs/development/workflow.md)。`just check` 做语法检查，`just test` 跑离线 core 测试，`just test-full` 与各 demo 入口加载模型、独占 GPU，先问再跑。
+- 工具链：mise、uv、just；`just --list` 列出全部 recipe，命令、门禁与测试分层见[开发工作流](docs/development/workflow.md)。`just check` 做语法检查，`just test`、`just test-full` 跑离线的 core 与 full 测试（都不加载模型）；`just smoke`（真实模型验证）与各 demo 入口加载模型、独占 GPU，先问再跑。
 - 所有模型、私有音频、完整转写、生成的字幕与运行日志存于 Git 忽略的 `.local/`。
 - 文档从[文档索引](docs/INDEX.md)进入；agent 约束在 [AGENTS.md](AGENTS.md)。
 

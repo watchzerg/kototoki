@@ -41,7 +41,7 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► translate �
 ## 代码与验证入口
 
 - 代码：`kototoki/plan.py`（`Target`、`Plan`、`next_stage`、`advance`、`PlanError`、`ModelSha`、各阶段身份函数、`translate_plan`、`STAGES`／`GPU_STAGES`／`STAGE_INPUTS`／`STAGE_OUTPUT`／`IDENTITY_KEY`、`worker_models`、`model_files`、`recipe_hash`、模型文件 SHA256 常量）。
-- 测试（core，`just test`）：`tests/test_plan.py` 直接测计划模块：阶段链逐级推进、cues 阶段同时要求 `ja-cues.json` 与 `ja.srt`、无语音直达 `publish` 再 `done`、最终文件改动或身份改变即重新发布、`advance` 停在未写出产物的阶段、连续调用结果相同且不改写入参、`PlanError` 标明阶段、损坏产物视为不当前；翻译阶段用 `sys.modules` 里的伪 `kototoki.translate` 模块（只需 `plan` 返回 `identity` 与 `needs_model`）。`tests/test_job.py` 核对一次整批运行中每文件 `next_stage` 恰一次、每个跑过的阶段 `advance` 恰一次；`tests/test_stt_workers.py` 核对壳写出的身份与本模块的期望身份逐字段相等。
+- 测试（core，`just test`）：`tests/core/test_plan.py` 直接测计划模块：阶段链逐级推进、cues 阶段同时要求 `ja-cues.json` 与 `ja.srt`、无语音直达 `publish` 再 `done`、最终文件改动或身份改变即重新发布、`advance` 停在未写出产物的阶段、连续调用结果相同且不改写入参、`PlanError` 标明阶段、损坏产物视为不当前；翻译阶段用 `sys.modules` 里的伪 `kototoki.translate` 模块（只需 `plan` 返回 `identity` 与 `needs_model`）。`tests/core/test_job.py` 核对一次整批运行中每文件 `next_stage` 恰一次、每个跑过的阶段 `advance` 恰一次；`tests/core/test_stt_workers.py` 核对壳写出的身份与本模块的期望身份逐字段相等。
 - 真实运行：票据 14 交付时对四个整片工作目录重算身份全等（见状态行）。
 - 未验证：没有单独的真实运行；行为由编排与 worker 的整片验收间接覆盖。
 

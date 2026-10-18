@@ -1,4 +1,7 @@
-"""批次编排器离线测试：媒体、cue 构建、翻译与合并均为假实现，GPU 阶段由 `fake_worker.py` 子进程顶替。"""
+"""批次编排器离线测试：媒体、cue 构建、翻译与合并均为假实现，GPU 阶段由 `fake_worker.py` 子进程顶替。
+
+`JobCase` 也是 full 层端到端测试（`tests/full/test_job_ffmpeg.py`）的接缝：`FAKE_MEDIA = False` 时媒体阶段用真实 ffmpeg。
+"""
 
 from __future__ import annotations
 
@@ -22,8 +25,8 @@ from kototoki import artifacts, job, media
 from kototoki.config import ConfigError, load
 from tests.fake_worker import FAKE_MODELS
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-FAKE_WORKER = Path(__file__).resolve().parent / "fake_worker.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FAKE_WORKER = Path(__file__).resolve().parents[1] / "fake_worker.py"
 SRT_JA = "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n"
 SRT_ZH = "1\n00:00:01,000 --> 00:00:02,000\n你好\n"
 DEAD_PID = 999999999
@@ -35,6 +38,8 @@ def fake_worker_command(stage: str, jobs_path: Path) -> list[str]:
 
 
 class JobCase(unittest.TestCase):
+    FAKE_MEDIA = True  # False 时媒体阶段走真实 `media.probe`／`extract`（full 层的端到端测试）
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -56,8 +61,9 @@ class JobCase(unittest.TestCase):
         self.probed: list[str] = []
         self.extracted: list[str] = []
         self.extract_errors: set[str] = set()
-        self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
-        self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
+        if self.FAKE_MEDIA:
+            self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
+            self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
         self.enterContext(mock.patch("kototoki.job.cues.build_cues", return_value=({"cues": []}, SRT_JA)))
         self.enterContext(mock.patch("kototoki.job.gpu.verify_models", return_value=FAKE_MODELS))
         self.enterContext(mock.patch("kototoki.job.contain_children"))  # 不把测试进程放进 Job Object

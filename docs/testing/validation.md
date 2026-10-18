@@ -12,7 +12,7 @@ Scope: evidence required for Python code and local inference changes.
 | --- | --- | --- |
 | Fast offline checks | Pure transformations, input validation, output contracts, and error handling with fixtures or a fake inference boundary. | Real model compatibility or GPU execution. |
 | Local integration | Actual changed boundaries such as audio decoding, files, configuration, subprocesses, and cleanup in isolated temporary locations. | Transcription accuracy or performance on user recordings. |
-| Real model smoke test | Load provisioned assets and transcribe a small permitted sample using the selected backend and actual device. | Accuracy across languages, workloads, or hardware. |
+| Real model smoke test（真实模型验证，`just smoke`；每次须用户批准，不属于任何 gate） | Load provisioned assets and transcribe a small permitted sample using the selected backend and actual device. | Accuracy across languages, workloads, or hardware. |
 | Quality/performance evaluation | A defined sample set, reference text when scoring accuracy, model/settings, hardware, latency, and memory measurements. | Performance or quality outside the evaluated conditions. |
 
 Select checks based on changed behavior; documentation-only edits need link and

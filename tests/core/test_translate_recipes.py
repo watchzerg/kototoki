@@ -268,8 +268,8 @@ class GapPackTests(unittest.TestCase):
         # 23 条、停顿 0.5 s：10/10/3 要付 1000 分的短包罚，8/8/7 不用。
         scene = scene_from_document(document(23))
         self.assertEqual(sorted(len(b.target_ids) for b in build_batches(scene, R.DP10_CUT)), [7, 8, 8])
-        # 每 10 条之间隔 20 s（`tests.test_translate.document`）：硬切出 10/10/3。
-        from tests.test_translate import document as paused
+        # 每 10 条之间隔 20 s（`tests.core.test_translate.document`）：硬切出 10/10/3。
+        from tests.core.test_translate import document as paused
         scene = scene_from_document(paused(23))
         self.assertEqual([len(b.target_ids) for b in build_batches(scene, R.DP10_CUT)], [10, 10, 3])
         self.assertEqual([(len(b.before_ids), len(b.after_ids)) for b in build_batches(scene, R.DP10_CUT)],

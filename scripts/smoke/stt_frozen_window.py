@@ -1,8 +1,8 @@
-"""票据 03 冻结窗口门禁（full：占 GPU、加载三个模型，运行前须经用户批准）。
+"""票据 03 冻结窗口门禁（真实模型验证：占 GPU、加载三个模型，运行前须经用户批准）。
 
-入口：`just test-full stt_frozen_window`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
-`python -m tests.stt_frozen_window --out <dir>` 启动本脚本；锁不存在时拒绝运行）。不在 `just test` 的发现范围内
-（文件名不以 `test_` 开头）。依次以子进程运行三个产品 worker（`python -m kototoki.workers.<stage>`），
+入口：`just smoke stt_frozen_window`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
+`python scripts/smoke/stt_frozen_window.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。
+依次以子进程运行三个产品 worker（`python -m kototoki.workers.<stage>`），
 输入是冻结窗口 `round2/corpus/audio/hf-ii-window-01.wav`，再与现有同窗 W0 结果对照：
 
 - VAD 窗口整数边界逐个相等；
@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import argparse
 import importlib.metadata
 import json
 import os
@@ -26,10 +25,14 @@ import sys
 import time
 from typing import Any
 
-from kototoki import artifacts, config, plan
-from kototoki.workers.protocol import FileJob, Jobs, write_jobs
+import smokelib
 
-REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(smokelib.REPO))
+
+from kototoki import artifacts, config, plan  # noqa: E402
+from kototoki.workers.protocol import FileJob, Jobs, write_jobs  # noqa: E402
+
+REPO = smokelib.REPO
 LOCAL = REPO / ".local"
 NAME = "stt_frozen_window"
 AUDIO = "round2/corpus/audio/hf-ii-window-01.wav"
@@ -100,11 +103,9 @@ def compare(work_dir: Path, reference: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", type=Path, required=True, help="本次 test-full 的输出目录（由 run_all.py 新建）")
-    args = parser.parse_args()
+    args = smokelib.parse_args(__doc__)
     if not (LOCAL / "gpu.lock").is_file():
-        print(f"{LOCAL / 'gpu.lock'} absent; run via `just test-full {NAME}`, which holds the GPU lock", file=sys.stderr)
+        print(f"{LOCAL / 'gpu.lock'} absent; run via `just smoke {NAME}`, which holds the GPU lock", file=sys.stderr)
         return 1
     audio, reference_path = LOCAL / AUDIO, LOCAL / REFERENCE
     models_root = LOCAL / "models"

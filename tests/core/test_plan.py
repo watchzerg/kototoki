@@ -1,6 +1,6 @@
 """阶段计划模块（`kototoki.plan`）离线测试：阶段链逐级推进、无语音直达发布、已发布即 `done`、
 最终文件改动即重新发布、连续调用结果相同且不改写入参、核对出错时标明阶段。
-壳写出的身份与本模块相等由 `tests/test_stt_workers.py` 覆盖；整批运行中的调用次数由 `tests/test_job.py` 覆盖。
+壳写出的身份与本模块相等由 `tests/core/test_stt_workers.py` 覆盖；整批运行中的调用次数由 `tests/core/test_job.py` 覆盖。
 """
 
 from __future__ import annotations

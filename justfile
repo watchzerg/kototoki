@@ -7,9 +7,10 @@ legacy := "uv run --no-project --no-python-downloads --offline --python 3.12"
 default:
     @just --list
 
-# 产品测试：只发现 tests/，-t . 使模块以 tests.* 导入；tests/ 为空时 unittest 报 NO TESTS RAN 并非零退出。
-test:
-    uv run --locked --offline python -m unittest discover -s tests -t . -v
+# core 产品测试：只发现 tests/core/，-t . 使模块以 tests.core.* 导入；可追加 unittest 参数（如 -k 名称片段）定向运行。
+# 目录为空时 unittest 报 NO TESTS RAN 并非零退出。
+test *args:
+    uv run --locked --offline python -m unittest discover -s tests/core -t . -v {{args}}
 
 # 研究期离线测试，只读保留，不属于 gate-core（docs/development/workflow.md#测试分层与资源边界）。
 experiments-test:
@@ -83,8 +84,13 @@ lint:
 typecheck:
     @echo "typecheck: no type checker selected (see docs/development/toolchain.md)" && exit 1
 
-# 环境 smoke（占 GPU、加载模型，须先经用户批准）：每项独立子进程，结果写 .local/smoke/；可只跑指定项。
+# full 产品测试：离线集成（项目内 ffmpeg、fake worker），不加载模型、不占 GPU、不持锁；参数同 test。
 test-full *args:
+    uv run --locked --offline python -m unittest discover -s tests/full -t . -v {{args}}
+
+# 真实模型验证（占 GPU、加载模型，每次须先经用户批准；不属于任何 gate）：每项独立子进程，持 .local/gpu.lock，
+# 结果写 .local/smoke/；可只跑指定项。
+smoke *args:
     uv run --locked --offline python scripts/smoke/run_all.py {{args}}
 
 docs-check:

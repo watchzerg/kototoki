@@ -19,8 +19,8 @@ from kototoki.translate import generate
 from kototoki.translate import recipes as R
 from kototoki.translate.batching import build_batches, scene_from_document
 from kototoki.translate.degrade import children
-from tests.test_job import JobCase
-from tests.test_translate import SEED, Harness, document
+from tests.core.test_job import JobCase
+from tests.core.test_translate import SEED, Harness, document
 
 
 class DegradeTests(unittest.TestCase):

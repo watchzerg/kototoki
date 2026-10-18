@@ -1,7 +1,7 @@
 """Hy-MT2 30B 原生提示、ID grammar 与严格 JSON 校验。
 
 复制自 `experiments/translation_demo/adapters.py`，只保留 `hy-mt2-30b` 家族用到的函数；
-字符串与拼接顺序逐字节不变（`tests/test_translate_recipes.py` 对照 v3 钉住）。
+字符串与拼接顺序逐字节不变（`tests/core/test_translate_recipes.py` 对照 v3 钉住）。
 """
 
 from __future__ import annotations
