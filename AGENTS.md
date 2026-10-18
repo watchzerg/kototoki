@@ -57,7 +57,7 @@
 | 实现、修改或 review 产品包 `kototoki/`（双语字幕流水线） | [模块边界](docs/architecture/module-boundaries.md)：依赖方向、产品包的责任边界与接缝 → 受影响模块页的"接口与依赖" → [技术设计](docs/specs/bilingual-subtitle-pipeline.md)。接口形状要变时先改模块页与模块边界，再动手 |
 | review diff 的代码质量 | [CODING_STANDARDS.md](CODING_STANDARDS.md) |
 | 编写、修改、移动或 review 测试，制定测试计划或整理验收证据，执行 `implement-spec` | [测试设计与验收](docs/agents/testing.md)、[验证边界](docs/testing/validation.md) |
-| 运行命令、选择门禁，调整依赖、工具版本或平台／GPU 配置 | [开发工作流](docs/development/workflow.md)、[技术选型](docs/development/technology-stack.md)、[工具链](docs/development/toolchain.md)、[Windows 与 NVIDIA](docs/development/windows-nvidia.md) |
+| 运行命令、选择门禁，调整依赖、工具版本或平台／GPU 配置 | [开发工作流](docs/development/workflow.md)、[技术选型](docs/development/technology-stack.md)、[依赖布局与资产清单](docs/development/dependencies.md)、[工具链](docs/development/toolchain.md)、[Windows 与 NVIDIA](docs/development/windows-nvidia.md) |
 | 新增、移动、删除文档，或讨论形成明确结论 | [文档维护规则](docs/agents/documentation.md) |
 | 涉及领域术语、数据模型或与 ADR 冲突；需要 W0、X0 或翻译基线的身份定义 | [GLOSSARY.md](GLOSSARY.md)、[领域文档规则](docs/agents/domain.md) |
 | 读取、创建或更新票据 | [tracker 约定](docs/agents/issue-tracker.md) |

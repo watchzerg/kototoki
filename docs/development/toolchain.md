@@ -30,23 +30,9 @@ see [execution record](../context/2026-10-04-demo-execution.md).
 
 ## Dependency changes
 
-Use uv to add, remove, resolve, and synchronize dependencies; commit the manifest
-and lock changes together. Normal setup should consume the committed resolution;
-dependency upgrades should be deliberate, separately identifiable changes.
-For new selections and deliberate upgrades, apply the latest-stable baseline in
-[inference selection principles](inference-selection.md) to supporting components
-and development tools as well; retain reproducible version locks after selection.
+依赖的四层布局、版本锁定、Python 依赖变更规则与安装／编译 recipe 的权威正文是[依赖布局与资产清单](dependencies.md)。
 
-Choose the Python version after checking the selected inference backend's Windows
-and NVIDIA compatibility. Document package sources and platform-specific
-dependency selections when adding the backend. Do not transplant CUDA package
-versions, indexes, or dependencies from another project.
-
-Keep development dependencies separate from runtime dependencies. Introduce
-optional backend-specific groups only when the chosen GPU backend needs them.
-Follow [inference selection](inference-selection.md) when evaluating engines,
-models, and aligners. Lint, formatting,
-type checking, and test tools remain to be selected during bootstrap; the
+Lint, formatting, type checking, and test tools remain to be selected during bootstrap; the
 neighboring repository's selections are references, not existing installations.
 
 ## Common task interface
