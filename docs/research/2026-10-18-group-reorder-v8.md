@@ -1,6 +1,6 @@
 # 字幕翻译流程第八轮探索（v8）：同一句话小组内语序重排——方案、进度与结论
 
-状态：in-progress（2026-10-18 立项；票据 01 离线实现已完成，02 起为 GPU 票据，待用户确认后执行）  
+状态：concluded（2026-10-18 立项并当日结题：票据 02 小样判定 Q1 否定——提示级放开不产生重排，按 §5 停止条件结束，03–06 未执行；结论见 §7.2，待用户裁定见 §8）  
 范围：固定 Hy-MT2 30B-A3B APEX-I-Compact（[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)）与流程基线 **dp10-cut**（[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)）。本轮只动一件事：**在包内按"同一句话"小组放开语序**，即改 joint 提示里限制逐 ID 归属的那一句，并把小组告诉模型。不换模型、不换量化、不换采样、不换裁判、不改切包与邻文、不改 grammar、不自动替换任何基线；单次生成，不涉及"翻译多次再挑选"（[ADR-0008](../adr/0008-no-multi-translation-selection.md)）。  
 执行载体：tracker 目录 `.scratch/group-reorder-v8/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**  
 先读：[划组规则离线统计](2026-10-18-reorder-group-offline-stats.md)全文（§1 结论、§3–§7 数字）、[技术设计 §11](../specs/bilingual-subtitle-pipeline.md) "翻译批内语序自由"一条、[v7 研究文档](2026-10-16-gap-aware-batching-v7.md) §2.1（裁判漂移、同包重判）与 §4.6（评测设计）、[translation_v3 README](../../experiments/translation_v3/README.md) 的配方段、[v5 §3](2026-10-16-quality-exploration-v5.md) 判定纪律。
@@ -130,15 +130,54 @@
 | 日期 | 票据 | 结果 |
 | --- | --- | --- |
 | 2026-10-18 | 01 离线实现 | `translation_v3` 新增 `Recipe.groups`（`{"gap": 1.0}`，版本 `group-reorder-v1`）与 `joint-understanding-v2`；只在含 ≥2 条小组的批次换 joint 句并在 assistant 标记前注入一行 `以下是待译条目中属于同一句话的 ID 分组：{"groups": [[...]]}`，无此类小组的批次与 `dp10-cut` 逐字相同；grammar 不变。最终措辞在 §4.2 草稿上加"只调语序、不改含义"与"未列入 groups 的 ID 各自单独成组"。内置 `grp1` hash `5aaf3e77…`；17 个旧内置配方 hash 不变（`GroupReorderTest` 固定）。划组唯一实现为 `batching.sentence_groups`，`reorder_groups/stats.py` 改为调用它，输出逐字节不变。重排率与显示校验器在 `reorder_groups/checks.py`：主阈值 0.2——同 seed 两个严格配方之间（v4 `c0`↔`b10-joint`、v7 `b10-joint-ctl`↔`dp6-grp`，各 3 seed）≥0.1／0.2／0.3 的组为 22–30%／1.6–6%／0–2%，逐字不同 85–94%（上界无区分力）；读速阈值 9 字/秒（Netflix 简体中文成人上限），严格配方 dev 上 p50 4.4–4.8、p90 6.3–7.3、p99 8.4–11.7 字/秒，超阈 0.4–2.2%，占比偏差 ≥0.3 的组 0–2.5%。注入覆盖（`reorder_groups/coverage.py`）：dev 621 包中 602 包注入（96.9%，cue 78.0%；剧集 96.7%、电影 97.3%），产品 296 包中 249 包（84.1%，cue 50.3%）；每注入包输入 +168（dev，其中 joint 句 +77、groups 行 +91，行 p90 125）／+150（产品）token，整体 +24.7%／+21.6%，最大输入 1186 ≪ 4032。token 用 GGUF 文件头词表离线重建的 BPE 计数，与 3 个已有 run 的 617 条 `/tokenize` 记录逐 ID 一致。未做 GPU 运行 |
+| 2026-10-18 | 02 小样生成与人工观察（GPU） | 见 7.1。两次小样共 20 个包、70 个多 cue 组：`joint-understanding-v2` 措辞下重排率（主阈值 0.2）5.3%／0%，与严格对严格的噪声底（1.6–6%）无法区分；人工阅读无一例把内容挪到相邻行。本票允许的那一次措辞调整（两步式"先合句译再切回"）重排率 6.2%，仍在噪声内，且引入只读邻文泄漏与无中生有，不采纳。**Q1 否定，按 §5 停止条件结题**，03–06 不执行 |
+
+### 7.1 小样生成与人工观察（票据 02）
+
+驱动：[`experiments/reorder_groups/sample.py`](../../experiments/reorder_groups/sample.py)，在 dev 全集上按 `dp10-cut` 切包挑包，对每个包各臂渲染一次提示并直接走 `translation_v3` 的 GPU 链路（`gpu.lock`、新启 llama-server、首个 completion `cache_n == 0`、`run_step` 的两次尝试规则）；不是 `run_generation` 的 run，不能用于裁判或配对。主 seed 20261011，采样与基线相同（temperature 0.7）。产物 `.local/group-reorder-v8/02/`、`02b/`（`sample.json`；`sample.md` 含原文，不入库）。
+
+| 小样 | 挑包准则 | 包 | 多 cue 组 | 臂 | 重排率 ≥0.1／0.2／0.3 | 逐字不同 | L1 p50／p90 | 输入 token（对 dp10-cut） | 输出 token |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 多 cue 组覆盖 cue 最多 | 10 | 38 | grp1 | 15.8%／5.3%／0% | 78.9% | 0.040／0.127 | +26.7% | +1.2% |
+| B | 组内以接续成分结尾的非末行最多（排除 A） | 10 | 16 | grp1 | 12.5%／0%／0% | 94% | 0.072／0.108 | +26.6% | +0.7% |
+| B | 同上 | 10 | 16 | grp1-alt（两步式措辞） | 37.5%／6.2%／0% | 100% | 0.084／0.181 | +29.4% | +4.8% |
+
+对照：票据 01 的严格对严格噪声底 ≥0.1 为 22–30%、≥0.2 为 1.6–6%、≥0.3 为 0–2%。50 次请求全部一次通过，每次 1.2–1.8 s；grammar 与采样未变，所以没有失败或重试。
+
+人工阅读（§4.4 的三类，按组计）：
+
+| 臂 | 组数 | 按中文语序合理重分配 | 只是改写没挪内容 | 挪错 |
+| --- | --- | --- | --- | --- |
+| grp1（v2 措辞，A＋B） | 54 | 0 | 54 | 0 |
+| grp1-alt（两步式措辞，B） | 16 | 0 | 15 | 1（只读后邻文的内容并进组末行） |
+
+- 小样 A 按"覆盖最多"挑出来的全是 10 条整包成组的快速对话，<1 s 停顿里多数是不同话轮，本来就不该重排，所以又按"真正被拆开的句子"挑了小样 B；两种准则下结论相同。
+- v2 措辞下候选与对照的差异全是改写：语气词、同义替换、句子略长（输出 token +1%）。每条中文仍只对应自己那行日文。
+- 两步式措辞没有带来重排，却让各行普遍整句化、加长（输出 +4.8%），并出现 §4.2 明令禁止的邻文泄漏与无中生有，不采纳。`joint-understanding-v2` 与 `grp1`（hash `5aaf3e77…`）保持票据 01 的版本，措辞调整只留在 `sample.py` 的 `ALT_INSTRUCTION`。
+- 顺带观察（20 包观感，不是统计）：严格逐 ID 模式下模型已经把每行译成自足的中文——日文末行的谓语会在前行里提前说出，后行则重述主语——所以"一句话被拆开导致中文语序别扭"在 dev 小样里并不常见。语序自由的收益上限可能比 §1 估计的更小。
+- 两个候选臂各有 1 处指代翻车（称呼性别、把"妈妈"当成称呼对象），对照正确。单次采样分不清是提示引起还是噪声，只记录。
+
+### 7.2 结题
+
+1. **Q1 否定**：在 ID JSON grammar 下，告知小组并放开逐 ID 归属（两种措辞）不会让 Hy-MT2 30B 在组内重新分配内容；重排率与噪声无法区分，人工 70 组无一例。
+2. **Q2–Q4 未执行**：§5 停止条件"Q1 重排率接近零且小样票据调整一次措辞后仍如此"满足，03–06 票据不开，没有生成对照 run、没有裁判。成本：2 次 GPU 会话约 6 分钟（含两次模型加载），50 次请求，0 套裁判。
+3. **保留的设施**：`grp1` 配方与 `joint-understanding-v2`（未采纳为任何默认，hash 固定在测试里）、`batching.sentence_groups`（R2+ 划组唯一实现）、`reorder_groups/{checks,coverage,sample}.py`。dp10-cut 仍没有 GPU run 与裁判分数。
+4. 技术设计 §11"提示里告知模型、grammar 仍按 cue ID 输出"这条实现形状**已证伪**；若继续这条线，只剩改输出契约的路线（§8 第 1 项）。
 
 ## 8. 待用户裁定
 
-执行中出现、需要用户决定的事项集中在这里；立项时可预见的有：
-
-1. Q1 否定时是否转**备选路线**：grammar 改为每组输出一个字符串，程序按时长比例加标点吸附切回各 cue（Subtitle Edit 等软件的主流做法）。它改输出契约、切回质量成为新变量，不在本轮范围。
-2. Q4 部分满足（例如 accuracy 非劣但 fluency 无改善）时是否仍进研究侧默认。
-3. 产品时间轴门槛是否放宽到 1.5–2.0 s（§2.2 覆盖只有一半），以及是否同步到产品 `b10-joint-degrade-v1`。
+1. **是否转备选路线**：grammar 改为每组输出一个字符串，程序按时长比例加标点吸附切回各 cue（Subtitle Edit 等软件的主流做法）。它改输出契约，切回质量成为新变量，需要新一轮立项（新的 grammar、切回程序与它的校验、裁判按切回后的 cue 评）。执行者意见：7.1 的顺带观察表明收益上限可能不大，建议先在小样 B 的包上离线看"组级整句译文"与"逐行译文拼接"的差别有多大，再决定是否立项；这一步也要占 GPU。
+2. **产品时间轴门槛与同步到产品**：本轮没有走到这一步，立项时登记的两项（1.5–2.0 s 门槛、同步到 `b10-joint-degrade-v1`）随本轮关闭，若备选路线立项再带上。
 
 ## 9. 产物与复现
 
-结题时填写：配方 hash、run 目录、裁判目录、配对脚本命令。
+- 配方：`grp1` hash `5aaf3e776bd39cf4fe718fc5016ece54f71685181af695e0c2f9cfb9a8792eaa`（`test_recipes.GroupReorderTest` 固定）；`dp10-cut` `ee72ce66…` 不变。
+- 小样：`.local/group-reorder-v8/02/sample.json`（A）、`02b/sample.json`（B，含 `alt_instruction` 全文）；日志 `02-sample.log`、`02b-sample.log`。复现：
+
+```bash
+PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.sample --seed 20261011 --per-category 5 --out .local/group-reorder-v8/02
+PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.sample --seed 20261011 --per-category 5 --criterion split --alt --exclude .local/group-reorder-v8/02/sample.json --out .local/group-reorder-v8/02b
+```
+
+- 离线：`python -X utf8 -m unittest discover -s experiments/reorder_groups -t . -p "test_*.py"`；票据 01 的覆盖与噪声底在 `.local/group-reorder-v8/01/`。
+- tracker：`.scratch/group-reorder-v8/`（Git 忽略）。

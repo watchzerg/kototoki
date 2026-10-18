@@ -406,7 +406,7 @@ seed  = 20261008
   - 其他软件的做法（[Subtitle Edit](../research/2026-10-05-translation-subtitleedit.md)、[VideoLingo](../research/2026-10-05-translation-videolingo.md)、[pyVideoTrans](../research/2026-10-05-translation-pyvideotrans.md)）：主流是把被拆碎的句子合并成整句翻译，再按标点、长度比例或让模型切回原时间段；Subtitle Edit 的合并门槛是相邻间隔 <1 s；公认难点是切回时行数、编号错位，都要加结构校验。
   - 现有裁判（`claude-opus-5-5-mqm-v1`）已允许相邻 cue 之间合理挪动内容，不计 cue-attribution 与漏译，所以评估面可直接比较"严格一一对应"与"小组内重排"。
   - 实现形状可以是：包仍为 1+10+1，包内按短停顿与句末标点标出小组并在提示里告知模型，grammar 仍按 cue ID 输出，只是允许同组内的 ID 互相挪内容；回映射因此不需要新的时间对齐，只需校验组内总长度与显示时长。
-  - 2026-10-18 进展：划组规则经[离线统计](../research/2026-10-18-reorder-group-offline-stats.md)定为 R2+（停顿 <1.0 s 且前一行不以 `。？！?!.` 结尾，剥右括号；产品 ASR 句末标点几乎全是半角，所以必须含半角），dev 上 78% 的 cue 落在多 cue 小组、产品 50%。研究侧按[第八轮（v8）](../research/2026-10-18-group-reorder-v8.md)立项执行：包与 grammar 沿用 dp10-cut，只改提示并注入 `groups`，先验证模型是否真的重排，再看 fluency。产品是否采用另行裁定。
+  - 2026-10-18 进展：划组规则经[离线统计](../research/2026-10-18-reorder-group-offline-stats.md)定为 R2+（停顿 <1.0 s 且前一行不以 `。？！?!.` 结尾，剥右括号；产品 ASR 句末标点几乎全是半角，所以必须含半角），dev 上 78% 的 cue 落在多 cue 小组、产品 50%。研究侧[第八轮（v8）](../research/2026-10-18-group-reorder-v8.md)验证了上一条的实现形状（包与 grammar 沿用 dp10-cut，只改提示并注入 `groups`）：**证伪**。两次小样 70 个多 cue 组里模型没有任何组内重排，两种措辞都如此，更强的措辞还引入邻文泄漏；且严格逐 ID 模式下模型已把每行译成自足中文。若继续这条线，只剩改输出契约的路线（每组输出一个字符串再程序切回），待用户裁定。
 - **跨文件术语一致**：同一剧集多集之间的人名、专名统一。v3 的 `terms` 配方未采纳，产品暂无跨文件记忆。
 - **用 HF transformers Whisper 替换 CTranslate2**，解除 CUDA 12 锁定（§7.2）。
 - **重复／幻觉守卫**：W0 移植的 WhisperX 路径没有温度回退与压缩比检查，长重复输出目前只能靠 VAD 过滤减少；后续可加 n-gram 重复检测并标记。

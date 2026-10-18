@@ -9,14 +9,24 @@
 | `stats.py` | 在 `dp10-cut` 的包内按停顿门槛与句末标点划组（R1、R2、R2+），统计小组大小、被切点截断的比例、行尾标点与门槛敏感性 |
 | `checks.py` | v8 §4.4 重排率与 §4.5 显示校验器：读一个或两个 run 目录的译文与场景时间，按配方切包、包内 R2+ 划组 |
 | `coverage.py` | v8 票据 01：`grp1` 注入 `groups` 的包比例与每包输入 token 增量 |
+| `sample.py` | v8 票据 02（**GPU**）：挑多 cue 组多的包，各臂（`dp10-cut`、`grp1`、可选 `grp1-alt` 两步式措辞）各生成一次，写并排 Markdown 与重排率；`--dry-run` 只渲染提示 |
 
 ```bash
 PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.stats --local-root <有 .local 的 checkout>/.local [--json <输出.json>]
 PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.checks --local-root <...>/.local --set dev|product --recipe grp1 \
     [--control <对照 run 目录>] [--candidate <候选 run 目录>] [--gap 1.0] [--json <输出.json>]
 PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.coverage --local-root <...>/.local --validate <run 目录> [--json <输出.json>]
+PYTHONPATH=. python -X utf8 -m experiments.reorder_groups.sample [--dry-run] [--criterion covered|split] [--alt] \
+    [--exclude <已有 sample.json>] [--seed 20261011] [--per-category 5] [--out .local/group-reorder-v8/02]
 python -X utf8 -m unittest discover -s experiments/reorder_groups -t . -p "test_*.py"
 ```
+
+## 小样驱动（`sample.py`，占 GPU）
+
+- 挑包：按 `dp10-cut` 切包，每类（剧集、电影）取得分最高的 `--per-category` 个包。`covered`：多 cue 组覆盖的 cue 数最多（偏向整包成组的快速对话）；`split`：组内以接续助词或顿号结尾的非末行最多（偏向真正被拆开的句子）。`--exclude` 排除另一份 `sample.json` 里的包。
+- 生成：走 `translation_v3.generate.managed_session_factory` 与 `run_step`（`gpu.lock`、新启 llama-server、首个 completion `cache_n == 0`、两次尝试），不是 `run_generation` 的 run：没有 `run.json`／`scenes/`，不能用于裁判或配对，只用于观察。
+- `--alt` 加第三臂 `grp1-alt`：用 `ALT_INSTRUCTION`（两步式"先合句译再切回"）临时替换 `joint-understanding-v2` 的句子渲染；只在本脚本里，不改 `recipes.py`，`grp1` hash 不变。
+- 输出：`sample.json`（提示 sha256、译文、token、耗时、`checks.reorder` 的重排率）与 `sample.md`（日文与各臂译文并排，**含原文**，放 `.local` 下不入库）。
 
 ## 重排率与显示校验（`checks.py`）
 
