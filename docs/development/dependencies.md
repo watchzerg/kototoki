@@ -77,4 +77,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 ## 当前实现
 
-清单、`scripts/assets.py` 与上表 recipe 随后续提交落地；落地前产品仍按原路径运行。
+- `assets.toml` 登记 `tools.ffmpeg`（`2026-10-01-git-0b01ed76aa`，压缩包名与 URL 按 gyan.dev 命名推断、未经下载核实，SHA256 未知）、`tools."llama.cpp"`（`b11583-cuda13.4`，两个 zip 的 SHA256 与 54 个运行时文件，取自原 `identity.json`）与产品用到的六个模型目录：`pyannote-segmentation-3.0`（门控）、`faster-whisper-large-v3`、`w0-assets`（只含 `mel_filters.npz`，来自 whisperx 3.8.6 包内 assets，没有 HF 来源，`fetch-models` 不负责）、`qwen3-asr-1.7b-hf`、`mms-1b-all`、`hy-mt2-30b-a3b-apex-i-compact`。
+- `scripts/assets.py`：`install-tools`、`fetch-models`、`verify` 三个子命令，压缩包只支持 zip，下载先写 `.partial` 并边下边算 SHA256，一致才改名；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
+- 测试（core）：`tests/core/test_assets_manifest.py` 钉住代码常量与默认路径版本号 == 清单；`tests/core/test_assets_script.py` 用本地 `file://` URL 与临时 zip 覆盖下载、`strip`、只解清单文件、`identity.json`、压缩包缓存复用、无 SHA 与非 zip 拒绝、SHA 不符清理、门控令牌、无来源模型与离线核对。
+- 2026-10-18 `just verify-assets` 在本机全部通过。真实下载路径（GitHub、HF）未运行过，只由本地伪 URL 覆盖；ffmpeg 记录不能重装是已知限制，见上文 [ffmpeg](#ffmpeg)。

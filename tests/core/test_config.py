@@ -54,7 +54,8 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(cfg.paths.models_root, config.REPO_ROOT / ".local" / "models")
         self.assertEqual(cfg.paths.llama_server,
                          config.REPO_ROOT / ".local/tools/llama.cpp/b11583-cuda13.4/llama-server.exe")
-        self.assertEqual(cfg.paths.ffmpeg, Path("D:/bin/ffmpeg.exe").resolve())
+        self.assertEqual(cfg.paths.ffmpeg, config.REPO_ROOT / ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffmpeg.exe")
+        self.assertEqual(cfg.paths.ffprobe, config.REPO_ROOT / ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffprobe.exe")
 
     def test_model_paths_are_relative_to_models_root(self) -> None:
         cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "D:/abs/mms"\n'),

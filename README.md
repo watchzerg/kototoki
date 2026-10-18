@@ -6,7 +6,7 @@
 
 从一批日语视频批量生产日文、中文与中日双语 SRT，全部在本机 GPU 上运行（[技术设计](docs/specs/bilingual-subtitle-pipeline.md)、[ADR-0007](docs/adr/0007-bilingual-subtitle-pipeline-architecture.md)）。
 
-1. 环境：`uv sync --locked`（根环境即产品环境，统一 CUDA 12.8）；模型放在 `.local/models/`，官方 llama.cpp 放在 `.local/tools/llama.cpp/b11583-cuda13.4/`；ffmpeg／ffprobe 默认在 `D:/bin/`（路径可在配置里改，只用默认 swr 重采样，不要求 libsoxr）。模型与引擎的来源与 SHA256 见[语料与模型资产准备](docs/architecture/modules/corpus-and-assets.md)与[本地翻译模型资产](docs/guides/local-translation-model-assets.md)。
+1. 环境：`just install`（`uv sync --locked` 建根环境即产品环境，统一 CUDA 12.8；再按资产清单 `assets.toml` 把 ffmpeg 与官方 llama.cpp 装到 `.local/tools/<name>/<version>/`）；模型放在 `.local/models/`，缺失时 `just fetch-models` 按清单下载（几十 GB）；`just verify-assets` 离线核对。两者都联网、改环境，先问再跑。ffmpeg 只用默认 swr 重采样，不要求 libsoxr，路径可在配置里改。全部模型与二进制的来源、版本与 SHA256 以 [`assets.toml`](assets.toml) 为准，布局与升级步骤见[依赖布局与资产清单](docs/development/dependencies.md)。
 2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`（递归扫描视频）与 `paths.output_dir`（不得位于仓库内，`.local/` 除外，也不得位于输入目录内）；`stt.engine` 默认 `w0`，可选 `x0`。全部键与默认值见[配置、配方与媒体提取](docs/architecture/modules/config-and-media.md)。
 3. 运行：`.venv/Scripts/python.exe -m kototoki kototoki.toml`（省略参数时读当前目录的 `kototoki.toml`）。这是加载全部模型的 GPU 重任务，运行期间持有 `.local/gpu.lock`。
 4. 输出：每部视频在 `output_dir` 下按输入子目录镜像得到 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`（双语每条中文在上、日文在下）；中间产物、日志与续跑状态在 `output_dir/.work/`。中断或失败后重跑同一命令，从各文件的最后一个有效产物继续；用户改动过的最终文件默认不覆盖，`[run] force = true` 才覆盖。退出码 0 全部成功、1 有文件失败、2 配置错误、3／4 输出目录锁／GPU 锁冲突。

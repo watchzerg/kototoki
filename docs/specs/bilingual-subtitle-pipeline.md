@@ -339,8 +339,8 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 input_dir   = "D:/movie/inbox"          # 递归扫描视频
 output_dir  = "D:/movie/subs"           # 最终 SRT 与 .work/
 models_root = ".local/models"           # 下面各模型路径相对于它
-ffmpeg      = "D:/bin/ffmpeg.exe"
-ffprobe     = "D:/bin/ffprobe.exe"
+ffmpeg      = ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffmpeg.exe"
+ffprobe     = ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffprobe.exe"
 llama_server = ".local/tools/llama.cpp/b11583-cuda13.4/llama-server.exe"
 
 [input]

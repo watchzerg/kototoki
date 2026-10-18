@@ -191,7 +191,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(wav[wav.index("-rf64") + 1], "auto")
 
     def test_probe_command_shows_all_streams_and_format(self) -> None:
-        command = media.probe_command(Path("D:/bin/ffprobe.exe"), self.video)
+        command = media.probe_command(Path("D:/tools dir/ffprobe.exe"), self.video)
         self.assertEqual(command[-1], str(self.video))
         self.assertIn("-show_streams", command)
         self.assertIn("-show_format", command)

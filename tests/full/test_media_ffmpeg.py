@@ -1,4 +1,4 @@
-"""`kototoki.media` 的离线核心测试：用真实 ffmpeg 合成几秒的小片段，验证时间轴零点、下混与流复制。
+"""`kototoki.media` 的 full 层离线集成测试：用真实 ffmpeg 合成几秒的小片段，验证时间轴零点、下混与流复制。
 
 不需要模型、GPU 或网络；ffmpeg／ffprobe 取 `config.load` 的默认路径（缺失时 setUpClass 失败并给出处理办法）。
 所有媒体都放在含空格和非 ASCII 字符的目录里，覆盖 Windows 路径传参。
@@ -94,8 +94,8 @@ class MediaFfmpegCase(unittest.TestCase):
         for binary in (cls.cfg.paths.ffmpeg, cls.cfg.paths.ffprobe):
             if not binary.is_file():
                 cls._cfg_tmp.cleanup()
-                raise AssertionError(f"{binary} not found: install ffmpeg/ffprobe there or set [paths] "
-                                     f"ffmpeg/ffprobe (defaults D:/bin/ffmpeg.exe, D:/bin/ffprobe.exe)")
+                raise AssertionError(f"{binary} not found: run `just install` (ffmpeg is listed in assets.toml) "
+                                     "or set [paths] ffmpeg/ffprobe")
 
     @classmethod
     def tearDownClass(cls) -> None:

@@ -33,8 +33,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "input_dir": REQUIRED,
         "output_dir": REQUIRED,
         "models_root": ".local/models",
-        "ffmpeg": "D:/bin/ffmpeg.exe",
-        "ffprobe": "D:/bin/ffprobe.exe",
+        "ffmpeg": ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffmpeg.exe",
+        "ffprobe": ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffprobe.exe",
         "llama_server": ".local/tools/llama.cpp/b11583-cuda13.4/llama-server.exe",
     },
     "input": {

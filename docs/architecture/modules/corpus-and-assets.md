@@ -2,7 +2,7 @@
 
 ## 定位与阅读
 
-负责推理之前的两类一次性准备：一是从私有源素材冻结语料划分、生成样本精确的 mono／16 kHz／PCM16 输入 WAV 与参考 JSON；二是按固定 revision 联网获取 STT 模型资产并记录 SHA256 清单。推理入口只读取这些本地产物；本模块是仓库中唯一会主动联网下载模型的代码。不负责翻译模型 GGUF 的获取（见[本地翻译模型资产指南](../../guides/local-translation-model-assets.md)），也不负责门控 Pyannote 权重的获取（见 [VAD 版本核验](../../research/2026-10-05-vad-stable-versions.md)）。
+负责推理之前的两类一次性准备：一是从私有源素材冻结语料划分、生成样本精确的 mono／16 kHz／PCM16 输入 WAV 与参考 JSON；二是按固定 revision 联网获取 STT 模型资产并记录 SHA256 清单。推理入口只读取这些本地产物；本模块是研究期唯一会主动联网下载模型的代码。产品用到的模型与二进制，其身份（HF repo、revision、逐文件 SHA256）的唯一权威是根目录资产清单 [`assets.toml`](../../../assets.toml)，获取与离线核对由 `scripts/assets.py`（`just fetch-models`、`just verify-assets`）负责，见[依赖布局与资产清单](../../development/dependencies.md)；本模块的 `.local/manifests/` 记录只作研究期获取证据。不负责翻译模型 GGUF 的获取（见[本地翻译模型资产指南](../../guides/local-translation-model-assets.md)），也不负责门控 Pyannote 权重的获取（见 [VAD 版本核验](../../research/2026-10-05-vad-stable-versions.md)）。
 
 上级总览见[架构总览](../INDEX.md)；素材规则见 [FateStay 参考](../../testing/fatestay-reference.md)；冻结证据见[语料冻结记录](../../testing/2026-10-04-corpus-freeze.md)；环境与资产清单见[环境清单](../../research/2026-10-04-runtime-inventory.md)。
 
@@ -30,7 +30,7 @@
 - 源码：`experiments/corpus/prepare.py`（`freeze`、`decode_full`、`crop`、`parse_srt`）、`prepare_round2.py`（`fixed_windows`、`window_reference`、`prepare`）、`prepare_heldout.py`、`prepare_scoring_reference.py`、`prepare_silence.py`；`experiments/provision/acquire_models.py`（`SPECS`、`acquire`）、`japanese_ctc.py`、`range_models.py`；`experiments/w0_demo/prepare_assets.py`。
 - 测试（离线，`just experiments-test`）：`experiments/corpus/test_prepare.py`、`test_round2.py`、`test_silence.py`；`experiments/provision/test_acquire_models.py`（伪响应下的获取与完整性）、`test_range_models.py`。
 - 已知差异：[语料冻结记录](../../testing/2026-10-04-corpus-freeze.md)说明 `prepare.py` 的默认路径与参考常量属于旧单片 FateStay 冻结，"不代表已经支持新的两片语料流程"；代码中 `prepare.py` 仍以 `D:/movie/FateStay/...` 为默认参数。新语料须另建 manifest，不覆盖旧哈希。
-- 已知限制：`acquire_models.SPECS` 的清单停留在 2026-10-04 的候选集（含历史 Qwen ForcedAligner、Crisp GGUF 等），不覆盖新 Pyannote 与翻译 GGUF。
+- 已知限制：`acquire_models.SPECS` 的清单停留在 2026-10-04 的候选集（含历史 Qwen ForcedAligner、Crisp GGUF 等），不覆盖新 Pyannote 与翻译 GGUF；产品资产以 `assets.toml` 为准。
 
 ## 变更与决策来源
 

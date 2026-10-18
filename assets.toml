@@ -1,0 +1,162 @@
+# 资产清单：除 Python 包外，产品依赖的二进制与模型身份的唯一权威。
+# 格式、布局与 recipe 职责见 docs/development/dependencies.md；执行逻辑在 scripts/assets.py。
+# 代码里的 SHA 常量（kototoki/plan.py、kototoki/translate/server.py）与 kototoki/config.py 默认路径里的版本号
+# 由 tests/core/test_assets_manifest.py 钉住与本文件一致。
+
+# --- 下载的二进制：安装到 .local/tools/<name>/<version>/ ---------------------------------------
+
+[tools.ffmpeg]
+version = "2026-10-01-git-0b01ed76aa"
+source = "https://www.gyan.dev/ffmpeg/builds/"
+note = "gyan.dev full build；两个可执行文件由本机既有安装原样复制入项目（2026-10-18），原始压缩包未保留"
+
+# 压缩包名与 URL 按 gyan.dev packages 目录的命名推断，未经下载核实；SHA256 未知，故不写 sha256，
+# install-tools 拒绝从它安装。升级按 dependencies.md 的 ffmpeg 升级步骤登记新版本。
+[[tools.ffmpeg.archives]]
+name = "ffmpeg-2026-10-01-git-0b01ed76aa-full_build.7z"
+url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-2026-10-01-git-0b01ed76aa-full_build.7z"
+strip = "ffmpeg-2026-10-01-git-0b01ed76aa-full_build/"
+
+[tools.ffmpeg.files]
+"bin/ffmpeg.exe" = { sha256 = "584d65c96d3a8f5e4d70d23ba7bb555ca6b267ba3f453046c4ed9e0c97e74fac", size = 217034240 }
+"bin/ffprobe.exe" = { sha256 = "901adf394a517da71a7a414ea3cbcf576ea8d7297906887f6699cf7275617217", size = 216822784 }
+
+[tools."llama.cpp"]
+version = "b11583-cuda13.4"
+source = "https://github.com/ggml-org/llama.cpp/releases/tag/b11583"
+upstream_tag = "b11583"
+upstream_commit = "98801578818b26d833a1fe244870d64b0c34bb46"
+published_at = "2026-10-13T09:34:36Z"
+
+[[tools."llama.cpp".archives]]
+name = "llama-b11583-bin-win-cuda-13.4-x64.zip"
+url = "https://github.com/ggml-org/llama.cpp/releases/download/b11583/llama-b11583-bin-win-cuda-13.4-x64.zip"
+sha256 = "daca162d788964bfcfdfefe1cfdd784398f8881b11d0d01b47f5e2bc5556d61d"
+
+[[tools."llama.cpp".archives]]
+name = "cudart-llama-bin-win-cuda-13.4-x64.zip"
+url = "https://github.com/ggml-org/llama.cpp/releases/download/b11583/cudart-llama-bin-win-cuda-13.4-x64.zip"
+sha256 = "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
+
+[tools."llama.cpp".files]
+"cublas64_13.dll" = { sha256 = "1119dbca0a808e0c8850bb4221e330daf0b5ddb348d62d37b6ac533854723df9", size = 54942320 }
+"cublasLt64_13.dll" = { sha256 = "0f5bc315fef706b5626248ebd74e8a48a9e82fa2f0cad38330f5f70984913107", size = 492752496 }
+"cudart64_13.dll" = { sha256 = "05bfafcb97bd53b0089568a96e1e5bd6921637bd0853ff7f5342bd31a6a16890", size = 551024 }
+"ggml-base.dll" = { sha256 = "4373ce332e713f110c86843555dd63c31613a380412ba92918f3130969981044", size = 803840 }
+"ggml-cpu-alderlake.dll" = { sha256 = "ae334b53c3e38ddc50c30df043a3aa110ffcc2f6c4f09d44a27c50a9097f437e", size = 1428992 }
+"ggml-cpu-cannonlake.dll" = { sha256 = "d6198cfb51c30709022a1128132724764605d2f62d6a0dbfce1f348ce7d0df91", size = 1613824 }
+"ggml-cpu-cascadelake.dll" = { sha256 = "8724012badb96184a4c5f8372f80704bd81987e89676c525da7c99fe87ef9860", size = 1597952 }
+"ggml-cpu-cooperlake.dll" = { sha256 = "a9b215401804616aa7cbde0c398494709e6e5c4f25fe4e2e32567d0cf80b2af6", size = 1607680 }
+"ggml-cpu-haswell.dll" = { sha256 = "e7e2f1bb62c005815d2a15d41dfa7447e3c457bac546aee9561ec680375ee7ef", size = 1433600 }
+"ggml-cpu-icelake.dll" = { sha256 = "1a8598721b9f03e16bc6a1467171d6137038bbb928c9f472c4f045d16173d505", size = 1604096 }
+"ggml-cpu-ivybridge.dll" = { sha256 = "7493d5b6d40f54ca998ac757bb716e2b0721de5bd02ce7a2eb79b74c2b54d6fc", size = 1310208 }
+"ggml-cpu-piledriver.dll" = { sha256 = "3ca62f724340b2f89ccb2d2f781a353de45cf87cdd299ab46cee6e9c843b5145", size = 1304576 }
+"ggml-cpu-sandybridge.dll" = { sha256 = "46a67542ae0322d39409db284edb06ee143d4bd5c935c322036581744c88fb0f", size = 1290240 }
+"ggml-cpu-sapphirerapids.dll" = { sha256 = "42d28b979b67ca9750dc8d370a007205f44f04c4b12df31b1bcbe58464939d81", size = 1892864 }
+"ggml-cpu-skylakex.dll" = { sha256 = "1d6add46722b981dacdf0dcd2710e555da084331d5c1ceb0b9bb6d17352a098c", size = 1607168 }
+"ggml-cpu-sse42.dll" = { sha256 = "f19ab28955e001803086bccfa5ce86ab1cb19840a7cecdf509c0a6fc3bbe7b9f", size = 915968 }
+"ggml-cpu-x64.dll" = { sha256 = "ec3ee896b250fdc95e95a77cec7f7915eb61dc509be6d889b742799df585808d", size = 908800 }
+"ggml-cpu-zen4.dll" = { sha256 = "0bd6935f34651c0e57aa70a9b1ce45706f2cfafc5440edc4800062f6082723d7", size = 1613824 }
+"ggml-cuda.dll" = { sha256 = "64bb70c1c6691c40f55180d06150ea257b880bf072d351e3bc9adb9ed033f103", size = 148119040 }
+"ggml-rpc-server.exe" = { sha256 = "fe77c776cf3b264a479fbaff92683eca559f6e74bee8e1ced366c77e54d3cc22", size = 117248 }
+"ggml-rpc.dll" = { sha256 = "5b4cbb42bb9b65b68aeb4350cff2ae2d1e06ee2c1ba1b3f57c5f8801fab502a8", size = 215040 }
+"ggml.dll" = { sha256 = "6b9eb1fc5e290b137e213089975cd1d886877cdd5cab5a38062430b42c2dfe26", size = 79872 }
+"libomp.dll" = { sha256 = "a12116ba72d1d6820407cf30be23da04ce79d6bb8a71a5ee71759c5a1faa6f1c", size = 768000 }
+"llama-batched-bench-impl.dll" = { sha256 = "531914a75c26378e7a953f467e3b49f4fb7f193696beddfd6bc1161c7080c874", size = 61952 }
+"llama-batched-bench.exe" = { sha256 = "6267ae0b5b5f0027894c0c728703aff4dd0b5c221403920e55e3874fa36110d0", size = 9216 }
+"llama-bench-impl.dll" = { sha256 = "e6c3807fa46a09ed286e160917ca8b72a0108be572dbdbcd5b5fd2b4734514d4", size = 404480 }
+"llama-bench.exe" = { sha256 = "9a9b525efcf85a7e49df21da9cfc03f45e761678f16aa485bcb4e96387f4583d", size = 9216 }
+"llama-cli-impl.dll" = { sha256 = "723039fab4eb00f522ef27acace0b4157cfdd5dcdad59ea7c4e4f8c5b0b78e57", size = 3317248 }
+"llama-cli.exe" = { sha256 = "47dd9d7a9affb3e62bf45ca2c515c9d5c1c648b389149c892525f45911b2444d", size = 9216 }
+"llama-common.dll" = { sha256 = "43dee7526662c19e20f37361324966c26939ec63dad108599aa30ebccbe0aa64", size = 8004096 }
+"llama-completion-impl.dll" = { sha256 = "fa4709fddce4f2ac76831de0b81af37b1c878bf450d13f5d82a3363d4c762f92", size = 140288 }
+"llama-completion.exe" = { sha256 = "faca40d44f17e9ebfb11d995a3fa804a093f938b0c8632ad1d742c3a0817b9ea", size = 9216 }
+"llama-fit-params-impl.dll" = { sha256 = "df332a5619d937d7d54303b29e93db458b837e4c2ac00f09033b803d4fcd36be", size = 43008 }
+"llama-fit-params.exe" = { sha256 = "663fe87aff3ed0c79bc4bcda1cffdb7968d5578b2d04fd582a07800150b265dc", size = 9216 }
+"llama-gemma3-cli.exe" = { sha256 = "05e8ff34ef19ea8cb5c4e60aa24bf93e10b6150afd27b26a3e354b6f86e26f11", size = 27136 }
+"llama-gguf-split.exe" = { sha256 = "1ba97d1193d872447e69b26f593d6de091580748cd95f82e6976864ab515ba0d", size = 60416 }
+"llama-imatrix.exe" = { sha256 = "ee0d04e52c15e8e52837c4c5f55fabe21005f013e0edda775e214f7a519750a4", size = 252416 }
+"llama-llava-cli.exe" = { sha256 = "05e8ff34ef19ea8cb5c4e60aa24bf93e10b6150afd27b26a3e354b6f86e26f11", size = 27136 }
+"llama-minicpmv-cli.exe" = { sha256 = "05e8ff34ef19ea8cb5c4e60aa24bf93e10b6150afd27b26a3e354b6f86e26f11", size = 27136 }
+"llama-mtmd-cli.exe" = { sha256 = "3a645f4956f1196b160d81c46658e687b4d57ca318f871dc767b4aa7591e17ec", size = 92672 }
+"llama-mtmd-debug.exe" = { sha256 = "5ccd64ae313cf3494d2d588c75fc3d5900a8159d7b44f9bd10f43f6f98acf52f", size = 55808 }
+"llama-perplexity-impl.dll" = { sha256 = "ee822f3e332e0880d5971fa7058f0f5c4678f9f3373c77263100a1249ac3d377", size = 197632 }
+"llama-perplexity.exe" = { sha256 = "b4c7ae4c93827f018a01a0744e745bd5553ff62df5197d79e9ed5322e7d23c5d", size = 9216 }
+"llama-quantize-impl.dll" = { sha256 = "e7ff025293bb13c21d51639022ee5c78530ca7feb153667d41129459c98dbd7e", size = 137216 }
+"llama-quantize.exe" = { sha256 = "dfff151c7cc9620d25e25de5c4fd8389e225bf976b7ded0aeef34f05541ae2a6", size = 9216 }
+"llama-qwen2vl-cli.exe" = { sha256 = "05e8ff34ef19ea8cb5c4e60aa24bf93e10b6150afd27b26a3e354b6f86e26f11", size = 27136 }
+"llama-results.exe" = { sha256 = "5ca5d7434f176e2f5efc757e16de490576b01ed5135fb2dcb0adcea5bf69b908", size = 46592 }
+"llama-server-impl.dll" = { sha256 = "70133b6bb53c80ff7b4656a534aba713a0a7929733d2a66326a58a4461e7e4c5", size = 9245696 }
+"llama-server.exe" = { sha256 = "58a62d7f1693c3f15782de4bc66563b488296880ca59fd34c37e9eade8546f39", size = 9216 }
+"llama-tokenize.exe" = { sha256 = "61960db720c1132305836d61ad83b60f49d56148cd0dc7b1fcb1d45e31748372", size = 58880 }
+"llama-tts.exe" = { sha256 = "bcdb2dca3ef09d9c57c7053abfc50a734c3038e90a3d96db208b0977ce7d175d", size = 41984 }
+"llama.dll" = { sha256 = "6720cef3d4fba862b92a3ed5a9ba4f137bcc7f8c5e80226b7d55037dc1e7f07e", size = 3436032 }
+"llama.exe" = { sha256 = "00780b0c8f93585f0e55a4a77a428ac69bbd7340c2c6f603dbe38aa269b5517a", size = 104448 }
+"mtmd.dll" = { sha256 = "0365d608a55923d5206d0810e97abfdf2b3ef1dc93be4827ca344dada85eaab1", size = 1835008 }
+
+# --- 模型：位于 .local/models/<dir>/；HF 下载地址为 https://huggingface.co/<repo>/resolve/<revision>/<file> ---
+
+[models."pyannote-segmentation-3.0"]
+dir = "vad-comparison/pyannote-segmentation-3.0"
+repo = "pyannote/segmentation-3.0"
+revision = "e66f3d3b9eb0873085418a7b813d3b369bf160bb"
+gated = true
+
+[models."pyannote-segmentation-3.0".files]
+"pytorch_model.bin" = { sha256 = "da85c29829d4002daedd676e012936488234d9255e65e86dfab9bec6b1729298", size = 5905440 }
+
+[models.faster-whisper-large-v3]
+dir = "faster-whisper-large-v3"
+repo = "Systran/faster-whisper-large-v3"
+revision = "edaa852ec7e145841d8ffdb056a99866b5f0a478"
+
+[models.faster-whisper-large-v3.files]
+"config.json" = { sha256 = "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9", size = 2394 }
+"model.bin" = { sha256 = "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1", size = 3087284237 }
+"preprocessor_config.json" = { sha256 = "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711", size = 340 }
+"tokenizer.json" = { sha256 = "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca", size = 2480617 }
+"vocabulary.json" = { sha256 = "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1", size = 1068114 }
+
+# W0 特征链的 Mel 滤波器：取自 whisperx 3.8.6 包内 assets，不是 HF 资产，fetch-models 不负责获取。
+[models.w0-assets]
+dir = "w0-assets"
+source = "whisperx 3.8.6 package assets (whisperx/assets/mel_filters.npz)"
+
+[models.w0-assets.files]
+"mel_filters.npz" = { sha256 = "7450ae70723a5ef9d341e3cee628c7cb0177f36ce42c44b7ed2bf3325f0f6d4c", size = 4271 }
+
+[models."qwen3-asr-1.7b-hf"]
+dir = "qwen3-asr-1.7b-hf"
+repo = "Qwen/Qwen3-ASR-1.7B-hf"
+revision = "bcd2b5b7f32b480ab5790554cfa8347f246a14f3"
+
+[models."qwen3-asr-1.7b-hf".files]
+"model.safetensors" = { sha256 = "2db53c7d81bd9b8cbc6a074e89be2c968a0d373fb4ee68bb1b1e14f7042dfee1", size = 4076193080 }
+"chat_template.jinja" = { sha256 = "f50e6b694fbf4a683206e37869990d68333fe95d285730f084c838a34b0d98c2", size = 1434 }
+"config.json" = { sha256 = "117ac8e63e2af7cae3665e5a632d6eb03f5f384915519ceb6403c15ec6533f63", size = 2399 }
+"generation_config.json" = { sha256 = "9939fc9388b79bd70757f938b87381e817173d6a6158f5af6506c0b73e775c3c", size = 165 }
+"processor_config.json" = { sha256 = "bc0b230081b44e629dd5b9045b78495615c1831b4b9f4cffe97bd37e82a6156a", size = 487 }
+"tokenizer.json" = { sha256 = "fe1fad59be22a41ee293363fcf95fdedbc7c93f3b49270b1d2e18bd1399a7a05", size = 11429653 }
+"tokenizer_config.json" = { sha256 = "945e980986de2ca7768f3326bfdbb4fbea3406f972b8ae0be233089f2b253c11", size = 998 }
+
+[models.mms-1b-all]
+dir = "mms-1b-all"
+repo = "facebook/mms-1b-all"
+revision = "3d33597edbdaaba14a8e858e2c8caa76e3cec0cd"
+
+[models.mms-1b-all.files]
+"adapter.jpn.safetensors" = { sha256 = "0d67ea38940d2c539d7c60b603d134ae7ce7af5314e103a8a9506c6476bbaca3", size = 20261560 }
+"config.json" = { sha256 = "ee172ef39a0e40c55403fb811fa0f56c6198c7ed21a2bdf5bd0e72e52c07a41c", size = 2040 }
+"model.safetensors" = { sha256 = "0f1d95ce43d27e03d5d8dd56c697c805460f967c793dd2cbec2e8e8012deda98", size = 3859521128 }
+"preprocessor_config.json" = { sha256 = "f724fdad65341e79bd9741888fe4e8ce1bb2e7b44fc8216c28c591afb1e202f4", size = 254 }
+"special_tokens_map.json" = { sha256 = "9046da57c270c8e74d0f38832b4adce269c9d914ef21d2a0925e7772152dd793", size = 96 }
+"tokenizer_config.json" = { sha256 = "42a65547cf0654d12263ece7c909c4b0c574b660c78658f806c772cc223bc01b", size = 397 }
+"vocab.json" = { sha256 = "0375a07a977a599040a7ff333b6974996965cd93754020619518c15db7691f01", size = 1340148 }
+
+[models.hy-mt2-30b-a3b-apex-i-compact]
+dir = "translation/hy-mt2-30b-a3b-apex-i-compact"
+repo = "alphaZimuth/Hy-MT2-30B-A3B-APEX-GGUF"
+revision = "312cce865e03a0718e36cfd1077e6307957aef72"
+
+[models.hy-mt2-30b-a3b-apex-i-compact.files]
+"Hy-MT2-30B-A3B-APEX-I-Compact.gguf" = { sha256 = "8a51a390b285fb1eb566a1683f8da476be9e87c1fbee5507967d6129872dfa1a", size = 15035838080 }

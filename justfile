@@ -72,8 +72,17 @@ setup:
 check-toolchain:
     uv run --no-project --no-python-downloads --offline python scripts/check_toolchain.py
 
-# Install the root environment from uv.lock (same as setup; changes the environment, ask first).
+# 安装根环境（uv.lock）后按 assets.toml 安装 ffmpeg、llama.cpp（改环境、可能联网，须先问；docs/development/dependencies.md）。
 install: setup
+    uv run --locked --offline python -X utf8 scripts/assets.py install-tools
+
+# 按 assets.toml 下载缺失或不符的模型（几十 GB、联网，须先问；不并入 install）。
+fetch-models:
+    uv run --locked --offline python -X utf8 scripts/assets.py fetch-models
+
+# 离线核对已装的 tools 与 models 与 assets.toml 一致（size+mtime 缓存，不下载）。
+verify-assets:
+    uv run --locked --offline python -X utf8 scripts/assets.py verify
 
 fmt *args:
     @echo "fmt: no formatter selected for this project (see docs/development/toolchain.md)" && exit 1
