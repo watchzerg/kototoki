@@ -9,7 +9,7 @@
 - uv 管理解释器、根环境与 `uv.lock`；just 是任务入口，Windows 下用 pwsh 执行 recipe。
 - 产品推理在根环境（统一 CUDA 12.8）中运行；翻译使用独立进程的官方 llama.cpp b11583 `win-cuda-13.4` 构建（`.local/tools/llama.cpp/b11583-cuda13.4/`，含 `identity.json`），与 Python 进程没有 DLL 交集。选型依据见[双语字幕流水线规格 §7.2](../specs/bilingual-subtitle-pipeline.md#72-环境一个统一的-cuda-128-环境)与 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。
 - 产品媒体提取调用外部 ffmpeg／ffprobe（路径在 `kototoki.toml` 的 `[paths]`，默认 `D:/bin/`），派生 WAV 用默认 swr 重采样（2026-10-15 由 soxr 改回，票据 10），不要求 libsoxr；本机为 gyan.dev full build `2026-10-01-git-0b01ed76aa`。
-- 产品翻译配方为 `b10-joint-degrade-v1`（`kototoki/translate/recipes.py`），与 ADR-0006 的 `b10-joint` 请求逐字节相同，只多批次终态失败的 10→5→1 降级，见 [GLOSSARY](../../GLOSSARY.md)。
+- 产品翻译配方为 `dp10-cut-degrade-v1`（`kototoki/translate/recipes.py`，ADR-0011），与 ADR-0010 的 `dp10-cut` 切包与请求逐字节相同，只多批次终态失败的拆批降级，见 [GLOSSARY](../../GLOSSARY.md)。
 - 研究期 demo 的推理后端仍在 `.local/envs/` 下的隔离环境中运行，不受根 lock 管理；冻结的 `experiments` recipe 用 Python 3.12 的无依赖历史解释器（`justfile` 的 `legacy`）。
 - 工具分工与依赖变更规则见 [Python 工具链](toolchain.md)。
 

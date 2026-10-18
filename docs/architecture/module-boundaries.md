@@ -24,7 +24,7 @@
 | 产品批次编排：扫描与稳定性、阶段调度、worker 重启、`<output_dir>/.work/lock` 与 `.local/gpu.lock`、Job Object、子进程环境、发布与 `failure.json` 清理、运行日志 | [批次编排](modules/batch-orchestration.md)（`kototoki/__main__.py`、`kototoki/job.py`） | 用户经 `python -m kototoki` 调用 |
 | 产品阶段计划：阶段链与各阶段的产物／输入名、模型文件清单与固定 SHA256、各阶段期望身份（probe、vad、asr、align、ja-cues；translate 身份转问翻译子系统）、"下一个要跑的阶段"与发布状态判定 | [阶段计划](modules/stage-plan.md)（`kototoki/plan.py`） | 编排器（`next_stage`／`advance`、jobs 文件）、worker 壳（写进产物的身份、模型核对清单）、伪 worker |
 | 流程配方身份（`Recipe.recipe_hash`）、批次、整片交付 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) | — |
-| 产品翻译：配方与 `RECIPE_HASH`（`kototoki/translate/recipes.py`，翻译配方的唯一归属）、翻译 run 目录的键（`translate/srt-<sha12>/<配方名>__s<seed>`）与翻译身份、"是否需要模型"（`needs_model`：零条目或 run 已完成即否）、llama-server session 生命周期与空闲显存轮询、`b10-joint` 请求、按批次落盘与续跑、基础设施失败重启、产品配方 `b10-joint-degrade-v1` 的三级降级与回退报告；中日两行合并 | [翻译子系统与双语合并](modules/translation-subsystem.md)（`kototoki/translate/`、`kototoki/merge.py`） | 阶段计划模块调用 `translate.plan` 取身份与 `needs_model`；编排器持有 `Session`、按 `needs_model` 取 GPU 锁、调用 `translate_document(plan, session)` 与 `merge`，从 `TranslateResult` 读回退计数 |
+| 产品翻译：配方与 `RECIPE_HASH`（`kototoki/translate/recipes.py`，翻译配方的唯一归属）、翻译 run 目录的键（`translate/srt-<sha12>/<配方名>__s<seed>`）与翻译身份、"是否需要模型"（`needs_model`：零条目或 run 已完成即否）、llama-server session 生命周期与空闲显存轮询、`dp10-cut` 切包与邻文（只读 `ja.srt` 的停顿）、joint 请求、按批次落盘与续跑、基础设施失败重启、产品配方 `dp10-cut-degrade-v1` 的三级降级与回退报告；中日两行合并 | [翻译子系统与双语合并](modules/translation-subsystem.md)（`kototoki/translate/`、`kototoki/merge.py`） | 阶段计划模块调用 `translate.plan` 取身份与 `needs_model`；编排器持有 `Session`、按 `needs_model` 取 GPU 锁、调用 `translate_document(plan, session)` 与 `merge`，从 `TranslateResult` 读回退计数 |
 
 ## 依赖方向
 
@@ -59,7 +59,7 @@
 
 双语字幕流水线（`kototoki/`）按"谁有权做这个决定"划分，每项只有一个归属：
 
-- **时间轴**只在三处出现：媒体定零点，推理模块输出 WAV 本地坐标，日文 cue 加一次 offset。编排、翻译、合并不得出现任何时间换算。
+- **时间轴**只在三处出现：媒体定零点，推理模块输出 WAV 本地坐标，日文 cue 加一次 offset。编排、翻译、合并不得出现任何时间换算；翻译子系统只读 `ja.srt` 相邻 cue 之间的停顿长短来切包与取舍邻文（ADR-0011），不改写、不换算任何时间。
 - **跳过与替换**由产物契约的 `is_current` 判定，期望身份与"下一个要跑的阶段"由阶段计划模块给出，编排只负责问；推理模块永远不决定"要不要跑"。
 - **失败分三级，各归一层**：窗口级（`failed_windows`，推理模块填、协议校验，不进对齐、cue 与翻译）；文件级（退出码 1，协议记账，编排继续下一文件）；进程级（退出码 2，编排从下一文件重启 worker）。翻译子系统内部的基础设施失败自己消化到重启两次为止，再往上抛即为该文件的文件级失败；批次终态失败在子系统内降级到单条，单条仍失败保留日文。
 - **发布**只有编排能做，且必须走 `publish_blockers` → `record_published` → 移动三份文件的固定顺序；判定在扫描阶段完成，被用户改动且非 `force` 的文件不进 GPU 阶段。

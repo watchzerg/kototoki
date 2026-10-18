@@ -1,6 +1,6 @@
 # 当前架构总览
 
-仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频生产日文、中文与中日双语 SRT，STT 默认 W0、可选 X0，翻译用产品配方 `b10-joint-degrade-v1`。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `b10-joint`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，翻译基线见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)／[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)。
+仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频生产日文、中文与中日双语 SRT，STT 默认 W0、可选 X0，翻译用产品配方 `dp10-cut-degrade-v1`。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `b10-joint`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，翻译基线见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)／[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)。
 
 本页是理解当前系统的入口，覆盖正式代码；"当前"指同一仓库版本的已实现结构，不代表全部环境已验收。阅读顺序：本页 → [模块边界](module-boundaries.md) → 受影响的模块页 → 源码与测试。
 

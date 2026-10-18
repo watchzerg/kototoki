@@ -23,7 +23,11 @@ SEED = 7
 
 
 def document(n: int, word: str = "台詞"):
-    return parse_srt(format_srt([(i * 2.0, i * 2.0 + 1.5, f"{word}{i}ですね") for i in range(n)]))
+    """每条 1.5 s、相邻停顿 0.5 s，每 10 条之间留 20 s 停顿：dp10-cut 在此恰好切出 10 条一批（与 b10-joint 相同），
+    续跑与降级测试只关心批次机制；批内后邻可见（<1 s）、跨 20 s 的邻文不可见。切包规则本身见 `test_translate_recipes`。"""
+    def start(i: int) -> float:
+        return i * 2.0 + (i // 10) * 20.0
+    return parse_srt(format_srt([(start(i), start(i) + 1.5, f"{word}{i}ですね") for i in range(n)]))
 
 
 class FakeServer:

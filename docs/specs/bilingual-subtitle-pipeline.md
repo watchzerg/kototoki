@@ -21,7 +21,7 @@
 | ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](x0-reusable-demo.md) |
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
 | 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2 给出初值） | [显示契约](../testing/demo-display-contract.md)为起点 |
-| 翻译 | Hy-MT2 30B-A3B APEX-I-Compact，`official30b-cached-v1` 采样，流程 `b10-joint`（每批 10 条，前后各 1 条只读邻文，即 1-10-1） | [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md) |
+| 翻译 | Hy-MT2 30B-A3B APEX-I-Compact，`official30b-cached-v1` 采样，joint 提示；切包 `dp10-cut`（每批待译 ≤10 条、可见 ≤12 条，按停顿动态规划切点、≥20 s 必切，前邻 <5 s／后邻 <1 s 可见；2026-10-18 起，之前为 `b10-joint` 的 1-10-1） | [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0011](../adr/0011-dp10-cut-product-recipe.md) |
 | 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下 | 用户裁定 |
 
 ### 1.2 已裁定（2026-10-13）
@@ -51,7 +51,7 @@
 | 下混 | 单声道直通；双声道沿用 0.5/0.5；5.1 以上用 ffmpeg 标准矩阵含中置 |
 | 重采样器 | ffmpeg 默认 swr（`aresample=16000`，2026-10-15 用户裁定由 soxr 28 bit 改回，票据 10）；派生 WAV 与基线 `hf-ii-full.wav` 逐字节一致 |
 | 翻译引擎 | 官方 llama.cpp b11583 win-cuda-13.4 替代 ADR-0005 的 b11429 兼容引擎条款 |
-| 产品翻译配方 | `b10-joint-degrade-v1` |
+| 产品翻译配方 | `dp10-cut-degrade-v1`（2026-10-18 起，ADR-0011；2026-10-14..18 为 `b10-joint-degrade-v1`） |
 
 第三轮评审（2026-10-14，独立评审）采纳的裁定：
 
@@ -216,7 +216,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 - 无语音：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布三份零条目 SRT 并告警（现有 SRT 解析器对空文件抛错，产品侧绕过它）。
 - x0 生成触顶（4096 token）：只把该窗口记为失败窗口，不让整部影片失败。表示方式由 worker 协议（票据 00）统一规定，w0／x0 相同：`asr.json` 中该窗的 `text` 置空，截断文字与原因记入 `failed_windows`（供诊断，不进对齐、cue 与翻译），"每个字符恰好一个 unit"的不变量按保留文本计算；窗口失败数进入汇总。现有 `x0_demo/pipeline.py::validate_asr` 拒绝 `token_limit_reached` 的行为不移植。
 - 阶段级终态与基础设施失败区分（沿用 v3）：OOM、服务器崩溃、传输错误是基础设施失败，同一 run 内重启 llama-server 重做，最多 2 次；每次重启是 v3 意义上的新 session（`sessions[]` 新增一项、`cache_state` 重置、首个请求重做 `cache_n == 0` 校验、`resumed=true`）。生成超限、grammar 失败是批次终态，进入下面的降级。
-- 翻译降级（产品规则，区别于 v3 实验的"不缩批"）：10 条批次终态失败 → 拆成两个 5 条批次（各自仍取前后各 1 条只读邻文，seed 不变）→ 仍失败的 5 条批次拆成单条 → 单条仍失败时该 cue 的中文位置保留日文原文。子批次 ID 为 `父ID.a`／`父ID.b`，场景文件记录降级树；降级清单写 `translate/report.json` 并在控制台汇总。降级改变了 v3 配方 `b10-joint` 中"不缩批"的身份字段，产品配方命名为 `b10-joint-degrade-v1`，另算 hash；提示、grammar、采样与请求字节不变并有测试固定。
+- 翻译降级（产品规则，区别于 v3 实验的"不缩批"）：批次（≤10 条）终态失败 → 拆成前后两半（与原批次用同一条邻文规则，seed 不变）→ 仍失败的半批拆成单条 → 单条仍失败时该 cue 的中文位置保留日文原文。子批次 ID 为 `父ID.a`／`父ID.b`，场景文件记录降级树；降级清单写 `translate/report.json` 并在控制台汇总。降级改变了 v3 配方中"不缩批"的身份字段，产品配方另名、另算 hash（`dp10-cut-degrade-v1` 对 `dp10-cut`；2026-10-14..18 为 `b10-joint-degrade-v1` 对 `b10-joint`）；提示、grammar、采样与请求字节不变并有测试固定。
 - 续跑：重跑同一命令即可；已完成的产物按身份跳过。翻译按批次增量落盘（v3 原本按整个场景落盘，产品改为每批次追加写），中断后从未完成的批次继续。回退为日文的 cue 对该配方 hash 与 seed 是终态，重跑同一命令不会再试；要重试须改 `[translate] seed`（另起 run 目录，整片重译）；`force` 只管最终文件的覆盖，不触发重译。
 
 ## 7. 进程、环境与依赖
@@ -392,7 +392,7 @@ seed  = 20261008
 | 所有路径、模型目录、二进制位置（GPU 锁路径除外） | VAD onset／offset、30 s 窗口与合并策略、设备 `cuda:0`、下混矩阵与重采样参数 |
 | 并发数、端口、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳；x0：BF16、greedy、4096 |
 | 输入扩展名、音轨语言偏好 | MMS FP32、归一化、字符映射 |
-| cue 显示规则（§5.2） | 翻译采样 `official30b-cached-v1`、b10-joint 批次与提示、grammar、context 8192 |
+| cue 显示规则（§5.2） | 翻译采样 `official30b-cached-v1`、dp10-cut 切包与 joint 提示、grammar、context 8192 |
 | 翻译 seed | 翻译请求重试次数、失败分类、降级策略 |
 | `force` | 产物 schema 版本 |
 
@@ -459,3 +459,5 @@ seed  = 20261008
 2026-10-15（票据 14 实施）：阶段链、worker 输入名、模型文件清单与各阶段期望身份从 `job.py`、三个 worker 壳与伪 worker 收进新模块 `kototoki/plan.py`（§4 身份归属随改）；身份字段、键名与取值逐字节不变，现有工作目录续跑不受影响。review 修订：`engine` 改为可选关键字、`advance` 对终态报错、编排侧改名 `advance_or_fail`。见[阶段计划](../architecture/modules/stage-plan.md)。
 
 2026-10-15（票据 15 实施）：翻译 run 目录键、翻译身份与"是否需要模型"归翻译子系统 `translate.plan`（§1.2 已记）；`translate/data.py` 并入 `batching.py`。review 修订：GPU 锁的翻译阶段获取移进 `translate_batch` 并只在有文件 `needs_model` 时发生，session 失败只影响需要模型的文件，`TranslatePlan` 类型化（§3.3 随改）。配方内容变了而名字未变时 `plan` 拒绝并提示删目录，不自动另开目录（零迁移，与 v3 一致）。
+
+2026-10-18（票据 16 实施，[ADR-0011](../adr/0011-dp10-cut-product-recipe.md)）：用户裁定把研究基线 `dp10-cut` 合并到产品，产品配方改为 `dp10-cut-degrade-v1`（§1.2 两处、§6 已改）：`Cue` 带 `ja.srt` 的起止秒，切包与邻文按 ADR-0010，降级子批次用同一条邻文规则；不迁移旧 run、不加开关，已交付影片的翻译身份过期、下次整批重译（用户接受）。`tests/test_translate.py` 的合成 SRT 每 10 条之间留 20 s 停顿，使批次机制用例仍是 10 条一批。

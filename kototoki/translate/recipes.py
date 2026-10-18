@@ -1,10 +1,12 @@
 """翻译配方：提示、grammar、采样与 completion 请求，及配方 hash（翻译配方的唯一归属，规格 §7.3）。
 
-复制自 `experiments/translation_v3/recipes.py`，只保留 `b10-joint` 用到的字段与函数；去掉 terms／review／
-多样本／类别路由与配方文件加载。`Recipe.spec()` 的结构与 v3 相同，因此 `B10_JOINT.recipe_hash` 等于 v3
-`BUILTIN["b10-joint"]` 的原 hash（`tests/test_translate_recipes.py` 钉住），请求字节同样逐字节对照 v3。
-产品配方 `b10-joint-degrade-v1`（票据 09）字段与 `b10-joint` 相同，只把 `overflow` 策略换成 10→5→1 降级与
-单条保留日文（见 `degrade.py`），因而另算 hash；提示、grammar、采样与请求字节不变。
+复制自 `experiments/translation_v3/recipes.py`，只保留 `b10-joint` 与 `dp10-cut` 用到的字段与函数；去掉
+terms／review／多样本／类别路由与配方文件加载。`Recipe.spec()` 的结构与 v3 相同（`gap_pack` 为 None 时不进
+`recipe`，有值时 `versions["gap_pack"]` 记 `gap-pack-v2`），因此 `B10_JOINT`、`DP10_CUT` 的 `recipe_hash` 等于
+v3 `BUILTIN` 同名配方的原 hash（`tests/test_translate_recipes.py` 钉住），请求字节同样逐字节对照 v3。
+产品配方只把 `overflow` 策略换成拆批降级与单条保留日文（见 `degrade.py`），因而另算 hash；提示、grammar、
+采样与请求字节不变：`b10-joint-degrade-v1`（票据 09）对应 `b10-joint`，`dp10-cut-degrade-v1`（票据 16，
+ADR-0011）对应 `dp10-cut`。
 """
 
 from __future__ import annotations
@@ -34,6 +36,14 @@ JOINT_INSTRUCTION = ("先共同理解全部可见台词及跨条目的条件、�
 SAMPLING_PROFILE = "official30b-cached-v1"
 OVERFLOW_V3 = "recorded-failure-no-truncation-no-auto-shrink"
 OVERFLOW_DEGRADE = "degrade-10-5-1-keep-source"
+# v3 gap-pack-v2（ADR-0010）：按停顿切包，切点按停顿长短分级加罚（`batching.gap_pack_cuts`）。
+GAP_PACK_VERSION = "gap-pack-v2"
+# `dp10-cut` 的切包参数，逐字照抄 v3 `BUILTIN["dp10-cut"]`（整个 dict 进 hash）。产品只实现 `group_gap=None`
+# 这条分支，`group_gap`／`group_max` 两键只为保持身份而保留。
+DP10_CUT_PACK: dict[str, Any] = {
+    "min": 6, "max": 10, "soft_gap": 2.0, "hard_gap": 20.0, "soft_weight": 1.0, "small_penalty": 1000.0,
+    "group_gap": None, "group_max": 10, "context_both_below": 1.0, "context_before_below": 5.0,
+    "max_visible": 12, "cut_penalty": [[0.5, 6.0], [1.0, 3.0], [2.0, 1.0]]}
 
 
 def sampling(seed: int) -> dict[str, Any]:
@@ -52,7 +62,11 @@ def completion_request(tokens: list[int], seed: int, grammar: str) -> dict[str, 
 
 @dataclass(frozen=True)
 class Recipe:
-    """v3 配方字段（`b10-joint` 的取值）；`name` 是标签，不进身份；`overflow` 进 `fixed`（与 v3 位置相同）。"""
+    """v3 配方字段（`b10-joint` 的取值）；`name` 是标签，不进身份；`overflow` 进 `fixed`（与 v3 位置相同）。
+
+    `gap_pack`：None 时按源顺序每批 `batch_count` 条、前后各 `context_before`／`context_after` 条邻文；有值时
+    按 `batching.gap_pack_cuts` 切包、邻文按停顿取舍（`batch_count` 成为目标条数、`context_*` 成为上限）。
+    """
 
     name: str
     batch_count: int = 10
@@ -64,11 +78,15 @@ class Recipe:
     preanalysis: None = None
     review: None = None
     overflow: str = OVERFLOW_V3
+    gap_pack: dict[str, Any] | None = None
 
     def spec(self) -> dict[str, Any]:
-        data = {key: value for key, value in asdict(self).items() if key not in ("name", "overflow")}
+        data = {key: value for key, value in asdict(self).items()
+                if key not in ("name", "overflow") and not (key == "gap_pack" and value is None)}
         versions = {"adapters_render": "adapters.render(hy-mt2-30b)+id_grammar",
                     "joint": [JOINT_VERSION, sha256_bytes(JOINT_INSTRUCTION.encode())]}
+        if self.gap_pack:
+            versions["gap_pack"] = GAP_PACK_VERSION
         return {"schema": RECIPE_SCHEMA, "recipe": data, "versions": versions,
                 "fixed": {"sampling_profile": SAMPLING_PROFILE, "sampling": sampling(0) | {"seed": "<run seed>"},
                           "n_predict": N_PREDICT, "context_size": CONTEXT_SIZE, "guard_tokens": GUARD_TOKENS,
@@ -83,11 +101,15 @@ class Recipe:
         return {"name": self.name, **self.spec(), "recipe_hash": self.recipe_hash}
 
 
-# 已采纳的翻译流程基线（ADR-0006）。
+# 2026-10-11..16 的翻译流程基线（ADR-0006）：按源顺序每批 10 条。
 B10_JOINT = Recipe("b10-joint")
-# 产品配方（规格 §1.2）：批次终态失败按 `degrade.py` 拆批，单条仍失败保留日文。
+# 2026-10-14..18 的产品配方（票据 09）：b10-joint 加拆批降级。保留并钉住 hash，作为旧 run 目录的身份对照。
 B10_JOINT_DEGRADE_V1 = Recipe("b10-joint-degrade-v1", overflow=OVERFLOW_DEGRADE)
-PRODUCT = B10_JOINT_DEGRADE_V1
+# 2026-10-17 起的翻译流程基线（ADR-0010）：gap-pack-v2 切包，每批 ≤10 条、可见 ≤12 条。
+DP10_CUT = Recipe("dp10-cut", gap_pack=DP10_CUT_PACK)
+# 产品配方（规格 §1.2，ADR-0011）：dp10-cut 切包，批次终态失败按 `degrade.py` 拆批，单条仍失败保留日文。
+DP10_CUT_DEGRADE_V1 = Recipe("dp10-cut-degrade-v1", overflow=OVERFLOW_DEGRADE, gap_pack=DP10_CUT_PACK)
+PRODUCT = DP10_CUT_DEGRADE_V1
 RECIPE_HASH = PRODUCT.recipe_hash
 
 

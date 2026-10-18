@@ -51,6 +51,7 @@
 
 调研条目已登记在[调研索引](research/INDEX.md)，此处只列其他既有文档，按原登记顺序保留。
 
+- ADR: [产品翻译配方改为 dp10-cut-degrade-v1](adr/0011-dp10-cut-product-recipe.md) — 已接受（2026-10-18）；产品包切包与邻文同步到 dp10-cut，降级规则不变；已交付影片的翻译身份过期、下次整批重译；仍无质量证据。替代 ADR-0007 决定 4 与 ADR-0010 关于产品配方的部分。
 - ADR: [字幕翻译流程基线改为 dp10-cut](adr/0010-dp10-cut-translation-flow-baseline.md) — 已接受（2026-10-17）；每包 ≤10 条、可见 ≤12 条，分级切点偏向停顿，不跨 ≥20 s；按逻辑推定，未做 GPU 筛选；产品配方不变。替代 ADR-0009。
 - ADR: [字幕翻译流程基线改为 dp6-grp](adr/0009-dp6-grp-translation-flow-baseline.md) — 已被 ADR-0010 替代（2026-10-17）；完整 SRT 流程按停顿与 <1 s 小组拼包，提示同 `b10-joint`；v7 两次合并与 b10-joint 无可分辨差异；产品配方不变。部分替代 ADR-0006。
 - ADR: [放弃多样本 MBR，不自动选用"翻译多次再挑选"](adr/0008-no-multi-translation-selection.md) — 已接受（2026-10-16）；放弃 v5 `mbr8s` 与 v4 `mbr8c`，翻译基线仍为 `b10-joint`；多样本选择、best-of-N、多次全量翻译投票等方法只在用户明确要求时使用，边界情况先问。

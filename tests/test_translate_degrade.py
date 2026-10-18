@@ -45,22 +45,29 @@ class DegradeTests(unittest.TestCase):
             result.append(list(target["translations"]))
         return result
 
-    def test_children_split_halves_then_singles_with_one_neighbour(self) -> None:
+    def test_children_split_halves_then_singles_with_the_batch_neighbour_rule(self) -> None:
         scene = scene_from_document(document(23))
         ids = scene.ids
-        batch = build_batches(scene, R.PRODUCT)[1]  # ids[10:20]
+        batch = build_batches(scene, R.PRODUCT)[1]  # ids[10:20]；与前一批之间隔 20 s，前邻不可见
+        self.assertEqual((batch.before_ids, batch.after_ids), ((), ()))
         a, b = children(scene, batch, 0, R.PRODUCT)
         self.assertEqual((a.batch_id, b.batch_id), (batch.batch_id + ".a", batch.batch_id + ".b"))
-        self.assertEqual((a.target_ids, a.before_ids, a.after_ids), (tuple(ids[10:15]), (ids[9],), (ids[15],)))
-        self.assertEqual((b.target_ids, b.before_ids, b.after_ids), (tuple(ids[15:20]), (ids[14],), (ids[20],)))
+        self.assertEqual((a.target_ids, a.before_ids, a.after_ids), (tuple(ids[10:15]), (), (ids[15],)))
+        self.assertEqual((b.target_ids, b.before_ids, b.after_ids), (tuple(ids[15:20]), (ids[14],), ()))
         singles = children(scene, a, 1, R.PRODUCT)
         self.assertEqual([s.batch_id for s in singles], [f"{a.batch_id}.{n}" for n in range(1, 6)])
         self.assertEqual((singles[0].before_ids, singles[0].target_ids, singles[0].after_ids),
-                         ((ids[9],), (ids[10],), (ids[11],)))
+                         ((), (ids[10],), (ids[11],)))
+        self.assertEqual((singles[1].before_ids, singles[1].target_ids, singles[1].after_ids),
+                         ((ids[10],), (ids[11],), (ids[12],)))
         self.assertEqual(children(scene, singles[0], 2, R.PRODUCT), [])
         last = build_batches(scene, R.PRODUCT)[2]  # 3 条：前半 2 条
         self.assertEqual([len(c.target_ids) for c in children(scene, last, 0, R.PRODUCT)], [2, 1])
         self.assertEqual(children(scene, last, 0, R.PRODUCT)[1].after_ids, ())
+        # dp10-cut 的批次不一定满 10 条：7 条拆成 4＋3。
+        scene = scene_from_document(document(7))
+        (batch,) = build_batches(scene, R.PRODUCT)
+        self.assertEqual([len(c.target_ids) for c in children(scene, batch, 0, R.PRODUCT)], [4, 3])
 
     def test_three_level_degrade_and_single_fallback(self) -> None:
         doc = document(12)

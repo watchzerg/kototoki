@@ -1,4 +1,4 @@
-"""三级降级（产品配方 `b10-joint-degrade-v1`，规格 §6）：批次终态失败 → 两个子批次 → 单条 → 保留日文。
+"""三级降级（产品配方 `dp10-cut-degrade-v1`，规格 §6）：批次终态失败 → 两个子批次 → 单条 → 保留日文。
 
 终态失败指 `run_step` 用完尝试次数后仍是 `context`／`limit`／`parse`；基础设施失败不在这里处理，
 由 `attempt` 原样抛给 `generate.translate_document` 的重启循环。拆分规则：
@@ -7,7 +7,8 @@
 - 第 1 级（半批）拆成单条 `父ID.a.1`…；
 - 单条仍失败，该 cue 的译文 = 日文原文（回退）。只有 1 条的批次失败即回退，不再拆。
 
-子批次仍按配方取前后各 1 条只读邻文、seed 不变，因此提示、grammar 与采样构造与原批次完全相同。
+子批次按配方的同一条邻文规则（`batching.neighbours`）取只读邻文、seed 不变，因此提示、grammar 与采样构造与
+原批次完全相同。
 每个子批次的结果（以及失败的原批次）一出来就经 `record` 追加到降级日志，续跑时 `recorded` 里已有的节点
 不再请求；整个批次完成后由调用方写成 `batches.jsonl` 的一行，回退由此对该配方 hash 与 seed 成为终态。
 """
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .batching import Batch, Scene
+from .batching import Batch, Scene, neighbours
 from .recipes import Recipe
 
 REPORT_SCHEMA = "kototoki-translate-report-v1"
@@ -33,10 +34,13 @@ def children(scene: Scene, node: Batch, level: int, recipe: Recipe) -> list[Batc
         parts = [(str(number), position, position + 1)
                  for number, position in enumerate(range(node.start, node.stop), 1)]
     ids = scene.ids
-    return [Batch(index=node.index, batch_id=f"{node.batch_id}.{suffix}", scene_id=node.scene_id,
-                  target_ids=tuple(ids[start:stop]), before_ids=tuple(ids[max(0, start - recipe.context_before):start]),
-                  after_ids=tuple(ids[stop:stop + recipe.context_after]), start=start, stop=stop)
-            for suffix, start, stop in parts]
+    result = []
+    for suffix, start, stop in parts:
+        left, right = neighbours(scene, start, stop, recipe)
+        result.append(Batch(index=node.index, batch_id=f"{node.batch_id}.{suffix}", scene_id=node.scene_id,
+                            target_ids=tuple(ids[start:stop]), before_ids=tuple(ids[left:start]),
+                            after_ids=tuple(ids[stop:right]), start=start, stop=stop))
+    return result
 
 
 def translate_with_degrade(scene: Scene, batch: Batch, recipe: Recipe, attempt: Callable[[Batch], dict[str, Any]],

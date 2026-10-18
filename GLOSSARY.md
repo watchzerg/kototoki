@@ -32,7 +32,8 @@ recipe `dp10-cut` since 2026-10-17 (ADR-0010: joint-understanding prompt of `b10
 6-10 targets around 10 with at most 12 visible cues, cuts penalised at short silences, never across a
 >=20 s silence, gap-aware read-only neighbours; not GPU-screened). `dp6-grp` (ADR-0009: cuts only between
 <1 s groups, 6-12 targets, never across >=10 s) briefly preceded it; `b10-joint` (ADR-0006: 10
-targets/batch, 1 neighbour each side) is the earlier baseline and the control of rounds v3-v7.
+targets/batch, 1 neighbour each side) is the earlier baseline and the control of rounds v3-v7. The product
+recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carries the same packing into `kototoki/`.
 
 ### 双语字幕流水线
 
@@ -49,9 +50,9 @@ _Avoid_: 产品后端, 正式后端
 **整窗 fallback**：
 日文 cue 回填时，一个窗口没有任何字符时间，按 VAD 子段比例给字符排时间（`time_source=fallback`）；只属时间回填，不是翻译回退。
 
-**产品翻译配方 `b10-joint-degrade-v1`**：
-`kototoki/translate/recipes.py` 的产品翻译配方：提示、grammar、采样与请求字节与 `b10-joint` 完全相同，只把批次终态失败的处理（`overflow`）改为 10→5→1 拆批降级、单条仍失败保留日文，因此另算 `recipe_hash`。
-_Avoid_: b10-joint（指产品配方时）
+**产品翻译配方 `dp10-cut-degrade-v1`**：
+`kototoki/translate/recipes.py` 的产品翻译配方（2026-10-18 起，ADR-0011）：切包、邻文、提示、grammar、采样与请求字节与 v3 `dp10-cut` 完全相同，只把批次终态失败的处理（`overflow`）改为拆批降级（两半→单条）、单条仍失败保留日文，因此另算 `recipe_hash`。2026-10-14..18 的产品配方 `b10-joint-degrade-v1` 与 `b10-joint` 同此关系，保留作旧 run 目录的身份对照。
+_Avoid_: dp10-cut、b10-joint（指产品配方时）
 
 **回退 cue**：
 降级到单条仍失败、译文保留日文原文的 cue；对该配方 hash 与 seed 是终态，重跑不再尝试，只有改 seed 才重译；数量记入 `translate/report.json` 与 `published.json`。
