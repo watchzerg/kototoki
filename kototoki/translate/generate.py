@@ -15,7 +15,7 @@ run 目录由本子系统的 `plan` 决定：`<work_dir>/translate/srt-<sha12>/<
 seed 三级分键；同名配方内容变化时 `run.json` 的 hash 不符即拒绝续跑，删除该目录可重跑），下有 `run.json`、
 `batches.jsonl`、`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、`transport/session-NN/`
 （逐请求原始交换）、`infra-failures/`。`TranslatePlan.needs_model` 告诉编排器是否要取 GPU 锁：零条目或 `run.json`
-已记完成时不需要。server 的运行日志在 `<output_dir>/.work/translate-sessions/<时间戳>/session-NN/`，被整批影片共用。
+已记完成时不需要。server 的运行日志在 `<output_dir>/.work/translate-sessions/<UTC戳>-<pid>/session-NN/`，被整批影片共用。
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ class Session:
         self.on_server_pid = on_server_pid or (lambda pid: None)
         self.server_factory = server_factory or self._managed_server
         self.client_factory = client_factory
-        stamp = time.strftime("%Y%m%dT%H%M%S")
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())  # UTC，与运行日志 `run-<戳>.log` 同一时间基准
         self.runtime_root = artifacts.work_root(config.paths.output_dir) / SESSIONS_DIR / f"{stamp}-{os.getpid()}"
         self.server: Any = None
         self.ordinal = 0

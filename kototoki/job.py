@@ -78,6 +78,14 @@ class ArtifactMissing(RuntimeError):
     """worker 正常结束但该文件的产物缺失或身份不符。"""
 
 
+class FinalPathCollision(RuntimeError):
+    """同目录另一个视频（主名相同、扩展名不同）已占用同一组最终 SRT 路径。"""
+
+
+# 提取补偿（`probe.json` 的 `extract.compensation`）超过这么多秒时记 WARNING：净补入／丢弃与 swr 报告的丢弃样本。
+COMPENSATION_WARN_S = 0.1
+
+
 # --- 进程身份、Job Object 与文件锁（取自 translation_v3/procs.py） --------------------------------
 
 _QUERY = 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION
@@ -226,12 +234,13 @@ class ProcessLock:
     def acquire(self, *, break_stale: bool = False) -> None:
         current = self.read()
         if current is not None:
-            if current.get("unparseable") or type(current.get("pid")) is not int:
-                raise LockError(f"{self.kind} {self.path} exists but has no owner pid; inspect it and its owner manually")
-            if self.alive(current.get("pid"), current.get("pid_created")):
-                raise LockError(f"{self.kind} {self.path} held by live pid {current['pid']}; not starting. Do not kill it.")
+            # 空的或无法解析的锁文件（持有者刚创建就被杀）没有 pid，与死 pid 同等对待：默认拒绝，`break_stale` 时替换。
+            owner = current.get("pid") if type(current.get("pid")) is int else None
+            if owner is not None and self.alive(owner, current.get("pid_created")):
+                raise LockError(f"{self.kind} {self.path} held by live pid {owner}; not starting. Do not kill it.")
             if not break_stale:
-                raise LockError(f"Stale {self.kind} {self.path} from dead pid {current.get('pid')}; "
+                origin = f"from dead pid {owner}" if owner is not None else "with no owner pid (empty or unparseable)"
+                raise LockError(f"Stale {self.kind} {self.path} {origin}; "
                                 f"set KOTOTOKI_BREAK_STALE_LOCK=1 for one run to remove it")
             self.stale = current
             self.path.unlink()
@@ -402,11 +411,30 @@ def model_sha_lookup(config: Config) -> ModelSha:
 
 # --- CPU 阶段：probe／extract -------------------------------------------------------------------
 
+def compensation_warnings(compensation: Mapping[str, Any], sample_rate: int | None) -> list[str]:
+    """`extract.compensation` 里净补偿（补入为正、丢弃为负）或 swr 报告的丢弃样本折算超过 `COMPENSATION_WARN_S` 时的告警。"""
+    warnings = []
+    net = compensation.get("net_padding_s")
+    if isinstance(net, (int, float)) and abs(net) > COMPENSATION_WARN_S:
+        warnings.append(f"Resampler {'padded' if net > 0 else 'dropped'} {abs(net):.3f} s net to keep the timeline")
+    dropped = compensation.get("swr_reported_discarded_samples")
+    if isinstance(dropped, int) and sample_rate and dropped / sample_rate > COMPENSATION_WARN_S:
+        warnings.append(f"Resampler discarded {dropped} input samples ({dropped / sample_rate:.3f} s)")
+    return warnings
+
+
+def clean_leftovers(work_dir: Path) -> None:
+    """删除上次被强杀留下的临时文件：ffmpeg 的 `.*.partial*` 与原子写的 `.*.tmp`（输出目录锁保证无并发）。"""
+    for pattern in (".*.partial*", ".*.tmp"):
+        for path in Path(work_dir).glob(pattern):
+            path.unlink(missing_ok=True)
+
+
 def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
     """ffprobe 每次都跑（<1 s）以得到视频身份；`probe.json` 当前且 WAV 在时跳过 extract。
 
     `probe.json` 在 extract 完成后写出，内容为 probe payload 加 `extract` 记录（PCM SHA256 等）。
-    返回 probe 与 extract 的告警（跳过 extract 时取 `probe.json` 里记下的），由调用方写进运行日志。
+    返回 probe 与 extract 的告警（跳过 extract 时取 `probe.json` 里记下的）以及补偿告警，由调用方写进运行日志。
     """
     video.probe = media.probe(video.path, config)
     video.probe_identity = plan.probe_identity(config, video.relative, video.probe.ffprobe)
@@ -414,11 +442,14 @@ def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
     if artifacts.is_current(path, video.probe_identity) and (video.work_dir / artifacts.AUDIO_16K).is_file():
         record = artifacts.read_json(path)["extract"]
         video.pcm_sha256 = record["pcm_sha256"]
-        return video.probe.warnings + tuple(record["warnings"])
+        return (video.probe.warnings + tuple(record["warnings"])
+                + tuple(compensation_warnings(record["compensation"], video.probe.audio.sample_rate)))
+    clean_leftovers(video.work_dir)
     result = media.extract(video.path, video.work_dir, video.probe, config)
     artifacts.write_artifact(path, video.probe_identity, {**video.probe.payload(), "extract": result.payload()})
     video.pcm_sha256 = result.pcm_sha256
-    return video.probe.warnings + result.warnings
+    return (video.probe.warnings + result.warnings
+            + tuple(compensation_warnings(result.compensation, video.probe.audio.sample_rate)))
 
 
 # --- GPU 阶段：worker 子进程 ---------------------------------------------------------------------
@@ -619,6 +650,7 @@ def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate
     blockers = artifacts.publish_blockers(video.finals, video.work_dir, force=ctx.config.run.force)
     if blockers:
         ctx.summary.blocked.append(video.relative)
+        (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
         logger.warning(f"[publish] {video.relative}: final file(s) changed by user, not overwritten "
                        f"({', '.join(blockers)}); set [run] force = true to overwrite")
         return False
@@ -648,11 +680,11 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
         out_lock.acquire(break_stale=config.break_stale_lock)
     except LockError as error:
         raise OutputLocked(str(error)) from error
-    contain_children()
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"output_dir": str(output_dir)})
-    ctx = _Context(config, Summary(), stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
     try:
+        contain_children()
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"output_dir": str(output_dir)})
+        ctx = _Context(config, Summary(), stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
         with _run_logging(root / f"run-{stamp}.log", console):
             try:
                 _run(ctx)
@@ -672,12 +704,25 @@ def _run(ctx: _Context) -> None:
     stable, summary.unstable = stable_files(found, config.run.stable_check_s, ctx.sleep)
     for rel in summary.unstable:
         logger.warning(f"[scan] {rel}: size still changing, skipped this run")
+    claimed: dict[str, str] = {}  # 最终 ja.srt 路径（按平台大小写规则）→ 先占用它的相对路径
     for rel, path in stable:
-        video = VideoFile(rel, path, artifacts.register_work_dir(output_dir, rel),
-                          artifacts.final_srt_paths(output_dir, rel))
+        try:
+            work_dir = artifacts.register_work_dir(output_dir, rel)
+        except Exception as error:  # index.json 损坏、短 id 碰撞等：没有工作目录可写 failure.json，只记日志
+            summary.failed[rel] = "scan"
+            logger.error(f"[scan] FAILED {rel}: {type(error).__name__}", exc_info=error)
+            continue
+        video = VideoFile(rel, path, work_dir, artifacts.final_srt_paths(output_dir, rel))
+        key = os.path.normcase(str(video.finals["ja"]))
+        if key in claimed:
+            ctx.fail(video, "scan", FinalPathCollision(
+                f"final SRT paths of {rel!r} are already taken by {claimed[key]!r} (same stem in the same directory)"))
+            continue
+        claimed[key] = rel
         blockers = artifacts.publish_blockers(video.finals, video.work_dir, force=config.run.force)
         if blockers:
             summary.blocked.append(rel)
+            (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
             logger.warning(f"[scan] {rel}: final file(s) changed by user ({', '.join(blockers)}), skipped; "
                            f"set [run] force = true to overwrite")
             continue
@@ -688,15 +733,19 @@ def _run(ctx: _Context) -> None:
     started = time.perf_counter()
     logger.info(f"[extract] start: {len(ctx.files)} file(s)")
     with concurrent.futures.ThreadPoolExecutor(max_workers=config.run.extract_workers) as pool:
-        futures = {pool.submit(probe_and_extract, config, video): video for video in ctx.files}
-        for future in concurrent.futures.as_completed(futures):
-            video = futures[future]
-            if future.exception() is not None:
-                ctx.fail(video, "extract", future.exception())
-                continue
-            for warning in future.result():
-                logger.warning(f"[extract] {video.relative}: {warning}")
-            logger.info(f"[extract] done {video.relative}")
+        try:
+            futures = {pool.submit(probe_and_extract, config, video): video for video in ctx.files}
+            for future in concurrent.futures.as_completed(futures):
+                video = futures[future]
+                if future.exception() is not None:
+                    ctx.fail(video, "extract", future.exception())
+                    continue
+                for warning in future.result():
+                    logger.warning(f"[extract] {video.relative}: {warning}")
+                logger.info(f"[extract] done {video.relative}")
+        except BaseException:  # Ctrl+C：排队中的文件不再提取，只等正在跑的 ffmpeg 结束
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
     logger.info(f"[extract] end: {sum(1 for v in ctx.files if not v.failed)} ok, {time.perf_counter() - started:.1f}s")
 
     def live() -> list[VideoFile]:
@@ -710,6 +759,7 @@ def _run(ctx: _Context) -> None:
             continue
         if video.plan.stage == "done":
             summary.up_to_date.append(video.relative)
+            (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
             logger.info(f"[scan] up to date: {video.relative}")
 
     def planned(stage: str) -> list[VideoFile]:

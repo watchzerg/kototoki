@@ -10,7 +10,7 @@
 
 **配置**（`kototoki/config.py`，`load(path, environ=os.environ) -> Config`）：`tomllib` 读取规格 §10.1 的结构，返回全部路径已解析为绝对路径的冻结数据类。
 
-- 缺省键取默认值（与规格 §10.1 相同，`kototoki.toml.example` 列出全部键）；`paths.input_dir`、`paths.output_dir` 没有默认值，必须写出。
+- 缺省键取默认值（与规格 §10.1 相同，`kototoki.toml.example` 列出全部键）；`paths.input_dir`、`paths.output_dir` 没有默认值，必须写出。`load` 只解析路径，不看文件系统；`input_dir` 必须是已存在的目录与 `output_dir` 的位置限制由 `__main__` 的 `check_input_dir`／`check_output_dir` 检查（[批次编排](batch-orchestration.md)）。
 - 未知节、未知键、类型不符（整数键给字符串、布尔键给 1 等）、`stt.engine` 不是 `w0`／`x0`、`run.extract_workers < 1` 均抛 `ConfigError`，消息给出键名；浮点键接受整数。
 - 路径：用户写出的相对路径按配置文件所在目录解析，省略键的默认相对路径按仓库根解析；`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]`、`[translate]` 的模型路径为相对路径时相对于 `paths.models_root`（绝对路径原样）。
 - 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`（`Config.gpu_lock`）；`Config.break_stale_lock` 只在环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1` 时为真。没有 `break_stale_lock` 与 `[vad] device` 键（写了即为未知键）。
@@ -30,13 +30,13 @@
 1. `extract_original`：`-map 0:<绝对索引> -c:a copy` 写出 `audio.<ext>`，容器按规格 §2.1：`flac`→`.flac`、`aac`／`alac`→`.m4a`、`ac3`、`eac3`、`dts`、`opus`、`vorbis`→`.ogg`、`mp3`，小端 PCM（`pcm_s16le`／`s24le`／`s32le`／`f32le`）→`.wav`（`-rf64 auto`），其余（大端 PCM、`pcm_bluray`、`pcm_dvd`、`aac_latm`、`truehd` 等）→`.mka`。
 2. `derive_pcm16k`：**从视频容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,<重采样>`、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`，`-loglevel verbose`；`<重采样>` 是 `aresample=16000`（ffmpeg 默认 swr；2026-10-14 曾改 soxr 28 bit，2026-10-15 因 Pyannote 少保留语音改回，票据 10）；两条命令行与 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即视频 0 秒，`Extract.offset_s` 恒为 0。
 3. 时长校验对**视频流时长**：解码短于视频超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；长于视频超过 1 s 只记告警。
-4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 在 verbose 下报告的"adding N audio samples of silence"／"discarding N audio samples"之和（输入采样率，含起始补齐），以及按 ffmpeg 结束统计的输入样本数算出的净补偿秒数 `net_padding_s`（派生时长 − 解码出的输入时长）。实测 swr 只报告一部分补偿（合成 2 s 间隙只报出约 0.63 s），因此以 `net_padding_s` 为准，swr 计数只作参考。
+4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 在 verbose 下报告的"adding N audio samples of silence"／"discarding N audio samples"之和（输入采样率，含起始补齐），以及按 ffmpeg 结束统计的输入样本数算出的净补偿秒数 `net_padding_s`（派生时长 − 解码出的输入时长）。实测 swr 只报告一部分补偿（合成 2 s 间隙只报出约 0.63 s），因此以 `net_padding_s` 为准，swr 计数只作参考。本模块只返回这些数据；`net_padding_s` 或丢弃样本折算超过 0.1 s 时的 WARNING 由编排写进运行日志（[批次编排](batch-orchestration.md) 的 `compensation_warnings`）。
 
 子进程一律参数列表、`stdin=DEVNULL`（ffmpeg 另加 `-nostdin`；ffprobe 不认 `-nostdin`）、UTF-8 解码；路径含空格与非 ASCII 已测。
 
 ## 接口与依赖
 
-`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与 ffmpeg／ffprobe 可执行文件（默认是项目内 `.local/tools/ffmpeg/<version>/bin/`，版本由 `assets.toml` 锁定），不依赖 torch 与网络，编排器在线程池里直接调用。媒体模块只写 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败；`Probe.warnings`／`Extract.warnings` 只作数据返回，本模块不发日志，由编排逐条写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
+`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与 ffmpeg／ffprobe 可执行文件（默认是项目内 `.local/tools/ffmpeg/<version>/bin/`，版本由 `assets.toml` 锁定），不依赖 torch 与网络，编排器在线程池里直接调用。媒体模块只写 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`；临时文件 `.<名>.<pid>.partial<ext>` 正常结束时自行删除，被强杀留下的残留由编排在下次提取前清理），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败；`Probe.warnings`／`Extract.warnings` 只作数据返回，本模块不发日志，由编排逐条写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
 
 ## 代码与验证入口
 

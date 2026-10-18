@@ -121,8 +121,9 @@ def validate_residency(evidence: dict[str, Any], requested_layers: int) -> None:
 
 
 def loader_logs(runtime: Path) -> str:
+    # stderr 不另存：`-lv 4` 下它与 `--log-file` 的 server.log 逐字节相同（2026-10-19 审计 B-14）。
     return '\n'.join(path.read_text(encoding='utf-8', errors='replace')
-                     for name in ('server.log', 'stderr.log', 'stdout.log')
+                     for name in ('server.log', 'stdout.log')
                      if (path := runtime / name).exists())
 
 
@@ -204,8 +205,8 @@ class ManagedServer:
             "command": command, "free_vram_mib_before_start": free_mib, "started_at_utc": utc_now()}
         opener = build_opener(ProxyHandler({}))
         load_start = time.perf_counter()
-        with (self.runtime_dir / "stdout.log").open("wb") as out, (self.runtime_dir / "stderr.log").open("wb") as err:
-            self.process = subprocess.Popen(command, stdout=out, stderr=err,
+        with (self.runtime_dir / "stdout.log").open("wb") as out:
+            self.process = subprocess.Popen(command, stdout=out, stderr=subprocess.DEVNULL,
                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.identity["server_pid"] = self.process.pid
         self.on_pid(self.process.pid)  # 加载期间 GPU 锁里就有 server pid
@@ -244,17 +245,21 @@ class ManagedServer:
     def __exit__(self, *exc: Any) -> None:
         self._stop.set()
         process = self.process
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+        stop = None
         if process is not None:
+            stop = "exited"  # 进程已自行退出，`server_exit_code` 才是它自己的退出码
+            if process.poll() is None:
+                process.terminate()
+                stop = "terminated"  # Windows 上 terminate() 让退出码固定为 1，不是故障
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    stop = "killed"
             self.on_pid(None)
         self.identity.update(stopped_at_utc=utc_now(),
-                             server_exit_code=process.poll() if process else None,
+                             server_exit_code=process.poll() if process else None, server_stop=stop,
                              peak_device_memory_mib=max(self._samples, default=None))
         if self.runtime_dir.exists():
             atomic_write_json(self.runtime_dir / "engine-final.json", self.identity)

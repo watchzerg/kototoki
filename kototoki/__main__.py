@@ -12,6 +12,12 @@ from kototoki import job
 from kototoki.config import REPO_ROOT, Config, ConfigError, load
 
 
+def check_input_dir(config: Config) -> None:
+    """输入目录必须存在：否则扫描到 0 个视频也会以退出码 0 结束，无人值守时像成功。"""
+    if not config.paths.input_dir.is_dir():
+        raise ConfigError(f"[paths] input_dir is not a directory: {config.paths.input_dir}")
+
+
 def check_output_dir(config: Config) -> None:
     """拒绝输出目录位于仓库内（`.local/` 除外）或位于输入目录内（含二者相同）。"""
     output, input_dir = config.paths.output_dir, config.paths.input_dir
@@ -28,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         return job.EXIT_CONFIG
     try:
         config = load(Path(args[0] if args else "kototoki.toml"))
+        check_input_dir(config)
         check_output_dir(config)
     except ConfigError as error:
         print(f"config error: {error}", file=sys.stderr)

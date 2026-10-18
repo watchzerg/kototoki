@@ -15,7 +15,7 @@ import tempfile
 import unittest
 import wave
 
-from kototoki import config, media, recipes
+from kototoki import config, job, media, recipes
 
 RATE = recipes.SAMPLE_RATE
 FRAME = RATE // 100  # 10 ms
@@ -172,7 +172,7 @@ class TimelineTests(MediaFfmpegCase):
         src = tone_src(dur=4.0, bursts=[(0.5, 0.7), (2.048, 2.248)])
         gap = Audio(src, af="asetpts='if(gte(T,2.048),PTS+2/TB,PTS)'")
         path = self.make_clip("gap.mkv", 6.0, [gap])
-        _, extract = self.extract_clip(path)
+        probe, extract = self.extract_clip(path)
         _, _, samples = read_wav(extract.wav)
         first = first_onset(samples)
         self.assertLess(abs(first - RATE // 2), FRAME)
@@ -181,6 +181,10 @@ class TimelineTests(MediaFfmpegCase):
         self.assertTime(resumed / RATE + extract.offset_s, 4.048)
         self.assertAlmostEqual(extract.decoded_duration_s, 6.0, delta=0.1)
         self.assertAlmostEqual(extract.compensation["net_padding_s"], 2.0, delta=0.05)
+        # 编排据此在运行日志记 WARNING（审计 A-3）：2 s 净补入远超 0.1 s 阈值
+        warnings = job.compensation_warnings(extract.compensation, probe.audio.sample_rate)
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertRegex(warnings[0], r"^Resampler padded 2\.0\d\d s net")
 
 
 class DownmixTests(MediaFfmpegCase):

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
-from kototoki.artifacts import sha256_bytes
+from kototoki.artifacts import read_json, sha256_bytes
 
 from kototoki.translate.server import (
-    InfraFailure, MODEL_ASSET, check_engine, check_model, explicit_oom, residency_evidence, server_command,
-    validate_residency, wait_for_free_vram,
+    InfraFailure, MODEL_ASSET, ManagedServer, check_engine, check_model, explicit_oom, loader_logs,
+    residency_evidence, server_command, validate_residency, wait_for_free_vram,
 )
 
 # 环境 smoke 中 stock llama.cpp b11583 的真实加载日志节选
@@ -159,6 +161,115 @@ class CheckEngineTests(unittest.TestCase):
         (self.dir / "extra.dll").write_bytes(b"x")
         with self.assertRaisesRegex(ValueError, "not in identity"):
             check_engine(self.engine, self.identity, self.cache)
+
+
+class FakeProcess:
+    """替身 llama-server 进程：`alive` 为 True 时只有 kill 能结束它（terminate 超时），`hangs` 为 True 时 terminate 不生效。"""
+
+    def __init__(self, *, alive: bool, hangs: bool = False, code: int = 0):
+        self.alive, self.hangs, self.code = alive, hangs, code
+        self.pid = 4242
+        self.calls: list[str] = []
+
+    @property
+    def returncode(self):
+        return self.poll()
+
+    def poll(self):
+        return None if self.alive else self.code
+
+    def terminate(self):
+        self.calls.append("terminate")
+        if not self.hangs:
+            self.alive, self.code = False, 1  # Windows 上 TerminateProcess 的固定退出码
+
+    def kill(self):
+        self.calls.append("kill")
+        self.alive, self.code = False, -9
+
+    def wait(self, timeout=None):
+        if self.alive:
+            raise subprocess.TimeoutExpired("llama-server", timeout or 0)
+        return self.code
+
+
+class ManagedServerStopTests(unittest.TestCase):
+    """`__exit__` 只靠进程对象，不需要真实 server：核对 `engine-final.json` 的 `server_stop` 标注。"""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.runtime = Path(tmp.name) / "session-01"
+        self.runtime.mkdir()
+        self.pids: list[int | None] = []
+
+    def server(self, process) -> ManagedServer:
+        server = ManagedServer(self.runtime, engine=Path("llama-server.exe"), model=Path("m.gguf"), port=18080,
+                               model_cache=Path("cache.json"), on_pid=self.pids.append)
+        server.process = process
+        return server
+
+    def final(self) -> dict:
+        return read_json(self.runtime / "engine-final.json")
+
+    def test_terminate_is_labelled_so_exit_code_1_is_not_a_fault(self):
+        process = FakeProcess(alive=True)
+        self.server(process).__exit__(None, None, None)
+        self.assertEqual(process.calls, ["terminate"])
+        final = self.final()
+        self.assertEqual((final["server_exit_code"], final["server_stop"]), (1, "terminated"))
+        self.assertEqual(self.pids, [None])
+
+    def test_kill_after_terminate_timeout_is_labelled(self):
+        process = FakeProcess(alive=True, hangs=True)
+        self.server(process).__exit__(None, None, None)
+        self.assertEqual(process.calls, ["terminate", "kill"])
+        self.assertEqual(self.final()["server_stop"], "killed")
+
+    def test_process_that_already_exited_keeps_its_own_exit_code(self):
+        self.server(FakeProcess(alive=False, code=3)).__exit__(None, None, None)
+        final = self.final()
+        self.assertEqual((final["server_exit_code"], final["server_stop"]), (3, "exited"))
+
+    def test_never_started_records_none(self):
+        self.server(None).__exit__(None, None, None)
+        final = self.final()
+        self.assertEqual((final["server_exit_code"], final["server_stop"]), (None, None))
+        self.assertEqual(self.pids, [])
+
+
+class ServerLogFilesTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+
+    def test_loader_logs_ignore_a_leftover_stderr_log(self):
+        (self.dir / "server.log").write_text("offloaded 49/49 layers to GPU\n", encoding="utf-8")
+        (self.dir / "stdout.log").write_text("out\n", encoding="utf-8")
+        (self.dir / "stderr.log").write_text("old duplicate\n", encoding="utf-8")
+        text = loader_logs(self.dir)
+        self.assertIn("offloaded 49/49", text)
+        self.assertIn("out", text)
+        self.assertNotIn("old duplicate", text)
+
+    def test_server_stderr_is_discarded_instead_of_saved(self):
+        """启动走到 Popen 为止（替身进程立刻退出 → `InfraFailure`）：stderr 送 DEVNULL，目录里没有 stderr.log。"""
+        engine = self.dir / "llama-server.exe"
+        engine.write_bytes(b"exe")
+        (self.dir / "identity.json").write_text("{}", encoding="utf-8")
+        runtime = self.dir / "session-01"
+        popen = mock.Mock(return_value=FakeProcess(alive=False, code=2))
+        with mock.patch("kototoki.translate.server.port_free", return_value=True), \
+                mock.patch("kototoki.translate.server.check_engine", return_value={"llama-server.exe": "0" * 64}), \
+                mock.patch("kototoki.translate.server.check_model", return_value={}), \
+                mock.patch("kototoki.translate.server.wait_for_free_vram", return_value=16000), \
+                mock.patch("kototoki.translate.server.subprocess.Popen", popen), \
+                self.assertRaisesRegex(InfraFailure, "exited 2 during load"):
+            ManagedServer(runtime, engine=engine, model=self.dir / "m.gguf", port=18080,
+                          model_cache=self.dir / "cache.json").__enter__()
+        self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
+        self.assertEqual(sorted(p.name for p in runtime.iterdir()), ["engine-final.json", "stdout.log"])
 
 
 if __name__ == "__main__":

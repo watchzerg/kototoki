@@ -171,6 +171,11 @@ class TranslateDocumentTests(unittest.TestCase):
         expected = R.completion_request([ord(ch) for ch in prompt], SEED, R.translation_grammar(window["translate_ids"]))
         self.assertEqual(json.dumps(self.h.requests[0], ensure_ascii=False), json.dumps(expected, ensure_ascii=False))
 
+    def test_session_directory_is_a_utc_stamp_with_pid(self) -> None:
+        session = self.h.session()
+        self.assertRegex(session.runtime_root.name, r"^\d{8}T\d{6}Z-\d+$")
+        self.assertEqual(session.runtime_root.parent, self.h.root / "out" / ".work" / "translate-sessions")
+
     def test_one_server_session_serves_the_whole_batch(self) -> None:
         a, b = document(12), document(5, "別")
         with self.h.session() as session:

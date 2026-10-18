@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -64,6 +65,8 @@ class JobCase(unittest.TestCase):
         self.extracted: list[str] = []
         self.extract_errors: set[str] = set()
         self.media_warnings: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}  # rel → (probe, extract) 告警
+        self.compensation: dict[str, dict] = {}  # rel → 伪 extract 记进 probe.json 的补偿统计
+        self.probe_delay_s = 0.0                 # 伪 probe 的耗时，供线程池取消测试
         if self.FAKE_MEDIA:
             self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
             self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
@@ -111,6 +114,8 @@ class JobCase(unittest.TestCase):
 
     def _probe(self, path: Path, config) -> media.Probe:
         self.probed.append(self._rel(path))
+        if self.probe_delay_s:
+            time.sleep(self.probe_delay_s)
         track = media.AudioTrack(index=0, codec_name="aac", channels=2, channel_layout="stereo", sample_rate=48000,
                                  language="jpn", default=True, comment=False, start_time=0.0, duration=10.0)
         return media.Probe(
@@ -133,8 +138,8 @@ class JobCase(unittest.TestCase):
         return media.Extract(
             audio_copy=Path(work_dir) / "audio.m4a", wav=wav, log=Path(work_dir) / artifacts.EXTRACT_LOG,
             sample_rate=16000, samples=len(pcm) // 2, pcm_sha256=hashlib.sha256(pcm).hexdigest(),
-            decoded_duration_s=10.0, video_duration_s=10.0, offset_s=0.0, pan="", compensation={},
-            warnings=self.media_warnings.get(rel, ((), ()))[1])
+            decoded_duration_s=10.0, video_duration_s=10.0, offset_s=0.0, pan="",
+            compensation=self.compensation.get(rel, {}), warnings=self.media_warnings.get(rel, ((), ()))[1])
 
     def _translate_plan(self, work_dir, document, config):
         """伪计划：目录键与真实子系统同形；已翻译过（`translate_done`）或零条目即不需要模型。"""
@@ -227,6 +232,63 @@ class ScanTests(JobCase):
         self.assertEqual(index, {artifacts.work_id(r): r for r in rels})
         for rel in rels:
             self.assertTrue(self.work_dir(rel).is_dir())
+
+    def test_same_stem_in_one_directory_fails_the_later_file(self) -> None:
+        # a.mkv 与 a.mp4 会写到同一组最终 SRT；不同目录的同名文件互不影响
+        self.make_inputs("a.mkv", "a.mp4", "S1/a.mkv")
+        summary = self.run_job()
+        self.assertEqual(summary.failed, {"a.mp4": "scan"})
+        self.assertEqual((summary.published, summary.exit_code), (["S1/a.mkv", "a.mkv"], 1))
+        self.assertNotIn("a.mp4", self.probed)
+        failure = self.failure("a.mp4")
+        self.assertEqual((failure["stage"], failure["error_type"]), ("scan", "FinalPathCollision"))
+        self.assertIn("'a.mkv'", failure["message"])
+        self.assertEqual(self.final("a.mkv", "zh").read_text(encoding="utf-8"), SRT_ZH)
+
+    def test_work_dir_registration_failure_fails_that_file_only(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        original = artifacts.register_work_dir
+
+        def register(output_dir, rel):
+            if rel == "b.mkv":
+                raise ValueError("Work id collides")
+            return original(output_dir, rel)
+
+        with mock.patch("kototoki.job.artifacts.register_work_dir", side_effect=register):
+            summary = self.run_job()
+        self.assertEqual(summary.failed, {"b.mkv": "scan"})
+        self.assertEqual((summary.published, summary.exit_code), (["a.mkv", "c.mkv"], 1))
+        self.assertNotIn("b.mkv", self.probed)
+        self.assertFalse(self.work_dir("b.mkv").exists())
+        self.assertFalse((self.output / ".work" / "lock").exists())
+
+    def test_job_object_failure_releases_the_output_lock(self) -> None:
+        self.make_inputs("a.mkv")
+        with mock.patch("kototoki.job.contain_children", side_effect=OSError(5, "CreateJobObjectW failed")), \
+                self.assertRaises(OSError):
+            self.run_job()
+        self.assertFalse((self.output / ".work" / "lock").exists())
+        self.assertEqual(self.probed, [])
+
+    def test_stale_failure_json_removed_when_up_to_date_or_blocked(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.run_job()
+        for rel in ("a.mkv", "b.mkv", "c.mkv"):
+            artifacts.write_failure(self.work_dir(rel), "asr", RuntimeError("stale"))
+        self.final("b.mkv", "zh").write_text("edited by user\n", encoding="utf-8")   # b：扫描期拦下
+        self.final("c.mkv", "zh").unlink()                                             # c：重新发布，发布期拦下
+        translate = sys.modules["kototoki.translate"]
+        inner = translate.translate_document
+
+        def edit_then_translate(plan, session):
+            self.final("c.mkv", "zh").write_text("edited meanwhile\n", encoding="utf-8")
+            return inner(plan, session)
+
+        translate.translate_document = edit_then_translate
+        summary = self.run_job()
+        self.assertEqual((summary.up_to_date, summary.blocked, summary.published), (["a.mkv"], ["b.mkv", "c.mkv"], []))
+        for rel in ("a.mkv", "b.mkv", "c.mkv"):
+            self.assertFalse((self.work_dir(rel) / artifacts.FAILURE).exists(), rel)
 
     def test_size_sampling_decides_stability_not_mtime(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
@@ -407,6 +469,28 @@ class IsolationTests(JobCase):
         failure = self.failure("c.mkv")
         self.assertEqual((failure["stage"], failure["error_type"]), ("extract", "MediaError"))
 
+    def test_interrupt_during_extract_cancels_queued_files(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.probe_delay_s = 0.3  # a 在唯一的线程里跑着，b、c 还在队列里
+        config = replace(self.config, run=replace(self.config.run, extract_workers=1))
+        with mock.patch("kototoki.job.concurrent.futures.as_completed", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            self.run_job(config)
+        self.assertEqual(self.probed, ["a.mkv"])
+        self.assertFalse((self.output / ".work" / "lock").exists())
+        self.assertEqual(list(self.output.rglob(artifacts.FAILURE)), [])
+
+    def test_leftover_temporary_files_removed_before_extract(self) -> None:
+        self.make_inputs("a.mkv")
+        work = self.work_dir("a.mkv")
+        work.mkdir(parents=True)
+        leftovers = [work / ".audio-16k.4242.partial.wav", work / ".audio.4242.partial.mka", work / ".probe.json.4242.1.tmp"]
+        for path in leftovers + [work / artifacts.EXTRACT_LOG]:
+            path.write_bytes(b"x")
+        self.run_job()
+        self.assertEqual([p.exists() for p in leftovers], [False] * 3)
+        self.assertTrue((work / artifacts.EXTRACT_LOG).is_file())
+
     def test_translate_failure_isolated_to_that_file(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
         self.translate_errors = set(self.ids("a.mkv"))
@@ -485,6 +569,26 @@ class LockTests(JobCase):
         self.assertEqual(summary.published, ["a.mkv"])
         self.assertEqual(self.launches()[0]["lock"]["replaced_stale_lock"]["pid"], DEAD_PID)
         self.assertFalse(self.config.gpu_lock.exists())
+
+    def test_empty_or_unparseable_lock_is_stale_and_breakable(self) -> None:
+        for content, rel in ((b"", "a.mkv"), (b"not json", "b.mkv")):
+            with self.subTest(content=content):
+                self.make_inputs(rel)  # 新文件要跑 GPU 阶段，取锁失败即 GpuLocked
+                self.config.gpu_lock.parent.mkdir(parents=True, exist_ok=True)
+                self.config.gpu_lock.write_bytes(content)
+                with self.assertRaises(job.GpuLocked) as context:
+                    self.run_job()
+                self.assertIn("Stale", str(context.exception))
+                self.assertIn("KOTOTOKI_BREAK_STALE_LOCK=1", str(context.exception))
+                self.assertEqual(self.config.gpu_lock.read_bytes(), content)
+                summary = self.run_job(replace(self.config, break_stale_lock=True))
+                self.assertEqual(summary.published, [rel])
+                self.assertFalse(self.config.gpu_lock.exists())
+
+        (self.output / ".work" / "lock").write_bytes(b"")
+        with self.assertRaises(job.OutputLocked):
+            self.run_job()
+        self.assertEqual(self.run_job(replace(self.config, break_stale_lock=True)).up_to_date, ["a.mkv", "b.mkv"])
 
     def test_stale_output_lock_refused_unless_break_requested(self) -> None:
         self.make_inputs("a.mkv")
@@ -641,6 +745,17 @@ class ImportAndOutputDirTests(JobCase):
         paths = replace(self.config.paths, output_dir=output, input_dir=input_dir or self.config.paths.input_dir)
         return replace(self.config, paths=paths)
 
+    def test_missing_input_dir_is_a_config_error(self) -> None:
+        config = self.with_output(self.output, input_dir=self.root / "missing")
+        with self.assertRaisesRegex(ConfigError, "input_dir is not a directory"):
+            cli.check_input_dir(config)
+        cli.check_input_dir(self.config)
+        err = io.StringIO()
+        with mock.patch("kototoki.__main__.load", return_value=config), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main([str(self.toml)]), job.EXIT_CONFIG)
+        self.assertIn("config error", err.getvalue())
+        self.assertFalse((self.output / ".work").exists())
+
     def test_check_output_dir(self) -> None:
         cli.check_output_dir(self.config)
         cli.check_output_dir(self.with_output(REPO_ROOT / ".local" / "out"))
@@ -725,6 +840,27 @@ class RunLogTests(JobCase):
         # 续跑跳过 extract 时告警照样出现：probe 的来自本次 ffprobe，extract 的取自 `probe.json`
         self.media_warnings["b.mkv"] = ((probe_warning,), ())
         _, file = self.run_logged()
+        self.assertEqual(self.extracted.count("b.mkv"), 1)
+        self.assertEqual(self.entries_at(file, "WARNING"), expected)
+
+    def test_compensation_warnings_unit(self) -> None:
+        self.assertEqual(job.compensation_warnings({"net_padding_s": 0.05, "swr_reported_discarded_samples": 4000}, 48000), [])
+        self.assertEqual(job.compensation_warnings({"net_padding_s": None, "swr_reported_discarded_samples": 4801}, None), [])
+        self.assertEqual(job.compensation_warnings({"net_padding_s": 0.25}, 48000),
+                         ["Resampler padded 0.250 s net to keep the timeline"])
+        self.assertEqual(job.compensation_warnings({"net_padding_s": -2.0, "swr_reported_discarded_samples": 9600}, 48000),
+                         ["Resampler dropped 2.000 s net to keep the timeline",
+                          "Resampler discarded 9600 input samples (0.200 s)"])
+
+    def test_compensation_over_threshold_is_logged_also_when_extract_is_skipped(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.compensation["b.mkv"] = {"swr_reported_silence_samples": 0, "swr_reported_discarded_samples": 0,
+                                      "input_samples": 480000, "net_padding_s": 0.25}
+        self.compensation["a.mkv"] = {"net_padding_s": 0.0}
+        expected = ["[extract] b.mkv: Resampler padded 0.250 s net to keep the timeline"]
+        _, file = self.run_logged()
+        self.assertEqual(self.entries_at(file, "WARNING"), expected)
+        _, file = self.run_logged()  # 续跑跳过 extract：补偿取自 probe.json，告警照样出现
         self.assertEqual(self.extracted.count("b.mkv"), 1)
         self.assertEqual(self.entries_at(file, "WARNING"), expected)
 
