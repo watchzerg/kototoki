@@ -26,9 +26,10 @@
 | [开发工作流](development/workflow.md)、[技术选型](development/technology-stack.md) | 怎么开发、构建和验证 |
 | [测试设计与验收](agents/testing.md) | 测试怎么写、归哪类、怎么验收 |
 | [文档维护规则](agents/documentation.md) | 文档放哪、怎么同步 |
+| `changes/` | 进行中的 Markdown 增量说明，吸收进当前正文后删除；当前有[依赖入项目与测试分层调整](changes/local-dependencies-and-test-layers.md) |
 | `agents/` 其余文件 | 工程 skills 的 tracker、标签映射与领域文档约定，以及旧字幕翻译评估流程 |
 
-按需创建的目录：`specs/`、`operations/`、`changes/`、`adr/`、`architecture/modules/`。创建条件见[文档维护规则](agents/documentation.md#权威归属与创建时机)。
+按需创建的目录：`specs/`、`operations/`、`adr/`、`architecture/modules/`。创建条件见[文档维护规则](agents/documentation.md#权威归属与创建时机)。
 
 ## 项目特有入口
 
