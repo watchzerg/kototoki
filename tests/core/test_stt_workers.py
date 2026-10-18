@@ -2,7 +2,7 @@
 
 覆盖产物身份与坐标（壳写出的身份与阶段计划模块 `kototoki.plan` 给出的期望身份逐字段相等，壳自身不再持有
 身份实现）、输入身份重验、`failed_windows` 记账、退出码 0／1／2、CUDA 守卫、三阶段串起来的 `align.json`
-能被 `cues.build_cues` 消费，以及壳模块导入时不加载 torch。
+能被 `cues.build_cues` 消费、worker 进程的 stderr 日志与 stdout 协议行分离，以及壳模块导入时不加载 torch。
 """
 
 from __future__ import annotations
@@ -10,7 +10,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
+import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,6 +33,9 @@ from kototoki.workers.protocol import (EXIT_FATAL, EXIT_OK, EXIT_PARTIAL, FatalW
 
 MODELS = {"vad": "a" * 64}
 SAMPLES = 3 * 16000
+REPO = Path(__file__).resolve().parents[2]
+LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z \[ *\d+\.\ds\] (\w+) +(.*)$")
+SECRET = "ひみつの窓"
 
 
 def write_wav(path: Path, samples: np.ndarray, *, channels: int = 1) -> str:
@@ -70,6 +76,22 @@ class FakeAsr:
         return segments, [None] * len(segments), self.failures
 
 
+class LeakyAsr(FakeAsr):
+    """失败窗口仍带着截断文字（真实适配器的生成触顶就是这样），用来确认文字不进日志。"""
+
+    def transcribe(self, audio, chunks):
+        segments, traces, failures = super().transcribe(audio, chunks)
+        for index, _ in failures:
+            segments[index]["text"] = SECRET
+        return segments, traces, failures
+
+
+def leaky_asr_start(jobs):
+    """`WorkerLogTest` 子进程里的伪 `start`：不加载模型，直接用伪 ASR 跑 `asr` 壳的 `compute`。"""
+    return gpu.file_processor(asr_worker.compute(LeakyAsr([(1, "RuntimeError: boom")]), "w0", MODELS, 2.0),
+                              check=no_check)
+
+
 class FakeAligner:
     """每个字符占 0.1 s，窗口内从窗口起点排开。"""
     metadata = {"device": "fake"}
@@ -92,6 +114,10 @@ def no_check() -> None:
 
 class WorkerTestCase(unittest.TestCase):
     def setUp(self):
+        # 进程内跑壳时日志无处可去：挂 NullHandler，免得 logging 的 lastResort 把告警与 traceback 打到测试输出。
+        quiet, workers = logging.NullHandler(), logging.getLogger("kototoki.workers")
+        workers.addHandler(quiet)
+        self.addCleanup(workers.removeHandler, quiet)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
@@ -247,7 +273,8 @@ class StartupTest(unittest.TestCase):
             path = Path(directory) / "jobs.json"
             write_jobs(path, Jobs(stage, recipe_hash, config_value, ()))
             stream = io.BytesIO()
-            status = run_worker(path, start, stream=stream)
+            with self.assertLogs("kototoki.workers.protocol", "ERROR"):
+                status = run_worker(path, start, stream=stream)
         return status, json.loads(stream.getvalue().decode("utf-8"))
 
     def test_recipe_mismatch_fails_before_touching_models(self):
@@ -266,7 +293,58 @@ class StartupTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "jobs.json"
             write_jobs(path, Jobs("vad", "0" * 64, {}, ()))
-            self.assertEqual(gpu.main(lambda jobs: (lambda job: None), ["--jobs", str(path)]), EXIT_OK)
+            root, ours = logging.getLogger(), logging.getLogger("kototoki")
+            handlers, level = list(root.handlers), ours.level
+            try:
+                self.assertEqual(gpu.main(lambda jobs: (lambda job: None), ["--jobs", str(path)]), EXIT_OK)
+            finally:  # main 为整个进程配置日志；测试进程里还原
+                root.handlers[:] = handlers
+                ours.setLevel(level)
+                logging.captureWarnings(False)
+
+
+class WorkerLogTest(WorkerTestCase):
+    """真实子进程：日志只进 stderr 且符合运行日志格式，stdout 只有协议 JSON 行。"""
+
+    def spawn(self, args: list[str]) -> tuple[int, list[dict], list[str]]:
+        result = subprocess.run([sys.executable, *args], capture_output=True, cwd=REPO,
+                                env={**os.environ, "PYTHONUTF8": "1"})
+        stdout = [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+        return result.returncode, stdout, result.stderr.decode("utf-8").splitlines()
+
+    def test_shell_logs_go_to_stderr_without_window_text(self):
+        self.run_vad()
+        good = FileJob("0123456789ab", self.work_dir, {"wav": self.wav, "vad": self.work_dir / artifacts.VAD})
+        broken_dir = self.root / "out" / ".work" / "ba9876543210"
+        broken_dir.mkdir()
+        broken = FileJob("ba9876543210", broken_dir, {"wav": broken_dir / "missing.wav", "vad": good.inputs["vad"]})
+        jobs_path = self.root / "jobs.json"
+        write_jobs(jobs_path, Jobs("asr", "0" * 64, {}, (good, broken)))
+        code = ("import sys; from kototoki.workers import gpu; from tests.core.test_stt_workers import leaky_asr_start; "
+                "sys.exit(gpu.main(leaky_asr_start, sys.argv[1:]))")
+        status, stdout, stderr = self.spawn(["-c", code, "--jobs", str(jobs_path)])
+        self.assertEqual(status, EXIT_PARTIAL)
+        self.assertEqual([(event["event"], event["id"]) for event in stdout],
+                         [("done", "0123456789ab"), ("failed", "ba9876543210")])
+        entries = [(m[1], m[2]) for m in map(LOG_LINE.match, stderr) if m]
+        self.assertIn(("WARNING", "[asr] 0123456789ab: window 1 failed: RuntimeError: boom"), entries)
+        self.assertTrue(any(level == "INFO" and message.startswith("[asr] 0123456789ab: 3 window(s), 1 failed, "
+                                                                   "inference ")
+                            for level, message in entries), entries)
+        self.assertIn(("ERROR", "[asr] FAILED ba9876543210: FileNotFoundError"), entries)
+        self.assertIn("Traceback (most recent call last):", stderr)
+        self.assertNotIn(SECRET, "\n".join(stderr))
+        self.assertEqual(artifacts.read_json(self.work_dir / artifacts.ASR)["failed_windows"][0]["text"], SECRET)
+
+    def test_startup_failure_logs_traceback_and_reports_on_stdout(self):
+        jobs_path = self.root / "jobs.json"
+        write_jobs(jobs_path, Jobs("vad", "f" * 64, {"models": {}, "model_cache": "x"}, ()))
+        status, stdout, stderr = self.spawn(["-m", "kototoki.workers.vad", "--jobs", str(jobs_path)])
+        self.assertEqual(status, EXIT_FATAL)
+        self.assertEqual([event["event"] for event in stdout], ["startup_failed"])
+        self.assertRegex(stderr[0], LOG_LINE)
+        self.assertEqual(LOG_LINE.match(stderr[0]).groups(), ("ERROR", "startup failed: ValueError"))
+        self.assertIn("Traceback (most recent call last):", stderr)
 
 
 class GpuHelpersTest(unittest.TestCase):

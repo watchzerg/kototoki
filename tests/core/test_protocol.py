@@ -70,7 +70,10 @@ class RunTests(ProtocolCase):
                 raise ValueError("bad window")
 
         jobs = self.jobs("a", "b", "c")
-        self.assertEqual(p.run_jobs(jobs, process, stream=self.stream), p.EXIT_PARTIAL)
+        with self.assertLogs("kototoki.workers.protocol", "ERROR") as logs:
+            self.assertEqual(p.run_jobs(jobs, process, stream=self.stream), p.EXIT_PARTIAL)
+        self.assertEqual([(r.getMessage(), r.exc_info[0]) for r in logs.records],
+                         [("[asr] FAILED b: ValueError", ValueError)])
         self.assertEqual(seen, ["a", "b", "c"])
         self.assertEqual([(e["event"], e["id"]) for e in self.events()], [("done", "a"), ("failed", "b"), ("done", "c")])
         failure = artifacts.read_json(self.root / "b" / artifacts.FAILURE)
@@ -85,22 +88,29 @@ class RunTests(ProtocolCase):
             if job.id == "b":
                 raise p.FatalWorkerError("CUDA error: an illegal memory access was encountered")
 
-        self.assertEqual(p.run_jobs(self.jobs("a", "b", "c"), process, stream=self.stream), p.EXIT_FATAL)
+        with self.assertLogs("kototoki.workers.protocol", "ERROR") as logs:
+            self.assertEqual(p.run_jobs(self.jobs("a", "b", "c"), process, stream=self.stream), p.EXIT_FATAL)
+        self.assertEqual([(r.getMessage(), r.exc_info[0]) for r in logs.records],
+                         [("[asr] FATAL b: FatalWorkerError", p.FatalWorkerError)])
         self.assertEqual(seen, ["a", "b"])
         self.assertEqual(self.events()[-1], {"event": "fatal", "id": "b", "error_type": "FatalWorkerError"})
         self.assertTrue((self.root / "b" / artifacts.FAILURE).exists())
 
     def test_startup_failures_exit_two(self) -> None:
         missing = self.root / "missing.json"
-        self.assertEqual(p.run_worker(missing, lambda jobs: lambda job: None, stream=self.stream), p.EXIT_FATAL)
         path = self.root / "batch.json"
         p.write_jobs(path, self.jobs("a"))
 
         def start(jobs: p.Jobs):
             raise RuntimeError("model load failed")
 
-        self.assertEqual(p.run_worker(path, start, stream=self.stream), p.EXIT_FATAL)
+        with self.assertLogs("kototoki.workers.protocol", "ERROR") as logs:
+            self.assertEqual(p.run_worker(missing, lambda jobs: lambda job: None, stream=self.stream), p.EXIT_FATAL)
+            self.assertEqual(p.run_worker(path, start, stream=self.stream), p.EXIT_FATAL)
         self.assertEqual([e["event"] for e in self.events()], ["startup_failed", "startup_failed"])
+        self.assertEqual([(r.getMessage(), r.exc_info[0]) for r in logs.records],
+                         [("startup failed: FileNotFoundError", FileNotFoundError),
+                          ("startup failed: RuntimeError", RuntimeError)])
 
     def test_run_worker_loads_once(self) -> None:
         path = self.root / "batch.json"

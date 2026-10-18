@@ -1,4 +1,4 @@
-"""三个 GPU worker 壳共用：命令行入口、读模型输入 WAV、模型文件核对、CUDA 粘性错误守卫与产物写出。
+"""三个 GPU worker 壳共用：命令行入口（含 stderr 日志配置）、读模型输入 WAV、模型文件核对、CUDA 粘性错误守卫与产物写出。
 
 只被 `kototoki.workers.{vad,asr,align}` 导入；本模块导入时不加载 torch，`check_cuda` 用到时才导入。
 """
@@ -9,11 +9,15 @@ import argparse
 from collections.abc import Callable, Mapping
 import hashlib
 import json
+import logging
 from pathlib import Path
+import sys
+import time
 from typing import Any
 import wave
 
 from kototoki import artifacts
+from kototoki.logs import RunFormatter
 from kototoki.workers.protocol import FatalWorkerError, FileJob, Jobs, run_worker
 
 SAMPLE_RATE = 16000
@@ -24,10 +28,21 @@ Compute = Callable[[FileJob], tuple[Path, Mapping[str, Any], Mapping[str, Any], 
 
 def main(start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]],
          argv: list[str] | None = None) -> int:
-    """`python -m kototoki.workers.<stage> --jobs <path>`；返回协议退出码。"""
+    """`python -m kototoki.workers.<stage> --jobs <path>`；返回协议退出码。
+
+    日志只写 stderr（编排器把它存成 `run-<戳>-<stage>.stderr.log`），stdout 只留协议 JSON 行。
+    handler 挂在 root 上：`kototoki` logger 放到 INFO，第三方库按 root 默认级别只有 WARNING 及以上。
+    """
+    started = time.time()
     parser = argparse.ArgumentParser()
     parser.add_argument("--jobs", type=Path, required=True)
-    return run_worker(parser.parse_args(argv).jobs, start)
+    jobs_path = parser.parse_args(argv).jobs
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(RunFormatter(started))
+    logging.getLogger().addHandler(handler)
+    logging.getLogger("kototoki").setLevel(logging.INFO)
+    logging.captureWarnings(True)
+    return run_worker(jobs_path, start)
 
 
 def require_recipe(jobs: Jobs, recipe_hash: str) -> None:

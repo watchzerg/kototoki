@@ -13,6 +13,7 @@ payload 为 `schema_version`、`engine`、`offset_s`、`input`、`chunks`（照�
 from __future__ import annotations
 
 from collections.abc import Mapping
+import logging
 from pathlib import Path
 import sys
 import time
@@ -23,6 +24,8 @@ from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, fail_window, retained_text, validate_failed_windows
 
 STAGE = "asr"
+
+logger = logging.getLogger(__name__)
 
 
 def compute(asr: Any, engine: str, model_sha256: Mapping[str, str], load_s: float) -> gpu.Compute:
@@ -38,10 +41,13 @@ def compute(asr: Any, engine: str, model_sha256: Mapping[str, str], load_s: floa
         }
         for index, reason in failures:
             fail_window(document, index, reason)
+            logger.warning("[%s] %s: window %d failed: %s", STAGE, job.id, index, reason)  # 不记窗口文字
         validate_failed_windows(document)
         document.update(text=retained_text(document), metadata=asr.metadata,
                         stages={"load_s": load_s, "inference_s": inference_s})
         fields = {"windows": len(segments), "failed_windows": len(failures)}
+        logger.info("[%s] %s: %d window(s), %d failed, inference %.1fs",
+                    STAGE, job.id, len(segments), len(failures), inference_s)
         return (job.work_dir / artifacts.ASR, plan.asr_identity(engine, pcm_sha256, vad_sha256, model_sha256),
                 document, fields)
     return run
@@ -51,6 +57,7 @@ def start(jobs: Jobs) -> Any:
     engine, models = jobs.config["engine"], jobs.config["models"]
     gpu.require_recipe(jobs, plan.recipe_hash(STAGE, engine=engine))  # 引擎不可用即启动失败
     model_sha256 = gpu.verify_models(plan.model_files(STAGE, models, engine=engine), Path(jobs.config["model_cache"]))
+    logger.info("[%s] engine %s: verified %d model file(s)", STAGE, engine, len(model_sha256))
     started = time.perf_counter()
     if engine == "x0":
         from kototoki.asr_qwen import QwenAsr
@@ -60,7 +67,9 @@ def start(jobs: Jobs) -> Any:
         from kototoki.asr_whisper import WhisperAsr
 
         asr = WhisperAsr(Path(models["w0"]), Path(models["w0_mel_assets"]))
-    return gpu.file_processor(compute(asr, engine, model_sha256, time.perf_counter() - started))
+    load_s = time.perf_counter() - started
+    logger.info("[%s] model loaded in %.1fs", STAGE, load_s)
+    return gpu.file_processor(compute(asr, engine, model_sha256, load_s))
 
 
 if __name__ == "__main__":

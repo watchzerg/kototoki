@@ -10,8 +10,10 @@ from dataclasses import replace
 import hashlib
 import io
 import json
+import logging
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -327,6 +329,12 @@ class StageTests(JobCase):
             self.assertEqual(launch["env"], {"PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "HF_HOME": cache,
                                              "TORCH_HOME": cache})
 
+    def test_child_environment_silences_progress_bars(self) -> None:
+        env = job.child_env(self.config)
+        for key, value in {"TQDM_DISABLE": "1", "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+                           "TRANSFORMERS_VERBOSITY": "warning"}.items():
+            self.assertEqual(env[key], value)
+
 
 class IsolationTests(JobCase):
     def test_crash_isolated_and_worker_restarts_for_later_files(self) -> None:
@@ -637,6 +645,105 @@ class ImportAndOutputDirTests(JobCase):
         for bad in (REPO_ROOT / "out", REPO_ROOT, self.input / "out", self.input):
             with self.subTest(output=bad), self.assertRaises(ConfigError):
                 cli.check_output_dir(self.with_output(bad))
+
+
+# 运行日志一行：UTC 墙钟、相对秒、级别、消息。traceback 的续行不匹配。
+LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z \[ *\d+\.\ds\] (\w+) +(.*)$")
+# 伪 worker 前置：先往 stderr 写一行本格式的告警、一行 INFO 和两行非本格式的噪声，再照常跑 fake_worker。
+NOISY_WORKER = (
+    "import runpy, sys\n"
+    "sys.stderr.write('2026-10-18 12:00:00Z [     1.0s] WARNING  [pyannote] fake warning\\n'\n"
+    "                 '2026-10-18 12:00:00Z [     1.0s] INFO     [kototoki] fake info\\n'\n"
+    "                 'Loading weights: 100%|##########| WARNING ERROR\\n'\n"
+    "                 'ERROR: bare line\\n')\n"
+    "sys.argv = sys.argv[1:]\n"
+    "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+
+
+class RunLogTests(JobCase):
+    def run_logged(self, config=None, **kwargs) -> tuple[list[str], list[str]]:
+        """跑一次，返回 (控制台行, 本次运行日志文件行)。"""
+        before = set((self.output / artifacts.WORK_DIR).glob("run-*.log"))
+        console = io.StringIO()
+        job.run(config or self.config, worker_command=kwargs.pop("worker_command", fake_worker_command),
+                sleep=kwargs.pop("sleep", lambda seconds: None), console=console)
+        (path,) = set((self.output / artifacts.WORK_DIR).glob("run-*[0-9]Z.log")) - before
+        data = path.read_bytes()
+        self.assertNotIn(b"\r", data)
+        return console.getvalue().splitlines(), data.decode("utf-8").splitlines()
+
+    def entries_at(self, lines: list[str], level: str) -> list[str]:
+        return [m[2] for m in map(LOG_LINE.match, lines) if m and m[1] == level]
+
+    def test_console_and_file_are_identical_and_formatted(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        console, file = self.run_logged()
+        self.assertEqual(console, file)
+        self.assertTrue(file)
+        for line in file:
+            self.assertRegex(line, LOG_LINE)
+        self.assertIn("[summary] 2 video(s): 2 published (0 no speech), 0 up to date, 0 failed, 0 blocked, "
+                      "0 unstable, 0 fallback cue(s)", self.entries_at(file, "INFO"))
+
+    def test_warnings_use_level_not_wording(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+
+        def sleep(seconds: float) -> None:
+            with (self.input / "b.mkv").open("ab") as stream:
+                stream.write(b"more")
+
+        config = replace(self.config, run=replace(self.config.run, stable_check_s=1.0))
+        console, file = self.run_logged(config, sleep=sleep)
+        self.assertEqual(console, file)
+        self.assertEqual(self.entries_at(file, "WARNING"), ["[scan] b.mkv: size still changing, skipped this run"])
+        for line in file:
+            self.assertNotIn("WARNING", LOG_LINE.match(line)[2])
+
+    def test_failure_is_error_with_traceback_in_file(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.extract_errors.add("b.mkv")
+        console, file = self.run_logged()
+        self.assertEqual(console, file)
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[extract] FAILED b.mkv: MediaError"])
+        text = "\n".join(file)
+        self.assertIn("Traceback (most recent call last):", text)
+        self.assertIn("kototoki.media.MediaError: fake extract failure: b.mkv", text)
+
+    def test_handlers_removed_after_each_run(self) -> None:
+        root, ours = logging.getLogger(), logging.getLogger("kototoki")
+        before = (list(root.handlers), list(ours.handlers), ours.level)
+        self.make_inputs("a.mkv")
+        self.run_job()
+        self.extract_errors.add("a.mkv")
+        self.run_job(replace(self.config, run=replace(self.config.run, force=True)))
+        self.assertEqual((list(root.handlers), list(ours.handlers), ours.level), before)
+
+    def test_third_party_records_are_prefixed(self) -> None:
+        self.make_inputs("a.mkv")
+
+        def build_cues(align, options):
+            logging.getLogger("transformers.modeling_utils").warning("third-party note")
+            logging.getLogger("transformers.modeling_utils").info("below root level, dropped")
+            logging.getLogger("kototoki.translate").info("own note")
+            return {"cues": []}, SRT_JA
+
+        with mock.patch("kototoki.job.cues.build_cues", side_effect=build_cues):
+            _, file = self.run_logged()
+        self.assertIn("[transformers] third-party note", self.entries_at(file, "WARNING"))
+        self.assertIn("own note", self.entries_at(file, "INFO"))
+        self.assertNotIn("dropped", "\n".join(file))
+
+    def test_worker_stderr_warnings_are_counted(self) -> None:
+        self.make_inputs("a.mkv")
+
+        def command(stage: str, jobs_path: Path) -> list[str]:
+            prefix = [sys.executable, "-c", NOISY_WORKER] if stage == "asr" else [sys.executable]
+            return prefix + [str(FAKE_WORKER), stage, "--jobs", str(jobs_path)]
+
+        _, file = self.run_logged(worker_command=command)
+        warnings = self.entries_at(file, "WARNING")
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertRegex(warnings[0], r"^\[asr\] 1 warning/error line\(s\), see run-\d{8}T\d{6}Z-asr\.stderr\.log$")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -53,6 +54,8 @@ FATAL_KINDS = ("oom", "cache", "server")
 # 基础设施失败：停掉当前 server、开新 session 重做，不形成终态。
 INFRA_KINDS = ("oom", "cache", "server", "server_error")
 CONTEXT_ERROR = re.compile(r"exceed[s]? the available context|context size|n_ctx|context length", re.IGNORECASE)
+
+log = logging.getLogger(__name__)
 
 
 class StepFailed(RuntimeError):
@@ -195,7 +198,8 @@ def run_step(client: Any, prompt: str, grammar: str, seed: int, parse: Callable[
             except HTTPError as exc:
                 body = _http_body(client) + str(exc)
                 kind = "oom" if explicit_oom(body) else "context" if CONTEXT_ERROR.search(body) else "server_error"
-                raise StepFailed(f"HTTP {exc.code}: {body[:500]}", kind) from exc
+                # 消息只带状态码、分类与正文长度；正文在 transport 交换目录里。
+                raise StepFailed(f"HTTP {exc.code} ({kind}): response body {len(body)} char(s)", kind) from exc
             except (URLError, ConnectionError, TimeoutError) as exc:
                 raise StepFailed(f"completion transport: {exc}", "server") from exc
             finally:
@@ -217,7 +221,9 @@ def run_step(client: Any, prompt: str, grammar: str, seed: int, parse: Callable[
                     raise StepFailed(f"First completion lacks timings.cache_n == 0 (got {reuse!r})", "cache")
             if response.get("error") is not None:
                 text = json.dumps(response["error"], ensure_ascii=False)
-                raise StepFailed("server error: " + text, "oom" if explicit_oom(text) else "server_error")
+                kind = "oom" if explicit_oom(text) else "server_error"
+                raise StepFailed(f"server error ({kind}): {type(response['error']).__name__} of {len(text)} char(s)",
+                                 kind)
             if response.get("tokens_evaluated") is not None and response["tokens_evaluated"] != len(tokens):
                 raise StepFailed("server evaluated a different token count", "server_error")
             if attempt["stopped_limit"] or attempt["truncated"]:
@@ -382,6 +388,29 @@ def _write_scene(root: Path, scene: Scene, batches: list[Batch], done: dict[int,
     return translations
 
 
+def _batch_line(row: dict[str, Any], total: int) -> str:
+    """批次完成的一行进度；字段取自已有记录（降级批次取原批次请求的末次尝试），取不到的省略。"""
+    request = row["degrade"]["nodes"][0]["request"] if "degrade" in row else row["request"]
+    attempts = request.get("attempts") or [{}]
+    last = attempts[-1]
+    timings = last.get("timings") or {}
+    parts = [f"{len(row['target_ids'])} cue(s)"]
+    if last.get("output_tokens") is not None:
+        parts.append(f"{last['output_tokens']} tok")
+    if isinstance(timings.get("predicted_per_second"), (int, float)):
+        parts.append(f"{timings['predicted_per_second']:.1f} tok/s")
+    if timings.get("cache_n") is not None:
+        parts.append(f"cache {timings['cache_n']}")
+    if "degrade" in row:
+        parts.append(f"degraded ({len(row['degrade']['nodes'])} request(s), "
+                     f"{len(row['degrade']['fallback'])} fallback)")
+    return f"[translate] batch {row['index'] + 1}/{total}: " + ", ".join(parts)
+
+
+def _first_line(exc: BaseException) -> str:
+    return (str(exc).splitlines() or [""])[0][:200]
+
+
 SESSION_ENGINE_KEYS = ("candidate", "model_path", "engine_sha256", "engine_identity_sha256", "command", "server_pid",
                        "cold_load_seconds", "residency", "model_verification", "free_vram_mib_before_start")
 
@@ -430,6 +459,8 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
                      "stop_reason": None, "infra_failure": None}
             run["sessions"].append(entry)
             atomic_write_json(root / "run.json", run)
+            log.info("[translate] session %d start (%s): %d of %d batch(es) pending", entry["index"],
+                     entry["server_session"], entry["pending_at_start"], len(batches))
             client = session.client_factory(server.url, timeout=CLIENT_TIMEOUT_SECONDS,
                                             trace_dir=root / "transport" / f"session-{entry['index']:02d}")
             number = entry["index"]
@@ -451,6 +482,7 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
                 row = row | {"session": number}
                 _append_line(root / BATCHES, row)
                 done[batch.index] = row
+                log.info("%s", _batch_line(row, len(batches)))
                 entry["batches_written"] += 1
                 entry["wall_seconds"] = time.perf_counter() - started
                 atomic_write_json(root / "run.json", run)  # 进程被强杀时 sessions[] 仍反映已写批次
@@ -469,20 +501,27 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
             restarts += 1
             failure_kinds.append(kind)
             if restarts > MAX_RESTARTS:
+                log.error("[translate] giving up after %d server restart(s): %s: %s", MAX_RESTARTS, kind,
+                          _first_line(exc))
                 if set(failure_kinds) == {"server_start"}:
                     session.unavailable = failure["error"]
                 raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} server restarts "
                                      f"({kind}): {exc}") from exc
+            log.warning("[translate] server restart %d/%d: %s: %s", restarts, MAX_RESTARTS, kind, _first_line(exc))
         except Exception as exc:
             # 意外异常（非 JSON 响应、写盘失败等）：记录后停掉可能不健康的 server，原样上抛给编排器。
             if entry is not None:
                 entry["stop_reason"] = f"session_error: {type(exc).__name__}: {exc}"[:2000]
+            # traceback 由编排器的 ctx.fail 记一次，这里不再附 exc_info，避免运行日志里出现两份。
+            log.error("[translate] unexpected %s during translation; stopping the server", type(exc).__name__)
             session.stop()
             raise
         finally:
             if entry is not None:
                 entry.update(ended_at_utc=utc_now(), wall_seconds=time.perf_counter() - started,
                              cache_reset=dict(session.cache_state))
+                log.info("[translate] session %d end: %d batch(es) written in %.1f s", entry["index"],
+                         entry["batches_written"], entry["wall_seconds"])
             _finish(root, run, batches, done, restarts)
     completion = _finish(root, run, batches, done, restarts)
     translations = _write_scene(root, scene, batches, done)

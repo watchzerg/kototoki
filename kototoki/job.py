@@ -21,15 +21,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 import concurrent.futures
 import contextlib
 import ctypes
 from dataclasses import asdict, dataclass, field
 import importlib
 import json
+import logging
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -37,6 +39,7 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 from kototoki import artifacts, cues, media, plan, srt
 from kototoki.config import REPO_ROOT, Config
+from kototoki.logs import RunFormatter
 from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
 
 if TYPE_CHECKING:  # 翻译子系统运行时才以 importlib 导入
@@ -55,6 +58,8 @@ PUBLISH_DIR = "publish"    # 三份最终 SRT 的暂存目录（工作目录内�
 # worker 子进程的离线环境（沿用 experiments setup_runtime 的变量，不加私有 DLL 目录）。
 OFFLINE_ENV = {"PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
                "HF_HUB_DISABLE_TELEMETRY": "1", "PYANNOTE_METRICS_ENABLED": "0"}
+# worker stderr 只留日志行：关掉 tqdm／HF 下载进度条，transformers 只报 warning 及以上。
+QUIET_ENV = {"TQDM_DISABLE": "1", "HF_HUB_DISABLE_PROGRESS_BARS": "1", "TRANSFORMERS_VERBOSITY": "warning"}
 
 
 class OutputLocked(RuntimeError):
@@ -257,24 +262,44 @@ class ProcessLock:
 
 # --- 运行日志 -----------------------------------------------------------------------------------
 
-class RunLog:
-    """控制台与 `.work/run-<时间戳>.log`：只有进度、计数与耗时，不写转写与译文。"""
+logger = logging.getLogger(__name__)
 
-    def __init__(self, path: Path, console: TextIO | None = None):
-        self.path = path
-        self.console = console if console is not None else sys.stdout
-        self.started = time.perf_counter()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.stream = path.open("a", encoding="utf-8", newline="\n")
+# worker stderr 里按 `kototoki.logs.LOG_FORMAT` 写出的告警／错误行；tqdm、裸 traceback 等其他行不计。
+_STDERR_PROBLEM = re.compile(rb"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z \[ *[0-9.]+s\] (?:WARNING|ERROR|CRITICAL) ",
+                             re.MULTILINE)
 
-    def __call__(self, message: str) -> None:
-        line = f"[{time.perf_counter() - self.started:8.1f}s] {message}"
-        self.stream.write(line + "\n")
-        self.stream.flush()
-        print(line, file=self.console, flush=True)
 
-    def close(self) -> None:
-        self.stream.close()
+@contextlib.contextmanager
+def _run_logging(path: Path, console: TextIO | None = None) -> Iterator[None]:
+    """`run` 期间把日志写到控制台与 `.work/run-<时间戳>.log`（内容相同，INFO 及以上）；退出时摘下并关闭 handler。
+
+    handler 挂在 root logger 上，第三方库的告警也进同一文件；`kototoki` logger 临时放到 INFO。
+    只有进度、计数与耗时，不写转写与译文。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    formatter = RunFormatter(time.time())
+    root, ours = logging.getLogger(), logging.getLogger("kototoki")
+    level = ours.level
+    with path.open("a", encoding="utf-8", newline="\n") as stream:
+        handlers = [logging.StreamHandler(stream),
+                    logging.StreamHandler(console if console is not None else sys.stdout)]
+        for handler in handlers:
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(formatter)
+            root.addHandler(handler)
+        ours.setLevel(logging.INFO)
+        try:
+            yield
+        finally:
+            ours.setLevel(level)
+            for handler in handlers:
+                root.removeHandler(handler)
+                handler.close()
+
+
+def _count_stderr_problems(data: bytes) -> int:
+    """worker stderr 片段里级别为 WARNING／ERROR（及 CRITICAL）的日志行数。"""
+    return len(_STDERR_PROBLEM.findall(data))
 
 
 # --- 文件状态与汇总 ------------------------------------------------------------------------------
@@ -401,13 +426,12 @@ def worker_command(stage: str, jobs_path: Path) -> list[str]:
 
 def child_env(config: Config) -> dict[str, str]:
     cache = artifacts.work_root(config.paths.output_dir) / artifacts.CACHE_DIR
-    return {**os.environ, **OFFLINE_ENV, "HF_HOME": str(cache), "TORCH_HOME": str(cache)}
+    return {**os.environ, **OFFLINE_ENV, **QUIET_ENV, "HF_HOME": str(cache), "TORCH_HOME": str(cache)}
 
 
 @dataclass
 class _Context:
     config: Config
-    log: RunLog
     summary: Summary
     stamp: str
     worker_command: Callable[[str, Path], list[str]]
@@ -422,7 +446,8 @@ class _Context:
             artifacts.write_failure(video.work_dir, stage, error)
         video.failed = stage
         self.summary.failed[video.relative] = stage
-        self.log(f"[{stage}] FAILED {video.relative}" + (f": {type(error).__name__}" if error else ""))
+        logger.error(f"[{stage}] FAILED {video.relative}" + (f": {type(error).__name__}" if error else ""),
+                     exc_info=error)
 
     def ensure_gpu_lock(self) -> None:
         if self.gpu_lock.held:
@@ -431,7 +456,7 @@ class _Context:
             self.gpu_lock.acquire(break_stale=self.config.break_stale_lock)
         except LockError as error:
             raise GpuLocked(str(error)) from error
-        self.log(f"GPU lock acquired: {self.gpu_lock.path}")
+        logger.info(f"GPU lock acquired: {self.gpu_lock.path}")
 
 
 def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, list[dict[str, Any]]]:
@@ -448,6 +473,7 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
     by_id = {v.work_dir.name: v for v in batch}
     stderr_path = root / f"run-{ctx.stamp}-{stage}.stderr.log"
     with stderr_path.open("ab") as stderr:
+        offset = stderr.tell()
         process = subprocess.Popen(ctx.worker_command(stage, jobs_path), stdout=subprocess.PIPE, stderr=stderr,
                                    stdin=subprocess.DEVNULL, env=child_env(config), cwd=REPO_ROOT)
         ctx.gpu_lock.update(worker_pid=process.pid, worker_stage=stage)
@@ -456,6 +482,11 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
             events = _read_events(ctx, stage, process.stdout, by_id)
         code = process.wait()
     ctx.gpu_lock.update(worker_pid=None, worker_stage=None)
+    with stderr_path.open("rb") as stream:
+        stream.seek(offset)
+        problems = _count_stderr_problems(stream.read())
+    if problems:
+        logger.warning(f"[{stage}] {problems} warning/error line(s), see {stderr_path.name}")
     return code, events
 
 
@@ -472,14 +503,14 @@ def _read_events(ctx: _Context, stage: str, stdout: Iterable[bytes],
         events.append(event)
         video = by_id.get(event.get("id"))
         label = video.relative if video else ""
-        ctx.log(f"[{stage}] {event.get('event')} {label}".rstrip())
+        logger.info(f"[{stage}] {event.get('event')} {label}".rstrip())
     return events
 
 
 def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
     """跑完 `batch`；worker 异常退出时按增量结果找出正在处理的文件，记失败，为其后文件重启 worker。"""
     started = time.perf_counter()
-    ctx.log(f"[{stage}] start: {len(batch)} file(s)")
+    logger.info(f"[{stage}] start: {len(batch)} file(s)")
     pending = list(batch)
     while pending:
         code, events = _launch(ctx, stage, pending)
@@ -508,9 +539,9 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
             ctx.fail(pending[culprit_at], stage, WorkerCrashed(f"{stage} worker exited with code {code}"))
         pending = pending[culprit_at + 1:]
         if pending:
-            ctx.log(f"[{stage}] restarting worker for {len(pending)} remaining file(s)")
+            logger.info(f"[{stage}] restarting worker for {len(pending)} remaining file(s)")
     done = sum(advance_or_fail(ctx, video, stage) for video in batch if not video.failed)
-    ctx.log(f"[{stage}] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
+    logger.info(f"[{stage}] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
 
 
 def advance_or_fail(ctx: _Context, video: VideoFile, stage: str) -> bool:
@@ -547,7 +578,7 @@ def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[di
     if not batch:
         return results
     started = time.perf_counter()
-    ctx.log(f"[translate] start: {len(batch)} file(s)")
+    logger.info(f"[translate] start: {len(batch)} file(s)")
     translate = _translate_module()
     needed = [video for video in batch if video.translate_plan.needs_model]
     session: Any = contextlib.nullcontext()
@@ -569,10 +600,10 @@ def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[di
                 ctx.fail(video, "translate", error)
                 continue
             results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
-            ctx.log(f"[translate] done {video.relative}: {len(tplan.document.cues)} cue(s), "
-                    f"{result.fallback_count} fallback")
+            logger.info(f"[translate] done {video.relative}: {len(tplan.document.cues)} cue(s), "
+                        f"{result.fallback_count} fallback")
     ctx.gpu_lock.update(server_pid=None)
-    ctx.log(f"[translate] end: {time.perf_counter() - started:.1f}s")
+    logger.info(f"[translate] end: {time.perf_counter() - started:.1f}s")
     return results
 
 
@@ -585,8 +616,8 @@ def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate
     blockers = artifacts.publish_blockers(video.finals, video.work_dir, force=ctx.config.run.force)
     if blockers:
         ctx.summary.blocked.append(video.relative)
-        ctx.log(f"[publish] WARNING {video.relative}: final file(s) changed by user, not overwritten "
-                f"({', '.join(blockers)}); set [run] force = true to overwrite")
+        logger.warning(f"[publish] {video.relative}: final file(s) changed by user, not overwritten "
+                       f"({', '.join(blockers)}); set [run] force = true to overwrite")
         return False
     assert video.plan is not None
     sources = video.plan.sources | {"translate_fallback_cues": fallback}
@@ -598,7 +629,7 @@ def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate
     (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
     ctx.summary.published.append(video.relative)
     ctx.summary.fallback_cues += fallback
-    ctx.log(f"[publish] {video.relative}" + (" (no speech)" if video.no_speech else ""))
+    logger.info(f"[publish] {video.relative}" + (" (no speech)" if video.no_speech else ""))
     return True
 
 
@@ -616,39 +647,40 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
         raise OutputLocked(str(error)) from error
     contain_children()
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    log = RunLog(root / f"run-{stamp}.log", console)
     gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"output_dir": str(output_dir)})
-    ctx = _Context(config, log, Summary(), stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
+    ctx = _Context(config, Summary(), stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
     try:
-        _run(ctx)
+        with _run_logging(root / f"run-{stamp}.log", console):
+            try:
+                _run(ctx)
+            finally:
+                gpu_lock.release()
     finally:
-        gpu_lock.release()
-        log.close()
         out_lock.release()
     return ctx.summary
 
 
 def _run(ctx: _Context) -> None:
-    config, log, summary = ctx.config, ctx.log, ctx.summary
+    config, summary = ctx.config, ctx.summary
     output_dir = config.paths.output_dir
 
     found = scan(config.paths.input_dir, config.input.video_extensions)
     summary.total = len(found)
     stable, summary.unstable = stable_files(found, config.run.stable_check_s, ctx.sleep)
     for rel in summary.unstable:
-        log(f"[scan] WARNING {rel}: size still changing, skipped this run")
+        logger.warning(f"[scan] {rel}: size still changing, skipped this run")
     for rel, path in stable:
         video = VideoFile(rel, path, artifacts.register_work_dir(output_dir, rel),
                           artifacts.final_srt_paths(output_dir, rel))
         blockers = artifacts.publish_blockers(video.finals, video.work_dir, force=config.run.force)
         if blockers:
             summary.blocked.append(rel)
-            log(f"[scan] WARNING {rel}: final file(s) changed by user ({', '.join(blockers)}), skipped; "
-                f"set [run] force = true to overwrite")
+            logger.warning(f"[scan] {rel}: final file(s) changed by user ({', '.join(blockers)}), skipped; "
+                           f"set [run] force = true to overwrite")
             continue
         ctx.files.append(video)
-    log(f"[scan] {summary.total} video(s): {len(ctx.files)} to check, {len(summary.blocked)} blocked, "
-        f"{len(summary.unstable)} unstable")
+    logger.info(f"[scan] {summary.total} video(s): {len(ctx.files)} to check, {len(summary.blocked)} blocked, "
+                f"{len(summary.unstable)} unstable")
 
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=config.run.extract_workers) as pool:
@@ -657,7 +689,7 @@ def _run(ctx: _Context) -> None:
             video = futures[future]
             if future.exception() is not None:
                 ctx.fail(video, "extract", future.exception())
-    log(f"[extract] end: {sum(1 for v in ctx.files if not v.failed)} ok, {time.perf_counter() - started:.1f}s")
+    logger.info(f"[extract] end: {sum(1 for v in ctx.files if not v.failed)} ok, {time.perf_counter() - started:.1f}s")
 
     def live() -> list[VideoFile]:
         return [video for video in ctx.files if not video.failed]
@@ -670,7 +702,7 @@ def _run(ctx: _Context) -> None:
             continue
         if video.plan.stage == "done":
             summary.up_to_date.append(video.relative)
-            log(f"[scan] up to date: {video.relative}")
+            logger.info(f"[scan] up to date: {video.relative}")
 
     def planned(stage: str) -> list[VideoFile]:
         return [video for video in live() if video.plan is not None and video.plan.stage == stage]
@@ -708,9 +740,9 @@ def _run(ctx: _Context) -> None:
         except Exception as error:
             ctx.fail(video, "publish", error)
 
-    log(f"[summary] {summary.total} video(s): {len(summary.published)} published "
-        f"({len(summary.no_speech)} no speech), {len(summary.up_to_date)} up to date, "
-        f"{len(summary.failed)} failed, {len(summary.blocked)} blocked, {len(summary.unstable)} unstable, "
-        f"{summary.fallback_cues} fallback cue(s)")
+    logger.info(f"[summary] {summary.total} video(s): {len(summary.published)} published "
+                f"({len(summary.no_speech)} no speech), {len(summary.up_to_date)} up to date, "
+                f"{len(summary.failed)} failed, {len(summary.blocked)} blocked, {len(summary.unstable)} unstable, "
+                f"{summary.fallback_cues} fallback cue(s)")
     for rel, stage in summary.failed.items():
-        log(f"[summary] failed at {stage}: {rel}")
+        logger.info(f"[summary] failed at {stage}: {rel}")

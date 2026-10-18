@@ -23,7 +23,7 @@
 
 **计划与身份**：续跑与跳过的唯一判据是[阶段计划](stage-plan.md)给出的 `Plan`（`stage`、各阶段期望身份、`no_speech`、`TranslatePlan`）；编排对每文件调用一次 `next_stage`，每跑完一个阶段调用一次 `advance`，不自己拼身份。模型文件 SHA256 由编排的 `model_sha_lookup` 经 `gpu.verify_models`（`plan.model_files` 给出期望值，size+mtime 缓存与 worker 共用 `.work/cache/model-verification.json`）按阶段每次运行最多核对一次；模型缺失或不符时需要该阶段核对的文件记失败。`published.json` 的 `sources` 即 `Plan.sources`（全部身份与 `no_speech`，另记 `translate_fallback_cues`，不参与比较）。
 
-**GPU worker 调度**：命令 `sys.executable -m kototoki.workers.<stage> --jobs <.work/jobs-<stage>.json>`，`cwd` 为仓库根；jobs 按 [STT worker](stt-workers.md) 的约定：`recipe_hash` 为 `plan.recipe_hash(stage, engine=…)`，`config` 为 `{"engine", "models": plan.worker_models(config), "model_cache"}`，`inputs` 按 `plan.STAGE_INPUTS`（vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）；worker 用 `plan` 的身份函数写入身份，编排用同一函数核对。子进程环境在当前环境上加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<output_dir>/.work/cache/`；stdout 逐行读进度 JSON 写入运行日志，stderr 追加到 `.work/run-<时间戳>-<stage>.stderr.log`。
+**GPU worker 调度**：命令 `sys.executable -m kototoki.workers.<stage> --jobs <.work/jobs-<stage>.json>`，`cwd` 为仓库根；jobs 按 [STT worker](stt-workers.md) 的约定：`recipe_hash` 为 `plan.recipe_hash(stage, engine=…)`，`config` 为 `{"engine", "models": plan.worker_models(config), "model_cache"}`，`inputs` 按 `plan.STAGE_INPUTS`（vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）；worker 用 `plan` 的身份函数写入身份，编排用同一函数核对。子进程环境在当前环境上加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<output_dir>/.work/cache/`，以及关进度条的 `QUIET_ENV`（见[运行日志](#运行日志)）；stdout 逐行读进度 JSON 写入运行日志，stderr 追加到 `.work/run-<时间戳>-<stage>.stderr.log`。
 
 **崩溃与重启**（按文件计）：
 
@@ -39,7 +39,32 @@
 
 **`failure.json` 清理**：该文件本次成功发布后删除；重跑时不看 `failure.json`，只按产物身份决定从哪个阶段继续，新的失败覆盖旧记录。
 
-**日志**：控制台与 `.work/run-<UTC 时间戳>.log` 只写阶段起止、逐文件状态（相对路径）、计数与耗时，不写转写与译文。
+### 运行日志
+
+本节是产品运行日志的权威；模块边界只规定目的地与格式归编排（[责任边界](../module-boundaries.md#产品包的责任边界)）。
+
+- **框架**：标准库 `logging`。[技术选型](../../development/technology-stack.md)"需要时"清单里的 `structlog` 于 2026-10-18 评估后未采用：读者只有人和 `grep`，transformers、pyannote 等第三方库的告警本就走标准库 logging，一个 root handler 即可收进同一文件，无需桥接，也不新增依赖。
+- **挂接**：`job.run` 取到输出目录锁后，在 `_run_logging` 上下文内给 root logger 挂两个 INFO 级 `StreamHandler`：`.work/run-<UTC戳>.log`（UTF-8、`\n` 行尾）与控制台（默认 `sys.stdout`），共用一个 `kototoki.logs.RunFormatter`；`kototoki` logger 临时设为 INFO。root 级别不动（默认 WARNING），所以第三方库只有 WARNING 及以上进日志，消息前加 `[<logger 名首段>]`（如 `[transformers]`），`kototoki.*` 不加。`run` 退出（含异常）时恢复级别、摘下并关闭 handler。其他产品模块只经 `logging.getLogger(__name__)` 发事件（`kototoki.job`、`kototoki.translate.*`；worker 壳在子进程里，见 [STT worker](stt-workers.md)），不配置 handler、不开文件。
+- **级别**：INFO 为进度、计数与耗时（每阶段 start／逐文件 done／end、worker 的 stdout 进度事件、翻译每批一行、结尾汇总）；WARNING 为流程继续但应看一眼的事（大小仍在变化、最终文件被用户改动而跳过、worker stderr 有告警、翻译等显存超过 30 s／server 重启／降级拆批／回退保留日文）；ERROR 为文件级与进程级失败；DEBUG 不用。
+- **行格式**（`kototoki/logs.py` 的 `LOG_FORMAT`／`LOG_DATEFMT`）：UTC 墙钟、自本次 `run` 起的相对秒、定宽级别、消息；消息沿用 `[stage]` 前缀与 start／done／end／FAILED 词汇。例：
+
+  ```
+  2026-10-18 12:06:21Z [  10.0s] INFO     [scan] 2 video(s): 2 to check, 0 blocked, 0 unstable
+  2026-10-18 12:41:07Z [2096.0s] WARNING  [asr] 3 warning/error line(s), see run-20261018T120611Z-asr.stderr.log
+  2026-10-18 13:05:02Z [3531.0s] ERROR    [translate] FAILED S1/ep01.mkv: TranslateError
+  ```
+
+  文件级失败的 ERROR 行只带异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；失败由 worker 报告（`failure.json` 已由 worker 写出）时没有 traceback。
+- **文件**：`.work/run-<UTC戳>.log` 与控制台逐行相同。`.work/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后编排只读本次启动追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计。llama-server 自身的日志另在 `.work/translate-sessions/`（[翻译子系统](translation-subsystem.md)）。
+- **内容**：
+  1. 转写、cue 与窗口文字、译文、提示词、grammar、模型响应正文不进任何日志；失败窗口只记序号与 reason。
+  2. 失败行只记异常类型，traceback 随后（只含源码行；异常消息可能含文件路径，不含转写）；异常消息不做通用截断，只有翻译的 server 重启与放弃两行把异常首行截到 200 字符。翻译子系统的"意外异常"行不带 traceback，由编排的 FAILED 行带。
+  3. 文件名用输入目录内相对路径，只有锁与日志文件的指向写绝对路径。
+  4. 一事一行、每阶段三件套、结尾汇总；`end` 行带墙钟，翻译批次行带输出 token 数、tok/s 与 cache（取不到的字段省略）。
+  5. 告警是级别不是措辞：消息里不写 `WARNING`。
+- **子进程噪声**：`child_env` 在离线变量之外合入 `QUIET_ENV`（`TQDM_DISABLE=1`、`HF_HUB_DISABLE_PROGRESS_BARS=1`、`TRANSFORMERS_VERBOSITY=warning`），让 worker stderr 只留日志行；这组变量归编排。
+- **启动早期错误**：用法与配置错误、输出目录锁与 GPU 锁冲突由 `__main__` 打印到 stderr（控制台流设 `errors="backslashreplace"`），以退出码区分，不写成日志行。
+- **未验证**：真实 GPU 运行下 worker stderr 是否已无进度条，以及 llama-server 是否报告 `predicted_per_second`（决定批次行是否出现 tok/s），均未验证。
 
 ## 接口与依赖
 
@@ -47,8 +72,8 @@
 
 ## 代码与验证入口
 
-- 代码：`kototoki/__main__.py`（`main`、`check_output_dir`）、`kototoki/job.py`（`run`、`Summary`、`model_sha_lookup`、`run_gpu_stage`、`advance_or_fail`、`translate_batch`、`publish`、`ProcessLock`、`contain_children`）。锁、进程身份与 Job Object 复制自 `experiments/translation_v3/procs.py`（未导入）。
-- 测试（core，`just test`）：`tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`、伪翻译与合并模块、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖扫描与镜像、大小采样稳定性、发布前置判定与 `force`、阶段顺序、崩溃文件隔离与按文件重启、失败隔离、中断后续跑、输出目录锁与 GPU 锁冲突退出码、无语音路径、一起发布、子进程环境、禁止导入清单与输出目录位置检查、翻译阶段只在有文件需要模型时取锁与建 session、session 建不起来只让需要模型的文件失败，以及一次整批运行中每文件 `plan.next_stage` 恰一次、每个跑过的阶段 `plan.advance` 恰一次；伪 worker 与真 worker 一样从 WAV 算 PCM SHA256 并经 `plan` 取身份。计划模块自身的测试见[阶段计划](stage-plan.md)。
+- 代码：`kototoki/__main__.py`（`main`、`check_output_dir`）、`kototoki/logs.py`（`LOG_FORMAT`、`RunFormatter`）、`kototoki/job.py`（`run`、`_run_logging`、`QUIET_ENV`、`Summary`、`model_sha_lookup`、`run_gpu_stage`、`advance_or_fail`、`translate_batch`、`publish`、`ProcessLock`、`contain_children`）。锁、进程身份与 Job Object 复制自 `experiments/translation_v3/procs.py`（未导入）。
+- 测试（core，`just test`）：`tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`、伪翻译与合并模块、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖扫描与镜像、大小采样稳定性、发布前置判定与 `force`、阶段顺序、崩溃文件隔离与按文件重启、失败隔离、中断后续跑、输出目录锁与 GPU 锁冲突退出码、无语音路径、一起发布、子进程环境、禁止导入清单与输出目录位置检查、翻译阶段只在有文件需要模型时取锁与建 session、session 建不起来只让需要模型的文件失败，以及一次整批运行中每文件 `plan.next_stage` 恰一次、每个跑过的阶段 `plan.advance` 恰一次；伪 worker 与真 worker 一样从 WAV 算 PCM SHA256 并经 `plan` 取身份。`RunLogTests` 覆盖运行日志：文件与控制台逐行相同且符合格式、告警与失败的级别、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。计划模块自身的测试见[阶段计划](stage-plan.md)。
 - 测试（full，`just test-full`）：`tests/full/test_job_ffmpeg.py` 沿用 `JobCase` 的接缝（`FAKE_MEDIA = False`），媒体阶段用 ffmpeg 合成的 3 s 视频走真实 `media.probe`／`extract`，GPU 阶段仍是伪 worker、cue 与翻译仍是假实现：检查派生 WAV 规格、三个 GPU 阶段各启动一次、session 进出顺序与三份 SRT 发布及 `published.json`。不经 `python -m kototoki` 子进程、不起伪 llama-server（`translate/server.py` 的 `check_model`／`check_engine` 核对 GGUF 大小与引擎 DLL 的 SHA，伪 server 过不了）。
 - 真实运行：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（Heaven's Feel II／III 各以 w0、x0 整批运行，12 份 SRT 齐全；首轮翻译因空闲显存低于启动阈值失败，重跑时 STT 按产物身份全部跳过、只做翻译与发布）。
 - 真实失败路径：[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)——asr 阶段强杀编排器后 worker 随 Job Object 退出、残留锁默认拒绝（退出码 3）、`KOTOTOKI_BREAK_STALE_LOCK=1` 后从 vad 产物续跑；无语音视频、损坏文件隔离、子目录镜像、用户改动最终文件的拒绝与 `force` 覆盖、重跑逐字节一致均通过。
@@ -57,5 +82,7 @@
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/06-batch-orchestration.md`、`14-stage-plan-module.md`（阶段链与身份拆出，见[阶段计划](stage-plan.md)）、`15-translate-run-key.md`（翻译阶段按 `needs_model` 取锁、session 失败只影响需要模型的文件）；规格 §3、§4、§6、§7.1 与 §1.2 第三轮裁定表。
+
+2026-10-18 运行日志改为标准库 logging：票据 `.scratch/runtime-logging/issues/01-orchestrator-logging.md`（编排）、`02-translate-progress.md`（翻译进度）、`03-worker-logging.md`（worker 壳与 `QUIET_ENV`），设计见同目录 `spec.md`。
 
 2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：`JobCase` 加 `FAKE_MEDIA` 接缝，新增 full 层端到端测试 `tests/full/test_job_ffmpeg.py`。

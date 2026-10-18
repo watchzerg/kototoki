@@ -9,7 +9,7 @@
 1. 环境：`just install`（`uv sync --locked` 建根环境即产品环境，统一 CUDA 12.8；再按资产清单 `assets.toml` 把 ffmpeg 与官方 llama.cpp 装到 `.local/tools/<name>/<version>/`）；模型放在 `.local/models/`，缺失时 `just fetch-models` 按清单下载（几十 GB）；`just verify-assets` 离线核对。两者都联网、改环境，先问再跑。ffmpeg 只用默认 swr 重采样，不要求 libsoxr，路径可在配置里改。全部模型与二进制的来源、版本与 SHA256 以 [`assets.toml`](assets.toml) 为准，布局与升级步骤见[依赖布局与资产清单](docs/development/dependencies.md)。
 2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`（递归扫描视频）与 `paths.output_dir`（不得位于仓库内，`.local/` 除外，也不得位于输入目录内）；`stt.engine` 默认 `w0`，可选 `x0`。全部键与默认值见[配置、配方与媒体提取](docs/architecture/modules/config-and-media.md)。
 3. 运行：`.venv/Scripts/python.exe -m kototoki kototoki.toml`（省略参数时读当前目录的 `kototoki.toml`）。这是加载全部模型的 GPU 重任务，运行期间持有 `.local/gpu.lock`。
-4. 输出：每部视频在 `output_dir` 下按输入子目录镜像得到 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`（双语每条中文在上、日文在下）；中间产物、日志与续跑状态在 `output_dir/.work/`。中断或失败后重跑同一命令，从各文件的最后一个有效产物继续；用户改动过的最终文件默认不覆盖，`[run] force = true` 才覆盖。退出码 0 全部成功、1 有文件失败、2 配置错误、3／4 输出目录锁／GPU 锁冲突。
+4. 输出：每部视频在 `output_dir` 下按输入子目录镜像得到 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`（双语每条中文在上、日文在下）；中间产物、日志与续跑状态在 `output_dir/.work/`；运行日志 `.work/run-<UTC 时间戳>.log` 与控制台内容相同，分 INFO／WARNING／ERROR 三级。中断或失败后重跑同一命令，从各文件的最后一个有效产物继续；用户改动过的最终文件默认不覆盖，`[run] force = true` 才覆盖。退出码 0 全部成功、1 有文件失败、2 配置错误、3／4 输出目录锁／GPU 锁冲突。
 
 翻译失败按 10→5→1 拆批降级，单条仍失败保留日文并计入回退数（`translate/report.json`）。行为与模块说明从[架构总览](docs/architecture/INDEX.md)进入（入口是[批次编排](docs/architecture/modules/batch-orchestration.md)）；验收见[两部整片验收](docs/research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)与[最终验收](docs/research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)（工程行为通过；产品 STT 与 2026-10-05 基线的质量回归在重采样改回 swr 后尚未重测）。
 

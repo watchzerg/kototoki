@@ -168,6 +168,8 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4]  [translate 1 2 3 4]
   .work/index.json       <id> ↔ 相对路径
   .work/cache/           HF_HOME／TORCH_HOME，整个输出目录共用一份
   .work/translate-sessions/  llama-server 运行日志（每次运行一个时间戳目录，按 session 分子目录，整批影片共用）
+  .work/run-<戳>.log     运行日志，与控制台逐行相同（INFO／WARNING／ERROR）
+  .work/run-<戳>-<stage>.stderr.log  该阶段 worker 的 stderr（壳日志与第三方告警），每次启动追加
   .work/<id>/
     probe.json           音轨选择与 ffprobe 快照（含 start_time 诊断）
     audio.<ext>          原始编码音轨（流复制），保留

@@ -41,6 +41,8 @@
 
 零条目 `ja.srt`：写 `run.json`（完成），返回空译文，不启动 server、不请求模型。
 
+**日志**：经 `kototoki.translate.*` logger 发事件，写进编排的运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）：session 起止、llama-server 加载完成与每批一行（cue 数、输出 token、tok/s、cache，取不到的字段省略）为 INFO；等空闲显存超过 30 s、server 重启、降级拆批与单条回退为 WARNING；加载失败与用尽重启放弃为 ERROR。`StepFailed` 的 HTTP 错误与 server error 消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）；这两条消息也是 `run.json`、`batches.jsonl`、`degrade.jsonl`、`report.json` 中对应 `error` 字段的取值，在这两条路径上随之变短（字段与配方 hash 不变）。
+
 **server**：stock llama.cpp（`[paths] llama_server`，同目录必须有 `identity.json`，且 `llama-server.exe` 与同目录全部 DLL 的 SHA256 等于其 `runtime_file_sha256`，经 size+mtime 缓存，目录里出现未登记的 DLL 也拒绝），命令行与 v3 冻结 C0 相同（ctx 8192、单槽、99 层、f16 KV、`--cache-ram 8192`、`--fit off`、`-lv 4`）。启动前检查端口空闲（被占时列出正在运行的 llama-server pid）、模型文件名与大小等于冻结资产 APEX-I-Compact、SHA256 经 `artifacts.verify_model`（size+mtime 缓存在 `.work/cache/model-verification.json`）。加载后从日志解析驻留证据，必须全部层在 GPU、有 CUDA model buffer，否则拒绝。
 
 **合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格，保证每条恰好两行；回退为日文的条目两行相同，照常输出。译文须精确覆盖全部 cue（缺失、多余、空串抛 `IncompleteTranslationError`）；零条目文档得到空串。

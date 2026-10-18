@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import re
 import socket
@@ -38,6 +39,9 @@ LOAD_TIMEOUT_SECONDS = 180
 MIN_FREE_MIB = 14700
 FREE_VRAM_TIMEOUT_SECONDS = 120.0
 FREE_VRAM_POLL_SECONDS = 2.0
+FREE_VRAM_WARN_SECONDS = 30.0  # 等显存超过这么久记一次 warning
+
+log = logging.getLogger(__name__)
 
 _OOM = re.compile(r"out of memory|cuda_error_out_of_memory|cudaerrormemoryallocation|vk_error_out_of_device_memory|std::bad_alloc",
                   re.IGNORECASE)
@@ -67,13 +71,19 @@ def wait_for_free_vram(min_mib: int = MIN_FREE_MIB, timeout: float = FREE_VRAM_T
                        sleep: Callable[[float], None] = time.sleep,
                        clock: Callable[[], float] = time.monotonic) -> int:
     """轮询 `nvidia-smi memory.free` 直到不低于阈值；超时抛 `InfraFailure` 并写明最后一次读数。"""
-    deadline = clock() + timeout
+    started = clock()
+    deadline = started + timeout
+    warned = False
     while True:
         free = query()
         if free is not None and free >= min_mib:
             return free
+        seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
+        if not warned and clock() - started > FREE_VRAM_WARN_SECONDS:
+            warned = True
+            log.warning("[translate] waiting for free GPU memory: %s < %d MiB after %.0f s", seen, min_mib,
+                        clock() - started)
         if clock() >= deadline:
-            seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
             raise InfraFailure(f"Free GPU memory {seen} stayed below {min_mib} MiB for {timeout:.0f} s; "
                                "another process may hold the GPU")
         sleep(FREE_VRAM_POLL_SECONDS)
@@ -204,10 +214,13 @@ class ManagedServer:
             while True:
                 if self.process.poll() is not None:
                     oom = " (out of memory)" if explicit_oom(loader_logs(self.runtime_dir)) else ""
-                    raise InfraFailure(f"llama-server exited {self.process.returncode} during load{oom}; "
-                                       f"see {self.runtime_dir}")
+                    message = f"llama-server exited {self.process.returncode} during load{oom}; see {self.runtime_dir}"
+                    log.error("[translate] %s", message)
+                    raise InfraFailure(message)
                 if time.perf_counter() - load_start > LOAD_TIMEOUT_SECONDS:
-                    raise InfraFailure(f"Model load exceeded {LOAD_TIMEOUT_SECONDS} seconds")
+                    message = f"Model load exceeded {LOAD_TIMEOUT_SECONDS} seconds"
+                    log.error("[translate] %s", message)
+                    raise InfraFailure(message)
                 try:
                     with opener.open(self.url + "/health", timeout=1) as response:
                         if response.status == 200:
@@ -215,6 +228,8 @@ class ManagedServer:
                 except OSError:
                     time.sleep(0.5)
             self.identity["cold_load_seconds"] = time.perf_counter() - load_start
+            log.info("[translate] llama-server pid %d loaded in %.1f s (free VRAM before start %d MiB)",
+                     self.process.pid, self.identity["cold_load_seconds"], free_mib)
             with opener.open(self.url + "/props", timeout=10) as response:
                 self.identity["props"] = json.loads(response.read())
             residency = residency_evidence(loader_logs(self.runtime_dir))

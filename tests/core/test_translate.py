@@ -397,6 +397,78 @@ class TranslateDocumentTests(unittest.TestCase):
                 self.h.translate(a, session)
             self.assertEqual(len(self.h.translate(b, session).translations), 5)
 
+    def test_normal_run_logs_one_progress_line_per_batch(self) -> None:
+        doc = document(23)
+        with self.assertLogs("kototoki.translate", level="INFO") as logs:
+            self.h.translate(doc)
+        batch_lines = [line for line in logs.output if "[translate] batch " in line]
+        self.assertEqual(batch_lines, ["INFO:kototoki.translate.generate:[translate] batch 1/3: 10 cue(s), 12 tok, cache 0",
+                                       "INFO:kototoki.translate.generate:[translate] batch 2/3: 10 cue(s), 12 tok, cache 5",
+                                       "INFO:kototoki.translate.generate:[translate] batch 3/3: 3 cue(s), 12 tok, cache 5"])
+        self.assertTrue(any("session 1 start" in line and "3 of 3 batch(es) pending" in line for line in logs.output))
+        self.assertTrue(any("session 1 end: 3 batch(es) written" in line for line in logs.output))
+        self.assertEqual({record.levelname for record in logs.records}, {"INFO"})
+
+    def test_restart_logs_a_warning_and_giving_up_an_error(self) -> None:
+        doc = document(12)
+        self.h.plans = [{2: "oom"}]
+        with self.assertLogs("kototoki.translate", level="INFO") as logs:
+            self.h.translate(doc)
+        warnings = [r.getMessage() for r in logs.records if r.levelname == "WARNING"]
+        self.assertEqual(len(warnings), 1)
+        self.assertTrue(warnings[0].startswith("[translate] server restart 1/2: oom: HTTP 500 (oom)"), warnings[0])
+        self.h.plans = [{1: "oom"}, {1: "oom"}, {1: "oom"}]
+        with self.assertLogs("kototoki.translate", level="INFO") as logs, self.assertRaises(TranslateError):
+            self.h.translate(document(5, "別"))
+        self.assertEqual([r.levelname for r in logs.records if r.levelname != "INFO"], ["WARNING", "WARNING", "ERROR"])
+        (error,) = [r for r in logs.records if r.levelname == "ERROR"]
+        self.assertIn("giving up after 2 server restart(s): oom", error.getMessage())
+
+    def test_unexpected_exception_logs_an_error_without_traceback(self) -> None:
+        # traceback 归编排器的 ctx.fail，这里只记一行类型，避免运行日志里出现两份。
+        self.h.plans = [{1: ValueError("Expected server JSON object")}]
+        with self.assertLogs("kototoki.translate", level="ERROR") as logs, self.assertRaises(ValueError):
+            self.h.translate(document(5))
+        (record,) = logs.records
+        self.assertIn("unexpected ValueError", record.getMessage())
+        self.assertIsNone(record.exc_info)
+
+    def test_logs_never_contain_cue_text(self) -> None:
+        # 覆盖正常批次、降级、回退与重启：日志里不出现任何日文 cue 文字（及其片段）。
+        doc = document(23)
+        self.h.poison = {doc.cues[3].id}
+        self.h.plans = [{14: "oom"}]
+        with self.assertLogs("kototoki.translate", level="INFO") as logs:
+            result = self.h.translate(doc)
+        self.assertEqual(result.fallback_count, 1)
+        text = "\n".join(logs.output)
+        self.assertIn("WARNING", text)
+        for cue in doc.cues:
+            self.assertNotIn(cue.text, text)
+        for fragment in ("台詞", "ですね", "译"):
+            self.assertNotIn(fragment, text)
+
+    def test_http_error_message_omits_the_response_body(self) -> None:
+        from kototoki.translate.generate import StepFailed, run_step
+        exchange = self.h.root / "exchange"
+        exchange.mkdir()
+        (exchange / "response.raw").write_text('{"error": "台詞0ですね exceeds the available context"}', encoding="utf-8")
+
+        class Client:
+            last_exchange = str(exchange)
+
+            def tokenize(self, prompt: str) -> list[int]:
+                return [1, 2, 3]
+
+            def complete(self, request: dict[str, Any]) -> dict[str, Any]:
+                raise HTTPError("http://127.0.0.1:8080/completion", 400, "Bad Request", {}, None)
+
+        with self.assertRaises(StepFailed) as caught:
+            run_step(Client(), "台詞0ですね", "root ::= x", SEED, lambda text: text, {}, {})
+        self.assertEqual(caught.exception.kind, "context")
+        self.assertNotIn("台詞", str(caught.exception))
+        self.assertRegex(str(caught.exception), r"^HTTP 400 \(context\): response body \d+ char\(s\)$")
+
     def test_start_failure_then_success(self) -> None:
         def crash() -> None:
             raise InfraFailure("llama-server exited 1 during load (out of memory)")

@@ -8,7 +8,7 @@
 worker 加载一次模型后逐文件处理，每个文件的结果由 worker 自己写进该文件的 `work_dir`
 （增量落盘），处理完一个文件即在 stdout 打一行 UTF-8 JSON 进度。单文件异常写该文件的
 `failure.json` 并继续下一个；启动失败或 `FatalWorkerError`（如 CUDA 粘性错误，后续文件必然失败）
-立即以退出码 2 结束，由编排器从下一文件重启。
+立即以退出码 2 结束，由编排器从下一文件重启。异常同时以 `error`（带 traceback）记到 stderr 日志。
 """
 
 from __future__ import annotations
@@ -16,11 +16,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
+import logging
 from pathlib import Path
 import sys
 from typing import Any, BinaryIO
 
 from kototoki.artifacts import atomic_write_json, read_json, write_failure
+
+logger = logging.getLogger(__name__)
 
 EXIT_OK = 0        # 全部文件完成
 EXIT_PARTIAL = 1   # 部分文件失败，其余完成
@@ -104,11 +107,13 @@ def run_jobs(jobs: Jobs, process: Callable[[FileJob], Mapping[str, Any] | None],
         try:
             fields = process(job) or {}
         except FatalWorkerError as error:
+            logger.error("[%s] FATAL %s: %s", jobs.stage, job.id, type(error).__name__, exc_info=error)
             write_failure(job.work_dir, jobs.stage, error)
             emit_progress({"event": "fatal", "id": job.id, "error_type": type(error).__name__}, stream)
             return EXIT_FATAL
         except Exception as error:
             failed += 1
+            logger.error("[%s] FAILED %s: %s", jobs.stage, job.id, type(error).__name__, exc_info=error)
             write_failure(job.work_dir, jobs.stage, error)
             emit_progress({"event": "failed", "id": job.id, "error_type": type(error).__name__}, stream)
             continue
@@ -123,6 +128,7 @@ def run_worker(jobs_path: Path, start: Callable[[Jobs], Callable[[FileJob], Mapp
         jobs = read_jobs(jobs_path)
         process = start(jobs)
     except Exception as error:
+        logger.error("startup failed: %s", type(error).__name__, exc_info=error)
         emit_progress({"event": "startup_failed", "error_type": type(error).__name__, "message": str(error)}, stream)
         return EXIT_FATAL
     return run_jobs(jobs, process, stream=stream)

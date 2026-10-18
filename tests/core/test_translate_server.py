@@ -73,6 +73,17 @@ class WaitForFreeVramTests(unittest.TestCase):
         self.assertEqual(self._wait([1000, 5000, 14500, 16000]), 14500)
         self.assertEqual(len(self.sleeps), 2)
 
+    def test_long_wait_logs_one_warning(self):
+        with self.assertLogs("kototoki.translate", level="INFO") as logs:
+            self.assertEqual(self._wait([1000] * 20 + [14500], timeout=120.0), 14500)
+        (record,) = logs.records
+        self.assertEqual(record.levelname, "WARNING")
+        self.assertIn("1000 MiB < 14300 MiB", record.getMessage())
+
+    def test_short_wait_logs_nothing(self):
+        with self.assertNoLogs("kototoki.translate", level="INFO"):
+            self._wait([1000, 14500])
+
     def test_timeout_raises_with_last_reading(self):
         with self.assertRaises(InfraFailure) as caught:
             self._wait([1000, 2000, 3456])

@@ -117,6 +117,20 @@ class DegradeTests(unittest.TestCase):
         self.assertEqual(scene_json["totals"]["requests"], 9)
         self.assertEqual(scene_json["totals"]["attempts"], 12)
 
+    def test_degrade_and_fallback_log_warnings(self) -> None:
+        doc = document(12)
+        ids = [cue.id for cue in doc.cues]
+        self.h.poison = {ids[3]}
+        with self.assertLogs("kototoki.translate", level="INFO") as logs:
+            self.h.translate(doc)
+        b = self.lines(doc, "batches.jsonl")[0]["batch_id"]
+        warnings = [r.getMessage() for r in logs.records if r.levelname == "WARNING"]
+        self.assertEqual(warnings, [f"[translate] batch {b} failed (parse) at level 0; splitting into 2 sub-batch(es)",
+                                    f"[translate] batch {b}.a failed (parse) at level 1; splitting into 5 sub-batch(es)",
+                                    f"[translate] batch {b}: 1 cue(s) kept in Japanese (fallback)"])
+        self.assertIn("[translate] batch 1/2: 10 cue(s), 12 tok, cache 5, degraded (8 request(s), 1 fallback)",
+                      [r.getMessage() for r in logs.records])
+
     def test_single_cue_batch_falls_back_without_splitting(self) -> None:
         doc = document(11)
         ids = [cue.id for cue in doc.cues]

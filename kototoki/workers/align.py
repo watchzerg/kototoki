@@ -10,6 +10,7 @@ PCM SHA256＋`asr.json` SHA256＋MMS 配方 hash＋模型文件 SHA256（取自 
 from __future__ import annotations
 
 from collections.abc import Mapping
+import logging
 from pathlib import Path
 import sys
 import time
@@ -21,6 +22,8 @@ from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, validate_failed_windows
 
 STAGE = "align"
+
+logger = logging.getLogger(__name__)
 
 
 def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Compute:
@@ -48,6 +51,13 @@ def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu
         fields = {"windows": len(aligned["records"]),
                   "failed_alignment_windows": sum(1 for record in aligned["records"] if record["failure"]),
                   "text_only_units": sum(1 for unit in aligned["units"] if unit["status"] == "text_only")}
+        for record in aligned["records"]:
+            if record["failure"]:  # 只有异常类型与消息，不含窗口文字
+                logger.warning("[%s] %s: window %d alignment failed: %s",
+                               STAGE, job.id, record["segment_index"], record["failure"])
+        logger.info("[%s] %s: %d window(s), %d failed alignment, %d text-only unit(s), inference %.1fs",
+                    STAGE, job.id, fields["windows"], fields["failed_alignment_windows"], fields["text_only_units"],
+                    inference_s)
         return job.work_dir / artifacts.ALIGN, plan.align_identity(pcm_sha256, asr_sha256, model_sha256), document, fields
     return run
 
@@ -56,11 +66,14 @@ def start(jobs: Jobs) -> Any:
     gpu.require_recipe(jobs, plan.recipe_hash(STAGE))
     models = jobs.config["models"]
     model_sha256 = gpu.verify_models(plan.model_files(STAGE, models), Path(jobs.config["model_cache"]))
+    logger.info("[%s] verified %d model file(s)", STAGE, len(model_sha256))
     from kototoki.align import MmsAligner
 
     started = time.perf_counter()
     aligner = MmsAligner(Path(models["align"]))
-    return gpu.file_processor(compute(aligner, model_sha256, time.perf_counter() - started))
+    load_s = time.perf_counter() - started
+    logger.info("[%s] model loaded in %.1fs", STAGE, load_s)
+    return gpu.file_processor(compute(aligner, model_sha256, load_s))
 
 
 if __name__ == "__main__":

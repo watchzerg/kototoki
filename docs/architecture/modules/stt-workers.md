@@ -42,7 +42,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 ## 接口与依赖
 
-推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。`schema` 属基础层，只依赖标准库：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。壳依赖 `artifacts`、[阶段计划](stage-plan.md)的 `plan`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`（`plan` 只在算翻译身份时才导入翻译子系统，壳不会触发）。子进程环境（`PYTHONUTF8=1`、`HF_HUB_OFFLINE` 等离线变量、`HF_HOME`／`TORCH_HOME = <output_dir>/.work/cache/`）由编排传入，worker 不自行设置（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。pyannote 与 transformers 的告警和加载进度条写 stderr，不干扰 stdout 上的协议进度行。
+推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。`schema` 属基础层，只依赖标准库：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。壳依赖 `artifacts`、[阶段计划](stage-plan.md)的 `plan`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`（`plan` 只在算翻译身份时才导入翻译子系统，壳不会触发）。子进程环境（`PYTHONUTF8=1`、`HF_HUB_OFFLINE` 等离线变量、`HF_HOME`／`TORCH_HOME = <output_dir>/.work/cache/`）由编排传入，worker 不自行设置（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。编排另传入 `QUIET_ENV` 关掉 tqdm 与 HF 进度条。壳的日志由 `gpu.main` 配置：root 上一个写 stderr 的 handler（`kototoki.logs.RunFormatter`，与运行日志同格式），`kototoki` logger 为 INFO，第三方只有 WARNING 及以上，`logging.captureWarnings(True)` 把 Python warnings 收进同一流；壳记模型核对与加载耗时、每文件窗口数／失败数／推理秒数，每个失败窗口一行 WARNING（只记序号与 reason，不记文字），`protocol` 对单文件失败、`FatalWorkerError` 与启动失败记 ERROR（异常类型＋traceback）。推理模块不发日志，stdout 只留协议 JSON 行；stderr 的存放与告警计数见[批次编排：运行日志](batch-orchestration.md#运行日志)。
 
 ## 代码与验证入口
 

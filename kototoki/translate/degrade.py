@@ -15,12 +15,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from .batching import Batch, Scene, neighbours
 from .recipes import Recipe
 
 REPORT_SCHEMA = "kototoki-translate-report-v1"
+
+log = logging.getLogger(__name__)
 
 
 def children(scene: Scene, node: Batch, level: int, recipe: Recipe) -> list[Batch]:
@@ -84,7 +87,10 @@ def translate_with_degrade(scene: Scene, batch: Batch, recipe: Recipe, attempt: 
             translations.update(row["translations"])
             return
         kids = children(scene, node, level, recipe)
-        if not kids:
+        if kids:
+            log.warning("[translate] batch %s failed (%s) at level %d; splitting into %d sub-batch(es)",
+                        node.batch_id, row["error_kind"], level, len(kids))
+        else:
             cue = node.target_ids[0]
             translations[cue] = text[cue]
             fallback.append({"id": cue, "batch_id": node.batch_id, "reason": row["error_kind"],
@@ -93,6 +99,8 @@ def translate_with_degrade(scene: Scene, batch: Batch, recipe: Recipe, attempt: 
             solve(kid, level + 1)
 
     solve(batch, 0)
+    if fallback:
+        log.warning("[translate] batch %s: %d cue(s) kept in Japanese (fallback)", batch.batch_id, len(fallback))
     for item in fallback:
         item["attempts"] = sum(node["attempts"] for node in nodes if item["id"] in node["target_ids"])
     # 原批次的请求记录在 `nodes[0]`，不在行顶层重复。

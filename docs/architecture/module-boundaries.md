@@ -21,7 +21,7 @@
 | 产品配置读取与路径解析（`kototoki.toml`、GPU 锁路径、破锁环境变量）；STT／cue／媒体配方常量、下混 `pan` 常量与 `recipe_hash`（翻译配方除外）；音轨选择、流复制容器映射、派生 WAV 与时间轴零点（`offset_s` 恒为 0）、对视频流的时长校验 | [配置、配方与媒体提取](modules/config-and-media.md)（`kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`） | 编排器（票据 06）、STT worker（票据 03／07）、翻译子系统读配置（票据 05） |
 | 产品日文 cue：无时间字符回填（插值、外推、整窗 `fallback`）、三级切分、lead-out 与最短时长、cue 时间加一次 `offset_s` | [日文 cue](modules/japanese-cues.md)（`kototoki/cues.py`） | 编排器（票据 06）写 `ja-cues.json`／`ja.srt` |
 | 产品 STT 推理：Pyannote 检测与 `source-span-merge-v1` 分窗、w0 特征链与 CT2 解码（torch 先于 ctranslate2 导入）、x0 Qwen 原生 processor 与 4096 触顶转失败窗口、MMS 强制对齐与字典按模型类数过滤；`vad.json`／`asr.json`／`align.json` 的 payload 与窗口级失败记账（身份取自阶段计划）；CUDA 粘性错误判定（退出码 2）；`validate_transcript`、窗口与 units 校验（`kototoki/schema.py`） | [STT worker](modules/stt-workers.md)（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py`） | 编排器（票据 06）以子进程启动 worker；日文 cue 读 `align.json` |
-| 产品批次编排：扫描与稳定性、阶段调度、worker 重启、`<output_dir>/.work/lock` 与 `.local/gpu.lock`、Job Object、子进程环境、发布与 `failure.json` 清理、运行日志 | [批次编排](modules/batch-orchestration.md)（`kototoki/__main__.py`、`kototoki/job.py`） | 用户经 `python -m kototoki` 调用 |
+| 产品批次编排：扫描与稳定性、阶段调度、worker 重启、`<output_dir>/.work/lock` 与 `.local/gpu.lock`、Job Object、子进程环境、发布与 `failure.json` 清理、运行日志（行格式在基础层 `kototoki/logs.py`） | [批次编排](modules/batch-orchestration.md)（`kototoki/__main__.py`、`kototoki/job.py`、`kototoki/logs.py`） | 用户经 `python -m kototoki` 调用 |
 | 产品阶段计划：阶段链与各阶段的产物／输入名、模型文件清单与固定 SHA256、各阶段期望身份（probe、vad、asr、align、ja-cues；translate 身份转问翻译子系统）、"下一个要跑的阶段"与发布状态判定 | [阶段计划](modules/stage-plan.md)（`kototoki/plan.py`） | 编排器（`next_stage`／`advance`、jobs 文件）、worker 壳（写进产物的身份、模型核对清单）、伪 worker |
 | 流程配方身份（`Recipe.recipe_hash`）、批次、整片交付 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) | — |
 | 产品翻译：配方与 `RECIPE_HASH`（`kototoki/translate/recipes.py`，翻译配方的唯一归属）、翻译 run 目录的键（`translate/srt-<sha12>/<配方名>__s<seed>`）与翻译身份、"是否需要模型"（`needs_model`：零条目或 run 已完成即否）、llama-server session 生命周期与空闲显存轮询、`dp10-cut` 切包与邻文（只读 `ja.srt` 的停顿）、joint 请求、按批次落盘与续跑、基础设施失败重启、产品配方 `dp10-cut-degrade-v1` 的三级降级与回退报告；中日两行合并 | [翻译子系统与双语合并](modules/translation-subsystem.md)（`kototoki/translate/`、`kototoki/merge.py`） | 阶段计划模块调用 `translate.plan` 取身份与 `needs_model`；编排器持有 `Session`、按 `needs_model` 取 GPU 锁、调用 `translate_document(plan, session)` 与 `merge`，从 `TranslateResult` 读回退计数 |
@@ -31,7 +31,7 @@
 - 允许：X0 → W0（`read_audio`、`setup_runtime`、`gpu_lock`、`read_vad_manifest`、`MmsAligner`）；外部 VAD 阶段 → W0（`gpu_lock`、`read_audio`、`vad_candidates`）；W0／X0 → `kototoki_eval.schema`。
 - 允许：完整 SRT 流程 → 逐窗翻译运行时（`translation_demo.adapters`、`client`、`run`、`translation_demo_runtime` 的纯函数）。
 - 现存的当前→历史依赖（只读导入，不得扩大）：X0 → `experiments.qwen.run_qwen`（Qwen 资产身份常量与 `checkpoint_identity`、`check_gpu`）；完整 SRT 流程 → `experiments.translation_flow.srt`（SRT 读写与覆盖校验），其测试另导入冻结的 `translation_flow.v2_prepare`／`v2_recipes` 做 C0 等价核对；W0 测试导入 `experiments.framework_equivalence` 作数值参照，运行时不导入。
-- 产品包 `kototoki/`（分层图见[架构总览](INDEX.md#依赖与装配)）：依赖只向下，编排 `job` → 媒体、cue、合并、阶段计划 `plan`、翻译子系统 → 基础层（`config`、`recipes`、`artifacts`、`srt`、`workers/protocol`、`schema`）。`plan` 与 worker 壳同在中间层：壳导入 `plan` 取身份与模型清单；`plan` 只在核对翻译阶段时延迟导入翻译子系统（`translate.plan`），壳不会触发这条边。四条硬规则：
+- 产品包 `kototoki/`（分层图见[架构总览](INDEX.md#依赖与装配)）：依赖只向下，编排 `job` → 媒体、cue、合并、阶段计划 `plan`、翻译子系统 → 基础层（`config`、`recipes`、`artifacts`、`srt`、`workers/protocol`、`schema`、`logs`）。`plan` 与 worker 壳同在中间层：壳导入 `plan` 取身份与模型清单；`plan` 只在核对翻译阶段时延迟导入翻译子系统（`translate.plan`），壳不会触发这条边。四条硬规则：
   - **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动阶段 worker，与它们的全部通信是 jobs 文件、工作目录里的产物和退出码；`tests/core/test_job.py` 的禁止导入测试（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、任何 `experiments.*`）守门。编排不导入 worker 壳；期望身份来自 `plan`，模型核对只用 `workers/gpu.verify_models`（导入时不加载推理库）。
   - **推理模块互不导入。** `vad`、`asr_*`、`align` 只依赖基础层，各自在独立进程里加载模型；阶段之间只经产物文件交接。三壳共用的入口、读 WAV、模型核对与 CUDA 守卫在 `workers/gpu.py`，只被 worker 壳与编排导入，不属基础层。
   - **基础层不依赖 torch、ffmpeg、网络与上层。** 它是所有离线测试的根基，编排器可以直接导入。
@@ -66,7 +66,7 @@
 - **锁**全归编排：`<output_dir>/.work/lock` 与 `.local/gpu.lock` 都在编排器手里；翻译子系统的 server 不取锁。
 - **身份**：各阶段 `recipe_hash` 归 `recipes.py`，翻译配方 hash 归 `translate/recipes.py`，模型 SHA256 经产物契约的缓存；每个阶段的期望身份由哪些上游、配方与模型组成只在 `plan.py` 写一次，worker 壳与编排消费而不复制；没有模块把绝对路径写进身份。
 - **子进程环境**归编排：`PYTHONUTF8=1`、离线变量、共用 `HF_HOME`／`TORCH_HOME=<output_dir>/.work/cache/` 由编排传入，worker 不自行设置 PATH 或 DLL 目录。
-- **日志**只有编排写运行日志，内容限进度与计数；推理模块只返回数据，不打印，转写与译文不进日志。
+- **日志**目的地与格式只归编排（`job._run_logging`、`kototoki/logs.py` 的格式；worker 壳的 `gpu.main` 只把子进程日志按同一格式写到 stderr，由编排存档）；产品模块经各自 `kototoki.*` logger 发进度与告警（首批：`job`、`translate.*`、worker 壳）；推理模块（`vad`、`asr_*`、`align`）不发日志、不打印；转写、译文、提示、grammar 与模型响应正文不进任何日志（细则见[批次编排：运行日志](modules/batch-orchestration.md#运行日志)）。
 
 接缝：有两个适配器的位置才是真接缝，只有一个适配器时保持具体实现、不抽象。真接缝有三处：ASR 引擎（`asr_whisper`／`asr_qwen` 写出同一种 `asr.json`，由 `config.engine` 选择）、编排器 ↔ 阶段 worker（真实子进程／测试用伪 worker 脚本，接口是 jobs 文件＋增量结果＋退出码）、翻译 ↔ llama-server（HTTP 客户端／伪客户端，只在 `translate/` 内部）。媒体 ↔ ffmpeg、VAD 与对齐后端、配置来源、SRT 写出器都只有一个实现，不做后端协议类或抽象层；换模型时改配方常量与实现，不改接口。在只有一个适配器的位置新建接缝须先在本节写明第二个使用者。内部接缝只供各自模块的测试使用、不属对外接口：`translate.client` 可换伪客户端，`protocol.run_worker` 的 `start` 回调可换伪处理函数，`artifacts.replace_with_retry` 的 `replace` 可注入。
 

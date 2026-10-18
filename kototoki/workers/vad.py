@@ -11,6 +11,7 @@ payload 为 `schema_version`、`offset_s`、`input`、`chunks`（整数样本窗
 from __future__ import annotations
 
 from collections.abc import Mapping
+import logging
 from pathlib import Path
 import sys
 import time
@@ -23,6 +24,8 @@ from kototoki.workers.protocol import FileJob, Jobs
 
 STAGE = "vad"
 
+logger = logging.getLogger(__name__)
+
 
 def compute(vad: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Compute:
     def run(job: FileJob) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -31,6 +34,7 @@ def compute(vad: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Com
         chunks, accounting = vad.segment(audio)
         inference_s = time.perf_counter() - started
         validate_windows(chunks, len(audio))
+        logger.info("[%s] %s: %d window(s), inference %.1fs", STAGE, job.id, len(chunks), inference_s)
         payload = {
             "schema_version": 1, "offset_s": recipes.MEDIA["offset_s"],
             "input": {"pcm_sha256": pcm_sha256, "samples": len(audio), "sample_rate": gpu.SAMPLE_RATE,
@@ -46,11 +50,14 @@ def start(jobs: Jobs) -> Any:
     gpu.require_recipe(jobs, plan.recipe_hash(STAGE))
     models = jobs.config["models"]
     model_sha256 = gpu.verify_models(plan.model_files(STAGE, models), Path(jobs.config["model_cache"]))
+    logger.info("[%s] verified %d model file(s)", STAGE, len(model_sha256))
     from kototoki.vad import PyannoteVad
 
     started = time.perf_counter()
     vad = PyannoteVad(Path(models["vad"]))
-    return gpu.file_processor(compute(vad, model_sha256, time.perf_counter() - started))
+    load_s = time.perf_counter() - started
+    logger.info("[%s] model loaded in %.1fs", STAGE, load_s)
+    return gpu.file_processor(compute(vad, model_sha256, load_s))
 
 
 if __name__ == "__main__":
