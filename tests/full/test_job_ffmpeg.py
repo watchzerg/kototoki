@@ -7,13 +7,14 @@ cue 构建与翻译仍是假实现；不经 `python -m kototoki` 子进程、不
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 import subprocess
 import unittest
 import wave
 
 from kototoki import artifacts, recipes
-from tests.core.test_job import SRT_JA, SRT_ZH, JobCase
+from tests.core.test_job import LOG_LINE, SRT_JA, SRT_ZH, JobCase
 
 SECONDS = 3
 
@@ -28,15 +29,15 @@ class EndToEndTests(JobCase):
                 self.fail(f"{binary} not found: run `just install` (ffmpeg is listed in assets.toml) "
                           "or set [paths] ffmpeg/ffprobe")
 
-    def make_video(self, rel: str) -> None:
-        """64x64 灰屏 + 48 kHz 立体声正弦、音轨标 jpn 的 mkv。"""
+    def make_video(self, rel: str, language: str = "jpn") -> None:
+        """64x64 灰屏 + 48 kHz 立体声正弦、音轨标 `language` 的 mkv。"""
         path = self.input / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         command = [str(self.config.paths.ffmpeg), "-nostdin", "-loglevel", "error", "-y",
                    "-f", "lavfi", "-i", f"color=c=gray:s=64x64:r=25:d={SECONDS}",
                    "-f", "lavfi", "-i", f"aevalsrc='0.5*sin(2*PI*440*t)|0.5*sin(2*PI*660*t)':c=stereo:s=48000:d={SECONDS}",
                    "-map", "0:v", "-map", "1:a", "-c:v", "mpeg4", "-c:a", "flac",
-                   "-metadata:s:a:0", "language=jpn", str(path)]
+                   "-metadata:s:a:0", f"language={language}", str(path)]
         result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
                                 errors="replace", check=False)
         self.assertEqual(result.returncode, 0, result.stderr[-1500:])
@@ -64,6 +65,16 @@ class EndToEndTests(JobCase):
         published = artifacts.read_published(work)
         self.assertIsNotNone(published)
         self.assertEqual(set(published["sha256"]), {"ja", "zh", "ja-zh"})
+
+    def test_missing_jpn_track_is_logged_as_warning(self) -> None:
+        rel = "no-jpn.mkv"
+        self.make_video(rel, language="eng")
+        console = io.StringIO()
+        summary = self.run_job(console=console)
+        self.assertEqual((summary.published, summary.exit_code), ([rel], 0))
+        warnings = [m[2] for m in map(LOG_LINE.match, console.getvalue().splitlines()) if m and m[1] == "WARNING"]
+        self.assertEqual(warnings, [f"[extract] {rel}: No non-commentary audio stream tagged 'jpn'; "
+                                    "using the first audio stream (index 1)"])
 
 
 if __name__ == "__main__":

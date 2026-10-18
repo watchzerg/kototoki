@@ -63,6 +63,7 @@ class JobCase(unittest.TestCase):
         self.probed: list[str] = []
         self.extracted: list[str] = []
         self.extract_errors: set[str] = set()
+        self.media_warnings: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}  # rel → (probe, extract) 告警
         if self.FAKE_MEDIA:
             self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
             self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
@@ -115,7 +116,7 @@ class JobCase(unittest.TestCase):
         return media.Probe(
             ffprobe={"streams": [{"index": 0, "codec_name": "aac"}], "format": {"duration": "10"}},
             audio=track, audio_tracks=(track,), video_duration_s=10.0, video_duration_source="stream.duration",
-            container_start_time=0.0, subtitles=(), warnings=())
+            container_start_time=0.0, subtitles=(), warnings=self.media_warnings.get(self._rel(path), ((), ()))[0])
 
     def _extract(self, path: Path, work_dir: Path, probe: media.Probe, config) -> media.Extract:
         rel = self._rel(path)
@@ -132,7 +133,8 @@ class JobCase(unittest.TestCase):
         return media.Extract(
             audio_copy=Path(work_dir) / "audio.m4a", wav=wav, log=Path(work_dir) / artifacts.EXTRACT_LOG,
             sample_rate=16000, samples=len(pcm) // 2, pcm_sha256=hashlib.sha256(pcm).hexdigest(),
-            decoded_duration_s=10.0, video_duration_s=10.0, offset_s=0.0, pan="", compensation={}, warnings=())
+            decoded_duration_s=10.0, video_duration_s=10.0, offset_s=0.0, pan="", compensation={},
+            warnings=self.media_warnings.get(rel, ((), ()))[1])
 
     def _translate_plan(self, work_dir, document, config):
         """伪计划：目录键与真实子系统同形；已翻译过（`translate_done`）或零条目即不需要模型。"""
@@ -698,6 +700,33 @@ class RunLogTests(JobCase):
         self.assertEqual(self.entries_at(file, "WARNING"), ["[scan] b.mkv: size still changing, skipped this run"])
         for line in file:
             self.assertNotIn("WARNING", LOG_LINE.match(line)[2])
+
+    def test_extract_logs_start_done_end(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.extract_errors.add("b.mkv")
+        _, file = self.run_logged()
+        extract = [entry for entry in self.entries_at(file, "INFO") if entry.startswith("[extract]")]
+        self.assertEqual(extract[0], "[extract] start: 3 file(s)")
+        self.assertEqual(sorted(extract[1:-1]), ["[extract] done a.mkv", "[extract] done c.mkv"])
+        self.assertRegex(extract[-1], r"^\[extract\] end: 2 ok, \d+\.\ds$")
+
+    def test_media_warnings_are_logged_per_file(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        probe_warning = "No non-commentary audio stream tagged 'jpn'; using the first audio stream (index 1)"
+        extract_warning = "Decoded audio is 0.300 s longer than the video"
+        self.media_warnings["b.mkv"] = ((probe_warning,), (extract_warning,))
+        console, file = self.run_logged()
+        self.assertEqual(console, file)
+        expected = [f"[extract] b.mkv: {probe_warning}", f"[extract] b.mkv: {extract_warning}"]
+        self.assertEqual(self.entries_at(file, "WARNING"), expected)
+        record = artifacts.read_json(self.work_dir("b.mkv") / artifacts.PROBE)
+        self.assertEqual((record["warnings"], record["extract"]["warnings"]), ([probe_warning], [extract_warning]))
+
+        # 续跑跳过 extract 时告警照样出现：probe 的来自本次 ffprobe，extract 的取自 `probe.json`
+        self.media_warnings["b.mkv"] = ((probe_warning,), ())
+        _, file = self.run_logged()
+        self.assertEqual(self.extracted.count("b.mkv"), 1)
+        self.assertEqual(self.entries_at(file, "WARNING"), expected)
 
     def test_failure_is_error_with_traceback_in_file(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")

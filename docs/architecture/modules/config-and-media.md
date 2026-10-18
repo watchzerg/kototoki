@@ -36,7 +36,7 @@
 
 ## 接口与依赖
 
-`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与 ffmpeg／ffprobe 可执行文件（默认是项目内 `.local/tools/ffmpeg/<version>/bin/`，版本由 `assets.toml` 锁定），不依赖 torch 与网络，编排器在线程池里直接调用。媒体模块只写 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
+`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与 ffmpeg／ffprobe 可执行文件（默认是项目内 `.local/tools/ffmpeg/<version>/bin/`，版本由 `assets.toml` 锁定），不依赖 torch 与网络，编排器在线程池里直接调用。媒体模块只写 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败；`Probe.warnings`／`Extract.warnings` 只作数据返回，本模块不发日志，由编排逐条写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
 
 ## 代码与验证入口
 

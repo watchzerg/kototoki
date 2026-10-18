@@ -402,20 +402,23 @@ def model_sha_lookup(config: Config) -> ModelSha:
 
 # --- CPU 阶段：probe／extract -------------------------------------------------------------------
 
-def probe_and_extract(config: Config, video: VideoFile) -> None:
+def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
     """ffprobe 每次都跑（<1 s）以得到视频身份；`probe.json` 当前且 WAV 在时跳过 extract。
 
     `probe.json` 在 extract 完成后写出，内容为 probe payload 加 `extract` 记录（PCM SHA256 等）。
+    返回 probe 与 extract 的告警（跳过 extract 时取 `probe.json` 里记下的），由调用方写进运行日志。
     """
     video.probe = media.probe(video.path, config)
     video.probe_identity = plan.probe_identity(config, video.relative, video.probe.ffprobe)
     path = video.work_dir / artifacts.PROBE
     if artifacts.is_current(path, video.probe_identity) and (video.work_dir / artifacts.AUDIO_16K).is_file():
-        video.pcm_sha256 = artifacts.read_json(path)["extract"]["pcm_sha256"]
-        return
+        record = artifacts.read_json(path)["extract"]
+        video.pcm_sha256 = record["pcm_sha256"]
+        return video.probe.warnings + tuple(record["warnings"])
     result = media.extract(video.path, video.work_dir, video.probe, config)
     artifacts.write_artifact(path, video.probe_identity, {**video.probe.payload(), "extract": result.payload()})
     video.pcm_sha256 = result.pcm_sha256
+    return video.probe.warnings + result.warnings
 
 
 # --- GPU 阶段：worker 子进程 ---------------------------------------------------------------------
@@ -683,12 +686,17 @@ def _run(ctx: _Context) -> None:
                 f"{len(summary.unstable)} unstable")
 
     started = time.perf_counter()
+    logger.info(f"[extract] start: {len(ctx.files)} file(s)")
     with concurrent.futures.ThreadPoolExecutor(max_workers=config.run.extract_workers) as pool:
         futures = {pool.submit(probe_and_extract, config, video): video for video in ctx.files}
         for future in concurrent.futures.as_completed(futures):
             video = futures[future]
             if future.exception() is not None:
                 ctx.fail(video, "extract", future.exception())
+                continue
+            for warning in future.result():
+                logger.warning(f"[extract] {video.relative}: {warning}")
+            logger.info(f"[extract] done {video.relative}")
     logger.info(f"[extract] end: {sum(1 for v in ctx.files if not v.failed)} ok, {time.perf_counter() - started:.1f}s")
 
     def live() -> list[VideoFile]:
