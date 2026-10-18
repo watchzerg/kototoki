@@ -9,6 +9,9 @@ and keeps a read-only neighbour only while the silence towards it is below ``con
 ``recipe.gap_pack`` (v7, ``gap-pack-v1``) chooses all cuts of a scene at once by dynamic programming
 (``gap_pack_cuts``); ``gap-pack-v2`` (ADR-0010) adds a per-cut penalty by the silence at the cut
 (``cut_penalty``). ``recipe.pause_marks`` (v7) records the visible silences that get a pause line.
+
+``recipe.groups`` (v8, ``group-reorder-v1``) splits each pack's targets into "same sentence" groups
+(``sentence_groups``, rule R2+) and records the groups of two or more cues for the prompt.
 """
 
 from __future__ import annotations
@@ -18,6 +21,10 @@ from typing import Any
 
 from .data import Scene
 from .recipes import Recipe
+
+# group-reorder-v1 (v8): sentence-end marks and the closers stripped before checking them.
+SENTENCE_END = "。？！?!."
+CLOSERS = "」』）)】〕\"'”’"
 
 
 @dataclass(frozen=True)
@@ -34,6 +41,8 @@ class Batch:
     single_cue_over_token_target: bool = False
     # (index into the visible list, seconds): a pause line goes before that visible cue (pause_marks).
     pauses: tuple[tuple[int, float], ...] = ()
+    # Target-ID sentence groups of >= 2 cues (groups recipes); empty: the batch renders as without groups.
+    groups: tuple[tuple[str, ...], ...] = ()
 
     def to_window(self, scene: Scene) -> dict[str, Any]:
         text = {cue.id: cue.text for cue in scene.cues}
@@ -49,6 +58,8 @@ class Batch:
                "single_cue_over_token_target": self.single_cue_over_token_target}
         if self.pauses:
             row["pauses"] = [list(p) for p in self.pauses]
+        if self.groups:
+            row["groups"] = [list(g) for g in self.groups]
         return row
 
 
@@ -56,6 +67,37 @@ def silence(scene: Scene, i: int) -> float | None:
     """Seconds between cue i and cue i+1 (None when a timestamp is missing)."""
     left, right = scene.cues[i], scene.cues[i + 1]
     return None if left.end is None or right.start is None else right.start - left.end
+
+
+def line_tail(text: str, strip_closers: bool = True) -> str:
+    """Last character after trailing whitespace (and, optionally, closing brackets/quotes); "" if none."""
+    text = text.rstrip(" 　")
+    while strip_closers and text and text[-1] in CLOSERS:
+        text = text[:-1].rstrip(" 　")
+    return text[-1] if text else ""
+
+
+def ends_sentence(text: str) -> bool:
+    """R2+ sentence end: 。？！?!. after stripping trailing whitespace and closers; … and 、 are not ends."""
+    char = line_tail(text)
+    return bool(char) and char in SENTENCE_END
+
+
+def sentence_joined(scene: Scene, i: int, gap: float) -> bool:
+    """R2+ (group-reorder-v1): cue i and i+1 belong to one sentence group when the silence is < gap
+    (overlap counts, a missing timestamp counts as no silence) and cue i does not end a sentence."""
+    silent = silence(scene, i)
+    return (silent is None or silent < gap) and not ends_sentence(scene.cues[i].text)
+
+
+def sentence_groups(scene: Scene, low: int, high: int, gap: float) -> list[tuple[int, int]]:
+    """R2+ sentence groups [a, b) inside [low, high) (a pack's targets); no size limit."""
+    out, a = [], low
+    for i in range(low, high - 1):
+        if not sentence_joined(scene, i, gap):
+            out.append((a, i + 1))
+            a = i + 1
+    return out + [(a, high)]
 
 
 def gap_cuts(scene: Scene, target: int, split: dict[str, Any]) -> list[int]:
@@ -231,7 +273,9 @@ def build_batches(scene: Scene, recipe: Recipe, token_counts: dict[str, int] | N
             source_token_count=sum(token_counts[k] for k in targets) if token_counts else None,
             single_cue_over_token_target=bool(recipe.token_target and len(targets) == 1
                                               and token_counts[targets[0]] > recipe.token_target),
-            pauses=visible_pauses(scene, left, right, recipe.pause_marks["min_gap"]) if recipe.pause_marks else ()))
+            pauses=visible_pauses(scene, left, right, recipe.pause_marks["min_gap"]) if recipe.pause_marks else (),
+            groups=tuple(tuple(ids[a:b]) for a, b in sentence_groups(scene, start, stop, recipe.groups["gap"])
+                         if b - a > 1) if recipe.groups else ()))
         start = stop
     return batches
 

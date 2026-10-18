@@ -1,6 +1,6 @@
 # 字幕翻译流程第八轮探索（v8）：同一句话小组内语序重排——方案、进度与结论
 
-状态：proposed（2026-10-18 立项，等待执行会话；§7 空）  
+状态：in-progress（2026-10-18 立项；票据 01 离线实现已完成，02 起为 GPU 票据，待用户确认后执行）  
 范围：固定 Hy-MT2 30B-A3B APEX-I-Compact（[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)）与流程基线 **dp10-cut**（[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)）。本轮只动一件事：**在包内按"同一句话"小组放开语序**，即改 joint 提示里限制逐 ID 归属的那一句，并把小组告诉模型。不换模型、不换量化、不换采样、不换裁判、不改切包与邻文、不改 grammar、不自动替换任何基线；单次生成，不涉及"翻译多次再挑选"（[ADR-0008](../adr/0008-no-multi-translation-selection.md)）。  
 执行载体：tracker 目录 `.scratch/group-reorder-v8/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**  
 先读：[划组规则离线统计](2026-10-18-reorder-group-offline-stats.md)全文（§1 结论、§3–§7 数字）、[技术设计 §11](../specs/bilingual-subtitle-pipeline.md) "翻译批内语序自由"一条、[v7 研究文档](2026-10-16-gap-aware-batching-v7.md) §2.1（裁判漂移、同包重判）与 §4.6（评测设计）、[translation_v3 README](../../experiments/translation_v3/README.md) 的配方段、[v5 §3](2026-10-16-quality-exploration-v5.md) 判定纪律。
@@ -129,7 +129,7 @@
 
 | 日期 | 票据 | 结果 |
 | --- | --- | --- |
-| | | |
+| 2026-10-18 | 01 离线实现 | `translation_v3` 新增 `Recipe.groups`（`{"gap": 1.0}`，版本 `group-reorder-v1`）与 `joint-understanding-v2`；只在含 ≥2 条小组的批次换 joint 句并在 assistant 标记前注入一行 `以下是待译条目中属于同一句话的 ID 分组：{"groups": [[...]]}`，无此类小组的批次与 `dp10-cut` 逐字相同；grammar 不变。最终措辞在 §4.2 草稿上加"只调语序、不改含义"与"未列入 groups 的 ID 各自单独成组"。内置 `grp1` hash `5aaf3e77…`；17 个旧内置配方 hash 不变（`GroupReorderTest` 固定）。划组唯一实现为 `batching.sentence_groups`，`reorder_groups/stats.py` 改为调用它，输出逐字节不变。重排率与显示校验器在 `reorder_groups/checks.py`：主阈值 0.2——同 seed 两个严格配方之间（v4 `c0`↔`b10-joint`、v7 `b10-joint-ctl`↔`dp6-grp`，各 3 seed）≥0.1／0.2／0.3 的组为 22–30%／1.6–6%／0–2%，逐字不同 85–94%（上界无区分力）；读速阈值 9 字/秒（Netflix 简体中文成人上限），严格配方 dev 上 p50 4.4–4.8、p90 6.3–7.3、p99 8.4–11.7 字/秒，超阈 0.4–2.2%，占比偏差 ≥0.3 的组 0–2.5%。注入覆盖（`reorder_groups/coverage.py`）：dev 621 包中 602 包注入（96.9%，cue 78.0%；剧集 96.7%、电影 97.3%），产品 296 包中 249 包（84.1%，cue 50.3%）；每注入包输入 +168（dev，其中 joint 句 +77、groups 行 +91，行 p90 125）／+150（产品）token，整体 +24.7%／+21.6%，最大输入 1186 ≪ 4032。token 用 GGUF 文件头词表离线重建的 BPE 计数，与 3 个已有 run 的 617 条 `/tokenize` 记录逐 ID 一致。未做 GPU 运行 |
 
 ## 8. 待用户裁定
 

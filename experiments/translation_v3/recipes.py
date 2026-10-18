@@ -84,6 +84,18 @@ GAP_PACK_V2_KEY = "cut_penalty"
 PAUSE_MARK_VERSION = "pause-mark-v1"
 PAUSE_MARK_KEY = "pause"
 PAUSE_MARK_TEXT = "此处约{seconds}秒无台词"
+# v8 (group-reorder-v1): R2+ sentence groups inside each pack (batching.sentence_groups). A batch with a group of
+# >= 2 targets gets the joint-understanding-v2 sentence instead of the v1 one and one injected groups line; a batch
+# without such a group renders exactly as without the field.
+GROUPS_VERSION = "group-reorder-v1"
+GROUPS_KEY = "groups"
+GROUPS_INJECTION = "以下是待译条目中属于同一句话的 ID 分组：\n"
+JOINT2_VERSION = "joint-understanding-v2"
+JOINT2_INSTRUCTION = ("先共同理解全部可见台词及跨条目的条件、否定、指代和语气，再表达各源 ID 的信息。"
+                      "groups 里同组的 ID 是同一句话被拆成的几行：同组各值合起来表达这句话，可以按中文语序在组内重新分配内容，"
+                      "只调语序、不改含义；每个值都不能为空，长度与各自原文大致相称，不把整句塞进一个值。"
+                      "未列入 groups 的 ID 各自单独成组。不同组之间仍各自只承载对应源 ID，不搬运邻条事实、不提前补完后文。"
+                      "保留原文歧义和信息揭示顺序。")
 SAMPLE_SEED_STRIDE = 1_000_003
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "samplers")
 SAMPLER_NAMES = ("top_k", "top_p", "min_p", "temperature")
@@ -173,6 +185,14 @@ def _check_gap_pack(pack: Any, batch_count: int | None) -> None:
         raise ValueError("gap_pack: soft_gap < hard_gap and context_both_below <= context_before_below")
 
 
+def _check_groups(groups: Any, prompt: str) -> None:
+    if (not isinstance(groups, dict) or set(groups) != {"gap"} or type(groups["gap"]) not in (int, float)
+            or groups["gap"] <= 0):
+        raise ValueError("groups must be {'gap': positive seconds}")
+    if prompt != "joint":
+        raise ValueError("groups replaces the joint sentence; it needs prompt 'joint'")
+
+
 def _check_pause_marks(marks: Any) -> None:
     if (not isinstance(marks, dict) or set(marks) != {"min_gap"} or type(marks["min_gap"]) not in (int, float)
             or marks["min_gap"] <= 0):
@@ -205,6 +225,8 @@ class Recipe:
     # v7 fields: gap_pack (batching.gap_pack_cuts) and pause_marks ({"min_gap": seconds}).
     gap_pack: dict[str, Any] | None = None
     pause_marks: dict[str, Any] | None = None
+    # v8 field: {"gap": seconds}, R2+ sentence groups inside each pack (see GROUPS_VERSION).
+    groups: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         safe_name(self.name, "recipe name")
@@ -247,6 +269,8 @@ class Recipe:
             _check_gap_pack(self.gap_pack, self.batch_count)
         if self.pause_marks is not None:
             _check_pause_marks(self.pause_marks)
+        if self.groups is not None:
+            _check_groups(self.groups, self.prompt)
         if self.category_overrides is not None:
             if not isinstance(self.category_overrides, dict) or not self.category_overrides:
                 raise ValueError("category_overrides must be a non-empty object")
@@ -296,6 +320,11 @@ class Recipe:
             versions["gap_pack"] = GAP_PACK_V2_VERSION if GAP_PACK_V2_KEY in self.gap_pack else GAP_PACK_VERSION
         if self.pause_marks:
             versions["pause_marks"] = [PAUSE_MARK_VERSION, PAUSE_MARK_KEY, sha256_bytes(PAUSE_MARK_TEXT.encode())]
+        if self.groups:
+            from .batching import CLOSERS, SENTENCE_END
+            versions["groups"] = [GROUPS_VERSION, SENTENCE_END, CLOSERS, GROUPS_KEY,
+                                  sha256_bytes(GROUPS_INJECTION.encode()), JOINT2_VERSION,
+                                  sha256_bytes(JOINT2_INSTRUCTION.encode())]
         if self.target_context:
             versions["target_context"] = [TARGET_CONTEXT_VERSION, sha256_bytes(TARGET_CONTEXT_INJECTION.encode())]
         if self.candidates > 1:
@@ -350,10 +379,13 @@ BUILTIN: dict[str, Recipe] = {recipe.name: recipe for recipe in (
         "group_gap": None, "group_max": 10, "context_both_below": 1.0, "context_before_below": 5.0,
         "max_visible": 12, "cut_penalty": [[0.5, 6.0], [1.0, 3.0], [2.0, 1.0]]}),
 )}
+# v8 candidate (docs/research/2026-10-18-group-reorder-v8.md): dp10-cut packs and neighbours + R2+ sentence groups
+# (< 1.0 s, within a pack) + joint-understanding-v2 in batches that have a group of >= 2 targets.
+BUILTIN["grp1"] = replace(BUILTIN["dp10-cut"], name="grp1", groups={"gap": 1.0})
 _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,
                                "selector": None, "glossary": None, "gap_split": None,
-                               "gap_pack": None, "pause_marks": None}
+                               "gap_pack": None, "pause_marks": None, "groups": None}
 
 
 def compose(name: str, base: str | Recipe, **overrides: Any) -> Recipe:
@@ -400,17 +432,26 @@ def inject(prompt: str, extra: str) -> str:
 
 def render_translation(recipe: Recipe, window: dict[str, Any], terms: list[dict[str, Any]] | None = None,
                        history: list[dict[str, str]] | None = None, work_id: str | None = None,
-                       pauses: tuple[tuple[int, float], ...] = ()) -> str:
+                       pauses: tuple[tuple[int, float], ...] = (),
+                       groups: tuple[tuple[str, ...], ...] = ()) -> str:
     """``history``: earlier {ja, zh} pairs of the scene (target_context recipes), oldest first;
     ``work_id``: selects the work's glossary (glossary recipes); ``pauses``: (visible index, seconds)
-    pairs from ``Batch.pauses`` (pause_marks recipes)."""
+    pairs from ``Batch.pauses`` (pause_marks recipes); ``groups``: ``Batch.groups`` (groups recipes)."""
     prompt = adapters.render(FAMILY, window)
     if pauses:
         prompt = mark_pauses(prompt, window, pauses)
     if recipe.prompt == "joint":
         if prompt.count(C0_INSTRUCTION) != 1:
             raise ValueError("Frozen C0 instruction changed; version the joint prompt")
-        prompt = prompt.replace(C0_INSTRUCTION, JOINT_INSTRUCTION, 1)
+        prompt = prompt.replace(C0_INSTRUCTION, JOINT2_INSTRUCTION if groups else JOINT_INSTRUCTION, 1)
+    if groups:
+        if not recipe.groups or recipe.prompt != "joint":
+            raise ValueError("Sentence groups need a groups recipe")
+        targets = set(window["translate_ids"])
+        if any(len(g) < 2 or not set(g) <= targets for g in groups):
+            raise ValueError("Each sentence group needs >= 2 target IDs")
+        prompt = inject(prompt, GROUPS_INJECTION + json.dumps({GROUPS_KEY: [list(g) for g in groups]},
+                                                              ensure_ascii=False))
     visible = terms_for_window(terms or [], window)
     if visible:
         prompt = inject(prompt, TERMS_INJECTION + json.dumps(

@@ -18,14 +18,13 @@ import unicodedata
 from typing import Any, Iterable
 
 from experiments.scene_batching_v6 import sim7
-from experiments.translation_v3.batching import build_batches, silence
+from experiments.translation_v3 import batching
+from experiments.translation_v3.batching import build_batches, line_tail, silence
 from experiments.translation_v3.data import Scene
 from experiments.translation_v3.recipes import load_recipe
 
 THRESHOLDS = (0.5, 0.8, 1.0, 1.5, 2.0)  # 任务要求前四个；2.0 用来读产品时间轴
 FULL_END = "。？！"
-EXT_END = "。？！?!."
-CLOSERS = "」』）)】〕\"'”’"
 QUESTION = "？?"
 # 接续词（句首）。代理指标用，不求完整。
 CONJUNCTIONS = ("そして", "それで", "それから", "それに", "だから", "ですから", "でも", "しかし", "だけど", "けど",
@@ -39,10 +38,7 @@ LEADING = " \u3000「『（(【"
 
 def tail(text: str, closers: bool) -> str:
     """去掉行尾空白（及可选的右括号／引号）后的最后一个字符，空串返回 ""。"""
-    text = text.rstrip(" \u3000")
-    while closers and text and text[-1] in CLOSERS:
-        text = text[:-1].rstrip(" \u3000")
-    return text[-1] if text else ""
+    return line_tail(text, closers)
 
 
 def head(text: str) -> str:
@@ -51,8 +47,10 @@ def head(text: str) -> str:
 
 def ends_sentence(text: str, extended: bool) -> bool:
     """R2 的"句末标点"判定：extended=False 严格取 。？！（全角，不剥右括号）；True 加半角 ?!. 并剥右括号。"""
-    char = tail(text, extended)
-    return bool(char) and char in (EXT_END if extended else FULL_END)
+    if extended:
+        return batching.ends_sentence(text)
+    char = tail(text, False)
+    return bool(char) and char in FULL_END
 
 
 def is_punct(char: str) -> bool:
@@ -65,11 +63,13 @@ class Rule:
     sentence: str | None = None  # None: R1；"full": R2（严格 。？！）；"ext": R2+（含半角、剥右括号）
 
     def joins(self, scene: Scene, i: int, threshold: float) -> bool:
-        """cue i 与 cue i+1 是否同组（缺时间戳按"无停顿"处理，与 gap_groups 一致）。"""
+        """cue i 与 cue i+1 是否同组（缺时间戳按"无停顿"处理，与 gap_groups 一致）。R2+ 即 v8 共用规则。"""
+        if self.sentence == "ext":
+            return batching.sentence_joined(scene, i, threshold)
         gap = silence(scene, i)
         if gap is not None and gap >= threshold:
             return False
-        return self.sentence is None or not ends_sentence(scene.cues[i].text, self.sentence == "ext")
+        return self.sentence is None or not ends_sentence(scene.cues[i].text, False)
 
 
 R1, R2, R2X = Rule("R1"), Rule("R2", "full"), Rule("R2+", "ext")
@@ -77,7 +77,9 @@ RULES = (R1, R2, R2X)
 
 
 def groups_in(scene: Scene, low: int, high: int, rule: Rule, threshold: float) -> list[tuple[int, int]]:
-    """[low, high) 内的小组 [a, b)。"""
+    """[low, high) 内的小组 [a, b)；R2+ 直接用 v8 共用的 ``batching.sentence_groups``。"""
+    if rule == R2X:
+        return batching.sentence_groups(scene, low, high, threshold)
     out, a = [], low
     for i in range(low, high - 1):
         if not rule.joins(scene, i, threshold):

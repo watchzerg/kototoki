@@ -191,7 +191,8 @@ def translate_scene(client: Any, scene: Scene, recipe: Recipe, seed: int, cache_
             stage = "translation"
             history = ([{"ja": text_of[key], "zh": row["translations"][key]} for key in scene.ids[:batch.start]]
                        if recipe.target_context else None)
-            prompt = R.render_translation(recipe, window, terms, history, scene.work_id, batch.pauses)
+            prompt = R.render_translation(recipe, window, terms, history, scene.work_id, batch.pauses,
+                                         batch.groups)
             info = row["batches"][batch.index]
             if recipe.candidates == 1:
                 record = {"stage": stage, "batch_index": batch.index}
