@@ -37,7 +37,7 @@
 
 - **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、`just x0-demo`、`just translation-demo`、`just translation-baseline`、`just translation-srt`、`just translation-flow`、`just translation-eval`，产品入口 `python -m kototoki` 与 `kototoki.workers.*`，W0 的 `.local/envs/whisper-latest/Scripts/python.exe -m experiments.w0_demo.run`，以及 `experiments.*` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。
 - `.local/gpu.lock` 标记正在运行的 GPU 作业：不抢占、不杀其他进程；用 PowerShell `Get-Process` 核实真实进程，而不是信任文档声称在跑的内容。
-- `just setup`／`uv sync|add|lock` 会改环境且可能联网：先问。
+- `just setup`、`just install`、`just upgrade`／`uv sync|add|lock` 会改环境且可能联网：先问。
 - 大目录（`.local/`、`.venv/`、`docs/research/*appendices`）会拖慢 Grep／Glob，搜索时限定子路径。
 
 ### 委派

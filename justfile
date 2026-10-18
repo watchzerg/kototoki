@@ -76,6 +76,18 @@ check-toolchain:
 install: setup
     uv run --locked --offline python -X utf8 scripts/assets.py install-tools
 
+# 按选版规则把 Python 依赖、llama.cpp、ffmpeg 升到最新稳定版（联网、改环境与 assets.toml，须先问；
+# docs/development/dependencies.md#升级）；可只列组件（python、llama.cpp、ffmpeg）。随后跑 core、full 测试与资产核对，smoke 另行批准。
+upgrade *args:
+    uv run --no-project --no-python-downloads --offline python -X utf8 scripts/upgrade.py {{args}}
+    just test
+    just test-full
+    just verify-assets
+
+# 只报告可升级项，不改文件（联网查询 PyPI 与 GitHub）。
+upgrade-check *args:
+    uv run --no-project --no-python-downloads --offline python -X utf8 scripts/upgrade.py --check {{args}}
+
 # 按 assets.toml 下载缺失或不符的模型（几十 GB、联网，须先问；不并入 install）。
 fetch-models:
     uv run --locked --offline python -X utf8 scripts/assets.py fetch-models

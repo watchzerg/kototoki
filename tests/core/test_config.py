@@ -52,10 +52,9 @@ class LoadTests(unittest.TestCase):
     def test_default_relative_paths_resolve_against_repo_root(self) -> None:
         cfg = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(cfg.paths.models_root, config.REPO_ROOT / ".local" / "models")
-        self.assertEqual(cfg.paths.llama_server,
-                         config.REPO_ROOT / ".local/tools/llama.cpp/b11583-cuda13.4/llama-server.exe")
-        self.assertEqual(cfg.paths.ffmpeg, config.REPO_ROOT / ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffmpeg.exe")
-        self.assertEqual(cfg.paths.ffprobe, config.REPO_ROOT / ".local/tools/ffmpeg/2026-10-01-git-0b01ed76aa/bin/ffprobe.exe")
+        # 默认路径里的版本号由 test_assets_manifest 钉住与 assets.toml 一致；这里只核对相对仓库根解析。
+        for key in ("ffmpeg", "ffprobe", "llama_server"):
+            self.assertEqual(getattr(cfg.paths, key), config.REPO_ROOT / config.DEFAULTS["paths"][key])
 
     def test_model_paths_are_relative_to_models_root(self) -> None:
         cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "D:/abs/mms"\n'),

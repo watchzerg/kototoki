@@ -25,9 +25,11 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 | recipe | 当前实现 |
 | --- | --- |
 | `check-toolchain` | `scripts/check_toolchain.py`：核对 uv、just 与 `mise.toml`、Python 与 `.python-version` 一致；用 `uv run --no-project --no-python-downloads --offline`，不同步环境 |
-| `install` | 依赖 `setup`（`uv sync --locked`），再 `scripts/assets.py install-tools`：按 `assets.toml` 安装 `tools`；已装且一致时只补缺失的 `identity.json`，否则下载 zip（缓存于 `.local/downloads/<name>/`）、解出清单文件并核对；没有压缩包 SHA256 的记录（当前的 ffmpeg）拒绝重装。联网、改环境，须先问 |
+| `install` | 依赖 `setup`（`uv sync --locked`），再 `scripts/assets.py install-tools`：按 `assets.toml` 安装 `tools`；已装且一致时只补缺失的 `identity.json`，否则下载 zip（缓存于 `.local/downloads/<name>/`）、解出清单文件并核对；没有压缩包 SHA256 的记录拒绝安装。联网、改环境，须先问 |
 | `fetch-models` | `scripts/assets.py fetch-models`：按清单从 HF 固定 revision 下载缺失或不符的模型文件，门控模型取 `HF_TOKEN`；几十 GB、联网，须先问 |
 | `verify-assets` | `scripts/assets.py verify`：离线核对 tools 与 models（大小、SHA256 经 size+mtime 缓存 `.local/cache/assets-verify.json`，tools 还要求 `identity.json`）；2026-10-18 本机首次 21.7 s（约 27 GB 全量哈希），缓存命中后 0.7 s |
+| `upgrade` | `scripts/upgrade.py [组件 ...]` 后接 `test`、`test-full`、`verify-assets`：按[选版规则](dependencies.md#升级)把 Python 依赖、llama.cpp、ffmpeg 升到最新稳定版，报告写 `.local/upgrade/<UTC>/report.json`；脚本用 `uv run --no-project`，自身调用 `uv lock`／`uv sync`。联网、改环境与 `assets.toml`，须先问；不跑 smoke |
+| `upgrade-check` | `scripts/upgrade.py --check`：只报告可升级项与被跳过的传递依赖主版本升级，不改文件；联网查询 PyPI 与 GitHub |
 | `fmt`、`lint`、`typecheck` | 项目尚未选定格式化、lint 与类型检查工具，按契约非零退出并说明原因 |
 | `test` | `unittest discover -s tests/core -t . -v [参数 ...]`：core 层；可追加 unittest 参数（如 `-k 名称片段`）定向运行 |
 | `test-full` | `unittest discover -s tests/full -t . -v [参数 ...]`：full 层离线集成测试，不加载模型、不占 GPU、不持锁 |
