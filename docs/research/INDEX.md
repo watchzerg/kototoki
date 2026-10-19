@@ -14,6 +14,16 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-19：`cross` 模式 T0 [共驻显存探针](acceptance/2026-10-19-cross-coresidency-probe.md)完成（用户授权的 GPU 作业，同一进程常驻产品 Whisper（CT2 FP16）与 Qwen3-ASR（BF16），HF II／III 全部 402 个 VAD 窗口按 w0 转写 → x0 转写 → Whisper 打分跑一遍，约 23 分钟）：整卡峰值 10688 MiB（含桌面约 2.0 GB），加 1 GB 余量 11712 MiB ≤ 13.5 GB 阈值，**采用共驻**，不需要三段式回退；先 torch 后 CT2 的导入顺序下两份 cuDNN 并存，无 DLL／OOM 问题，两路转写与单独运行逐窗口相同。三步墙钟两部合计 1364 s（打分 40.5 s），约为单独 w0 的 4.4 倍。窗口口径下规范化后相同的窗口只有 10%，改为 x0 的区间 18.5%（研究单元口径 37.7%，增量说明 §5 预期 6–10%），留给 T6 判读。
+
+2026-10-19：[Whisper 与 Qwen 交叉打分裁判](2026-10-19-asr-pair-cross-score.md)测算完成（用户授权的 GPU 作业，先后加载产品 Whisper large-v3 与 Qwen3-ASR，只做教师强制前向，合计约 12 分钟；与 oracle、MMS 实验同一批 1253 个分歧区间）：跨片调参后两部合计 CER，Whisper 单独 16.16% → 14.31%，"两者都同意" 14.23%（无长度项 14.17%），Whisper＋Qwen 之和 14.56%，Qwen 单独 15.09%，加 MMS 不改善；MMS 为 15.40%、oracle 拼接 11.90%，即拿到 oracle 增益的约 43%～47%。替换区间 Whisper AUC 0.77（涉及汉字 0.77，MMS 0.49），加 Qwen 反而降到 0.73。两模型都偏向自己的输出：oracle 判 x0 对时 Whisper 仍偏 w0 52%，判 w0 对时 Qwen 仍偏 x0 57%；Whisper 阈值两片稳定（m ≈ −1），Qwen 不稳。Whisper 分数不含 EOT（`text_token_probs` 限制），插入／删除类判定混有长度偏差。是否采纳待用户裁定（文档 §10），未启动任何合并实现。
+
+2026-10-19：[音频接地裁判候选调研](2026-10-19-acoustic-judge-survey.md)（exploratory，纯桌面调研，未跑模型）：MMS jpn CTC 当初按时间对齐成功率选入，从未评估过文字判别力，无公开日语 CER，词表对分歧区间缺字 1.13%（3.8% 的区间），许可 CC-BY-NC-4.0；预期更优的方向依次为 Whisper `align()`＋Qwen3-ASR 互相教师强制打分、Parakeet-ja CTC 头、盘上的 rs35kh；音素路线只作分流器。名次均为推断，待用户裁定是否做有界 GPU 验证。
+
+2026-10-19：[MMS CTC 声学裁判与 w0 幻觉过滤](2026-10-19-asr-pair-ctc-judge.md)测算完成（用户授权的 GPU 作业，只加载产品 MMS，约 2 分钟；HF II／III，与 oracle 同一批 1253 个分歧区间）：逐区间比较两个整单元假设的 CTC 对数似然、跨片调 λ／m，两部合计 CER 16.16% → 15.40%，只拿到 oracle 拼接增益的 18%；区间准确率 67.1%（全取 w0 为 65.0%）。增益几乎全在删除 w0 多出的字，替换区间判别力接近随机（AUC 0.54／0.48，涉及汉字的 0.47），λ 符号两片相反。w0 单路幻觉过滤：插入单元与正确单元可分（每字 Viterbi AUC 0.975，Whisper avg_logprob 0.914），但丢弃低分单元对 CER 几乎无作用（−0.02 pp，上界 −0.75 pp），并误删单汉字真台词。是否采纳待用户裁定（文档 §8），未启动任何合并或过滤实现。
+
+2026-10-19：[w0／x0 两路 ASR 交叉合并的 oracle 上限](2026-10-19-asr-pair-oracle.md)测算完成（纯 CPU、不跑任何模型，HF II／III）：用参考答案逐单元选更优一路，两部合计 CER 16.16% → 12.46%；逐分歧区间拼接 → 11.90%（编辑量 −26.4%，官方口径折算约 15.25% → 11.0%）。选择增益一半是删掉对方多出的插入字；两路都错占有参考单元的 48%（其中 40% 文本完全相同），字符级 10.3% 的参考字符两路都没对上；30 个分歧区间里 8 个只是表记差异。x0 ASR 墙钟约为 w0 的 2.8 倍。是否开新线、是否测真实选择器待用户裁定（文档 §8），未启动任何合并实现。
+
 2026-10-18：用户裁定**停止换 ASR 模型这条线**（v5 [§8](2026-10-16-quality-exploration-v5.md#8-待用户裁定) 第 3、4 项）：两轮共五个候选（Cohere、Granite、Nemotron、anime-whisper、Qwen3 动漫微调）都不如 w0，10-05 之后也没有新的实质性日语开放权重 ASR；许可未声明的 `efwkjn/whisper-ja-*`／`cohere-asr-ja` 不评测，Qwen3 动漫微调加循环防护也不做。产品 STT 保持 w0（large-v3）。重开前提：出现新的、许可清楚的日语 ASR 模型。STT 侧后续只做稳健性方向（窗口边界、幻觉过滤＋补窗、人名）。
 
 2026-10-18：用户裁定**关闭"翻译批内语序自由"这条线，不立项备选路线**（v8 [§8](2026-10-18-group-reorder-v8.md#8-待用户裁定)、技术设计 §11）：提示级放开与整组合译两种形状都不产生跨行重排，合译还会把 <1 s 停顿内的不同说话人并成一句；翻译保持逐 cue 对应。重开前提是有说话人信息。
@@ -172,6 +182,13 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 - [cue 间隔断句引入 ASR token 边界](2026-10-15-cue-token-boundary-study.md)：两个引擎的 token 都能稳定映射到窗口字符，但 Whisper 日文 token 接近单字，"同一 token 内不断句"在四部整片只减 12 条 ≤2 字条目且新增 >6 s 条目，不能修复票据 12 的样本；用户裁定不实现，根因归 VAD 召回。只有离线统计，无人工观感
 
+### w0／x0 两路 ASR 交叉合并：oracle 上限、MMS 声学裁判与交叉打分（2026-10-19）
+
+- [oracle 上限测算](2026-10-19-asr-pair-oracle.md)：concluded（纯离线 CPU，待用户裁定是否开新线）。HF II／III 的产品 w0、x0 `ja.srt` 与参考按时间重叠连成三轨单元，逐单元字符级编辑距离：oracle 选择（取更接近参考的一路）两部合计 CER 16.16% → 12.46%，oracle 拼接（逐分歧区间、全局最优）→ 11.90%；增益一半来自删除对方多出的插入字。分歧区间 1253 个（覆盖约 13% 参考字符，无时间集中），两路都错占有参考单元 48%（40% 完全相同），30 个区间人工分类中 8 个仅是表记差异。适用：这两部电影、产品 w0／x0 配置、SRT 显示字幕参考；未覆盖：真实选择器的准确率与成本（未测，也未试任何第三方模型）、译文层收益、剧集。脚本 [`experiments/quality_v5/asr_pair_oracle.py`](../../experiments/quality_v5/asr_pair_oracle.py)
+- [MMS CTC 声学裁判与 w0 幻觉过滤](2026-10-19-asr-pair-ctc-judge.md)：concluded（GPU 只做 MMS 前向，待用户裁定）。Part A：每个分歧区间构造只差该区间的两个整单元假设，CTC 前向对数似然（OOV 用常数列 log(1/2268)，区间含 OOV 的 47 个排除），规则 score_x − score_w > m＋λ·Δlen，跨片调参（II λ −0.75／m 16.5，III λ 1.75／m 16.0）：CER 两部合计 16.16% → 15.40%（oracle 拼接 11.90%），改动 82 个区间、54 个与 oracle 一致；w0 多出 AUC 0.71／0.79，替换 0.54／0.48，30 个人工样本只改 1 个，表记差异一个未动。Part B：插入 vs 完全一致的单元，每字 Viterbi AUC 0.975、Whisper 窗口 avg_logprob 0.914，跨片阈值丢弃后 CER 16.16% → 16.14%（上界 15.41%）。适用：这两部电影、产品 w0／x0、MMS `jpn` 原样；未覆盖：读音级打分、逐 cue 过滤、听音核对、剧集与官方整片口径。脚本 [`experiments/quality_v5/asr_pair_ctc_judge.py`](../../experiments/quality_v5/asr_pair_ctc_judge.py)
+- [Whisper 与 Qwen 交叉打分裁判](2026-10-19-asr-pair-cross-score.md)：concluded（GPU 只做两个产品 ASR 的教师强制前向，待用户裁定）。同一单元、区间与跨度；Whisper 用 CT2 `align()` 的 `text_token_probs`（sot 前缀，CT2 自动补 notimestamps，不含 EOT），Qwen 用 `apply_transcription_request` 提示后接假设与 `<|im_end|>` 单次前向；SRT 原文只替换区间字符。跨片调参：Whisper 14.31%（λ 0／0.25、m −1）、两者都同意 14.23%、之和 14.56%、Qwen 15.09%、三路加 MMS 14.60%；准确率 72.0%／72.2%（全取 w0 65.0%）。替换 AUC Whisper 0.774、Qwen 0.641、之和 0.733、MMS 0.490；自偏好两边都有（Qwen 更重）；d_W 与 d_Q 的 Spearman 0.38。幻觉角度：每字分数 AUC Whisper 0.976、Qwen 0.974（MMS 0.975），丢弃后 CER 15.92%／16.04%。适用：这两部电影、产品 w0／x0 原样；未覆盖：Whisper 的 EOT 概率、听音核对、剧集与官方整片口径；18 个裁判配置之间的选择没有独立验证集。脚本 [`experiments/quality_v5/asr_pair_cross_score.py`](../../experiments/quality_v5/asr_pair_cross_score.py)
+- [音频接地裁判候选调研](2026-10-19-acoustic-judge-survey.md)：exploratory。比较 13 个候选（MMS、rs35kh、Parakeet-ja CTC、Whisper／Qwen 教师强制、音素化、音频 LLM、TTS 似然等）在 oracle 误差构成（71% 替换、同音／表记占多数、一半增益是删插入）上的适用性：声学 CTC 看不出同读异形，交叉打分最有希望；附 §6 本机词表覆盖实测、§5 验证方案与限制。未在本项目数据上测过任何候选的判别力
+
 ### 字幕质量探索第五轮（2026-10-16）
 
 - [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），用户已裁定放弃（ADR-0008）；其余后续列在第 8 节
@@ -200,6 +217,7 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 条目格式：`[主题 日期](acceptance/文件.md)：验收范围与未覆盖项`
 
+- [cross 模式 T0 共驻显存探针 2026-10-19](acceptance/2026-10-19-cross-coresidency-probe.md)：同一进程常驻产品 `WhisperAsr` 与 `QwenAsr`，HF II／III 全部窗口按 ①w0 转写 ②x0 转写 ③Whisper 分歧区间打分（d > −1 取 x0）运行，0.5 s 整卡采样与每阶段 torch 峰值：整卡峰值 10688 MiB，峰值＋1 GB ≤ 13.5 GB，判定共驻；DLL 与导入顺序无问题；PCM、VAD 与 13 个模型文件 SHA 核对通过。未覆盖：产品 worker 路径、重复性与桌面占用变化、三段式回退实测、CER 与听音核对
 - [ffmpeg 升级到 9.0 维护分支 2026-10-19](acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)：BtbN `n9.0.2-28-g669f5ab083` 与旧 gyan.dev 构建用产品 extract 代码派生 HF II／III 的 16 kHz WAV，PCM SHA256 逐字节相同且等于基线，补偿记录相同；未重跑整片，只覆盖这两部的 FLAC 立体声音轨
 
 - [双语字幕流水线 swr 回归重测 2026-10-16](acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)：改回 swr 后 HF II／III 各以 w0、x0 整批重跑 `python -m kototoki`：派生 WAV 与基线 PCM 逐字节一致，w0 CER 与 2026-10-05 基线逐项相同（16.81%／13.77%），x0 差 ≤0.15 个百分点；477 个翻译批次降级与回退 0；记录各阶段墙钟与显存峰值。未覆盖：翻译质量评分、失败路径重跑。

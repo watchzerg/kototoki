@@ -21,6 +21,9 @@
 | `diff_judge.py` | 08 | 候选 run 只判计分 cue 与同 seed 基准 run 不同的窗口，其余窗口复制基准判分（合成包文件标 `copied_from`），之后 v4 `compare` 照常读取 | Claude 配额（退出码 75 可续跑） |
 | `diversity.py` | 09 | 多样本 run 里每条 cue 的样本两两 chrF 均值与"全部样本相同"占比（样本多样性） | 离线 |
 | `glossary.py` | 10 | 第一遍译文 → 每部作品人名／专名的多数票译法 → 写带 `glossary` 字段的配方（v3 `Recipe.glossary`，每批只注入上下文里出现的条目） | 离线 |
+| `asr_pair_ctc_judge.py` | — | MMS CTC 声学裁判：`emit` 对 w0／x0 分歧单元与 w0 单元的音频跨度做产品 MMS 前向并缓存发射矩阵；`analyze` 逐分歧区间比较 CTC 对数似然、跨片调 λ／m 并算合并 CER，另做 w0 单路幻觉过滤的特征、AUC 与丢弃阈值（见 [研究文档](../../docs/research/2026-10-19-asr-pair-ctc-judge.md)） | `emit` GPU 约 2 分钟（持有 `.local/gpu.lock`）；`analyze` 离线约 15 s |
+| `asr_pair_cross_score.py` | — | 交叉打分裁判：`score-whisper`／`score-qwen` 各加载一个产品 ASR 模型，对 MMS 实验的同一批分歧单元跨度做教师强制（Whisper `align()` 的 `text_token_probs`；Qwen 单次前向 log_softmax），给 w0 文本与只替换一个区间的假设打分；`analyze` 组合 d_W／d_Q／缓存的 MMS d_M，跨片调参、算准确率、AUC、自偏好与合并 CER（见 [研究文档](../../docs/research/2026-10-19-asr-pair-cross-score.md)） | `score-*` GPU（持有 `.local/gpu.lock`，一次一个模型）；`analyze` 离线 |
+| `coresidency_probe.py` | cross T0 | 同一进程常驻产品 `WhisperAsr` 与 `QwenAsr`，HF II／III 逐文件按 Whisper 转写 → Qwen 转写 → Whisper 对分歧区间打分（d > −1 取 x0）跑全部 VAD 窗口；0.5 s `nvidia-smi` 按阶段采样整卡显存并记 torch 峰值，按"峰值＋1 GB ≤ 13.5 GB"判定共驻或三段式回退（见 [验收记录](../../docs/research/acceptance/2026-10-19-cross-coresidency-probe.md)） | GPU 约 25 分钟（持有 `.local/gpu.lock`） |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.quality_v5.<模块> ...`（各模块文件头有命令示例）。
 
