@@ -110,8 +110,8 @@ class ParseTests(unittest.TestCase):
 class CapTests(unittest.TestCase):
     def test_caps_after_dedupe(self):
         zh = [f"译{chr(0x4e00 + i)}" for i in range(20)]  # zh 不许含数字，用不同汉字区分
-        forms = [{"ja": f"写法{i}", "zh": zh[i]} for i in range(20)]
-        entry = {"entity_ja": "写法0", "zh": zh[0], "forms": forms,
+        forms = [{"ja": f"写{chr(0x4e00 + i)}", "zh": zh[i]} for i in range(20)]  # ja 不许含数字，同样用汉字区分
+        entry = {"entity_ja": "写一", "zh": zh[0], "forms": forms,
                  "zh_variants": ["a"] * 3 + zh[:12], "evidence": [1, 1, 2, 3]}
         _, entries = bt.parse_reply(json.dumps({"entries": [entry]}, ensure_ascii=False), 3)
         self.assertEqual(len(entries[0]["forms"]), 12)
@@ -132,7 +132,7 @@ class CapTests(unittest.TestCase):
 
     def test_prompt_states_granularity_and_variant_rules(self):
         prompt = bt.SYSTEM_PROMPT
-        for needle in ("绝不收", "第三适格者", "指同一对象", "绝不把全名填给只说了姓或名的写法", "固定身份的称号", "forms"):
+        for needle in ("绝不收", "第七观测者", "指同一对象", "绝不把全名填给只说了姓或名的写法", "固定身份的称号", "forms"):
             self.assertIn(needle, prompt)
 
 
@@ -170,7 +170,7 @@ class ShapeTests(unittest.TestCase):
     def test_ascii_names_and_long_separated_names_pass(self):
         long_name = "伊莉雅丝菲尔·冯·爱因兹贝伦"  # 去掉间隔号后 12 字
         for zh in ("Saber", "Rider", long_name, "阿尔托莉雅・潘德拉贡"):
-            entry = {"entity_ja": "x", "zh": zh, "forms": [{"ja": "x", "zh": zh}], "zh_variants": [zh]}
+            entry = {"entity_ja": "セイバー", "zh": zh, "forms": [{"ja": "セイバー", "zh": zh}], "zh_variants": [zh]}
             entries, dropped = self.parse(entry)
             self.assertEqual((entries[0]["zh"], dropped), (zh, []), zh)
             self.assertEqual(entries[0]["zh_variants"], [zh])
@@ -271,7 +271,7 @@ class HonorificTests(unittest.TestCase):
                 self.assertEqual(bt.main(["--srt", str(srt), "--work", "w", "--out", str(out), "--seed", "7"]), 0)
                 table = json.loads(out.read_text(encoding="utf-8"))
                 self.assertEqual(seeds, [7])
-                self.assertEqual(table["meta"], {"seed": 7, "dropped_shape": [],
+                self.assertEqual(table["meta"], {"seed": 7, "dropped_shape": [], "dropped_ja_shape": [],
                                                  "dropped_honorific": [{"entity_ja": "時臣", "ja": "父さん"}]})
                 # 旧表（无 meta）重算：seed 从配对的请求文件取回
                 old = json.loads(out.read_text(encoding="utf-8"))
@@ -302,6 +302,151 @@ class HonorificTests(unittest.TestCase):
         self.assertEqual(table["meta"]["seed"], 101)
 
 
+class PromptV6Tests(unittest.TestCase):
+    # 真实作品（EVA、Fate）的名字会污染输出：提示里只许出现虚构的示例名。
+    REAL_WORK_NAMES = ("碇", "シンジ", "真嗣", "真司", "アスカ", "綾波", "绫波", "レイ", "明日香", "初号機", "初号机",
+                       "弐号機", "使徒", "チルドレン", "適格者", "适格者", "エヴァ", "EVA", "Evangelion", "シロウ",
+                       "士郎", "マトウ", "増健", "造剣", "キリエ", "エレイソン", "衛宮", "遠坂")
+
+    def test_version_is_v6(self):
+        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v6")
+
+    def test_prompt_has_no_real_work_names(self):
+        for name in self.REAL_WORK_NAMES:
+            self.assertNotIn(name, bt.SYSTEM_PROMPT, name)
+
+    def test_prompt_keeps_every_illustration(self):
+        prompt = bt.SYSTEM_PROMPT
+        for needle in ("汉字误替", "片假名变体", "写错的汉字", "片假名被转成平假名", "粒度必须一致", "绝不能合并成一个实体",
+                       "不属于", "裸形式", "不带助词", "残留的中文字", "zh_variants", "正例", "反例", "不成词的碎片",
+                       "祷词"):
+            self.assertIn(needle, prompt)
+
+
+class JaShapeTests(unittest.TestCase):
+    KEEP = ("しろ", "あすか", "あすかー", "白", "衛宮くん", "衛宮君", "お嬢", "ご主人", "桜ちゃん", "エミヤ・キリツグ",
+            "キシュア・ゼルレッチ・シュバインオーグ", "遠坂", "的場", "セイバー", "佐々木")
+    DROP = ("アサシンと契約を結べ", "サーヴァント ライダー", "アインツベルンの聖杯が取り込んだアーチャ", "キリツグは 前回",
+            "トウサカの庭に埋めてきた", "アインツベルンとマキリー遠坂の御三家は", "的レイ", "アスカの代わりに?", "Shirou",
+            "士郎1", "シンジを呼んでいる", "シンジ、", "「シンジ」", "ｓａｂｅｒ", "", "   ", "・", "ー", "あの人の", "言うた",
+            "x" * 21, "ア" * 21, "鷺宮 タクミ", "間桐 さくら", None, 5)
+
+    def test_keep_and_drop_examples(self):
+        for ja in self.KEEP:
+            self.assertEqual(bt._clean_ja(ja), ja, ja)
+        for ja in self.DROP:
+            self.assertIsNone(bt._clean_ja(ja), ja)
+
+    def test_whitespace_removed_only_between_kanji(self):
+        self.assertEqual(bt._clean_ja("間桐 桜"), "間桐桜")
+        self.assertEqual(bt._clean_ja(" 間桐\u3000桜 "), "間桐桜")  # 全角空格、首尾空白
+        self.assertEqual(bt._clean_ja("衛宮 士 郎"), "衛宮士郎")
+        for ja in ("間桐 サクラ", "マキリ 桜", "キリツグは 前回", "サーヴァント ライダー"):
+            self.assertIsNone(bt._clean_ja(ja), ja)
+
+    def test_length_boundary(self):
+        self.assertEqual(bt._clean_ja("ア" * 20), "ア" * 20)
+        self.assertIsNone(bt._clean_ja("ア" * 21))
+        # 间隔号计入长度：5 组"アアア・"去掉末尾间隔号共 19 字，6 组共 23 字
+        self.assertIsNotNone(bt._clean_ja(("アアア・" * 5)[:-1]))
+        self.assertIsNone(bt._clean_ja(("アアア・" * 6)[:-1]))
+
+    def test_hiragana_only_inside_prefix_and_suffix(self):
+        for ja in ("お嬢", "ご主人", "衛宮くん", "衛宮さん", "衛宮ちゃん", "衛宮さま", "衛宮たん", "おセイバーさん"):
+            self.assertEqual(bt._clean_ja(ja), ja, ja)
+        for ja in ("衛宮のくん", "衛宮は", "遠坂が", "シンジと", "お嬢の", "お衛宮お", "おかしな士郎", "士郎へ"):
+            self.assertIsNone(bt._clean_ja(ja), ja)
+
+    def test_nfkc_normalised(self):
+        self.assertEqual(bt._clean_ja("ｾｲﾊﾞｰ"), "セイバー")  # 半角片假名
+        self.assertIsNone(bt._clean_ja("Ｓａｂｅｒ"))  # 全角字母规范化为 ASCII 后丢弃
+
+    @staticmethod
+    def parse(entries: list[dict]) -> tuple[list, list]:
+        ja_shape: list = []
+        _, out = bt.parse_reply(json.dumps({"entries": entries}, ensure_ascii=False), 10, None, None, ja_shape)
+        return out, ja_shape
+
+    def test_forms_filtered_recorded_and_deduped(self):
+        entry = {"entity_ja": "遠坂凛", "zh": "远坂凛", "forms": [
+            {"ja": "遠坂凛", "zh": "远坂凛"}, {"ja": "遠坂 凛", "zh": "远坂凛"}, {"ja": "凛", "zh": "凛"},
+            {"ja": "トウサカの庭に埋めてきた", "zh": "远坂"}, {"ja": "サーヴァント ライダー", "zh": "骑兵"},
+            {"ja": "Rin", "zh": "凛"}]}
+        entries, ja_shape = self.parse([entry])
+        self.assertEqual([f["ja"] for f in entries[0]["forms"]], ["遠坂凛", "凛"])
+        self.assertEqual(ja_shape, [{"entity_ja": "遠坂凛", "ja": ja} for ja in
+                                    ("トウサカの庭に埋めてきた", "サーヴァント ライダー", "Rin")])
+
+    def test_shape_runs_before_honorific(self):
+        entry = {"entity_ja": "時臣", "zh": "时臣", "forms": [
+            {"ja": "時臣", "zh": "时臣"}, {"ja": "父さん", "zh": "时臣"}, {"ja": "あの人は", "zh": "时臣"}]}
+        honorific: list = []
+        ja_shape: list = []
+        entries = bt.parse_reply(json.dumps({"entries": [entry]}, ensure_ascii=False), 10, None, honorific, ja_shape)[1]
+        self.assertEqual([f["ja"] for f in entries[0]["forms"]], ["時臣"])
+        self.assertEqual(honorific, [{"entity_ja": "時臣", "ja": "父さん"}])
+        self.assertEqual(ja_shape, [{"entity_ja": "時臣", "ja": "あの人は"}])
+
+    def test_entity_ja_with_whitespace_replaced_by_cleaned(self):
+        entry = {"entity_ja": "間桐 桜", "zh": "间桐樱", "forms": [{"ja": "間桐 桜", "zh": "间桐樱"}, {"ja": "桜", "zh": "樱"}]}
+        entries, ja_shape = self.parse([entry])
+        self.assertEqual(entries[0]["entity_ja"], "間桐桜")
+        self.assertEqual([f["ja"] for f in entries[0]["forms"]], ["間桐桜", "桜"])
+        self.assertEqual(ja_shape, [])
+
+    def test_bad_entity_ja_replaced_by_first_kept_form(self):
+        entry = {"entity_ja": "アサシンと契約を結べ", "zh": "暗杀者", "forms": [
+            {"ja": "アサシンと契約を結べ", "zh": "暗杀者"}, {"ja": "アサシン", "zh": "暗杀者"}, {"ja": "暗殺者", "zh": "暗杀者"}]}
+        entries, ja_shape = self.parse([entry])
+        self.assertEqual(entries[0]["entity_ja"], "アサシン")
+        self.assertEqual([f["ja"] for f in entries[0]["forms"]], ["アサシン", "暗殺者"])
+        self.assertEqual(ja_shape, [{"entity_ja": "アサシンと契約を結べ", "ja": "アサシンと契約を結べ"}])
+
+    def test_entity_dropped_when_no_form_survives(self):
+        bad = {"entity_ja": "サーヴァント ライダー", "zh": "骑兵", "forms": [{"ja": "サーヴァント ライダー", "zh": "骑兵"},
+                                                                   {"ja": "Rider", "zh": "骑兵"}]}
+        good = {"entity_ja": "凛", "zh": "凛", "forms": [{"ja": "凛", "zh": "凛"}]}
+        entries, ja_shape = self.parse([bad, good])
+        self.assertEqual([e["entity_ja"] for e in entries], ["凛"])
+        self.assertEqual(ja_shape, [
+            {"entity_ja": "サーヴァント ライダー", "ja": "サーヴァント ライダー"},
+            {"entity_ja": "サーヴァント ライダー", "ja": "Rider"},
+            {"entity_ja": "サーヴァント ライダー", "field": "entity", "ja": "サーヴァント ライダー"}])
+
+    def test_all_bad_raises_like_before(self):
+        entry = {"entity_ja": "アサシンと契約を結べ", "zh": "暗杀者", "forms": [{"ja": "アサシンと契約を結べ", "zh": "暗杀者"}]}
+        with self.assertRaises(ValueError):
+            self.parse([entry])
+
+    def test_cleaned_entity_collides_with_earlier_entity_dropped(self):
+        a = {"entity_ja": "間桐桜", "zh": "间桐樱", "forms": [{"ja": "間桐桜", "zh": "间桐樱"}]}
+        b = {"entity_ja": "間桐 桜", "zh": "间桐樱", "forms": [{"ja": "間桐 桜", "zh": "间桐樱"}]}
+        entries, _ = self.parse([a, b])
+        self.assertEqual([e["entity_ja"] for e in entries], ["間桐桜"])
+
+    def test_main_and_renormalize_write_meta_dropped_ja_shape(self):
+        reply = {"entries": [{"entity_ja": "桜", "zh": "樱", "forms": [
+            {"ja": "桜", "zh": "樱"}, {"ja": "桜が咲いた", "zh": "樱"}]}]}
+        text = json.dumps(reply, ensure_ascii=False)
+        expected = [{"entity_ja": "桜", "ja": "桜が咲いた"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            srt, out, new = write_srt(tmp), Path(tmp) / "table.json", Path(tmp) / "new.json"
+            response = {"model": "m", "choices": [{"message": {"content": text}, "finish_reason": "stop"}], "usage": {}}
+            with mock.patch.object(bt, "post_chat", lambda *a: response):
+                self.assertEqual(bt.main(["--srt", str(srt), "--work", "w", "--out", str(out)]), 0)
+            table = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(table["meta"]["dropped_ja_shape"], expected)
+            self.assertEqual([f["ja"] for f in table["entries"][0]["forms"]], ["桜"])
+            # 重算读的是原始回复（旧表 meta 删掉也不影响），按当前规则同样丢掉句子写法
+            del table["meta"]
+            out.write_text(json.dumps(table, ensure_ascii=False), encoding="utf-8")
+            with mock.patch.object(bt, "post_chat", side_effect=AssertionError("no network")):
+                self.assertEqual(bt.main(["--renormalize", str(out), "--out", str(new)]), 0)
+            renorm = json.loads(new.read_text(encoding="utf-8"))
+        self.assertEqual(renorm["meta"]["dropped_ja_shape"], expected)
+        self.assertEqual([f["ja"] for f in renorm["entries"][0]["forms"]], ["桜"])
+
+
 class ConfidenceTests(unittest.TestCase):
     @staticmethod
     def parse(kind: str, confidence: str, evidence: list[int]) -> dict:
@@ -309,10 +454,10 @@ class ConfidenceTests(unittest.TestCase):
                  "forms": [{"ja": "桜", "zh": "樱"}], "evidence": evidence}
         return bt.parse_reply(json.dumps({"entries": [entry]}), 10)[1][0]
 
-    def test_prompt_v5_states_confidence_criteria(self):
-        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v5")
+    def test_prompt_v6_states_confidence_criteria(self):
+        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v6")
         prompt = bt.SYSTEM_PROMPT
-        for needle in ("≥3", "medium", "low", "父さん", "キリエ・エレイソン", "シンジ 与 シロウ", "マトウ増健"):
+        for needle in ("≥3", "medium", "low", "父さん", "ソルヴェ・テネブラス", "タクミ 与 タクマ", "ホズミ増尋"):
             self.assertIn(needle, prompt)
         self.assertIn('"confidence": "medium"', prompt)  # JSON 示例里有 medium 条目
         self.assertIn("绝不能合并成一个实体", prompt)
@@ -363,7 +508,7 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(Path(table["raw_reply_path"]).exists())
         self.assertEqual(table["schema"], "name-table-v2")
-        self.assertEqual(table["prompt_version"], "build-table-prompt-v5")
+        self.assertEqual(table["prompt_version"], "build-table-prompt-v6")
         # GOOD 的 evidence 只有 2 条有效 cue（2、3），person 的 high 被降级
         self.assertEqual(table["entries"][0]["confidence"], "medium")
         self.assertEqual(table["entries"][0]["confidence_note"], "downgraded: evidence<3")

@@ -175,6 +175,97 @@ class MergeTablesTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 merge_tables.main([*args, "--forms-fallback"])  # 只对 zh-agree
 
+    def test_form_agree_off_keeps_full_union(self):
+        """不加 --form-agree 时并集照旧：增健=慎二 这类单表写法也留，dropped_form_unverified 为空。"""
+        a = table(entity("間桐慎二", "间桐慎二", [("間桐慎二", "间桐慎二"), ("ゾウケン", "脏砚")]))
+        b = table(entity("間桐慎二", "间桐慎二", [("間桐慎二", "间桐慎二"), ("ゾウケン", "脏砚"), ("増健", "慎二")]))
+        merged = merge_tables.agree_tables(a, b)
+        self.assertEqual([f["ja"] for f in merged["entries"][0]["forms"]], ["間桐慎二", "ゾウケン", "増健"])
+        self.assertEqual(merged["meta"]["dropped_form_unverified"], [])
+        self.assertEqual(merged["meta"]["stats"]["dropped_form_unverified"], 0)
+
+    def test_form_agree_increase_case_is_dropped(self):
+        """增健=慎二 只在 B，且 A 的实体里没有任何 zh 为 慎二 的写法、实体 zh 也不是 慎二：丢弃并记录。"""
+        a = table(entity("間桐慎二", "间桐慎二", [("間桐慎二", "间桐慎二"), ("ゾウケン", "脏砚")]))
+        b = table(entity("間桐慎二", "间桐慎二", [("間桐慎二", "间桐慎二"), ("ゾウケン", "脏砚"), ("増健", "慎二")]))
+        merged = merge_tables.agree_tables(a, b, form_agree=True)
+        (entry,) = merged["entries"]
+        self.assertEqual([(f["ja"], f["zh"]) for f in entry["forms"]], [("間桐慎二", "间桐慎二"), ("ゾウケン", "脏砚")])
+        self.assertEqual(merged["meta"]["dropped_form_unverified"],
+                         [{"entity_ja": "間桐慎二", "table": "b", "ja": "増健", "zh": "慎二"}])
+        self.assertEqual(merged["meta"]["stats"]["dropped_form_unverified"], 1)
+
+    def test_form_agree_keeps_zh_attested_by_other_table(self):
+        """B 独有的 白=士郎、素郎=士郎：A 有 シロ=士郎，zh 有佐证，保留。"""
+        a = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎"), ("シロ", "士郎")]))
+        b = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎"), ("白", "士郎"), ("素郎", "士郎"),
+                                                  ("エミア・キリツグ", "卫宫切嗣")]))
+        merged = merge_tables.agree_tables(a, b, form_agree=True)
+        (entry,) = merged["entries"]
+        self.assertEqual([(f["ja"], f["zh"]) for f in entry["forms"]],
+                         [("衛宮士郎", "卫宫士郎"), ("シロ", "士郎"), ("白", "士郎"), ("素郎", "士郎")])
+        self.assertEqual([(d["table"], d["ja"], d["zh"]) for d in merged["meta"]["dropped_form_unverified"]],
+                         [("b", "エミア・キリツグ", "卫宫切嗣")])
+
+    def test_form_agree_keeps_single_table_form_with_entity_zh(self):
+        """A 独有的写法，zh 等于实体 zh：保留。"""
+        a = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎"), ("エミヤ", "卫宫士郎")]))
+        b = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎")]))
+        merged = merge_tables.agree_tables(a, b, form_agree=True)
+        (entry,) = merged["entries"]
+        self.assertEqual([f["ja"] for f in entry["forms"]], ["衛宮士郎", "エミヤ"])
+        self.assertEqual(merged["meta"]["dropped_form_unverified"], [])
+
+    def test_form_agree_requires_zh_agree_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("a.json", "b.json"):
+                (tmp / name).write_text(json.dumps(table(entity("桜", "樱", [("桜", "樱")])), ensure_ascii=False), encoding="utf-8")
+            args = ["--a", str(tmp / "a.json"), "--b", str(tmp / "b.json"), "--out", str(tmp / "o.json")]
+            with self.assertRaises(SystemExit):
+                merge_tables.main([*args, "--form-agree"])
+            self.assertFalse((tmp / "o.json").exists())
+            self.assertEqual(merge_tables.main([*args, "--mode", "zh-agree", "--forms-fallback", "--form-agree"]), 0)
+
+    def test_form_agree_replaces_entity_ja_dropped_by_rule(self):
+        """entity_ja 的写法被 --form-agree 丢掉时，改用第一个保留写法的日文，隐含写法不会把它补回来。"""
+        a = table(entity("増健", "间桐慎二", [("増健", "慎二"), ("慎二", "间桐慎二")]))
+        b = table(entity("慎二", "间桐慎二", [("慎二", "间桐慎二")]))
+        a["entries"][0]["forms"] = [{"ja": "増健", "zh": "慎二"}, {"ja": "慎二", "zh": "间桐慎二"}]
+        merged = merge_tables.agree_tables(a, b, form_agree=True)
+        (entry,) = merged["entries"]
+        self.assertEqual([item["ja"] for item in merged["meta"]["dropped_form_unverified"]], ["増健"])
+        self.assertEqual(entry["entity_ja"], "慎二")
+        self.assertEqual({(f["ja"], f["zh"]) for f in apply_table.entity_forms(entry)}, {("慎二", "间桐慎二")})
+
+    def test_form_agree_substring_keeps_zh_inside_entity_zh(self):
+        """--form-agree-substring：单表写法的 zh 是实体 zh 的子串（长度 ≥ 2）也算有佐证，并计入 kept_form_substring。"""
+        a = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎")]))
+        b = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎"), ("エミヤ", "卫宫"), ("シンジ", "真嗣")]))
+        strict = merge_tables.agree_tables(a, b, form_agree=True)
+        self.assertEqual([d["ja"] for d in strict["meta"]["dropped_form_unverified"]], ["エミヤ", "シンジ"])
+        self.assertEqual(strict["meta"]["stats"]["kept_form_substring"], 0)
+        merged = merge_tables.agree_tables(a, b, form_agree=True, form_agree_substring=True)
+        (entry,) = merged["entries"]
+        self.assertEqual([f["ja"] for f in entry["forms"]], ["衛宮士郎", "エミヤ"])
+        self.assertEqual([d["ja"] for d in merged["meta"]["dropped_form_unverified"]], ["シンジ"])  # 真嗣 不是子串
+        self.assertEqual(merged["meta"]["stats"]["kept_form_substring"], 1)
+
+    def test_form_agree_substring_ignores_single_char_and_needs_form_agree(self):
+        a = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎")]))
+        b = table(entity("衛宮士郎", "卫宫士郎", [("衛宮士郎", "卫宫士郎"), ("士", "士")]))
+        merged = merge_tables.agree_tables(a, b, form_agree=True, form_agree_substring=True)
+        self.assertEqual([d["ja"] for d in merged["meta"]["dropped_form_unverified"]], ["士"])  # 单字 zh 不靠子串佐证
+        self.assertEqual(merged["meta"]["stats"]["kept_form_substring"], 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("a.json", "b.json"):
+                (tmp / name).write_text(json.dumps(table(entity("桜", "樱", [("桜", "樱")])), ensure_ascii=False), encoding="utf-8")
+            args = ["--a", str(tmp / "a.json"), "--b", str(tmp / "b.json"), "--out", str(tmp / "o.json"), "--mode", "zh-agree"]
+            with self.assertRaises(SystemExit):
+                merge_tables.main([*args, "--form-agree-substring"])
+            self.assertEqual(merge_tables.main([*args, "--form-agree", "--form-agree-substring"]), 0)
+
     def test_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

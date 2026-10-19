@@ -22,9 +22,18 @@ zh-agree：
   A 的实体 zh 若不等于任何保留写法的 zh，apply_table 的隐含写法（entity_ja→实体 zh）会拼出错误映射，
   所以实体就只是两表一致认可的内容：entity_ja 与 zh 取第一个保留写法的，zh_variants 清空。
   一条写法都对不上仍记 dropped_zh_disagree。
+- --form-agree（只对 zh-agree，可与 --forms-fallback 同用）：并集里只有一张表有的写法（按规范化日文判断）需要“佐证”才留——
+  它的 zh 必须出现在 {实体 zh} ∪ {另一张表配对实体的所有写法的 zh} 里，否则丢弃并记 meta.dropped_form_unverified
+  （entity_ja／table／ja／zh；table 是该写法所在的表）。两表都有（日文规范化相同、zh 相同）的写法照旧保留。
+  例：只有 B 有 増健=慎二（另一边没有任何写法映到 慎二）会被丢；B 独有的 白=士郎 因 A 有 シロウ=士郎 而保留。
+  --form-agree-substring（须与 --form-agree 同用）：单表写法的 zh 若是（长度 ≥ 2 的）实体 zh 的子串，也算有佐证，
+  例：エミヤ=卫宫 在 卫宫士郎 下、キリツグ=切嗣 在 卫宫切嗣 下、間桐=间桐 在 间桐樱 下保留；单字 zh 不靠子串佐证，
+  真嗣 不是 卫宫士郎 的子串仍被丢。靠子串才留下的写法数记入 stats.kept_form_substring。
+  这条规则在 dropped_form_disagree 之后判断；被它丢掉的写法同样触发 entity_ja 改用第一个保留写法的日文，
+  写法全被丢弃的实体照旧记 dropped_no_form。forms-fallback 分支本来只留共同写法，不受影响。统计里有 dropped_form_unverified 计数。
 
 命令（仓库根目录）：
-  python -X utf8 -m experiments.name_consistency.merge_tables --a A.json --b B.json --out OUT.json [--mode zh-agree]
+  python -X utf8 -m experiments.name_consistency.merge_tables --a A.json --b B.json --out OUT.json [--mode zh-agree [--forms-fallback] [--form-agree [--form-agree-substring]]]
 """
 
 import argparse
@@ -128,11 +137,14 @@ def common_forms(a_entity: dict, b_entity: dict) -> list[dict]:
     return kept
 
 
-def agree_tables(a: dict, b: dict, a_path: str = "", b_path: str = "", forms_fallback: bool = False) -> dict:
-    """zh-agree：日文配对实体，zh 一致才保留，写法取并集；forms_fallback 时 zh 不一致的配对退而只留共同写法。"""
+def agree_tables(a: dict, b: dict, a_path: str = "", b_path: str = "", forms_fallback: bool = False,
+                 form_agree: bool = False, form_agree_substring: bool = False) -> dict:
+    """zh-agree：日文配对实体，zh 一致才保留，写法取并集；forms_fallback 时 zh 不一致的配对退而只留共同写法；
+    form_agree 时只有一张表有的写法须其 zh 在另一边有佐证才留（form_agree_substring 时实体 zh 的长度 ≥ 2 的子串也算佐证）。"""
     b_keys = [entity_keys(entity) for entity in b["entries"]]
     entries, used_b = [], set()
-    unmatched, zh_disagree, form_disagree, no_form, forms_only = [], [], [], [], []
+    unmatched, zh_disagree, form_disagree, no_form, forms_only, unverified = [], [], [], [], [], []
+    substring_kept = 0
     for entity in a["entries"]:
         keys = entity_keys(entity)
         overlaps = [len(keys & other) for other in b_keys]
@@ -172,6 +184,24 @@ def agree_tables(a: dict, b: dict, a_path: str = "", b_path: str = "", forms_fal
                 dropped_keys.add(key)
                 form_disagree.append({"entity_ja": entity["entity_ja"], "form_ja": merged[key]["ja"],
                                       "a_zh": merged[key]["zh"], "b_zh": form["zh"]})
+        if form_agree:
+            a_by_key, b_by_key = {}, {}
+            for form in entity_forms(entity):
+                a_by_key.setdefault(norm_ja(form["ja"]), form)
+            for form in entity_forms(other):
+                b_by_key.setdefault(norm_ja(form["ja"]), form)
+            attested = {"a": {form["zh"] for form in b_by_key.values()}, "b": {form["zh"] for form in a_by_key.values()}}
+            for key, form in merged.items():
+                if key in dropped_keys or (key in a_by_key and key in b_by_key):
+                    continue
+                side = "a" if key in a_by_key else "b"
+                if form["zh"] == entity["zh"] or form["zh"] in attested[side]:
+                    continue
+                if form_agree_substring and len(form["zh"]) >= 2 and form["zh"] in entity["zh"]:
+                    substring_kept += 1
+                    continue
+                dropped_keys.add(key)  # 并入 dropped_keys：entity_ja 被丢时同样改用保留写法
+                unverified.append({"entity_ja": entity["entity_ja"], "table": side, "ja": form["ja"], "zh": form["zh"]})
         kept = [form for key, form in merged.items() if key not in dropped_keys]
         if not kept:
             no_form.append({"entity_ja": entity["entity_ja"], "zh": entity["zh"]})
@@ -189,12 +219,14 @@ def agree_tables(a: dict, b: dict, a_path: str = "", b_path: str = "", forms_fal
             unmatched.append({"table": "b", "entity_ja": entity["entity_ja"], "zh": entity["zh"]})
     stats = {"entities_a": len(a["entries"]), "entities_b": len(b["entries"]), "entities_kept": len(entries),
              "dropped_unmatched": len(unmatched), "dropped_zh_disagree": len(zh_disagree),
-             "dropped_form_disagree": len(form_disagree), "dropped_no_form": len(no_form),
+             "dropped_form_disagree": len(form_disagree), "dropped_form_unverified": len(unverified),
+             "kept_form_substring": substring_kept, "dropped_no_form": len(no_form),
              "kept_forms_only": len(forms_only), "forms_kept": sum(len(entry["forms"]) for entry in entries)}
     return {"schema": SCHEMA, "work": a.get("work"),
             "meta": {"source": "zh-agree", "a": a_path, "b": b_path, "stats": stats,
                      "dropped_unmatched": unmatched, "dropped_zh_disagree": zh_disagree,
-                     "dropped_form_disagree": form_disagree, "dropped_no_form": no_form,
+                     "dropped_form_disagree": form_disagree, "dropped_form_unverified": unverified,
+                     "dropped_no_form": no_form,
                      "kept_forms_only": forms_only},
             "entries": entries}
 
@@ -208,7 +240,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="intersection：写法取交集（默认）；zh-agree：实体 zh 一致才保留，写法取并集")
     parser.add_argument("--forms-fallback", action="store_true",
                         help="只对 zh-agree：配对实体 zh 不一致时不整对丢弃，改为只留两边相同的写法（实体 zh 取 A）")
+    parser.add_argument("--form-agree", action="store_true",
+                        help="只对 zh-agree：只有一张表有的写法，其 zh 须是实体 zh 或另一张表配对实体某写法的 zh，否则丢弃")
+    parser.add_argument("--form-agree-substring", action="store_true",
+                        help="只对 --form-agree：单表写法的 zh 若是（长度 ≥ 2 的）实体 zh 的子串，也算有佐证")
     args = parser.parse_args(argv)
+    if args.form_agree_substring and not args.form_agree:
+        parser.error("--form-agree-substring requires --form-agree")
+    if args.form_agree and args.mode != "zh-agree":
+        parser.error("--form-agree requires --mode zh-agree")
     if args.forms_fallback and args.mode != "zh-agree":
         parser.error("--forms-fallback requires --mode zh-agree")
     tables = []
@@ -217,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         if table.get("schema") != SCHEMA:
             raise SystemExit(f"{path}: unexpected table schema {table.get('schema')!r} (expected {SCHEMA})")
         tables.append(table)
-    merged = (agree_tables(tables[0], tables[1], str(args.a), str(args.b), args.forms_fallback)
+    merged = (agree_tables(tables[0], tables[1], str(args.a), str(args.b), args.forms_fallback, args.form_agree, args.form_agree_substring)
               if args.mode == "zh-agree" else merge_tables(tables[0], tables[1], str(args.a), str(args.b)))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(merged, ensure_ascii=False, indent=1), encoding="utf-8")

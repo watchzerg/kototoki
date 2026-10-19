@@ -2,6 +2,9 @@
 
 读 `ja.srt`，剥掉时间轴，整片一次放进提示，经 llama-server 的 OpenAI 兼容接口取回 JSON 表，
 校验、归一后写 `table.json`，并在旁边留下原始请求、原始回复。不加载模型，只发 HTTP。
+
+提示 v6 的示例全部用虚构作品的人名，避免真实作品的名字污染模型输出；归一时对每个日文写法再做形状过滤（`_clean_ja`：
+只留裸名字，丢句子、带助词、带空白或标点的写法），丢弃项记入 `meta.dropped_ja_shape`。
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 SCHEMA = "name-table-v2"
 KINDS = ("person", "class", "org", "place", "other")
 SRT_BLOCK = re.compile(r"(\d+)\s*\n[\d:,]+ --> [\d:,]+\s*\n(.*?)(?:\n\s*\n|\Z)", re.S)
-PROMPT_VERSION = "build-table-prompt-v5"
+PROMPT_VERSION = "build-table-prompt-v6"
 CONFIDENCES = ("high", "medium", "low")
 MAX_FORMS = 12
 MAX_ITEMS = 8
@@ -41,31 +44,43 @@ SEPARATORS = "·・"
 # 多半是模型夹带的注释（如"间桐(误识为Makiri)"）。长度按去掉间隔号后的字数算，1–12。
 ZH_SHAPE = re.compile(r"[㐀-䶿一-鿿" + SEPARATORS + r"A-Za-z]+")
 
+# 日文写法形状：只许汉字（含々）、平假名、片假名、长音符 ー、间隔号 ・／·；句子、短语、带助词或标点的写法一律不要。
+MAX_JA_LEN = 20
+_KANJI = "㐀-䶿一-鿿々𠀀-𯿿"
+_KANJI_RUN = re.compile("[" + _KANJI + "]+")
+_HIRAGANA_RE = re.compile("[ぁ-ゖ]")
+JA_SHAPE = re.compile("[" + _KANJI + "ぁ-ゖァ-ヺー" + SEPARATORS + "]+")
+# 含汉字或片假名的写法里，平假名只许作开头的 お／ご 或结尾的敬称；其余（助词、活用尾）说明是短语。
+_JA_HIRAGANA_PREFIXES = ("お", "ご")
+_JA_HIRAGANA_SUFFIXES = ("さん", "くん", "ちゃん", "さま", "たん")
+# 汉字 的 紧邻片假名（的ミオリ、ミオリ的）是模型把中文的"的"夹进了日文名。的場 之类的姓不受影响。
+_DE_NEXT_TO_KATAKANA = re.compile("的[ァ-ヺー]|[ァ-ヺー]的")
+
 SYSTEM_PROMPT = """你是日本动画／电影字幕的专名整理员。用户给出的是一部作品日语字幕轨的 ASR（自动语音识别）转写稿，每行格式为"cue 编号<TAB>日文台词"。
-ASR 会把同一个专名写成不同形式，例如：汉字误替（彩波 对 綾波）、片假名变体（アスカ／アスカー）、写错的汉字（真司 对 真嗣）、片假名被转成平假名（あすか）等。
+ASR 会把同一个专名写成不同形式，例如：汉字误替（月隅 对 月隈）、片假名变体（ミオリ／ミオリー）、写错的汉字（拓巳 对 拓海）、片假名被转成平假名（みおり）等。
 
 任务：通读全片，抽取"固定专名"，把指同一对象的各种写法归并为一条，并为每个日文写法分别给出中文。
-收录：人名、角色名；职阶名／称号（如 チルドレン、エヴァ初号機）；反复出现的组织名、地名。反复出现、指代固定身份的称号也要收，即使它在普通语境里是普通名词（如 使徒），因为译文里这类称号的译法最容易摇摆。
-不收：亲属称呼和人称称呼（お兄ちゃん、先輩、あの人、お主、父さん 等），这类称呼词一律不收；祷词、咒文、台词片段（如 キリエ・エレイソン 这类祷词）不是人名，不收；作品名的片段；单个泛用词；只出现一次且无法确认是专名的片段。
-两个不同角色即使名字读音或字形相近，也绝不能合并成一个实体（例如 シンジ 与 シロウ 是两个人，各自成条）。
+收录：人名、角色名；职阶名／称号（如 第七観測者、灯守一番機）；反复出现的组织名、地名。反复出现、指代固定身份的称号也要收，即使它在普通语境里是普通名词（如 灯守），因为译文里这类称号的译法最容易摇摆。
+不收：亲属称呼和人称称呼（お兄ちゃん、先輩、あの人、お主、父さん 等），这类称呼词一律不收；祷词、咒文、台词片段（如 ソルヴェ・テネブラス 这类祷词）不是人名，不收；作品名的片段；单个泛用词；只出现一次且无法确认是专名的片段。
+两个不同角色即使名字读音或字形相近，也绝不能合并成一个实体（例如 タクミ 与 タクマ 是两个人，各自成条）。
 
 每条给出：
 - entity_ja：该对象的正确日文全称（若你认出作品，用官方写法；否则用转写稿中最可信的写法）。
 - zh：该对象在这部作品的中文官方译名或中文圈通行译名全称（认出作品时必须用通行写法；认不出作品时给出合理的音译）。仅用于展示。
 - forms：转写稿里实际出现的每一个日文写法（包括正确的和被 ASR 误识的），每个写法单独给出它对应的中文 {"ja": 日文写法, "zh": 中文}。最多 12 个，不要重复列出同一个写法，entity_ja 本身也必须是其中一个写法。
   * 粒度必须一致：每个日文写法单独给中文。写法只说姓，就只给姓的中文；只说名，就只给名的中文；绝不把全名填给只说了姓或名的写法。原因：之后的替换只能把句子里的这个写法换成它的 zh，不能给句子添上原文没说的字。被误识的写法同样按它所指的那一部分给中文（误识的只有名，就映射到名）。
-  * 例如碇シンジ：forms 为 {"ja": "碇シンジ", "zh": "碇真嗣"}、{"ja": "シンジ", "zh": "真嗣"}、{"ja": "碇", "zh": "碇"}、{"ja": "真司", "zh": "真嗣"}（真司是 ASR 把"名"写错的汉字）。
-  * 只收指同一对象的写法。别的角色、别的称号，即使读音或字形相似，也不要放进来（例如 アスカ 不属于 碇シンジ，エヴァ弐号機 不属于 エヴァ初号機）。
-  * ja 只写专名本身的裸形式：不带助词（の、は、を、に、が、と 等），不带前后的其他词，不写成短语或句子，不带残留的中文字或标点（反例：シンジを呼んでいる、アスカの代わりに?、的レイ、素人シンジ）。
+  * 例如鷺宮タクミ：forms 为 {"ja": "鷺宮タクミ", "zh": "鹭宫拓海"}、{"ja": "タクミ", "zh": "拓海"}、{"ja": "鷺宮", "zh": "鹭宫"}、{"ja": "拓巳", "zh": "拓海"}（拓巳是 ASR 把"名"写错的汉字）。
+  * 只收指同一对象的写法。别的角色、别的称号，即使读音或字形相似，也不要放进来（例如 ミオリ 不属于 鷺宮タクミ，灯守二番機 不属于 灯守一番機）。
+  * ja 只写专名本身的裸形式：不带助词（の、は、を、に、が、と 等），不带前后的其他词，不写成短语或句子，不带残留的中文字或标点（反例：タクミを呼んでいる、ミオリの代わりに?、的ミオリ、素人タクミ）。
   * forms 里的 zh 只写中文译名本身，不要括号、冒号、加号、空格，不要附带任何注释或说明。
 - zh_variants：只收"同一个词的不同写法"，最多 8 个，不要重复。可收：音译的异写、英文原文、字面意译、繁简异体。绝不收该角色的真名、别名、称号，也不收其他角色的名字。
-  * 正例：写法 シンジ→真嗣 的 zh_variants 可为 ["真司", "真治", "Shinji"]；写法 綾波レイ→绫波丽 的可为 ["绫波零", "綾波丽", "Rei Ayanami"]；初号機→初号机 的可为 ["EVA初号机", "Evangelion Unit-01"]。
-  * 反例：真嗣的 zh_variants 里不能放"第三适格者"（称号）；绫波丽的不能放"明日香"（其他角色名）。这些不是同一个词的写法，替换后会改变句意。
+  * 正例：写法 タクミ→拓海 的 zh_variants 可为 ["拓美", "托米", "Takumi"]；写法 月隈ミオリ→月隈澪织 的可为 ["月隈美织", "月隈澪織", "Miori Tsukikuma"]；灯守一番機→灯守一号机 的可为 ["灯守壹号机", "Lampkeeper"]。
+  * 反例：拓海的 zh_variants 里不能放"第七观测者"（称号）；澪织的不能放"灰谷"（其他角色名）。这些不是同一个词的写法，替换后会改变句意。
 - kind：person（人名、角色名）、class（职阶名／称号）、org（组织）、place（地名）、other（其他）之一。
 - evidence：该对象（含各种误识写法）出现的 cue 编号，整数列表，最多 8 个，取有代表性的几条即可，必须是输入里真实存在的编号。
 - confidence：high、medium、low 之一，按下列可操作的判据给，宁可给低也不要给错的 high：
   * high：只给你能凭作品知识说出该角色身份（他/她是谁、与主角的关系）、并且确定其通行中文译名的条目；并且该名字（含各种写法）在转写稿里出现在 ≥3 条 cue 里。
-  * medium：认出作品，但说不出这一条具体是谁，或中文译名只是你推断的；或者这个名字是从 ASR 误识碎片拼出来的（如 マトウ増健、造剣 这类不成词的碎片）。次要角色、只出现两三次的名字通常是 medium，这是正常输出。
+  * medium：认出作品，但说不出这一条具体是谁，或中文译名只是你推断的；或者这个名字是从 ASR 误识碎片拼出来的（如 ホズミ増尋、燈織 这类不成词的碎片）。次要角色、只出现两三次的名字通常是 medium，这是正常输出。
   * low：认不出作品，zh 只是音译。
 
 条目总数最多约 60 条，优先收录在片中反复出现的专名；只出现一两次的次要名字可以省略。
@@ -158,6 +173,39 @@ def _clean_zh(value: Any) -> str | None:
     return value
 
 
+def _clean_ja(value: Any) -> str | None:
+    """日文写法形状合格则返回规范化后的串，否则 None。
+
+    NFKC 规范化后：内部有空白时，仅当被空白隔开的每一段都全是汉字才去掉空白（间桐 桜 → 间桐桜），否则丢弃；
+    只许 JA_SHAPE 里的字符（ASCII 字母数字、标点、空白一律丢弃）；含汉字或片假名的写法，平假名只许是开头的
+    お／ご 或结尾的 さん／くん／ちゃん／さま／たん，全平假名的写法（しろ）原样保留；长度 1–20（含间隔号）。
+    不区分日文汉字与中文汉字。
+    """
+    if not isinstance(value, str):
+        return None
+    text = unicodedata.normalize("NFKC", value).strip()
+    parts = text.split()
+    if len(parts) > 1:
+        if not all(_KANJI_RUN.fullmatch(part) for part in parts):
+            return None
+        text = "".join(parts)
+    if not 1 <= len(text) <= MAX_JA_LEN or not JA_SHAPE.fullmatch(text) or _DE_NEXT_TO_KATAKANA.search(text):
+        return None
+    # ー 和间隔号不算文字：全由它们组成的串不是名字；平假名加长音（あすかー）仍算全平假名。
+    letters = text.translate({ord(c): None for c in SEPARATORS + "ー"})
+    if not letters:
+        return None
+    if _HIRAGANA_RE.search(letters) and not all(_HIRAGANA_RE.fullmatch(c) for c in letters):
+        body = text[1:] if text[0] in _JA_HIRAGANA_PREFIXES else text
+        for suffix in _JA_HIRAGANA_SUFFIXES:
+            if body.endswith(suffix):
+                body = body[:-len(suffix)]
+                break
+        if _HIRAGANA_RE.search(body):
+            return None
+    return text
+
+
 def _honorific_stem(word: str) -> str:
     """NFKC 规范化并去空白，再剥掉前缀 お／ご 与后缀 さん／さま／様／ちゃん／くん／君（剥后须非空）。"""
     word = "".join(unicodedata.normalize("NFKC", word).split())
@@ -205,6 +253,22 @@ def _forms(raw_forms: Any, entity: str, entity_zh: str, dropped: list[dict[str, 
     return forms[:MAX_FORMS]
 
 
+def _clean_forms_ja(forms: list[dict[str, str]], entity: str, dropped_ja_shape: list[dict[str, Any]] | None
+                    ) -> list[dict[str, str]]:
+    """对每个写法的 ja 做 `_clean_ja`：不合格的丢弃并记录，清洗后重复的按先到先得去重。"""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for form in forms:
+        ja = _clean_ja(form["ja"])
+        if ja is None:
+            if dropped_ja_shape is not None:
+                dropped_ja_shape.append({"entity_ja": entity, "ja": form["ja"]})
+        elif ja not in seen:
+            seen.add(ja)
+            out.append({"ja": ja, "zh": form["zh"]})
+    return out
+
+
 def _zh_variants(values: Any, entity: str, dropped: list[dict[str, Any]] | None) -> list[str]:
     """去空白、保序去重；形状不合的变体丢弃并记录。"""
     out: list[str] = []
@@ -225,11 +289,14 @@ def _downgrade_thin_person(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_reply(reply: str, cue_count: int, dropped: list[dict[str, Any]] | None = None,
-                dropped_honorific: list[dict[str, Any]] | None = None
+                dropped_honorific: list[dict[str, Any]] | None = None,
+                dropped_ja_shape: list[dict[str, Any]] | None = None
                 ) -> tuple[str | None, list[dict[str, Any]]]:
     """解析并校验回复，返回 (work_guess, entries)。缺关键字段的条目丢弃，全部丢光则抛 ValueError。
     因 zh 形状不合被丢的实体／写法／变体追加进 `dropped`（若给出）；日文写法是称呼词（HONORIFIC_JA）而被丢的
-    写法追加进 `dropped_honorific`，丢光写法的实体整条丢弃。"""
+    写法追加进 `dropped_honorific`，丢光写法的实体整条丢弃。日文写法先过形状过滤（`_clean_ja`）再查称呼词，
+    形状不合的写法追加进 `dropped_ja_shape`；entity_ja 本身不合格时，取清洗后的串（空白被去掉）或第一个保留写法的
+    ja，一个写法都不剩则整条丢弃并以 field="entity" 记录。"""
     data = json.loads(_json_text(reply))
     raw_entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(raw_entries, list) or not raw_entries:
@@ -248,13 +315,19 @@ def parse_reply(reply: str, cue_count: int, dropped: list[dict[str, Any]] | None
         if _clean_zh(zh) is None:
             _drop(dropped, entity, "zh", zh)
             continue
-        forms = _forms(raw.get("forms"), entity, zh, dropped)
+        forms = _clean_forms_ja(_forms(raw.get("forms"), entity, zh, dropped), entity, dropped_ja_shape)
         kept = [f for f in forms if not is_honorific(f["ja"])]
         if dropped_honorific is not None:
             dropped_honorific.extend({"entity_ja": entity, "ja": f["ja"]} for f in forms if f not in kept)
         forms = kept
-        if entity in seen or not forms:
+        clean_entity = _clean_ja(entity)
+        if clean_entity is None and not forms and dropped_ja_shape is not None:
+            dropped_ja_shape.append({"entity_ja": entity, "field": "entity", "ja": entity})
+        if clean_entity is None and forms:
+            clean_entity = forms[0]["ja"]
+        if clean_entity is None or clean_entity in seen or not forms:
             continue
+        entity = clean_entity
         seen.add(entity)
         kind = raw.get("kind")
         evidence = [i for i in raw.get("evidence", []) if type(i) is int and 1 <= i <= cue_count] \
@@ -327,8 +400,10 @@ def renormalize_table(old_table: Path, out: Path) -> dict[str, Any]:
     cue_count = max(index for index, _ in read_srt_cues(Path(old["source_srt"])))
     dropped: list[dict[str, Any]] = []
     honorific: list[dict[str, Any]] = []
-    guess, entries = parse_reply(reply_path.read_text(encoding="utf-8"), cue_count, dropped, honorific)
-    meta = {"seed": _original_seed(old, reply_path), "dropped_shape": dropped, "dropped_honorific": honorific}
+    ja_shape: list[dict[str, Any]] = []
+    guess, entries = parse_reply(reply_path.read_text(encoding="utf-8"), cue_count, dropped, honorific, ja_shape)
+    meta = {"seed": _original_seed(old, reply_path), "dropped_shape": dropped, "dropped_honorific": honorific,
+            "dropped_ja_shape": ja_shape}
     table = {**old, "work_guess": guess, "entries": entries, "meta": meta, "renormalized_from": str(old_table)}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(table, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -350,7 +425,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.renormalize:
         table = renormalize_table(args.renormalize, args.out)
-        print(f"entries={len(table['entries'])} dropped_shape={len(table['meta']['dropped_shape'])}")
+        print(f"entries={len(table['entries'])} dropped_shape={len(table['meta']['dropped_shape'])} "
+              f"dropped_ja_shape={len(table['meta']['dropped_ja_shape'])}")
         return 0
     if not (args.srt and args.work):
         parser.error("--srt and --work are required unless --renormalize is given")
@@ -373,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     total_seconds = 0.0
     dropped: list[dict[str, Any]] = []
     honorific: list[dict[str, Any]] = []
+    ja_shape: list[dict[str, Any]] = []
     last_error: Exception | None = None
     for attempt in (1, 2):
         reply, response, seconds = run_once(args.url, messages, args.think, args.out, attempt, args.seed)
@@ -381,8 +458,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if finish_reason == "length":
                 raise ValueError("reply truncated (finish_reason=length), refusing to parse")
-            dropped, honorific = [], []
-            guess, entries = parse_reply(reply, cue_count, dropped, honorific)
+            dropped, honorific, ja_shape = [], [], []
+            guess, entries = parse_reply(reply, cue_count, dropped, honorific, ja_shape)
             break
         except ValueError as exc:  # json.JSONDecodeError 是其子类
             last_error = exc
@@ -400,14 +477,15 @@ def main(argv: list[str] | None = None) -> int:
         "model": {"url": args.url, "model_id_from_server": response.get("model"), "think": args.think},
         "work_guess": guess,
         "entries": entries,
-        "meta": {"seed": args.seed + attempt - 1, "dropped_shape": dropped, "dropped_honorific": honorific},
+        "meta": {"seed": args.seed + attempt - 1, "dropped_shape": dropped, "dropped_honorific": honorific,
+                 "dropped_ja_shape": ja_shape},
         "timing": {"prompt_chars": prompt_chars, "prompt_tokens": usage.get("prompt_tokens", 0),
                    "completion_tokens": usage.get("completion_tokens", 0), "seconds": round(total_seconds, 2),
                    "finish_reason": finish_reason},
         "raw_reply_path": f"{args.out}.reply{'' if attempt == 1 else f'.{attempt}'}.txt",
     }
     args.out.write_text(json.dumps(table, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"entries={len(entries)} dropped_shape={len(dropped)} work_guess={guess} seconds={table['timing']['seconds']}")
+    print(f"entries={len(entries)} dropped_shape={len(dropped)} dropped_ja_shape={len(ja_shape)} work_guess={guess} seconds={table['timing']['seconds']}")
     return 0
 
 
