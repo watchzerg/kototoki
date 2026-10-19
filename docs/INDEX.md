@@ -28,9 +28,8 @@
 | [测试设计与验收](agents/testing.md) | 测试怎么写、归哪类、怎么验收 |
 | [文档维护规则](agents/documentation.md) | 文档放哪、怎么同步 |
 | `agents/` 其余文件 | 工程 skills 的 tracker、标签映射与领域文档约定，以及旧字幕翻译评估流程 |
-| `changes/` | 进行中的 Markdown 增量说明，吸收进当前正文后删除；当前有[产品 STT 增加 cross 模式：x0 转写＋Whisper 交叉打分裁判](changes/cross-asr-judge.md) |
 
-按需创建的目录：`specs/`、`operations/`、`adr/`、`architecture/modules/`。创建条件见[文档维护规则](agents/documentation.md#权威归属与创建时机)。
+按需创建的目录：`specs/`、`operations/`、`changes/`、`adr/`、`architecture/modules/`。创建条件见[文档维护规则](agents/documentation.md#权威归属与创建时机)。
 
 ## 项目特有入口
 
@@ -53,7 +52,7 @@
 
 调研条目已登记在[调研索引](research/INDEX.md)，此处只列其他既有文档，按原登记顺序保留。
 
-- ADR: [产品 STT 增加可选引擎 cross](adr/0012-cross-asr-judge.md) — proposed（2026-10-19）；asr 阶段内 w0 与 x0 共驻、Whisper 交叉打分裁判，默认仍 w0；T6 验收后定案。不替代 ADR-0007（扩展其决定 1）与 ADR-0008。
+- ADR: [产品 STT 增加可选引擎 cross](adr/0012-cross-asr-judge.md) — 已接受（2026-10-19）；asr 阶段内 w0 与 x0 共驻、Whisper 交叉打分裁判，默认仍 w0；两部合计 CER −0.95 pp（低于预设 1.0 pp 验收线，用户裁定采纳）。不替代 ADR-0007 与 ADR-0008。
 - ADR: [产品翻译配方改为 dp10-cut-degrade-v1](adr/0011-dp10-cut-product-recipe.md) — 已接受（2026-10-18）；产品包切包与邻文同步到 dp10-cut，降级规则不变；已交付影片的翻译身份过期、下次整批重译；仍无质量证据。替代 ADR-0007 决定 4 与 ADR-0010 关于产品配方的部分。
 - ADR: [字幕翻译流程基线改为 dp10-cut](adr/0010-dp10-cut-translation-flow-baseline.md) — 已接受（2026-10-17）；每包 ≤10 条、可见 ≤12 条，分级切点偏向停顿，不跨 ≥20 s；按逻辑推定，未做 GPU 筛选；产品配方不变。替代 ADR-0009。
 - ADR: [字幕翻译流程基线改为 dp6-grp](adr/0009-dp6-grp-translation-flow-baseline.md) — 已被 ADR-0010 替代（2026-10-17）；完整 SRT 流程按停顿与 <1 s 小组拼包，提示同 `b10-joint`；v7 两次合并与 b10-joint 无可分辨差异；产品配方不变。部分替代 ADR-0006。

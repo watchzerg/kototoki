@@ -14,7 +14,10 @@ import threading
 import time
 from pathlib import Path
 
-PHASE_LINE = re.compile(r"^\[\s*(?P<t>[\d.]+)s\]\s+\[(?P<phase>[\w-]+)\]\s+(?P<event>start|end)\b")
+# 产品日志自 2026-10-18 起形如 `2026-10-19 06:35:03Z [    10.0s] INFO     [vad] start: ...`；
+# 旧格式 `[   10.0s] [vad] start` 仍可匹配（日期与级别均可选）。
+PHASE_LINE = re.compile(r"^(?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z\s+)?\[\s*(?P<t>[\d.]+)s\]\s+(?:[A-Z]+\s+)?"
+                        r"\[(?P<phase>[\w-]+)\]\s+(?P<event>start|end)\b")
 
 
 def summarize(lines: list[str], samples: list[dict], t0: float) -> dict:

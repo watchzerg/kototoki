@@ -613,3 +613,22 @@ class ImportBoundaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkerLoggerNameTest(unittest.TestCase):
+    """三个 worker 壳以 `python -m kototoki.workers.<stage>` 运行时 `__name__` 是 `__main__`，
+    若按 `__name__` 取 logger 就不在 `gpu.main` 设为 INFO 的 `kototoki` 之下，每文件 INFO 行会被丢弃
+    （2026-10-19 cross 验收发现）；logger 名必须固定为 `kototoki.workers.<stage>`。"""
+
+    def test_worker_loggers_are_under_kototoki(self):
+        for module in (vad_worker, asr_worker, align_worker):
+            self.assertEqual(module.logger.name, f"kototoki.workers.{module.STAGE}")
+
+    def test_main_run_module_emits_info_under_kototoki(self):
+        code = ("import logging, runpy, sys; sys.argv = ['x']; "
+                "mod = runpy.run_module('kototoki.workers.asr', run_name='not_main'); "
+                "print(mod['logger'].name)")
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, cwd=REPO,
+                                env={**os.environ, "PYTHONUTF8": "1"}, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "kototoki.workers.asr")

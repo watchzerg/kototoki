@@ -31,7 +31,7 @@
 
 **失败窗口**（w0／x0 共用）：`fail_window(asr, chunk_index, reason)` 把 `original_segments[i].text` 移入 `failed_windows`（`chunk_index`、`reason`、截断文字）并置空；`retained_text` 是保留文本，后续对齐、cue 与翻译只用它；`validate_failed_windows` 要求列表存在、索引唯一有效且对应窗口已置空。
 
-**cross 审计产物（实施中）**：**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** `engine = "cross"` 时 asr 阶段在 `.work/<id>/` 额外写三个审计文件，名称是 `artifacts.py` 的模块常量：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`）与 `asr-judge.json`（每窗口两路原文、分歧区间、逐区间分数与决定，以及文件级计数汇总）。它们**不是阶段产物**：不在 `STAGE_OUTPUT`，不带阶段身份，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游；asr 阶段的产物契约只认 `asr.json`。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。`asr.json` 本身的结构、`offset_s` 强制检查与失败窗口约定不变。
+**cross 审计产物**：`engine = "cross"` 时 asr 阶段在 `.work/<id>/` 额外写三个审计文件，名称是 `artifacts.py` 的模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`，身份按单引擎计算）与 `asr-judge.json`（`offset_s`、每窗口两路原文、分歧区间、逐区间分数与决定，以及文件级计数汇总，身份同 cross 的 `asr.json`；字段见 [STT worker](stt-workers.md#cross-引擎)）。三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。它们**不是阶段产物**：不在 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游；asr 阶段的产物契约只认 `asr.json`。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。`asr.json` 本身的结构、`offset_s` 强制检查与失败窗口约定不变。
 
 **SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。`write_srt` 原子写出、拒绝覆盖源文件；是否允许覆盖最终文件由 `publish_blockers` 判定。
 
@@ -50,4 +50,4 @@
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/00-foundation.md`；规格 §4、§6、§7.1、§1.2 第三轮裁定表。原子写取自 `experiments/translation_v3/common.py`，模型哈希缓存取自 `experiments/translation_v3/server.py::verify_model`。
 
-2026-10-19 `cross` 审计产物：**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** [增量说明](../../changes/cross-asr-judge.md) §2.3、[ADR-0012](../../adr/0012-cross-asr-judge.md)，票据 `.scratch/cross-asr-judge/`。
+2026-10-19 `cross` 引擎交付，依据 [ADR-0012](../../adr/0012-cross-asr-judge.md) 与[产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)，票据 `.scratch/cross-asr-judge/`；增量说明已吸收进本页（审计产物）并删除。

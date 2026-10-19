@@ -30,7 +30,7 @@ from kototoki.workers.protocol import FileJob, Jobs, fail_window, retained_text,
 
 STAGE = "asr"
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(f"kototoki.workers.{STAGE}")  # 以 `python -m` 运行时 __name__ 是 __main__，不在 INFO 级的 kototoki 之下
 
 _SPACE = re.compile(r"\s+")
 

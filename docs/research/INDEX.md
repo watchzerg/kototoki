@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-19：`cross` 模式 T6 [产品路径验收](acceptance/2026-10-19-cross-asr-acceptance.md)完成（用户授权的 GPU 作业，HF II／III 以 `engine = cross` 整批运行 `python -m kototoki`，含翻译，约 29 分钟）：官方整片口径 CER II 16.81% → 15.93%、III 13.77% → 12.75%，两部都低于 w0；两部合计 15.25% → 14.30%，**降 0.95 pp，差 0.05 pp 未达 1.0 pp 验收线**（替换 −82、插入 −175、删除 +47），按增量说明 §5 待用户裁定是否仍采用。工程行为全部通过：裁判统计与 T0 探针逐区间相同（402 窗口、41 相同、1084 区间、200 改为 x0），x0 失败窗口 0，asr 阶段整卡峰值 10030 MiB（加 1 GB ≤ 13.5 GB），asr 墙钟 1211.6 s（w0 的 3.75 倍），翻译正常启动，293 个批次降级与回退 0。另发现 worker INFO 日志行（含 cross 每文件计数）因 `__main__` logger 名而被丢弃。
+
 2026-10-19：`cross` 模式 T0 [共驻显存探针](acceptance/2026-10-19-cross-coresidency-probe.md)完成（用户授权的 GPU 作业，同一进程常驻产品 Whisper（CT2 FP16）与 Qwen3-ASR（BF16），HF II／III 全部 402 个 VAD 窗口按 w0 转写 → x0 转写 → Whisper 打分跑一遍，约 23 分钟）：整卡峰值 10688 MiB（含桌面约 2.0 GB），加 1 GB 余量 11712 MiB ≤ 13.5 GB 阈值，**采用共驻**，不需要三段式回退；先 torch 后 CT2 的导入顺序下两份 cuDNN 并存，无 DLL／OOM 问题，两路转写与单独运行逐窗口相同。三步墙钟两部合计 1364 s（打分 40.5 s），约为单独 w0 的 4.4 倍。窗口口径下规范化后相同的窗口只有 10%，改为 x0 的区间 18.5%（研究单元口径 37.7%，增量说明 §5 预期 6–10%），留给 T6 判读。
 
 2026-10-19：[Whisper 与 Qwen 交叉打分裁判](2026-10-19-asr-pair-cross-score.md)测算完成（用户授权的 GPU 作业，先后加载产品 Whisper large-v3 与 Qwen3-ASR，只做教师强制前向，合计约 12 分钟；与 oracle、MMS 实验同一批 1253 个分歧区间）：跨片调参后两部合计 CER，Whisper 单独 16.16% → 14.31%，"两者都同意" 14.23%（无长度项 14.17%），Whisper＋Qwen 之和 14.56%，Qwen 单独 15.09%，加 MMS 不改善；MMS 为 15.40%、oracle 拼接 11.90%，即拿到 oracle 增益的约 43%～47%。替换区间 Whisper AUC 0.77（涉及汉字 0.77，MMS 0.49），加 Qwen 反而降到 0.73。两模型都偏向自己的输出：oracle 判 x0 对时 Whisper 仍偏 w0 52%，判 w0 对时 Qwen 仍偏 x0 57%；Whisper 阈值两片稳定（m ≈ −1），Qwen 不稳。Whisper 分数不含 EOT（`text_token_probs` 限制），插入／删除类判定混有长度偏差。是否采纳待用户裁定（文档 §10），未启动任何合并实现。
@@ -217,6 +219,7 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 条目格式：`[主题 日期](acceptance/文件.md)：验收范围与未覆盖项`
 
+- [cross 模式 T6 产品路径验收 2026-10-19](acceptance/2026-10-19-cross-asr-acceptance.md)：HF II／III 以 `engine = cross` 整批运行 `python -m kototoki`（含 align、translate），`kototoki_eval` 评 cross `align.json` 与同次运行的 `asr-w0.json`／`asr-x0.json`：两部 CER 都低于 w0（−0.88／−1.01 pp），合计 −0.95 pp 未达 1.0 pp 线；裁判与 T0 探针逐区间相同；asr 峰值 10030 MiB、墙钟 1211.6 s；翻译降级与回退 0；附 15 个改为 x0 区间的抽查。未覆盖：译文层收益、听音核对、表记改动对 CER 的拆分、剧集与新材料
 - [cross 模式 T0 共驻显存探针 2026-10-19](acceptance/2026-10-19-cross-coresidency-probe.md)：同一进程常驻产品 `WhisperAsr` 与 `QwenAsr`，HF II／III 全部窗口按 ①w0 转写 ②x0 转写 ③Whisper 分歧区间打分（d > −1 取 x0）运行，0.5 s 整卡采样与每阶段 torch 峰值：整卡峰值 10688 MiB，峰值＋1 GB ≤ 13.5 GB，判定共驻；DLL 与导入顺序无问题；PCM、VAD 与 13 个模型文件 SHA 核对通过。未覆盖：产品 worker 路径、重复性与桌面占用变化、三段式回退实测、CER 与听音核对
 - [ffmpeg 升级到 9.0 维护分支 2026-10-19](acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)：BtbN `n9.0.2-28-g669f5ab083` 与旧 gyan.dev 构建用产品 extract 代码派生 HF II／III 的 16 kHz WAV，PCM SHA256 逐字节相同且等于基线，补偿记录相同；未重跑整片，只覆盖这两部的 FLAC 立体声音轨
 

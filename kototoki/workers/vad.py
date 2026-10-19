@@ -24,7 +24,7 @@ from kototoki.workers.protocol import FileJob, Jobs
 
 STAGE = "vad"
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(f"kototoki.workers.{STAGE}")  # 以 `python -m` 运行时 __name__ 是 __main__，不在 INFO 级的 kototoki 之下
 
 
 def compute(vad: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Compute:

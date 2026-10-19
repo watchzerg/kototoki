@@ -1,7 +1,7 @@
 # cross 模式 T0：Whisper 与 Qwen 同进程共驻显存探针
 
 状态：concluded（2026-10-19）  
-范围：[增量说明 `cross-asr-judge`](../../changes/cross-asr-judge.md) §2.1 的流程形态与显存阈值、§5 的 T0 标准；票据 `.scratch/cross-asr-judge/issues/01-t0-coresidency-probe.md`。用户授权的 GPU 作业：同一进程加载产品 `kototoki.asr_whisper.WhisperAsr`（CT2 FP16）与 `kototoki.asr_qwen.QwenAsr`（BF16 SDPA），不加载 MMS 或其他模型，不调用 `python -m kototoki` 或 `kototoki.workers.*`。  
+范围：[ADR-0012](../../adr/0012-cross-asr-judge.md)（增量说明已吸收进 ADR-0012 与模块页）§2.1 的流程形态与显存阈值、§5 的 T0 标准；票据 `.scratch/cross-asr-judge/issues/01-t0-coresidency-probe.md`。用户授权的 GPU 作业：同一进程加载产品 `kototoki.asr_whisper.WhisperAsr`（CT2 FP16）与 `kototoki.asr_qwen.QwenAsr`（BF16 SDPA），不加载 MMS 或其他模型，不调用 `python -m kototoki` 或 `kototoki.workers.*`。  
 产物：`.local/quality-exploration-v5/cross-coresidency-probe/`（`samples.csv`、`summary.json`、`judge-hf-ii.jsonl`、`judge-hf-iii.jsonl`、`console.log`、`model-cache.json`），Git 忽略  
 代码：[`experiments/quality_v5/coresidency_probe.py`](../../../experiments/quality_v5/coresidency_probe.py)，测试 `experiments/quality_v5/test_coresidency_probe.py`
 
