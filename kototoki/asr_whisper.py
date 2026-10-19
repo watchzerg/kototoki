@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
-import ctranslate2  # noqa: F401  必须在 torch 之后、faster_whisper 之前导入
+import ctranslate2  # 必须在 torch 之后、faster_whisper 之前导入；`score` 用其 StorageView
 from faster_whisper import WhisperModel
 from faster_whisper.tokenizer import Tokenizer
 
@@ -127,3 +128,47 @@ class WhisperAsr:
                            "feature_sha256": hashlib.sha256(mel.tobytes()).hexdigest(),
                            "start_sample": start, "end_sample": end})
         return segments, traces, failures
+
+    def score(self, audio: Any, chunk: dict[str, Any], texts: list[str], max_batch: int = 16) -> list[float]:
+        """教师强制打分：同一窗口音频下每段文本的 Σ log P(token)，不含 EOT；空文本得 0.0。
+
+        窗口音频与特征同 `transcribe`（`audio[start_sample:end_sample]`，`features()` 右补零到 30 s）；
+        编码器每次调用只跑一次，输出展开成批后经 `Whisper.align` 分批（每批至多 `max_batch` 条）打分，
+        结果与 `texts` 一一对应。`start_sequence` 为 `sot_sequence`（<|sot|><|ja|><|transcribe|>），CT2 在其后
+        自动接 `<|notimestamps|>`，等价于产品无时间戳、无 initial prompt 的提示（调研已对照产品 avg_logprob
+        核实；若直接传含 `<|notimestamps|>` 的产品提示，会被重复接一次，分数更远）。文本 token 为
+        `tokenizer.encode(text)`，不含 EOT；分数只在文本词表上归一化。
+
+        空文本（或编码后无 token）得 0.0 且不送入 `align`；全部为空时连编码器也不运行（裁判依赖这一点）。
+        `align` 返回的概率数与 token 数不符时抛 `RuntimeError`。不保留跨调用状态，批内显存临时量即用即释放。
+        """
+        scores = [0.0] * len(texts)
+        if not any(texts):
+            return scores
+        window = audio[chunk["start_sample"]:chunk["end_sample"]]
+        mel = features(window, self._filters)
+        tokenizer = Tokenizer(self._model.hf_tokenizer, self._model.model.is_multilingual,
+                              task=W0["task"], language=W0["language"])
+        start_sequence = list(tokenizer.sot_sequence)
+        tokens = {index: tokenizer.encode(text) for index, text in enumerate(texts) if text}
+        todo = [index for index, ids in tokens.items() if ids]
+        if not todo:
+            return scores
+        num_frames = min(mel.shape[-1], -(-len(window) // 160))
+        base = torch.as_tensor(self._model.encode(mel), device="cuda")
+        for begin in range(0, len(todo), max_batch):
+            group = todo[begin:begin + max_batch]
+            batch = base.expand(len(group), *base.shape[1:]).contiguous()
+            view = ctranslate2.StorageView.from_array(batch)
+            results = self._model.model.align(view, start_sequence, [tokens[index] for index in group],
+                                              [num_frames] * len(group))
+            del view, batch
+            if len(results) != len(group):
+                raise RuntimeError("align returned a different number of results than texts")
+            for index, result in zip(group, results):
+                probs = list(result.text_token_probs)
+                if len(probs) != len(tokens[index]):
+                    raise RuntimeError("text_token_probs length differs from text tokens")
+                scores[index] = float(sum(math.log(max(prob, 1e-45)) for prob in probs))
+        del base
+        return scores

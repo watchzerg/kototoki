@@ -40,9 +40,41 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 **失败分级**：窗口级见上；单文件异常（读 WAV、身份不符、校验失败等）由协议写 `failure.json`、退出码 1，继续下一文件；`gpu.file_processor` 在 `compute` 抛异常后、以及写产物之前各调用一次 `torch.cuda.synchronize()`，失败即判定为 CUDA 粘性错误，抛 `FatalWorkerError`（不写产物，退出码 2，由编排从下一文件重启）。因此推理模块按窗口吞掉的粘性错误也不会写出"全窗失败"的产物。
 
+### cross 引擎（实施中）
+
+**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** 以下是 `engine = "cross"` 的目标行为，**尚未实现**，不是上文已描述的现状；上文 w0／x0 的描述不变，实现落地后（票据 T7）本节并入上文并删除此标记。设计依据：[ADR-0012](../../adr/0012-cross-asr-judge.md)、研究 [交叉打分](../../research/2026-10-19-asr-pair-cross-score.md)。
+
+- **入口与加载**：jobs 的 `config.engine` 取 `cross`，`recipe_hash` 为 `recipes.CROSS` 的 hash；`models` 同时需要 `w0`、`w0_mel_assets`、`x0`，模型核对三者的文件（w0 模型与 mel 资产＋x0 模型）。`start` 先后加载 `WhisperAsr`（CT2 fp16）与 `QwenAsr`（bf16），两者常驻到进程退出；同一进程里同时持有 CT2 与 torch 的 CUDA 显存，仍先 `import torch` 再导入 `ctranslate2`／`faster_whisper`。
+- **逐文件三步**（保留"逐文件增量写结果、文件级失败只跳过该文件"的语义）：① Whisper 转写全部窗口，写 `asr-w0.json`；② Qwen 转写全部窗口，写 `asr-x0.json`；③ 裁判，写 `asr-judge.json` 与合并结果 `asr.json`。两路共用同一份 `vad.json`，窗口一一对应。
+- **裁判**（窗口级，纯逻辑在 `kototoki/judge.py`，打分由 `WhisperAsr.score` 提供）：
+  1. 两路文本规范化后做字符级编辑距离对齐，非匹配操作的极大连续段为一个**分歧区间**（相隔至少一个匹配字符才分开）。
+  2. 每个区间构造两个假设：hyp_w 为 w0 窗口原文，hyp_x 只把该区间按偏移映射换成 x0 原文字符、其余（含 w0 标点）不动；映射失败时两假设一并退回规范化文本。
+  3. Whisper 教师强制打分：mel 右补零到 30 s，`encode` 只算一次，编码复制成批后调用 `Whisper.align`，start_sequence 取 `tokenizer.sot_sequence`（`<|startoftranscript|><|ja|><|transcribe|>`），CT2 自动接 `<|notimestamps|>`，等价于产品无时间戳、无 initial prompt 的提示；分数为 Σ log `text_token_probs`（不含结束符）；一个窗口的 hyp_w 与全部 hyp_x 同批，批上限 16。
+  4. 判定：d ＝ score(hyp_x) − score(hyp_w)，**d > −1.0 取 x0，否则保持 w0**；没有长度项，阈值与 λ 都是 `CROSS` 配方常量，不是配置项。多个区间各自独立判定（每次只翻转一个、其余保持 w0），再把全部被接受的翻转一起应用。
+  5. 守卫：两路规范化后相同的窗口取 w0、不打分；合并结果为空而 w0 非空时保持 w0；x0 窗口失败（`failed_windows`，含触顶）时该窗口取 w0、不裁判；打分抛错（如 `align` 返回数量不符的 `RuntimeError`）时该窗口取 w0，记一条 WARNING（只记窗口序号与原因，不记文字）并计数，不作为窗口级失败、不中断文件；w0 窗口失败时沿用现有语义，窗口仍记失败，不以 x0 替代（是否替代留待后续裁定）。
+  6. 不做：幻觉过滤、叠加 Qwen 或 MMS 分数、长度项。
+- **产物**：`asr.json` 结构不变，`engine` 为 `"cross"`，`original_segments` 为合并文本，`asr_traces` 取 w0 的 trace，`metadata` 记两路模型与裁判统计，`failed_windows` 为 w0 的失败窗口，align 原样消费。审计产物 `asr-w0.json`／`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`，可直接用 `kototoki_eval` 评分）与 `asr-judge.json`（每窗口：两路原文、分歧区间、每区间 score_w／score_x／d／决定；文件级汇总：窗口数、相同窗口数、分歧区间数、改为 x0 的区间数、打分墙钟）写在同一工作目录，不参与 `is_current`，见[产物契约](artifact-contract.md)。
+- **日志**：每文件一行 `[asr] <id>: cross windows N, identical K, intervals M, switched S, score X.Xs`，只有计数，不记任何窗口文字。
+- **显存预算**（整卡峰值，含桌面 0.5–1.5 GB；单独实测来自 [swr 回归](../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)与[交叉打分](../../research/2026-10-19-asr-pair-cross-score.md)）：
+
+  | 项 | 单独实测 MiB | 说明 |
+  | --- | ---: | --- |
+  | asr w0 转写 | 5265 | |
+  | asr x0 转写 | 5420 | |
+  | Whisper 打分 | 5903 | 空闲 1452 |
+  | Qwen 打分 | 6945 | torch 分配 4229；产品不用 Qwen 打分，仅作参照 |
+  | **两者共驻（估）** | **约 11.5 GB** | 单独峰值相加，未实测，票据 T0 测 |
+  | align（MMS fp32） | 8515 | 不能与上两者共驻，保持独立阶段 |
+  | translate（Hy-MT2） | 15648 | 启动要求空闲 ≥ 14700，必须独占 |
+
+  **共驻阈值与回退**：探针实测的共驻峰值加 1 GB 余量仍 ≤ 13.5 GB 才采用共驻；否则回退为"Whisper 整批转写 → 卸载 → Qwen 整批转写 → 卸载 → Whisper 整批打分"的三段式（多付一次 Whisper 加载，每批几秒）。回退不改变产物与接口。
+- **成本**：asr 阶段墙钟约为 w0 的 3.8 倍（w0 转写＋x0 转写＋打分，估算值），两部电影约 1226 s 对 323 s；实测值待 T6 记录。
+
 ## 接口与依赖
 
 推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。`schema` 属基础层，只依赖标准库：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。壳依赖 `artifacts`、[阶段计划](stage-plan.md)的 `plan`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`（`plan` 只在算翻译身份时才导入翻译子系统，壳不会触发）。子进程环境（`PYTHONUTF8=1`、`HF_HUB_OFFLINE` 等离线变量、`HF_HOME`／`TORCH_HOME = <output_dir>/.work/cache/`）由编排传入，worker 不自行设置（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。编排另传入 `QUIET_ENV` 关掉 tqdm 与 HF 进度条。壳的日志由 `gpu.main` 配置：root 上一个写 stderr 的 handler（`kototoki.logs.RunFormatter`，与运行日志同格式），`kototoki` logger 为 INFO，第三方只有 WARNING 及以上，`logging.captureWarnings(True)` 把 Python warnings 收进同一流；壳记模型核对与加载耗时、每文件窗口数／失败数／推理秒数，每个失败窗口一行 WARNING（只记序号与 reason，不记文字），`protocol` 对单文件失败、`FatalWorkerError` 与启动失败记 ERROR（异常类型＋traceback）。推理模块不发日志，stdout 只留协议 JSON 行；stderr 的存放与告警计数见[批次编排：运行日志](batch-orchestration.md#运行日志)。
+
+`cross` 引擎新增的接口（**实施中**，标记见上节；T7 随上节一并去掉）：`WhisperAsr.score(audio, chunk, texts, max_batch=16) -> list[float]`，对同一窗口音频编码一次、为每个候选文本返回 Σ log `text_token_probs`（不含结束符；`texts` 为空返回空列表；超过 `max_batch` 分批）；`kototoki.judge.judge_window(...)` 是纯函数，输入一个窗口的两路文本与打分函数，返回合并文本与该窗口的审计记录。`judge` 属基础层，不导入 torch、`experiments`、`kototoki_eval`，不导入任何推理模块；打分函数由 worker 壳传入。`cross` 不新增推理模块，壳 `workers/asr.py` 同时持有 `WhisperAsr` 与 `QwenAsr`。
 
 ## 代码与验证入口
 
@@ -59,3 +91,5 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 票据 `.scratch/bilingual-subtitle-pipeline/issues/03-stt-workers.md`、`07-x0-engine.md`；规格 §1.2、§4、§6、§7.1、§7.3、§12；票据 01 smoke #1–#3（`.local/smoke/20261014T045328Z/`）。来源代码：`experiments/w0_demo/vad_candidates.py`（`CurrentPyannoteVad`、`chunk_intervals`）、`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`（`check_gpu`）、`experiments/w0_demo/alignment.py`、`experiments/w0_demo/pipeline.py`（units 不变量）、`kototoki_eval/schema.py`。共用的 CUDA 守卫放在新文件 `workers/gpu.py`（2026-10-14 用户裁定，不改票据 00 的 `protocol.py`）。三壳各自的 `identity`／`model_files`／`RECIPE_HASH` 于票据 `14-stage-plan-module.md`（2026-10-15）迁入[阶段计划](stage-plan.md)，取值不变。
 
 2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：两个冻结窗口门禁从 `tests/` 移到 `scripts/smoke/`，改由真实模型验证入口 `just smoke` 运行；测试移入 `tests/core/`（分层见[测试设计与验收](../../agents/testing.md#分层)）。
+
+2026-10-19 `cross` 引擎设计：**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** 增量说明 [changes 文档](../../changes/cross-asr-judge.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)，票据 `.scratch/cross-asr-judge/`。asr 阶段新增引擎取值 `cross`（w0 与 x0 共驻、Whisper 交叉打分裁判），默认仍为 `w0`；依据[交叉打分](../../research/2026-10-19-asr-pair-cross-score.md)等四份同日研究。

@@ -51,6 +51,11 @@ ALIGN = "align.json"
 JA_CUES = "ja-cues.json"
 PUBLISHED = "published.json"
 FAILURE = "failure.json"
+# cross 引擎的审计产物（两路原始结果与裁决记录）：不在 STAGE_ARTIFACTS，不参与 `is_current` 与阶段计划，
+# 也不进 LOCAL_TIME_ARTIFACTS（该集合只约束经 `write_artifact` 写出、且被编排读偏移的阶段产物）。
+ASR_W0 = "asr-w0.json"
+ASR_X0 = "asr-x0.json"
+ASR_JUDGE = "asr-judge.json"
 
 # failure.json 记录"已完成产物"时按此顺序检查是否存在。
 STAGE_ARTIFACTS = (PROBE, AUDIO_16K, VAD, ASR, ALIGN, JA_CUES, PUBLISHED)

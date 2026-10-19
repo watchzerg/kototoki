@@ -66,6 +66,18 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(default.models.vad, config.REPO_ROOT / ".local/models/vad-comparison/"
                          "pyannote-segmentation-3.0/pytorch_model.bin")
 
+    def test_cross_engine_is_accepted_and_carries_both_asr_models(self) -> None:
+        cfg = config.load(self.write(MINIMAL + '[stt]\nengine = "cross"\n'), environ={})
+        self.assertEqual(cfg.engine, "cross")
+        self.assertEqual(config.ENGINES, ("w0", "x0", "cross"))
+        self.assertEqual(cfg.models.w0, config.REPO_ROOT / ".local/models/faster-whisper-large-v3")
+        self.assertEqual(cfg.models.w0_mel_assets, config.REPO_ROOT / ".local/models/w0-assets")
+        self.assertEqual(cfg.models.x0, config.REPO_ROOT / ".local/models/qwen3-asr-1.7b-hf")
+
+    def test_unknown_engine_message_lists_all_engines(self) -> None:
+        with self.assertRaisesRegex(config.ConfigError, r"one of w0, x0, cross, got 'w1'"):
+            config.load(self.write(MINIMAL + '[stt]\nengine = "w1"\n'), environ={})
+
     def test_unknown_keys_and_sections_are_errors(self) -> None:
         for text, needle in ((MINIMAL + "bogus = 1\n", "bogus"),
                              (MINIMAL + "[vad]\ndevice = \"cpu\"\n", "device"),

@@ -19,6 +19,7 @@
 | VAD 与分窗 | Pyannote `segmentation-3.0`（revision `e66f3d3b…`），powerset 原生检测，onset／offset 0.5，`source-span-merge-v1`：≤30 s、整数样本坐标、保留块内间隙 | [ADR-0003](../adr/0003-new-pyannote-baselines.md) |
 | ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链 | [W0 契约](w0-reusable-demo.md) |
 | ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](x0-reusable-demo.md) |
+| ASR `cross`（可选，默认仍为 `w0`） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0 转写、再 x0 转写，然后由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变。**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../changes/cross-asr-judge.md) 为准** | [ADR-0012](../adr/0012-cross-asr-judge.md)、[交叉打分研究](../research/2026-10-19-asr-pair-cross-score.md) |
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
 | 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2 给出初值） | [显示契约](../testing/demo-display-contract.md)为起点 |
 | 翻译 | Hy-MT2 30B-A3B APEX-I-Compact，`official30b-cached-v1` 采样，joint 提示；切包 `dp10-cut`（每批待译 ≤10 条、可见 ≤12 条，按停顿动态规划切点、≥20 s 必切，前邻 <5 s／后邻 <1 s 可见；2026-10-18 起，之前为 `b10-joint` 的 1-10-1） | [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0011](../adr/0011-dp10-cut-product-recipe.md) |
@@ -86,7 +87,7 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 | probe | ffprobe 读取全部流：音轨按 `language=jpn` 且非 `disposition.comment` 优先，再按 `disposition.default`，多条匹配告警并记录；没有匹配选第一条音轨并告警；记录绝对流索引、编码、声道布局、`start_time`、时长，以及字幕流清单（只记录，第一版不使用） | 视频 → `probe.json` | CPU | <1 s |
 | extract | ① ffmpeg `-c:a copy` 把选中音轨原样写出，容器按 §2.1 选；② 从视频容器按绝对流索引解码该音轨，`aresample=async=1:first_pts=0` 保留时间轴（起始静音补齐、间隙补零，sample 0 即视频 0 秒），按 §2.2 下混，重采样 16 kHz，PCM16 WAV；ffmpeg verbose 日志写入工作目录；校验解码时长对视频流时长（§2.2）；记录 PCM SHA256、样本数、`offset_s = 0` | 视频 → `audio.<ext>`、`audio-16k.wav`、`extract.log` | CPU | ① 秒级 ② 约 10–30 s |
 | vad | Pyannote 检测 → 源跨度合并 → manifest | `audio-16k.wav` → `vad.json` | GPU（VAD 允许 CPU） | 加载 28 s，推理 20 s |
-| asr | 逐窗识别，纯文字 | `audio-16k.wav`+`vad.json` → `asr.json` | GPU | w0：加载 7 s，推理 150–170 s；x0：加载 19 s，推理 365–395 s |
+| asr | 逐窗识别，纯文字 | `audio-16k.wav`+`vad.json` → `asr.json`（`cross` 另写审计文件 `asr-w0.json`、`asr-x0.json`、`asr-judge.json`） | GPU | w0：加载 7 s，推理 150–170 s；x0：加载 19 s，推理 365–395 s；`cross`：约为 w0 阶段墙钟的 3.8 倍（w0 转写＋x0 转写＋Whisper 打分，两部电影估算 1226 s 对 323 s，T6 记实测；实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../changes/cross-asr-judge.md) 为准） |
 | align | 逐窗 CTC 对齐，字符时间 | `audio-16k.wav`+`asr.json` → `align.json`（现有 `result.json` 结构） | GPU | 加载 17 s，推理 53–56 s |
 | ja-cues | 字符 units → 日文 cue，含无时间字符的时间回填 | `align.json` → `ja.srt`+`ja-cues.json` | CPU | <1 s |
 | translate | 产品配方 `dp10-cut-degrade-v1` 整片翻译（ADR-0011），续跑语义沿用 v3 | `ja.srt` → `zh.srt`+翻译 run 目录 | GPU（独占） | 1993 条约 270 s，387 条约 66 s；另加模型加载 |
@@ -131,7 +132,7 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 
 | 考虑 | 分阶段批处理（采用） | 逐文件全流程 |
 | --- | --- | --- |
-| 显存 | 任一时刻只有一个模型驻留；翻译峰值 15.7–15.8 GB 已接近 16 GB 整卡，无法与任何 STT 模型共存 | 需要 VAD+ASR+MMS 共驻（估计 10–12 GB，未验证），翻译仍必须单独一段 |
+| 显存 | 任一时刻只有一个模型驻留；翻译峰值 15.7–15.8 GB 已接近 16 GB 整卡，无法与任何 STT 模型共存。**例外**：`cross` 引擎的 asr 阶段内 Whisper 与 Qwen 同进程共驻，估约 11.5 GB（单独峰值相加，未实测）；探针实测峰值加 1 GB 余量仍 ≤ 13.5 GB 才共驻，否则回退为 Whisper 整批转写 → 卸载 → Qwen 整批转写 → 卸载 → Whisper 整批打分的三段式，产物与接口不变。MMS 对齐与翻译不变，仍独立阶段、不与之共驻（实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../changes/cross-asr-judge.md) 为准） | 需要 VAD+ASR+MMS 共驻（估计 10–12 GB，未验证），翻译仍必须单独一段 |
 | 模型加载开销 | 每阶段每批一次：Pyannote 28 s、MMS 17 s、whisper 7 s、Qwen 19 s、llama-server 约 1 min | 每文件重复一次，20 部电影多付约 20–40 分钟 |
 | 首个结果出现时间 | 整批 STT 结束后才有第一份 `ja.srt`，整批翻译结束后才有第一份双语 SRT | 第一部电影约 10 分钟后完成 |
 | 失败隔离 | 一个文件失败只跳过它，阶段继续 | 同样可做 |
@@ -177,6 +178,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4]  [translate 1 2 3 4]
     extract.log          ffmpeg verbose 日志（补偿统计）
     vad.json             身份：PCM SHA256 + VAD 配方 hash
     asr.json             最贵的 STT 阶段；每窗文字与 trace、failed_windows，不含音频
+    asr-w0.json、asr-x0.json、asr-judge.json   仅 `engine = cross`：两路各自完整的 `asr.json` 结构与裁判审计记录；审计产物，不参与身份与跳过判定（实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../changes/cross-asr-judge.md) 为准）
     align.json           权威 STT 证据：全文、units、text_only、对齐记录
     ja-cues.json         cue ↔ unit 映射、时间回填记账、未渲染文字记账
     translate/srt-<sha12>/<配方名>__s<seed>/   v3 风格 run，按 ja.srt 的 SHA256 分键、再按配方与 seed 分目录：run.json、batches.jsonl、scene.json、transport；可续跑
@@ -229,7 +231,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；不 import torch)
  ├─ ThreadPool → ffmpeg/ffprobe 子进程（CPU 队列）
  ├─ python -m kototoki.workers.vad    --jobs batch.json   (子进程，加载一次，循环文件)
- ├─ python -m kototoki.workers.asr    --jobs batch.json   (引擎取 jobs 的 config.engine：w0|x0)
+ ├─ python -m kototoki.workers.asr    --jobs batch.json   (引擎取 jobs 的 config.engine：w0|x0|cross)
  ├─ python -m kototoki.workers.align  --jobs batch.json
  ├─ llama-server + 进程内 HTTP 客户端循环翻译（一个 server session 服务整批）
  └─ 进程内 ja-cues / merge
@@ -355,7 +357,7 @@ force = false                           # true 时允许覆盖已被改动的最
 stable_check_s = 10                     # 两次采样大小不变才视为写入完成（不用 mtime，拷贝工具常保留源 mtime）
 
 [stt]
-engine = "w0"                           # w0 | x0
+engine = "w0"                           # w0 | x0 | cross（cross 需要 [asr.w0] 与 [asr.x0]）
 
 [vad]
 model  = "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"   # 设备固定 cuda:0，第一版无配置键
@@ -392,7 +394,7 @@ seed  = 20261008
 | 放配置文件（用户关注、不改变模型行为） | 留在代码 `recipes.py`／`translate/recipes.py`（改动即新配方 hash） |
 | --- | --- |
 | 所有路径、模型目录、二进制位置（GPU 锁路径除外） | VAD onset／offset、30 s 窗口与合并策略、设备 `cuda:0`、下混矩阵与重采样参数 |
-| 并发数、端口、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳；x0：BF16、greedy、4096 |
+| 并发数、端口、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳；x0：BF16、greedy、4096；cross：裁判阈值 −1.0、无长度项、打分批上限 16、守卫（配方 `CROSS`） |
 | 输入扩展名、音轨语言偏好 | MMS FP32、归一化、字符映射 |
 | cue 显示规则（§5.2） | 翻译采样 `official30b-cached-v1`、dp10-cut 切包与 joint 提示、grammar、context 8192 |
 | 翻译 seed | 翻译请求重试次数、失败分类、降级策略 |
@@ -463,3 +465,5 @@ seed  = 20261008
 2026-10-15（票据 15 实施）：翻译 run 目录键、翻译身份与"是否需要模型"归翻译子系统 `translate.plan`（§1.2 已记）；`translate/data.py` 并入 `batching.py`。review 修订：GPU 锁的翻译阶段获取移进 `translate_batch` 并只在有文件 `needs_model` 时发生，session 失败只影响需要模型的文件，`TranslatePlan` 类型化（§3.3 随改）。配方内容变了而名字未变时 `plan` 拒绝并提示删目录，不自动另开目录（零迁移，与 v3 一致）。
 
 2026-10-18（票据 16 实施，[ADR-0011](../adr/0011-dp10-cut-product-recipe.md)）：用户裁定把研究基线 `dp10-cut` 合并到产品，产品配方改为 `dp10-cut-degrade-v1`（§1.2 两处、§6 已改）：`Cue` 带 `ja.srt` 的起止秒，切包与邻文按 ADR-0010，降级子批次用同一条邻文规则；不迁移旧 run、不加开关，已交付影片的翻译身份过期、下次整批重译（用户接受）。`tests/test_translate.py` 的合成 SRT 每 10 条之间留 20 s 停顿，使批次机制用例仍是 10 条一批。
+
+2026-10-19（`cross` 引擎设计，[ADR-0012](../adr/0012-cross-asr-judge.md)，proposed）：用户裁定在 asr 阶段内新增可选引擎 `cross`（w0 与 x0 共驻、逐文件两路转写、Whisper 交叉打分合并），默认仍为 `w0`，阶段链与下游接口不变；本文 §1.1、§2、§3.2、§4、§7.1、§10 按目标行为补记，均标注"实施中"，**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../changes/cross-asr-judge.md) 为准**。

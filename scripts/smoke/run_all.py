@@ -23,7 +23,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 GPU_LOCK = REPO / ".local/gpu.lock"
 SMOKES = ("forced_align", "vad_pyannote", "ct2_after_torch", "llama_stock", "stt_frozen_window", "x0_frozen_window",
-          "translate_product")
+          "translate_product", "whisper_score")
 PRIVATE_DLL_DIR = "whisper-runtime-provisional"
 
 

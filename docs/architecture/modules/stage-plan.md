@@ -28,6 +28,8 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► translate �
 
 **模型文件清单**：`worker_models(config)` 给出 jobs `config.models` 的路径表（`Config.models` 的同名键：`vad`、`w0`、`w0_mel_assets`、`x0`、`align`）；`model_files(stage, models, engine=…)` 给出 GPU 阶段加载前要核对的 `{名称: (路径, 期望 SHA256)}`：segmentation-3.0 `pytorch_model.bin`；faster-whisper-large-v3 的 `config.json`／`model.bin`／`preprocessor_config.json`／`tokenizer.json`／`vocabulary.json` 与 `w0-assets/mel_filters.npz`；qwen3-asr-1.7b-hf 的 `model.safetensors` 与全部 `.json`／`.jinja`（共 7 个）；mms-1b-all 的 adapter、`model.safetensors` 与 5 个配置／词表文件。期望值取自 W0／X0 基线运行记录，核对结果即身份的 `models` 字段。模型文件的 SHA256 本模块不算，由调用方经 `ModelSha` 回调（阶段名 → `{模型文件名: SHA256}`）提供：编排用 `workers/gpu.verify_models` 加 size+mtime 缓存，每次运行每阶段最多一次。
 
+**cross 引擎的 asr 身份（实施中）**：**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** 现状的 `ASR_RECIPES` 只有 `w0`、`x0` 两项；目标是三项（加 `cross` → `recipes.CROSS`），`recipe_hash("asr", engine="cross")` 与 `asr_identity("cross", …)` 随之可用。`cross` 的 `asr.json` 身份：上游 PCM SHA256 ＋ `vad.json` SHA256 ＋ `recipe_hash(CROSS)` ＋ 两路模型文件 SHA256，即 w0 模型（`config.json`／`model.bin`／`preprocessor_config.json`／`tokenizer.json`／`vocabulary.json`）、mel 资产 `mel_filters.npz` 与 x0 模型（7 个文件）；`model_files("asr", models, engine="cross")` 因而返回 w0 与 x0 两套清单。`CROSS` 配方字典嵌入 `W0`、`X0` 与裁判参数，一个 hash 覆盖全部，任一子配方变化即身份变化（字段见[配置与配方](config-and-media.md)）。身份字段与键名不变，其它阶段的身份函数与阶段链不变；`asr-w0.json`／`asr-x0.json`／`asr-judge.json` 是审计产物，不进 `STAGE_OUTPUT`，不参与 `is_current`（见[产物契约](artifact-contract.md)）。
+
 **计划**：`Target(work_dir, finals, probe, pcm_sha256)` 是一个文件在 CPU 阶段之后已知的常量。`Plan` 是不可变值：`stage`（第一个需要运行的阶段，或终态 `publish`：无语音，直接发布零条目 SRT；`done`：已发布且身份匹配、最终文件未改动）、`identities`（`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `published.json` 的 `sources`）、`no_speech`、`translate`（核对到翻译阶段后才有的 `TranslatePlan`，否则 `None`），以及发布记录用的 `sources`（无语音时只含 `probe`、`vad`）。
 
 - `next_stage(target, config, models)`：从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果（`cues` 阶段同时要求 `ja.srt` 在）；`vad.json` 的 `chunks` 为空即无语音，跳到发布判定；全部当前时对照 `published.json`：`sources` 与期望相同且三份最终文件 SHA 等于记录即 `done`，否则 `translate`（无语音时 `publish`）。每文件每次运行调用一次。
@@ -48,3 +50,5 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► translate �
 ## 变更与决策来源
 
 票据 `.scratch/bilingual-subtitle-pipeline/issues/14-stage-plan-module.md`（2026-10-15 架构评审候选 1：把散在六处的阶段链与身份收进一个模块）、`15-translate-run-key.md`（翻译 run 键、身份与 `needs_model` 归翻译子系统，本模块只转问）；规格 §1.2、§4、§13。
+
+2026-10-19 `cross` 引擎的 asr 身份：**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** [增量说明](../../changes/cross-asr-judge.md) §2.3、[ADR-0012](../../adr/0012-cross-asr-judge.md)，票据 `.scratch/cross-asr-judge/`。

@@ -43,7 +43,7 @@ STAGE_INPUTS = {"vad": (("wav", artifacts.AUDIO_16K),),
 # `published.json` 的 `sources` 里各阶段身份的键（`cues` 阶段的产物是 `ja-cues.json`）。
 IDENTITY_KEY = {"vad": "vad", "asr": "asr", "align": "align", "cues": "ja_cues", "translate": "translate"}
 
-ASR_RECIPES = {"w0": recipes.W0, "x0": recipes.X0}
+ASR_RECIPES = {"w0": recipes.W0, "x0": recipes.X0, "cross": recipes.CROSS}
 
 # --- 模型文件：路径键（`Config.models` 的同名键）与固定 SHA256 ----------------------------------------
 
@@ -96,11 +96,15 @@ def model_files(stage: str, models: Mapping[str, str], *, engine: str | None = N
         raise ValueError(f"{stage!r} is not a GPU stage")
     if engine not in ASR_RECIPES:
         raise ValueError(f"ASR engine {engine!r} is not available")
-    if engine == "x0":
-        return {f"qwen3-asr-1.7b-hf/{name}": (Path(models["x0"]) / name, sha256) for name, sha256 in X0_FILES.items()}
-    files = {f"faster-whisper-large-v3/{name}": (Path(models["w0"]) / name, sha256) for name, sha256 in W0_FILES.items()}
-    files["w0-assets/mel_filters.npz"] = (Path(models["w0_mel_assets"]) / "mel_filters.npz",
-                                          recipes.W0["features"]["mel_sha256"])
+    files: dict[str, tuple[Path, str]] = {}
+    if engine in ("w0", "cross"):
+        files |= {f"faster-whisper-large-v3/{name}": (Path(models["w0"]) / name, sha256)
+                  for name, sha256 in W0_FILES.items()}
+        files["w0-assets/mel_filters.npz"] = (Path(models["w0_mel_assets"]) / "mel_filters.npz",
+                                              recipes.W0["features"]["mel_sha256"])
+    if engine in ("x0", "cross"):
+        files |= {f"qwen3-asr-1.7b-hf/{name}": (Path(models["x0"]) / name, sha256)
+                  for name, sha256 in X0_FILES.items()}
     return files
 
 

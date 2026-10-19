@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 import sys
 
-from kototoki import artifacts, plan, srt
+from kototoki import artifacts, plan, recipes, srt
 from kototoki.config import load
 
 MODELS = {"fake-model": "b" * 64}
@@ -201,6 +201,46 @@ class PurityTests(PlanCase):
         self.assertIn("asr model missing", str(context.exception))
         (self.work / artifacts.VAD).write_text("{not json", encoding="utf-8")
         self.assertEqual(self.next().stage, "vad")  # 损坏的产物不是错误，而是"不当前"
+
+
+class AsrEngineTests(unittest.TestCase):
+    WORKER_MODELS = {"vad": "v", "w0": "w", "w0_mel_assets": "m", "x0": "x", "align": "a"}
+
+    def test_cross_model_files_are_the_union_of_w0_and_x0(self) -> None:
+        w0 = plan.model_files("asr", self.WORKER_MODELS, engine="w0")
+        x0 = plan.model_files("asr", self.WORKER_MODELS, engine="x0")
+        cross = plan.model_files("asr", self.WORKER_MODELS, engine="cross")
+        self.assertEqual(cross, w0 | x0)
+        self.assertEqual(len(cross), len(plan.W0_FILES) + 1 + len(plan.X0_FILES))
+        self.assertEqual(cross["w0-assets/mel_filters.npz"][0], Path("m") / "mel_filters.npz")
+        self.assertEqual(cross["qwen3-asr-1.7b-hf/model.safetensors"][0], Path("x") / "model.safetensors")
+        self.assertFalse(set(w0) & set(x0))
+
+    def test_cross_identity_carries_both_model_shas_and_the_cross_recipe_hash(self) -> None:
+        shas = {name: "d" * 64 for name in plan.model_files("asr", self.WORKER_MODELS, engine="cross")}
+        identity = plan.asr_identity("cross", PCM, "e" * 64, shas)
+        self.assertEqual(identity["recipe_hash"], recipes.recipe_hash(recipes.CROSS))
+        self.assertEqual(plan.recipe_hash("asr", engine="cross"), recipes.recipe_hash(recipes.CROSS))
+        self.assertIn("qwen3-asr-1.7b-hf/model.safetensors", identity["models"])
+        self.assertIn("faster-whisper-large-v3/model.bin", identity["models"])
+        other = {**shas, "qwen3-asr-1.7b-hf/model.safetensors": "f" * 64}  # 任一路模型 SHA 变化即不同身份
+        self.assertNotEqual(identity, plan.asr_identity("cross", PCM, "e" * 64, other))
+
+    def test_existing_engine_identities_are_unchanged(self) -> None:
+        self.assertEqual(plan.recipe_hash("asr", engine="w0"),
+                         "127397b52558bbaab0f57a61bf55d1a446d90db1c3db933a07ef8a834fa1f7ba")
+        self.assertEqual(plan.recipe_hash("asr", engine="x0"),
+                         "5d1bec25fbb4acae6d82a866620faf75e2c55498aa304c1dadd7dc401bfd057b")
+        self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="w0")), len(plan.W0_FILES) + 1)
+        self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="x0")), len(plan.X0_FILES))
+
+    def test_worker_models_pass_both_asr_entries_for_cross(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            toml = Path(tmp) / "kototoki.toml"
+            toml.write_text('[paths]\ninput_dir = "in"\noutput_dir = "out"\n[stt]\nengine = "cross"\n',
+                            encoding="utf-8")
+            worker_models = plan.worker_models(load(toml))
+        self.assertTrue({"w0", "w0_mel_assets", "x0"} <= set(worker_models))
 
 
 class StageTableTests(unittest.TestCase):

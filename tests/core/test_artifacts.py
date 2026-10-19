@@ -145,6 +145,16 @@ class ArtifactTests(TempCase):
         with self.assertRaises(ValueError):
             a.write_artifact(self.root / a.JA_CUES, self.identity(), {"identity": {}})
 
+    def test_cross_audit_artifacts_are_outside_the_stage_chain(self) -> None:
+        names = (a.ASR_W0, a.ASR_X0, a.ASR_JUDGE)
+        self.assertEqual(names, ("asr-w0.json", "asr-x0.json", "asr-judge.json"))
+        for name in names:
+            self.assertNotIn(name, a.STAGE_ARTIFACTS)
+            self.assertNotIn(name, a.LOCAL_TIME_ARTIFACTS)
+            (self.root / name).write_text("{}", encoding="utf-8")
+        a.write_failure(self.root, "asr", RuntimeError("boom"))
+        self.assertEqual(a.read_json(self.root / a.FAILURE)["completed"], [])
+
     def test_failure_lists_existing_stage_artifacts(self) -> None:
         a.write_artifact(self.root / a.VAD, self.identity(), {"offset_s": 0})
         (self.root / a.PROBE).write_text("{}", encoding="utf-8")

@@ -23,7 +23,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GPU_LOCK = REPO_ROOT / ".local" / "gpu.lock"
 BREAK_STALE_LOCK_ENV = "KOTOTOKI_BREAK_STALE_LOCK"
-ENGINES = ("w0", "x0")
+ENGINES = ("w0", "x0", "cross")  # cross 需要 asr.w0 与 asr.x0 两路模型，DEFAULTS 已都带默认
 
 REQUIRED = object()  # 无默认值的键
 

@@ -17,6 +17,8 @@
 
 **配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`MMS`、`CUES` 六个字典，`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）：VAD 固定设备 `cuda:0`、Pyannote revision `e66f3d3b…`、`source-span-merge-v1`；w0 beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链；x0 BF16、SDPA、greedy、4096；MMS FP32、`jpn` adapter、字典按模型类数过滤；cue 的切分顺序、回填方式、整窗回退每字符时长上限 0.25 s（与 `cues.FALLBACK_MAX_CHAR_S` 相等，有测试钉住）与毫秒取整（数值规则在配置 `[cues]`，`max_gap_s` 默认 1.0（票据 04），作为影响输出的配置键另入身份）。
 
+**cross 引擎的配置与配方（实施中）**：**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** 现状的 `stt.engine` 只接受 `w0`／`x0`（上文）；目标是接受 `w0 | x0 | cross`，默认仍为 `w0`。`cross` 需要 `[asr.w0]` 与 `[asr.x0]` 两节的模型路径（默认值已存在），不新增配置键，其它值仍抛 `ConfigError`。配方字典由六个增至七个：`CROSS`（id `cross-w0-x0-whisper-judge-v1`）嵌入 `W0` 与 `X0` 两个子配方和裁判参数——判定阈值 `margin` −1.0、`length_weight` 0.0（无长度项）、打分批上限 `max_batch` 16、文本形式（w0 原文，只替换分歧区间的字符）、start_sequence 约定（`tokenizer.sot_sequence` 即 `<|startoftranscript|><|ja|><|transcribe|>`，CT2 自动接 `<|notimestamps|>`，等价于产品无时间戳、无 initial prompt 的提示）、守卫（相同窗口不打分、空结果取 w0、x0 失败窗口取 w0、w0 失败窗口保持失败、打分抛错的窗口取 w0 并计数）。裁判参数是配方常量而非配置项，一个 `recipe_hash(CROSS)` 覆盖全部，任一子配方或参数变化即新身份。
+
 **下混常量**（`recipes.PAN`，进 `MEDIA` 因而进 hash）：单声道 `anull` 直通；双声道 `pan=mono|c0=0.5*c0+0.5*c1`（与基线证据相同）；`5.1`、`5.1(side)`、`6.1`、`7.1` 用前左右 1、中置 0.707、环绕 0.707、丢 LFE 的权重除以权重和、向下截到 6 位小数，系数和 ≤ 1，满幅同相输入不削波。表达式按声道序号引用；ffprobe 未给布局时按声道数取 `mono`／`stereo`／`5.1`／`7.1`；其它布局（如 `5.0`、`quad`）报 `MediaError`。不用 `-ac 1`。
 
 **probe**（`kototoki/media.py`，`probe(path, config) -> Probe`）：ffprobe `-show_streams -show_format` 全部流；原始 JSON 保留在 `Probe.ffprobe`（供 `artifacts.video_identity` 取指纹），`Probe.payload()` 是 `probe.json` 的内容。
@@ -51,3 +53,5 @@
 票据 `.scratch/bilingual-subtitle-pipeline/issues/02-config-and-media.md`、`10-resampler-swr.md`、`11-duration-tag.md`；规格 §1.2 第三轮裁定表、§2.1、§2.2、§10。下混与重采样参数取自 `experiments/corpus/prepare_round2.py`，配方常量取自 `experiments/w0_demo/`（`vad_candidates.py`、`asr.py`、`alignment.py`）、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`。
 
 2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：ffmpeg 默认路径改指项目内 `.local/tools/ffmpeg/<version>/bin/`，构建与身份锁在 `assets.toml`（[依赖布局与资产清单](../../development/dependencies.md)）；`test_media_ffmpeg` 移入 full 层。
+
+2026-10-19 `cross` 引擎的配置与配方：**实施中（票据 .scratch/cross-asr-judge T5／T6），交付前以 [changes 文档](../../changes/cross-asr-judge.md) 为准。** [增量说明](../../changes/cross-asr-judge.md) §2.3、[ADR-0012](../../adr/0012-cross-asr-judge.md)，票据 `.scratch/cross-asr-judge/`。

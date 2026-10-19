@@ -45,8 +45,8 @@ recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carries the same packing int
 产品包 `kototoki/`，入口 `python -m kototoki [kototoki.toml]`：一批日语视频按阶段整批推进（probe／extract → vad → asr → align → ja-cues → translate → 发布），每部产出 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`。
 _Avoid_: 产品后端, 正式后端
 
-**STT 引擎（w0／x0）**：
-配置键 `stt.engine` 的取值，分别按 W0／X0 的配方在产品统一 CUDA 12.8 环境中运行；环境升级即新身份，与基线成绩的回归本期未做，不直接继承 W0／X0 的分数。
+**STT 引擎（w0／x0／cross）**：
+配置键 `stt.engine` 的取值，`w0`／`x0` 分别按 W0／X0 的配方在产品统一 CUDA 12.8 环境中运行；环境升级即新身份，与基线成绩的回归本期未做，不直接继承 W0／X0 的分数。`cross`（ADR-0012，proposed，**实施中**，票据 .scratch/cross-asr-judge T5／T6）是可选取值，默认仍为 `w0`：同一 asr worker 内 w0 与 x0 各转写一遍，再由 Whisper 对两路分歧区间做交叉打分（阈值 −1.0）合并成同构的 `asr.json`，配方 `cross-w0-x0-whisper-judge-v1`，不是新的 W0／X0 基线。
 
 **日文 cue**：
 翻译与字幕的最小单元：由 `align.json` 字符时间回填后按句末、软断点、字数与时长切出的一条日文字幕（`ja-cues.json`／`ja.srt`），中文译文与之一一对应。

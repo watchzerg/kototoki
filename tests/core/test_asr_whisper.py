@@ -9,6 +9,7 @@ import importlib
 import importlib.abc
 import importlib.util
 import sys
+import math
 import types
 import unittest
 from unittest import mock
@@ -113,6 +114,137 @@ class TranscribeTest(unittest.TestCase):
         self.chunks[1]["end_sample"] = 15000
         with self.assertRaises(ValueError):
             self.run_transcribe(lambda *args: {})
+
+
+NO_TIMESTAMPS = 50363
+SOT_SEQUENCE = [50258, 50266, 50360]
+
+
+class _FakeTokenizer:
+    """可预测的分词器：每个字符一个 token（`ord(c) % 50 + 1`）。"""
+
+    sot_sequence = tuple(SOT_SEQUENCE)
+    no_timestamps = NO_TIMESTAMPS
+    eot = 50257
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.tokenizer = mock.Mock()
+        self.tokenizer.decode_batch.return_value = ["文"]
+
+    def encode(self, text: str) -> list[int]:
+        return [ord(char) % 50 + 1 for char in text]
+
+
+def _prob(token: int) -> float:
+    return 1.0 / (token + 1)
+
+
+class ScoreTest(unittest.TestCase):
+    def setUp(self):
+        self.module, _ = import_with_fakes()
+        self.asr = object.__new__(self.module.WhisperAsr)
+        self.model = mock.Mock()
+        self.model.hf_tokenizer = object()
+        self.model.model.is_multilingual = True
+        # 与 faster-whisper `get_prompt(previous=[], without_timestamps=True)` 同形
+        self.model.get_prompt.side_effect = lambda tokenizer, previous, **kwargs: (
+            list(tokenizer.sot_sequence) + ([tokenizer.no_timestamps] if kwargs["without_timestamps"] else []))
+        self.model.encode.return_value = "encoder-output"
+        self.model.model.align.side_effect = self.align
+        self.asr._model, self.asr._filters = self.model, object()
+        self.asr.options = {}
+        self.audio = np.zeros(48000, dtype=np.float32)
+        self.chunk = {"start": 1.0, "end": 2.0, "start_sample": 16000, "end_sample": 32000}
+        self.aligned: list[tuple] = []
+        self.torch = mock.MagicMock()
+        self.features = mock.Mock(return_value=np.zeros((128, 3000), dtype=np.float32))
+        patches = (mock.patch.object(self.module, "features", self.features),
+                   mock.patch.object(self.module, "Tokenizer", _FakeTokenizer),
+                   mock.patch.object(self.module, "torch", self.torch),
+                   mock.patch.object(self.module, "ctranslate2", mock.MagicMock()))
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def align(self, view, start_sequence, text_tokens, num_frames):
+        self.aligned.append((start_sequence, text_tokens, num_frames))
+        return [types.SimpleNamespace(text_token_probs=[_prob(token) for token in tokens])
+                for tokens in text_tokens]
+
+    @staticmethod
+    def expected(text: str) -> float:
+        return sum(math.log(_prob(token)) for token in _FakeTokenizer().encode(text))
+
+    def test_scores_are_the_sum_of_log_probs_in_input_order(self):
+        texts = ["あい", "う", "えおか"]
+        scores = self.asr.score(self.audio, self.chunk, texts)
+        self.assertEqual(len(scores), 3)
+        for text, score in zip(texts, scores):
+            self.assertAlmostEqual(score, self.expected(text))
+
+    def test_window_audio_is_sliced_like_transcribe_and_frames_follow_the_window(self):
+        self.asr.score(self.audio, self.chunk, ["あ"])
+        window = self.features.call_args.args[0]
+        self.assertEqual(len(window), 16000)
+        self.assertEqual(self.features.call_args.args[1], self.asr._filters)
+        self.assertEqual(self.aligned[0][2], [100])  # ceil(16000 / 160)
+
+    def test_encoder_runs_once_and_texts_are_aligned_in_batches_of_at_most_16(self):
+        texts = [f"{chr(0x3042 + index)}" for index in range(40)]
+        scores = self.asr.score(self.audio, self.chunk, texts)
+        self.assertEqual(self.model.encode.call_count, 1)
+        self.assertEqual([len(call[1]) for call in self.aligned], [16, 16, 8])
+        self.assertEqual([tokens for call in self.aligned for tokens in call[1]],
+                         [_FakeTokenizer().encode(text) for text in texts])
+        self.assertEqual(self.torch.as_tensor.call_count, 1)
+        expanded = self.torch.as_tensor.return_value.expand
+        self.assertEqual([call.args[0] for call in expanded.call_args_list], [16, 16, 8])
+        for text, score in zip(texts, scores):
+            self.assertAlmostEqual(score, self.expected(text))
+
+    def test_max_batch_argument_is_honored(self):
+        self.asr.score(self.audio, self.chunk, ["あ", "い", "う"], max_batch=2)
+        self.assertEqual([len(call[1]) for call in self.aligned], [2, 1])
+
+    def test_empty_text_scores_zero_and_is_not_sent_to_align(self):
+        scores = self.asr.score(self.audio, self.chunk, ["", "あい", ""])
+        self.assertEqual(scores[0], 0.0)
+        self.assertEqual(scores[2], 0.0)
+        self.assertAlmostEqual(scores[1], self.expected("あい"))
+        self.assertEqual(sum(len(call[1]) for call in self.aligned), 1)
+
+    def test_all_empty_skips_features_encoder_and_align(self):
+        self.assertEqual(self.asr.score(self.audio, self.chunk, ["", ""]), [0.0, 0.0])
+        self.assertEqual(self.asr.score(self.audio, self.chunk, []), [])
+        self.features.assert_not_called()
+        self.model.encode.assert_not_called()
+        self.assertEqual(self.aligned, [])
+
+    def test_zero_probability_is_clamped(self):
+        self.model.model.align.side_effect = lambda *args: [types.SimpleNamespace(text_token_probs=[0.0])]
+        [score] = self.asr.score(self.audio, self.chunk, ["あ"])
+        self.assertAlmostEqual(score, math.log(1e-45))
+
+    def test_prob_count_mismatch_raises(self):
+        self.model.model.align.side_effect = lambda *args: [types.SimpleNamespace(text_token_probs=[0.5])]
+        with self.assertRaises(RuntimeError):
+            self.asr.score(self.audio, self.chunk, ["あい"])
+
+    def test_result_count_mismatch_raises(self):
+        self.model.model.align.side_effect = lambda *args: []
+        with self.assertRaises(RuntimeError):
+            self.asr.score(self.audio, self.chunk, ["あ"])
+
+    def test_start_sequence_is_the_generate_prompt_without_the_notimestamps_token(self):
+        options = {"initial_prompt": None, "without_timestamps": True, "prefix": None, "hotwords": None,
+                   "beam_size": 1, "patience": 1.0, "length_penalty": 1.0, "suppress_blank": True,
+                   "suppress_tokens": [], "no_repeat_ngram_size": 0, "repetition_penalty": 1.0}
+        self.model.model.generate.return_value = [types.SimpleNamespace(sequences_ids=[[7]], scores=[-0.5])]
+        prompt = self.module.generate(self.model, self.features.return_value, options)["prompt"]
+        self.asr.score(self.audio, self.chunk, ["あ"])
+        start_sequence = self.aligned[0][0]
+        self.assertEqual(start_sequence, SOT_SEQUENCE)
+        self.assertEqual(prompt, start_sequence + [NO_TIMESTAMPS])
 
 
 if __name__ == "__main__":

@@ -123,6 +123,38 @@ X0: dict[str, Any] = {
     "token_limit": "window reaching max_new_tokens is emptied and recorded in failed_windows",
 }
 
+# --- ASR cross（w0 与 x0 的整窗输出逐区间由 w0 的 Whisper 打分裁决；依据 docs/research/2026-10-19-asr-pair-cross-score.md） ---
+
+CROSS: dict[str, Any] = {
+    "id": "cross-w0-x0-whisper-judge-v1",
+    # 嵌套两路子配方：任一子配方改动都会改变 cross 的 hash。
+    "w0": W0,
+    "x0": X0,
+    "judge": {
+        "scorer": "w0 ctranslate2 Whisper.align teacher-forced, score = sum log text_token_probs, EOT excluded, "
+                  "empty text = 0",
+        "start_sequence": "tokenizer.sot_sequence (<|startoftranscript|><|ja|><|transcribe|>), CT2 appends "
+                          "<|notimestamps|> itself; equals the product prompt without timestamps and "
+                          "without initial prompt",
+        "text_form": "raw window text; interval characters replaced via normalize offsets; "
+                     "whole window falls back to normalized text when any mapping fails",
+        "normalize": "NFKC, drop Unicode punctuation and whitespace (kototoki.judge.normalize, "
+                     "copied from kototoki_eval)",
+        "intervals": "char-level Levenshtein (tie: diagonal, delete, insert); maximal non-match runs",
+        "decision": "take x0 iff score_x - score_w > margin; independent per interval, "
+                    "all accepted flips applied together",
+        "margin": -1.0,
+        "length_weight": 0.0,
+        "max_batch": 16,
+        "identical_windows": "keep w0, not scored",
+        "empty_result": "keep w0",
+        "x0_failed_window": "keep w0",
+        "w0_failed_window": "stays failed",
+        "score_error": "keep w0, warn, count",  # 打分抛 RuntimeError：该窗口取 w0，不作窗口级失败
+        "x0_text_cleaning": "drop whitespace adjacent to a non-ASCII character in x0 text only; w0 text untouched",  # workers.asr.clean_x0
+    },
+}
+
 # --- 强制对齐（来源 experiments/w0_demo/alignment.py；MMS 对齐模块页） --------------------------------------
 
 MMS: dict[str, Any] = {
