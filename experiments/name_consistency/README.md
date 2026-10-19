@@ -7,13 +7,14 @@
 同一作品内人名／职阶名等专名在中文译文里写法不一致（产品整片不一致率 0.07–0.25）。思路是把"建表"和"用表"分开：
 
 1. `build_table.py`：通用 LLM（Qwen3.8-27B UD-IQ3_S，经 llama-server）读整份 `ja.srt`（剥时间轴、带 cue 编号，一部电影约 13–15K tokens），输出 `name-table-v2` JSON：每条 `entity_ja`、`zh`（展示用全名）、`forms: [{ja, zh}]`（转写稿里出现的每个日文写法，含 ASR 误识，各配**同粒度**的中文：姓对姓、名对名）、`zh_variants`（同一个词的其他写法）、`kind`、`confidence`、`evidence`。请求带 JSON schema（llama.cpp 转 grammar）与 Qwen 官方 non-thinking 采样；`finish_reason == length` 视为失败；失败重试一次（seed +1）。`--think` 开思考模式（输出上限 8192，服务器需 `--reasoning on --reasoning-budget 4096 -c 24576`）。
-2. `apply_table.py`：翻译配方不动，生成后在译文里把专名的变体写法统一成表里的中文。按写法锚定：cue 的日文含某个 `form.ja`（同一实体取最长的）就在该 cue 的译文里找落点，目标是该写法的 `zh`。落点来源：同实体其他写法的中文（仅限包含关系）、`zh_variants`（须通过译文特异性检验）、跨 cue 统计（复用 `experiments/quality_v5/consistency.py`，候选过形状与特异性过滤，落点扩到有支持的最长超串，含 `·` 的扩展须覆盖整个复合词）。目标的真子串视为省略形不扩写，包含目标的串视为已规范不缩写；落点紧邻 `·`／拉丁字母的跳过；都没命中就不动，只记 `unresolved.jsonl`。第二轮加了两条规则：**整个名字**——统计层候选互为子串时只留锚定 cue 最多的一个，扩展要求超串支持不少于原落点一半，最终落点两侧紧邻 `BOUNDARY_CHARS` 之外的汉字就视为没覆盖完整名字，不替换（`boundary`）；**中文名核对**——写法的目标 `zh` 须在同实体的锚定 cue 里出现过（`appears`）、与译者主写法近形（`near`）或是职阶的纯 ASCII 名（`class_ascii`），否则整个写法不动（`unverified_name`，列在 `summary.json` 的 `unverified_forms`）。第二轮证明它误拦的正确名字远多于拦对的错名，用户 2026-10-19 裁定放弃，默认关闭，`--name-check` 只作对照。**当前配置：no-think 建表＋规则一**（[第二轮报告](../../docs/research/2026-10-19-name-consistency-round2.md)）。`--min-confidence` 按表里的 confidence 过滤条目。`measure` 子命令对成对 SRT 算替换前后的不一致率。
+2. `apply_table.py`：翻译配方不动，生成后在译文里把专名的变体写法统一成表里的中文。按写法锚定：cue 的日文含某个 `form.ja`（同一实体取最长的）就在该 cue 的译文里找落点，目标是该写法的 `zh`。落点来源：同实体其他写法的中文（仅限包含关系）、`zh_variants`（须通过译文特异性检验）、跨 cue 统计（复用 `experiments/quality_v5/consistency.py`，候选过形状与特异性过滤，落点扩到有支持的最长超串，含 `·` 的扩展须覆盖整个复合词）。目标的真子串视为省略形不扩写，包含目标的串视为已规范不缩写；落点紧邻 `·`／拉丁字母的跳过；都没命中就不动，只记 `unresolved.jsonl`。第二轮加了两条规则：**整个名字**——统计层候选互为子串时只留锚定 cue 最多的一个，扩展要求超串支持不少于原落点一半，最终落点两侧紧邻 `BOUNDARY_CHARS` 之外的汉字就视为没覆盖完整名字，不替换（`boundary`）；**中文名核对**——写法的目标 `zh` 须在同实体的锚定 cue 里出现过（`appears`）、与译者主写法近形（`near`）或是职阶的纯 ASCII 名（`class_ascii`），否则整个写法不动（`unverified_name`，列在 `summary.json` 的 `unverified_forms`）。第二轮证明它误拦的正确名字远多于拦对的错名，用户 2026-10-19 裁定放弃，默认关闭，`--name-check` 只作对照。第三轮（[报告](../../docs/research/2026-10-19-name-consistency-round3.md)）加了四个开关：**孤立单字**（默认开，`--no-isolated-singles` 关）——单字译法（白）的特异性只按孤立出现统计，扩展超串首尾不得是边界字，一次补上 51 处 白→士郎 且全部正确；`--pool-by-target`（同实体同目标的写法合并统计并把二字组放进候选池，有害率 8%，错源是表里的错名，修表后再评）；`--bigram-isolation`（单字孤立按语料二字组判断，产生"士郎郎""Rider手"，不采纳）；`--iterate N`（跑到不动点，无效）。`merge_tables.py` 对两张 v2 表取交集（去掉了全部 7 条已知错映射但实体砍掉一半，不采纳）。**当前配置：no-think 建表＋规则一＋孤立单字**。`--min-confidence` 按表里的 confidence 过滤条目。`measure` 子命令对成对 SRT 算替换前后的不一致率。
 
 ## 命令（仓库根目录）
 
 ```
 python -X utf8 -m experiments.name_consistency.build_table --srt ja.srt --work NAME --out table.json [--url http://127.0.0.1:8081] [--think] [--dry-run]
-python -X utf8 -m experiments.name_consistency.apply_table --table table.json --ja ja.srt --zh zh.srt --out-dir DIR [--min-confidence low|medium|high] [--name-check]
+python -X utf8 -m experiments.name_consistency.apply_table --table table.json --ja ja.srt --zh zh.srt --out-dir DIR [--min-confidence low|medium|high] [--no-isolated-singles] [--pool-by-target] [--bigram-isolation] [--iterate N] [--name-check]
+python -X utf8 -m experiments.name_consistency.merge_tables --a think.json --b nothink.json --out both.json
 python -X utf8 -m experiments.name_consistency.apply_table measure --pair NAME ja.srt zh.srt [--pair ...] --out FILE
 ```
 
@@ -22,7 +23,7 @@ llama-server 启动参数（探针所用，b11669）：`-c 20480 -np 1 -ngl 99 -
 ## 测试
 
 ```
-.venv/Scripts/python.exe -X utf8 -m unittest experiments.name_consistency.test_build_table experiments.name_consistency.test_apply_table -v
+.venv/Scripts/python.exe -X utf8 -m unittest experiments.name_consistency.test_build_table experiments.name_consistency.test_apply_table experiments.name_consistency.test_merge_tables -v
 ```
 
 离线，不发 HTTP、不加载模型。
@@ -34,5 +35,6 @@ llama-server 启动参数（探针所用，b11669）：`-c 20480 -np 1 -ngl 99 -
 - 中文名核对以译者为证据：译者整片都没写对的名字（切嗣、间桐、爱因兹贝伦在 HF II／III 产品译文里一次都没出现）即使模型给对了也会被拦下；这是规则本身的代价，不是 bug，因此已放弃。
 - 单字 `form.ja` 会过度锚定。
 - 不幂等：统计层依赖整片语料，替换后统计变化，第二遍还会再改少量（四部共 9 处，都正确）。
-- 覆盖率低：锚定 cue 中目标名出现的比例只有 0.55–0.74，译者写成单字（シロ→白）的行几乎全部过不了特异性过滤（[第二轮报告 §6](../../docs/research/2026-10-19-name-consistency-round2.md)）。
+- 覆盖率：锚定 cue 中目标名出现的比例 0.62–0.80（第三轮默认），士郎约 40%；剩余是每 cue 都不同的一次性音译（艾米亚希罗／埃米亚希罗），统计方法覆盖不到。
+- no-think 表里的错名（HF III x0 的 `アンリマユ→安赫尔`、`マトウ増健→间桐慎二`，HF II x0 的 `造剣→言峰绮礼` 等）是当前剩余有害行的主要来源，须从建表侧解决。
 - 一致性指标与表同源，只能证明"照表执行"；准确性要另看 `changes.jsonl`。

@@ -21,6 +21,12 @@ changes 里记 extended_from。落点（扩展后）紧邻 ·／・ 或拉丁字
 或是职阶的纯 ASCII 名（class_ascii）；否则整个 form 不动，记 unverified_name 并列入 summary 的 unverified_forms。
 默认关闭（第二轮证明误拦多于拦对，已放弃），--name-check 打开，只作对照。
 
+孤立单字（默认开，--no-isolated-singles 关，对照用）：单字候选（如 白）的 a／b 只数孤立出现，扩展超串首尾不得是 BOUNDARY_CHARS（叫白 保留 叫）。
+--pool-by-target：同实体、同目标的 form 共用一个按并集锚定 cue 建的统计层（各 form 单独都撑不起 MIN_SUPPORT／MIN_RATIO 时合起来够），
+并把锚定 cue 里反复出现的二字组放进候选池。
+--bigram-isolation：单字的孤立改用语料口径，落点边界检查对统计层的单字同口径；孤立单字默认的 BOUNDARY_CHARS 口径不变。
+--iterate N：把输出再跑一遍直到不动点或 N 遍，changes 记 pass，summary["passes"] 记每遍改动的 cue 数。
+
 已知限制：单字的 form.ja（如 凛）会过度锚定（任何含该字的 cue 都被锚定），目前不处理。
 
 命令（仓库根目录）：
@@ -34,7 +40,7 @@ import math
 import re
 import sys
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from experiments.quality_v5 import consistency
@@ -44,6 +50,7 @@ CONFIDENCE_LEVELS = {"low": 0, "medium": 1, "high": 2}
 MIN_SUPPORT = 2  # 统计候选至少在这么多条锚定 cue 内出现
 MIN_RATIO = 0.8  # 候选出现的 cue 中，锚定 cue 至少占这个比例（特异性）
 MIN_SHARE = 0.04  # 相对支持度：至少占锚定 cue 数的这个比例，防止锚定很多的条目被偶发短语带偏
+WORD_MIN_COUNT = 2  # 二字组在非锚定 cue 里出现这么多次就算"词"（明白、白色），单字挨着它就不算孤立
 MAX_EXTEND = 6  # 统计层落点向左右扩展时，最多比原落点长这么多字
 EXTEND_SHARE = 0.5  # 扩展后的超串至少要有原落点这么大比例的锚定 cue 支持，否则 叫白 之类语境串会取代 白
 # 可以紧挨在专名旁边的常见虚词／动词单字，属人工判断的经验清单，不是穷举；落点另一侧若是清单外的汉字，视为没落在词边界上
@@ -143,11 +150,25 @@ def shape_problem(candidate: str, zh: str, max_len: int | None) -> str | None:
     return None
 
 
-def support(lowered: list[str], inside: set[int], candidate: str) -> tuple[int, int]:
-    """候选出现在锚定 cue（a）与非锚定 cue（b）的 cue 数，不区分大小写。"""
+def isolated_in(text: str, char: str) -> bool:
+    """单字在 text 里是否有孤立出现：两侧都不是汉字，或两侧的汉字都在 BOUNDARY_CHARS 内（叫白、白说算，明白、白色不算）。"""
+    def side_ok(k: int) -> bool:
+        return not (0 <= k < len(text)) or not ("一" <= text[k] <= "鿿") or text[k] in BOUNDARY_CHARS
+
+    start = text.find(char)
+    while start != -1:
+        if side_ok(start - 1) and side_ok(start + 1):
+            return True
+        start = text.find(char, start + 1)
+    return False
+
+
+def support(lowered: list[str], inside: set[int], candidate: str, has=None) -> tuple[int, int]:
+    """候选出现在锚定 cue（a）与非锚定 cue（b）的 cue 数，不区分大小写；has 可换成"孤立出现"之类的判定。"""
     needle = candidate.lower()
-    a = sum(1 for i in inside if needle in lowered[i])
-    b = sum(1 for i, text in enumerate(lowered) if i not in inside and needle in text)
+    has = has or (lambda text: needle in text)
+    a = sum(1 for i in inside if has(lowered[i]))
+    b = sum(1 for i, text in enumerate(lowered) if i not in inside and has(text))
     return a, b
 
 
@@ -187,8 +208,17 @@ class StatLayer:
 
     RUN_CHAR = re.compile(r"[一-鿿A-Za-z·・]")
 
-    def __init__(self, zh: str, zh_texts: list[str], anchored: list[int]):
+    def __init__(self, zh: str, zh_texts: list[str], anchored: list[int], isolated_singles: bool = False,
+                 bigram_isolation: bool = False, pool_bigrams: bool = False):
+        """isolated_singles：单字候选的 a／b 只数孤立出现（两侧是非汉字或 BOUNDARY_CHARS 内的汉字），
+        扩展的超串首尾也不得是 BOUNDARY_CHARS。
+        bigram_isolation：孤立改用语料口径——相邻汉字构成的二字组在非锚定 cue 里出现不足 WORD_MIN_COUNT 次
+        （不是词）才算孤立；同时开启上一项的扩展限制。
+        pool_bigrams：候选池里再加上锚定 cue 里反复出现的二字组（consistency 的池因背景计数过严而漏掉它们）。"""
         inside = set(anchored)
+        self.bigram_isolation = bigram_isolation
+        self.isolated_singles = isolated_singles or bigram_isolation
+        self._word_counts: dict[str, int] | None = None
         self.min_anchored = max(MIN_SUPPORT, math.ceil(MIN_SHARE * len(inside)))
         self.lowered = [text.lower() for text in zh_texts]
         self.inside = inside
@@ -212,12 +242,20 @@ class StatLayer:
                 char_cues[ch] += 1
         singles = [ch for ch, n in sorted(char_cues.items()) if n >= self.min_anchored and ch not in pool]
         accepted += [ch for ch in singles if self.accept(ch, record=False)]
+        bigrams: list[str] = []
+        if pool_bigrams:
+            gram_cues: dict[str, int] = defaultdict(int)
+            for i in inside:
+                for gram in {run[k:k + 2] for run in re.findall("[一-鿿]+", zh_texts[i]) for k in range(len(run) - 1)}:
+                    gram_cues[gram] += 1
+            bigrams = [g for g, n in sorted(gram_cues.items()) if n >= self.min_anchored and g not in pool]
+            accepted += [g for g in bigrams if self.accept(g, record=False)]
         # 互为子串的候选算一族，每族只留锚定 cue 数最多的（并列取更长的）作主候选；族内其余串只在扩展时参考
         bases: list[str] = []
         for candidate in sorted(accepted, key=lambda c: (-self.counts(c)[0], -len(c), c)):
             if not any(candidate in base or base in candidate for base in bases):
                 bases.append(candidate)
-                if candidate in singles:
+                if candidate in singles or candidate in bigrams:
                     a_count, b_count = self.counts(candidate)
                     self.kept.append({"text": candidate, "anchored": a_count, "other": b_count})
         self.rendering, self.alternatives = (bases[0], bases[1:]) if bases else (None, [])
@@ -225,8 +263,33 @@ class StatLayer:
         long_ones = [c for c in accepted if len(c) >= 3]
         self.near_base = max(long_ones, key=lambda c: (self.counts(c)[0], len(c), c)) if long_ones else None
 
+    @property
+    def word_counts(self) -> dict[str, int]:
+        """相邻汉字二字组在非锚定 cue 里出现的 cue 数（懒算一次）。"""
+        if self._word_counts is None:
+            counts: dict[str, int] = defaultdict(int)
+            for i, text in enumerate(self.lowered):
+                if i not in self.inside:
+                    for gram in {run[k:k + 2] for run in re.findall("[一-鿿]+", text) for k in range(len(run) - 1)}:
+                        counts[gram] += 1
+            self._word_counts = counts
+        return self._word_counts
+
+    def char_isolated(self, text: str, k: int) -> bool:
+        """text[k] 这个汉字是否孤立：两侧相邻若是汉字，二字组都不是"词"（bigram 口径）。"""
+        for gram, neighbour in ((text[k - 1:k + 1], k - 1), (text[k:k + 2], k + 1)):
+            if 0 <= neighbour < len(text) and "一" <= text[neighbour] <= "鿿" and self.word_counts.get(gram, 0) >= WORD_MIN_COUNT:
+                return False
+        return True
+
     def counts(self, candidate: str) -> tuple[int, int]:
-        return support(self.lowered, self.inside, candidate)
+        has = None
+        if self.isolated_singles and len(candidate) == 1 and "一" <= candidate <= "鿿":
+            if self.bigram_isolation:
+                has = lambda text: any(self.char_isolated(text, k) for k, ch in enumerate(text) if ch == candidate)
+            else:
+                has = lambda text: isolated_in(text, candidate)
+        return support(self.lowered, self.inside, candidate, has)
 
     def accept(self, candidate: str, near: bool = False, record: bool = True) -> bool:
         """过滤并记录；near 为近形变体（只在个别 cue 出现，不要求 a ≥ 2）；record=False 时不记落选（单字池太大）。"""
@@ -267,6 +330,8 @@ class StatLayer:
                         or superstring[0] in "·・" or superstring[-1] in "·・"
                         or (self.zh in superstring and superstring != self.zh)):
                     continue
+                if self.isolated_singles and (superstring[0] in BOUNDARY_CHARS or superstring[-1] in BOUNDARY_CHARS):
+                    continue  # 叫白 保留 叫：首尾是常见虚词／动词时，它们不属于名字
                 if ("·" in superstring or "・" in superstring) and (start - left, end + right) != (run_start, run_end):
                     continue
                 a, b = self.counts(superstring)
@@ -353,6 +418,14 @@ def bad_boundary(text: str, start: int, end: int) -> bool:
                for k in (start - 1, end) if 0 <= k < len(text))
 
 
+def unit_boundary(unit: "Unit", layer: str, text: str, start: int, end: int) -> bool:
+    """落点边界检查；bigram 口径下统计层的单字落点改用语料判断孤立，其余仍用 BOUNDARY_CHARS 清单。"""
+    stat = unit.stat
+    if layer == "stat" and stat is not None and stat.bigram_isolation and end - start == 1 and "一" <= text[start] <= "鿿":
+        return not stat.char_isolated(text, start)
+    return bad_boundary(text, start, end)
+
+
 def is_near_name(target: str, rendering: str) -> bool:
     """目标与译者实际用的主写法接近：等长且编辑距离 ≤ 1（伊莉亚／伊莉雅），或目标至少一半汉字出现在主写法里。"""
     if len(target) == len(rendering) and consistency.edit_distance(target, rendering) <= 1:
@@ -366,8 +439,10 @@ COUNTERS = ("anchored", "replaced_variant", "replaced_stat", "already_canonical"
             "unresolved_unverified_name")
 
 
-def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low",
-                name_check: bool = False) -> dict:
+def apply_pass(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low",
+               name_check: bool = False, isolated_singles: bool = True, pool_by_target: bool = False,
+               bigram_isolation: bool = False) -> dict:
+    """对一份译文跑一遍；statuses 记每个（实体，form，cue）这一遍落在哪个计数器上，供多遍合并时去重。"""
     zh_texts = [cue.text for cue in zh_cues]
     lowered = [text.lower() for text in zh_texts]
     entities = table["entries"]
@@ -388,9 +463,21 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
             others = [f["zh"] for f in forms if f["zh"] and f["zh"] != target and (target in f["zh"] or f["zh"] in target)]
             units.append(Unit(e, form["ja"], target, others, anchored, kept, dropped))
 
+    pooled: dict[tuple[int, str], StatLayer] = {}
+
     def stat_of(unit: Unit) -> StatLayer | None:
-        if unit.stat is None and unit.anchored:
-            unit.stat = StatLayer(unit.target, zh_texts, unit.anchored)
+        if unit.stat is not None or not unit.anchored:
+            return unit.stat
+        anchored = unit.anchored
+        if pool_by_target:  # 同实体、同目标的各 form 合并统计，各 form 共用一个 StatLayer
+            key = (unit.entity, unit.target)
+            if key not in pooled:
+                members = [v for v in units if (v.entity, v.target) == key]
+                pooled[key] = StatLayer(unit.target, zh_texts, sorted({i for v in members for i in v.anchored}),
+                                        isolated_singles, bigram_isolation, pool_bigrams=True)
+            unit.stat = pooled[key]
+        else:
+            unit.stat = StatLayer(unit.target, zh_texts, anchored, isolated_singles, bigram_isolation)
         return unit.stat
 
     # 目标名核对：目标 zh 必须得到译者自己用法的佐证，否则整个 form 不动
@@ -444,6 +531,7 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
                             overlapped.add((u, i))
 
     changes, unresolved = [], []
+    statuses: dict[tuple[int, str, int], str] = {}
     edits: dict[int, list[tuple[int, int, str]]] = defaultdict(list)
     rows = []
     for u, unit in enumerate(units):
@@ -451,6 +539,7 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
         stat = unit.stat
         row = {"form_ja": unit.form_ja, "target": unit.target, **dict.fromkeys(COUNTERS, 0),
                "anchored": len(unit.anchored), "name_check": unit.name_check,
+               "stat_pooled_cues": len(stat.inside) if stat else None,
                "stat_rendering": stat.rendering if stat else None,
                "stat_alternatives": stat.alternatives if stat else [],
                "zh_variants_dropped": unit.variants_dropped,
@@ -459,33 +548,39 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
         for i in unit.anchored:
             match = matches.get((u, i))
             record = {"index": ja_cues[i].number, "ja": ja_cues[i].text, "zh": zh_cues[i].text,
-                      "entry": entity["entity_ja"], "form_ja": unit.form_ja, "target": unit.target}
+                      "entry": entity["entity_ja"], "form_ja": unit.form_ja, "target": unit.target,
+                      "_key": (unit.entity, unit.form_ja, i)}
+
+            def mark(counter: str) -> None:
+                row[counter] += 1
+                statuses[record["_key"]] = counter
+
             if unit.name_check == "unverified":
-                row["unresolved_unverified_name"] += 1
+                mark("unresolved_unverified_name")
                 unresolved.append({**record, "reason": "unverified_name"})
             elif match is None:
-                row["unresolved_not_found"] += 1
+                mark("unresolved_not_found")
                 unresolved.append({**record, "reason": "not_found"})
             elif (u, i) in overlapped:
-                row["unresolved_overlap"] += 1
+                mark("unresolved_overlap")
                 unresolved.append({**record, "reason": "overlap"})
             else:
                 todo = to_replace(unit.target, match)
                 if not todo:
                     full = any(unit.target in span[2] for span in match.spans)
-                    row["already_canonical" if full else "partial_canonical"] += 1
+                    mark("already_canonical" if full else "partial_canonical")
                     continue
                 if any(in_compound(zh_cues[i].text, start, end) for start, end, _ in todo):
-                    row["unresolved_compound"] += 1
+                    mark("unresolved_compound")
                     unresolved.append({**record, "reason": "compound"})
                     continue
                 # 边界：紧邻清单外的汉字说明落点只是更长词的一段，该落点不动；一个落点都不剩才记 boundary
-                todo = [span for span in todo if not bad_boundary(zh_cues[i].text, span[0], span[1])]
+                todo = [span for span in todo if not unit_boundary(unit, match.layer, zh_cues[i].text, span[0], span[1])]
                 if not todo:
-                    row["unresolved_boundary"] += 1
+                    mark("unresolved_boundary")
                     unresolved.append({**record, "reason": "boundary"})
                     continue
-                row[f"replaced_{match.layer}"] += 1
+                mark(f"replaced_{match.layer}")
                 edits[i].extend((start, end, unit.target) for start, end, _ in todo)
                 for text in sorted({span[2] for span in todo}):
                     change = {"_cue": i, "index": ja_cues[i].number, "ja": ja_cues[i].text,
@@ -512,15 +607,67 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
         forms_rows = [row for unit, row in zip(units, rows) if unit.entity == e]
         if not forms_rows:
             continue
-        per_entity.append({"entity_ja": entity["entity_ja"], "zh": entity["zh"], "kind": entity.get("kind"),
+        per_entity.append({"_e": e, "entity_ja": entity["entity_ja"], "zh": entity["zh"], "kind": entity.get("kind"),
                            "confidence": entity.get("confidence"),
                            **{key: sum(row[key] for row in forms_rows) for key in COUNTERS}, "forms": forms_rows})
     totals = {key: sum(row[key] for row in per_entity) for key in COUNTERS}
     totals["cues_changed"] = len(edits)
     totals["entries_with_replacements"] = sum(1 for row in per_entity if row["replaced_variant"] + row["replaced_stat"])
-    return {"new_texts": new_texts, "changes": changes, "unresolved": unresolved,
+    return {"new_texts": new_texts, "changes": changes, "unresolved": unresolved, "statuses": statuses,
+            "changed_cues": sorted(edits),
             "summary": {"entries": per_entity, "entries_skipped_confidence": skipped,
                         "unverified_forms": unverified, "totals": totals}}
+
+
+def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low",
+                name_check: bool = False, iterate: int = 1, isolated_singles: bool = True,
+                pool_by_target: bool = False, bigram_isolation: bool = False) -> dict:
+    """跑 apply_pass；iterate > 1 时把输出当输入再跑，直到一遍 0 改动或达到遍数上限。
+
+    多遍的口径：changes 每条记 pass；summary["passes"] 是每遍改动的 cue 数；
+    各计数器按（实体，form，cue）取最终状态——某遍替换过的算 replaced（只算一次），否则取第一遍的状态，
+    所以第二遍里"刚被替换所以已规范"的 cue 不会重复计入 already_canonical；unresolved 取最后一遍并去掉已被替换的。
+    """
+    current = zh_cues
+    first = last = None
+    changes, passes, changed_cues, final = [], [], set(), {}
+    for number in range(1, max(1, iterate) + 1):
+        result = apply_pass(table, ja_cues, current, min_confidence, name_check, isolated_singles, pool_by_target,
+                            bigram_isolation)
+        changes.extend({"pass": number, **change} for change in result["changes"])
+        passes.append(len(result["changed_cues"]))
+        changed_cues.update(result["changed_cues"])
+        if first is None:
+            first, final = result, dict(result["statuses"])
+        else:
+            for key, status in result["statuses"].items():
+                if status.startswith("replaced") and not final.get(key, "").startswith("replaced"):
+                    final[key] = status
+        last = result
+        if not result["changed_cues"]:
+            break
+        current = [replace(cue, text=text) for cue, text in zip(zh_cues, result["new_texts"])]
+
+    summary = first["summary"]
+    if len(passes) > 1:
+        for entity_row in summary["entries"]:
+            for form_row in entity_row["forms"]:
+                for counter in COUNTERS[1:]:
+                    form_row[counter] = sum(1 for (e, form_ja, _), status in final.items()
+                                            if e == entity_row["_e"] and form_ja == form_row["form_ja"] and status == counter)
+            for counter in COUNTERS:
+                entity_row[counter] = sum(form_row[counter] for form_row in entity_row["forms"])
+        summary["totals"] = {key: sum(row[key] for row in summary["entries"]) for key in COUNTERS}
+        summary["totals"]["cues_changed"] = len(changed_cues)
+        summary["totals"]["entries_with_replacements"] = sum(
+            1 for row in summary["entries"] if row["replaced_variant"] + row["replaced_stat"])
+    for row in summary["entries"]:
+        row.pop("_e")
+    summary["passes"] = passes
+    replaced = {key for key, status in final.items() if status.startswith("replaced")}
+    unresolved = [{k: v for k, v in item.items() if k != "_key"} for item in last["unresolved"]
+                  if item["_key"] not in replaced]
+    return {"new_texts": last["new_texts"], "changes": changes, "unresolved": unresolved, "summary": summary}
 
 
 def render_srt(content: str, cues: list[Cue], new_texts: list[str]) -> str:
@@ -547,7 +694,8 @@ def run_apply(args: argparse.Namespace) -> int:
     zh_content, zh_cues = read_srt(args.zh)
     if len(ja_cues) != len(zh_cues):
         raise SystemExit(f"cue count differs: ja {len(ja_cues)} vs zh {len(zh_cues)}")
-    result = apply_table(table, ja_cues, zh_cues, args.min_confidence, args.name_check)
+    result = apply_table(table, ja_cues, zh_cues, args.min_confidence, args.name_check, args.iterate,
+                         args.isolated_singles, args.pool_by_target, args.bigram_isolation)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "zh.replaced.srt").write_bytes(render_srt(zh_content, zh_cues, result["new_texts"]).encode("utf-8"))
     write_jsonl(args.out_dir / "changes.jsonl", result["changes"])
@@ -590,6 +738,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--min-confidence", choices=list(CONFIDENCE_LEVELS), default="low",
                         help="低于该置信度的条目整条跳过（默认 low：全部应用）")
+    parser.add_argument("--no-isolated-singles", dest="isolated_singles", action="store_false",
+                        help="关闭孤立单字（默认开：单字候选只数孤立出现，扩展超串首尾不得是 BOUNDARY_CHARS），对照用")
+    parser.add_argument("--pool-by-target", action="store_true",
+                        help="统计层按（同实体、同目标）合并各 form 的锚定 cue，并把二字组也放进候选池")
+    parser.add_argument("--bigram-isolation", action="store_true",
+                        help="单字孤立改用语料口径：相邻二字组在非锚定 cue 里出现不足 2 次才算孤立（隐含孤立单字的扩展限制）")
+    parser.add_argument("--iterate", type=int, default=1, metavar="N",
+                        help="把输出当输入再跑，直到一遍 0 改动或达到 N 遍（默认 1）")
     parser.add_argument("--name-check", action="store_true", help="核对目标名是否得到译者用法的佐证（第二轮已放弃，只作对照）")
     return run_apply(parser.parse_args(argv))
 

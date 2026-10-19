@@ -427,6 +427,94 @@ class ApplyTableTest(unittest.TestCase):
         self.assertEqual({f["name_check"] for e in summary["entries"] for f in e["forms"]}, {"disabled"})
         self.assertEqual(summary["unverified_forms"], [])
 
+    ISOLATED_PAIRS = [("シロ1", "白来了"), ("シロ2", "我叫白"), ("シロ3", "白在笑"), ("シロ4", "小白来了"),
+                      ("シロ5", "他叫白啊"), ("シロ6", "你叫白呀"),
+                      ("朝", "明白了"), ("昼", "明白吗"), ("夜", "白色的花"), ("夕", "白色来了")]
+
+    def test_isolated_singles(self):
+        """白 在 明白／白色 里到处出现，但孤立的 白 只在锚定 cue 里：默认（孤立单字开）被接受；叫白 保留 叫；小白 不动。"""
+        self.write_pairs(table(entity("シロ", "士郎", [("シロ", "士郎")])), self.ISOLATED_PAIRS)
+        fillers = [p[1] for p in self.ISOLATED_PAIRS[6:]]
+        out = self.run_apply()  # 孤立单字默认开
+        self.assertEqual(self.result_texts(out),
+                         ["士郎来了", "我叫士郎", "士郎在笑", "小白来了", "他叫士郎啊", "你叫士郎呀"] + fillers)
+        self.assertEqual([(u["index"], u["reason"]) for u in self.read_jsonl(out / "unresolved.jsonl")], [(4, "boundary")])
+        summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+        form = summary["entries"][0]["forms"][0]
+        self.assertEqual(form["stat_rendering"], "白")
+        self.assertIn({"text": "白", "anchored": 5, "other": 0}, form["stat_candidates_kept"])  # 只数孤立出现
+        # --no-isolated-singles：白 的 b 把特异性拉到 0.6 以下，只剩 叫白 这个语境串被当成译法，叫 被吞掉（修复前的行为）
+        texts = self.result_texts(self.run_apply(extra=["--no-isolated-singles"]))
+        self.assertEqual([texts[1], texts[4], texts[5]], ["我士郎", "他士郎啊", "你士郎呀"])
+
+    def test_extension_edges_respect_boundary_chars_when_isolated(self):
+        texts = ["我叫白", "他叫白啊", "你叫白呀", "白来了", "白在笑", "路过"]
+        self.assertEqual(apply_table.StatLayer("士郎", texts, [0, 1, 2, 3, 4]).extend(texts[0], 2, 3), (1, 3))
+        stat = apply_table.StatLayer("士郎", texts, [0, 1, 2, 3, 4], isolated_singles=True)
+        self.assertEqual(stat.extend(texts[0], 2, 3), (2, 3))
+        self.assertTrue(apply_table.isolated_in("我叫白", "白"))
+        self.assertTrue(apply_table.isolated_in("白，", "白"))
+        self.assertFalse(apply_table.isolated_in("明白", "白"))
+        self.assertFalse(apply_table.isolated_in("白色", "白"))
+        self.assertFalse(apply_table.isolated_in("小白", "白"))
+
+    ITERATE_PAIRS = [("ライダー1", "骑士来了"), ("ライダー2", "骑士在笑"), ("ライダー3", "骑士去了"),
+                     ("ライダー4", "骑手来了"), ("ライダー5", "骑手去了"), ("朝", "早上好"), ("夜", "晚上好"),
+                     ("昼", "手机坏了"), ("夕", "拍手叫好"), ("暮", "手套在桌上")]  # 手 在别处常见，不能单独当候选
+
+    def test_iterate_reaches_fixpoint(self):
+        """第一遍 骑士 -> Rider 后，骑 的支持只剩 骑手，第二遍 骑手 才过扩展的支持度；第三遍 0 改动停止。"""
+        FILLER = ["手机坏了", "拍手叫好", "手套在桌上"]
+        self.write_pairs(table(entity("ライダー", "Rider", [("ライダー", "Rider")], kind="class")), self.ITERATE_PAIRS)
+        # 本测试的前提是旧口径（孤立单字改变了 手 这类碎片的支持度，骑手 第一遍就会被替换），所以显式关闭
+        out = self.run_apply(extra=["--no-isolated-singles"])  # 默认 1 遍：骑手 因支持不足被 boundary 挡住
+        self.assertEqual(self.result_texts(out), ["Rider来了", "Rider在笑", "Rider去了", "骑手来了", "骑手去了", "早上好", "晚上好"] + FILLER)
+        summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["passes"], [3])
+        self.assertEqual(summary["totals"]["unresolved_boundary"], 2)
+
+        out = self.run_apply(extra=["--no-isolated-singles", "--iterate", "5"])
+        self.assertEqual(self.result_texts(out), ["Rider来了", "Rider在笑", "Rider去了", "Rider来了", "Rider去了", "早上好", "晚上好"] + FILLER)
+        summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["passes"], [3, 2, 0])
+        changes = self.read_jsonl(out / "changes.jsonl")
+        self.assertEqual(sorted((c["pass"], c["index"]) for c in changes), [(1, 1), (1, 2), (1, 3), (2, 4), (2, 5)])
+        second = [c for c in changes if c["pass"] == 2]
+        self.assertEqual({c["zh_before"] for c in second}, {"骑手来了", "骑手去了"})
+        totals = summary["totals"]
+        # 终态口径：被替换过的 cue 只算 replaced（一次），第二、三遍里"已规范"不重复计入，第一遍的 boundary 也随之消除
+        self.assertEqual((totals["replaced_stat"], totals["already_canonical"], totals["unresolved_boundary"]), (5, 0, 0))
+        self.assertEqual(totals["cues_changed"], 5)
+        self.assertEqual(self.read_jsonl(out / "unresolved.jsonl"), [])
+
+    def test_pool_by_target(self):
+        """两个 form 同目标、各自支持不足（a=1）合并后够（a=2）；不同目标（卫宫）仍分开。"""
+        self.write_pairs(
+            table(entity("衛宮士郎", "卫宫士郎", [("シロウ", "士郎"), ("シロ", "士郎"), ("エミヤ", "卫宫")])),
+            [("シロウ1", "希罗来了"), ("シロ1", "希罗去了"), ("エミヤ1", "艾米亚在笑"), ("朝", "早上好"), ("夜", "晚上好")])
+        out = self.run_apply()
+        self.assertEqual(self.result_texts(out), ["希罗来了", "希罗去了", "艾米亚在笑", "早上好", "晚上好"])  # 单个 form 撑不起
+        out = self.run_apply(extra=["--pool-by-target"])
+        self.assertEqual(self.result_texts(out), ["士郎来了", "士郎去了", "艾米亚在笑", "早上好", "晚上好"])
+        summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+        forms = {f["form_ja"]: f for f in summary["entries"][0]["forms"]}
+        self.assertEqual((forms["シロウ"]["stat_pooled_cues"], forms["シロ"]["stat_pooled_cues"]), (2, 2))
+        self.assertEqual(forms["エミヤ"]["stat_pooled_cues"], 1)  # 目标不同，另算
+        self.assertEqual(forms["エミヤ"]["unresolved_not_found"], 1)
+
+    def test_bigram_isolation(self):
+        """单字孤立按语料判断：找白聊（找白、白聊 在别处不出现）算孤立；小白（别处 3 次）是词，不动。"""
+        anchored = [("シロ1", "找白聊"), ("シロ2", "白来了"), ("シロ3", "白在笑"), ("シロ4", "小白啊")]
+        fillers = [("朝", "明白了"), ("昼", "明白吗"), ("夜", "我明白"), ("夕", "小白兔"), ("暮", "小白龙"), ("暗", "小白鞋")]
+        self.write_pairs(table(entity("シロ", "士郎", [("シロ", "士郎")])), anchored + fillers)
+        tail = [p[1] for p in fillers]
+        out = self.run_apply(extra=["--bigram-isolation"])
+        self.assertEqual(self.result_texts(out), ["找士郎聊", "士郎来了", "士郎在笑", "小白啊"] + tail)
+        self.assertEqual([(u["index"], u["reason"]) for u in self.read_jsonl(out / "unresolved.jsonl")], [(4, "boundary")])
+        # 默认的清单口径下 聊／笑 不在 BOUNDARY_CHARS，白 的孤立出现不够，什么都不替换
+        out = self.run_apply()
+        self.assertEqual(self.result_texts(out)[0], "找白聊")
+
     def test_crlf_preserved(self):
         (self.dir / "zh.srt").write_bytes(srt([c[1] for c in CUES], "\r\n").encode("utf-8"))
         (self.dir / "ja.srt").write_bytes(srt([c[0] for c in CUES], "\r\n").encode("utf-8"))
