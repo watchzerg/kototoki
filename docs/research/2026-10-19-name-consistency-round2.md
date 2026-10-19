@@ -14,7 +14,7 @@
 脚本改动（`apply_table.py` v6 → v7，测试 19 → 19 项、总 38 项通过）：
 
 - **规则一**：统计层候选互为子串时只留锚定 cue 最多的一个作主候选（允许单字译法）；向外扩展只接受出现次数不低于基底一半的超串；最终落点两侧若紧邻 `BOUNDARY_CHARS`（`consistency.EDGE_STOP` ＋ 常见动词、介词、助词）之外的汉字，视为没覆盖完整名字，不替换，记 `unresolved: boundary`。变体层同样适用。
-- **规则二**：每个写法的目标 `zh` 要有译文证据：在同实体同目标写法锚定的 cue 里出现过（`appears`）、与译者主写法近形（`near`：编辑距离 ≤1 或共享 ≥50% 字符）、或是职阶的纯 ASCII 名（`class_ascii`）；无证据的写法整个跳过，记 `unresolved: unverified_name`，`summary.json` 的 `unverified_forms` 列出核验来源。`--no-name-check` 关闭。
+- **规则二**：每个写法的目标 `zh` 要有译文证据：在同实体同目标写法锚定的 cue 里出现过（`appears`）、与译者主写法近形（`near`：编辑距离 ≤1 或共享 ≥50% 字符）、或是职阶的纯 ASCII 名（`class_ascii`）；无证据的写法整个跳过，记 `unresolved: unverified_name`，`summary.json` 的 `unverified_forms` 列出核验来源。本轮以 `--no-name-check` 关闭；裁定后改为默认关闭、`--name-check` 打开。
 
 数据与表：HF II／III × w0／x0 四对 `ja.srt`／`zh.srt`，复用第一轮 `03-four-v2` 的八张 v2 表（think／no-think 各四，`--min-confidence low`），不重建，以隔离脚本改动的效果。每张表跑两档：`nocheck`（只有规则一）和 `check`（规则一＋二）；`check` 的改动是 `nocheck` 的严格子集。
 
@@ -79,3 +79,5 @@ HF II w0 上升的原因见 §1 第 4 条；其余三部的降幅比第一轮小
 1. 是否按本轮结论定型：**no-think 表＋规则一、关闭规则二**作为当前最佳配置；规则二按现形式放弃，或收窄为只校验 `confidence` 非 high 的人物条目／改用已知译名表再测一轮。
 2. 是否做第三轮：① 规则一放行"名字＋助词／动词"的相邻字以减少半改；② 对表里的错名（シンジ=士郎、アンリマユ=恩奇都、ゾウケン→言峰绮礼）从建表侧想办法（提示里要求次要角色标 confidence=medium 并默认跳过，或 think 与 no-think 两张表取交集）；③ 单字译法（シロ→白）仍找不到落点。
 3. 是否进入产品：仍维持第一轮 §5 第 3 条的条件（先补 MQM 抽样与整片观感，再改技术设计与另写 ADR）。本文不改变任何 ADR。
+
+裁定（2026-10-19，用户）：第 1 条采用 **no-think 表＋规则一、关闭规则二** 作为当前配置，规则二按现形式放弃（脚本默认关闭，`--name-check` 只作对照）；第 2、3 条未裁定。

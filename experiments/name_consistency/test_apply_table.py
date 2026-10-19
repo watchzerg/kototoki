@@ -68,11 +68,11 @@ class ApplyTableTest(unittest.TestCase):
         (self.dir / "zh.srt").write_text(self.zh_original, encoding="utf-8")
 
     def run_apply(self, zh_name: str = "zh.srt", extra: list[str] | None = None) -> Path:
-        """extra 默认关闭目标名核对：多数测试关心的是落点与替换，不是名字是否得到佐证。"""
+        """extra 默认为空，即脚本默认（不核对目标名）。"""
         out = self.dir / "out"
         code = apply_table.main(["--table", str(self.dir / "table.json"), "--ja", str(self.dir / "ja.srt"),
                                  "--zh", str(self.dir / zh_name), "--out-dir", str(out),
-                                 *(["--no-name-check"] if extra is None else extra)])
+                                 *(extra or [])])
         self.assertEqual(code, 0)
         return out
 
@@ -212,7 +212,7 @@ class ApplyTableTest(unittest.TestCase):
         shutil_out = self.dir / "out_medium"
         code = apply_table.main(["--table", str(self.dir / "table.json"), "--ja", str(self.dir / "ja.srt"),
                                  "--zh", str(self.dir / "zh.srt"), "--out-dir", str(shutil_out),
-                                 "--min-confidence", "medium", "--no-name-check"])
+                                 "--min-confidence", "medium"])
         self.assertEqual(code, 0)
         texts = [c.text for c in apply_table.parse_srt((shutil_out / "zh.replaced.srt").read_text(encoding="utf-8"))]
         self.assertEqual(texts, ["慎二来了", "希罗来了"])
@@ -401,7 +401,7 @@ class ApplyTableTest(unittest.TestCase):
 
     def test_name_check_outcomes(self):
         self.write_pairs(self.name_check_table(), self.NAME_CHECK_PAIRS)
-        out = self.run_apply(extra=[])
+        out = self.run_apply(extra=["--name-check"])
         self.assertEqual(self.result_texts(out),
                          ["卫宫士郎来了", "卫宫士郎来了", "伊莉雅来了", "伊莉雅在笑", "伊莉雅去了", "Saber来了",
                           "脏砚来了", "脏砚在笑", "脏砚去了"])
@@ -419,7 +419,7 @@ class ApplyTableTest(unittest.TestCase):
                          ("ゾウケン", "言峰绮礼", "脏砚"))
         self.assertEqual(summary["totals"]["unresolved_unverified_name"], 3)
 
-    def test_no_name_check_flag(self):
+    def test_name_check_off_by_default(self):
         self.write_pairs(self.name_check_table(), self.NAME_CHECK_PAIRS)
         out = self.run_apply()  # 默认关闭核对
         self.assertEqual(self.result_texts(out)[6:], ["言峰绮礼来了", "言峰绮礼在笑", "言峰绮礼去了"])

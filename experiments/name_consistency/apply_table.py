@@ -19,7 +19,7 @@ changes 里记 extended_from。落点（扩展后）紧邻 ·／・ 或拉丁字
 最终落点两侧若紧邻清单外的汉字（BOUNDARY_CHARS）说明没落在词边界上，不替换，记 boundary（变体层同样适用）。
 目标名核对：form.zh 必须出现在同实体同目标的 form 锚定的 cue 里（appears），或与译者的主写法接近（near），
 或是职阶的纯 ASCII 名（class_ascii）；否则整个 form 不动，记 unverified_name 并列入 summary 的 unverified_forms。
---no-name-check 关闭核对。
+默认关闭（第二轮证明误拦多于拦对，已放弃），--name-check 打开，只作对照。
 
 已知限制：单字的 form.ja（如 凛）会过度锚定（任何含该字的 cue 都被锚定），目前不处理。
 
@@ -367,7 +367,7 @@ COUNTERS = ("anchored", "replaced_variant", "replaced_stat", "already_canonical"
 
 
 def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low",
-                name_check: bool = True) -> dict:
+                name_check: bool = False) -> dict:
     zh_texts = [cue.text for cue in zh_cues]
     lowered = [text.lower() for text in zh_texts]
     entities = table["entries"]
@@ -547,7 +547,7 @@ def run_apply(args: argparse.Namespace) -> int:
     zh_content, zh_cues = read_srt(args.zh)
     if len(ja_cues) != len(zh_cues):
         raise SystemExit(f"cue count differs: ja {len(ja_cues)} vs zh {len(zh_cues)}")
-    result = apply_table(table, ja_cues, zh_cues, args.min_confidence, not args.no_name_check)
+    result = apply_table(table, ja_cues, zh_cues, args.min_confidence, args.name_check)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "zh.replaced.srt").write_bytes(render_srt(zh_content, zh_cues, result["new_texts"]).encode("utf-8"))
     write_jsonl(args.out_dir / "changes.jsonl", result["changes"])
@@ -590,7 +590,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--min-confidence", choices=list(CONFIDENCE_LEVELS), default="low",
                         help="低于该置信度的条目整条跳过（默认 low：全部应用）")
-    parser.add_argument("--no-name-check", action="store_true", help="不核对目标名是否得到译者用法的佐证（对照用）")
+    parser.add_argument("--name-check", action="store_true", help="核对目标名是否得到译者用法的佐证（第二轮已放弃，只作对照）")
     return run_apply(parser.parse_args(argv))
 
 
