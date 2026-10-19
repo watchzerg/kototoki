@@ -12,7 +12,8 @@
 
 - 缺省键取默认值（与规格 §10.1 相同，`kototoki.toml.example` 列出全部键）；`paths.input_dir`、`paths.output_dir` 没有默认值，必须写出。`load` 只解析路径，不看文件系统；`input_dir` 必须是已存在的目录与 `output_dir` 的位置限制由 `__main__` 的 `check_input_dir`／`check_output_dir` 检查（[批次编排](batch-orchestration.md)）。
 - 未知节、未知键、类型不符（整数键给字符串、布尔键给 1 等）、`stt.engine` 不是 `w0`／`x0`／`cross`、`run.extract_workers < 1` 均抛 `ConfigError`，消息给出键名；浮点键接受整数。
-- 路径：用户写出的相对路径按配置文件所在目录解析，省略键的默认相对路径按仓库根解析；`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]`、`[translate]` 的模型路径为相对路径时相对于 `paths.models_root`（绝对路径原样）。
+- 路径：用户写出的相对路径按配置文件所在目录解析，省略键的默认相对路径按仓库根解析；`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]`、`[translate]`、`[names]` 的模型路径为相对路径时相对于 `paths.models_root`（绝对路径原样）。
+- `[names]`（专名建表，[专名一致性](name-consistency.md)）：`model`（默认 `glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf`，进 `Config.models.names`）、`port`（默认 8081，与翻译的 8080 分开）、`seed`（默认 20261019，进表的身份，改 seed 即重建表）、`enabled`（默认 true；false 时阶段链跳过 names、发布不替换）。提示、采样、schema、上下文、归一与替换规则不是配置项，在 `kototoki/names/recipes.py` 的两份配方里。
 - 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`（`Config.gpu_lock`）；`Config.break_stale_lock` 只在环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1` 时为真。没有 `break_stale_lock` 与 `[vad] device` 键（写了即为未知键）。
 
 **配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES` 七个字典，`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）：VAD 固定设备 `cuda:0`、Pyannote revision `e66f3d3b…`、`source-span-merge-v1`；w0 beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链；x0 BF16、SDPA、greedy、4096；MMS FP32、`jpn` adapter、字典按模型类数过滤；cue 的切分顺序、回填方式、整窗回退每字符时长上限 0.25 s（与 `cues.FALLBACK_MAX_CHAR_S` 相等，有测试钉住）与毫秒取整（数值规则在配置 `[cues]`，`max_gap_s` 默认 1.0（票据 04），作为影响输出的配置键另入身份）。
@@ -55,3 +56,5 @@
 2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：ffmpeg 默认路径改指项目内 `.local/tools/ffmpeg/<version>/bin/`，构建与身份锁在 `assets.toml`（[依赖布局与资产清单](../../development/dependencies.md)）；`test_media_ffmpeg` 移入 full 层。
 
 2026-10-19 `cross` 引擎交付，依据 [ADR-0012](../../adr/0012-cross-asr-judge.md) 与[产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)，票据 `.scratch/cross-asr-judge/`；增量说明已吸收进本页（配置与配方）并删除。
+
+2026-10-19 专名一致性进产品（[ADR-0014](../../adr/0014-name-consistency-in-product.md)）：票据 `.scratch/name-consistency-product/issues/05-config-assets-plan.md` 加 `[names]` 节，06 同步本页。

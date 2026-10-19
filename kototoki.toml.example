@@ -50,3 +50,9 @@ lead_out_s = 0.3                        # 发声结束后向后延长，不越�
 model = "translation/hy-mt2-30b-a3b-apex-i-compact/Hy-MT2-30B-A3B-APEX-I-Compact.gguf"
 port  = 8080
 seed  = 20261008
+
+[names]                                 # 专名一致性：建表（GPU，translate 之前）＋发布时替换；ADR-0014
+model   = "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf"   # 相对 models_root
+port    = 8081
+seed    = 20261019                      # 改 seed 即重建表（另起身份）
+enabled = true                          # false 时跳过建表与替换，行为同未引入本节

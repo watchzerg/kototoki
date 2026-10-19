@@ -1,265 +1,28 @@
-"""受管 llama-server：冻结命令行、模型与引擎身份核对、启动前空闲显存轮询、驻留证据校验。
+"""翻译的 llama-server 配置：APEX-I-Compact 冻结资产身份与冻结命令行（`TRANSLATE_SPEC`）。
 
-复制自 `experiments/translation_v3/server.py`（`ManagedServer`、`server_command`、`port_free`），
-去掉 `GpuLock`（GPU 锁归编排器）与资产清单文件读取（模型路径来自配置，身份核对改用下方冻结常量）；
-驻留解析 `residency_evidence`／`validate_residency`／`loader_logs` 复制自 `experiments/translation_demo_runtime.py`，
-01 smoke #4 已在 stock b11583 加载日志上验证原解析不需改动；`explicit_oom` 复制自 `translation_demo/run.py`。
+server 生命周期、身份核对、显存轮询、驻留校验与 HTTP 客户端在 `kototoki/llama_server.py`（票据 02 从本模块抽出，
+与专名建表共用）；这里只留翻译特有的常量。命令行与 v3 冻结 C0 相同（`experiments/translation_v3/server.py`）。
+`InfraFailure`、`wait_for_free_vram` 再导出，供 `tests/core/test_translate.py` 沿用原导入路径。
 """
 
 from __future__ import annotations
 
-import json
-import logging
-from pathlib import Path
-import re
-import socket
-import subprocess
-import threading
-import time
-from typing import Any, Callable
-from urllib.request import ProxyHandler, build_opener
+from kototoki.llama_server import InfraFailure, ServerSpec, wait_for_free_vram  # noqa: F401  后两者为再导出
 
-from kototoki.artifacts import atomic_write_json, read_json, sha256_file, utc_now, verify_model
-
-from .procs import list_llama_servers
 from .recipes import CONTEXT_SIZE
 
 # APEX-I-Compact 冻结资产身份（`translation_demo/run.py` 的 HY30_ASSET_IDENTITIES 对应行）。
-CANDIDATE = "hy-mt2-30b-a3b-apex-i-compact"
 MODEL_ASSET = {"repo": "alphaZimuth/Hy-MT2-30B-A3B-APEX-GGUF", "revision": "312cce865e03a0718e36cfd1077e6307957aef72",
                "file": "Hy-MT2-30B-A3B-APEX-I-Compact.gguf", "size": 15035838080,
                "sha256": "8a51a390b285fb1eb566a1683f8da476be9e87c1fbee5507967d6129872dfa1a"}
-LAYERS = 99
-THREADS = 8
-THREADS_BATCH = 8
-LOAD_TIMEOUT_SECONDS = 180
-# 启动前等待的空闲显存（MiB）与超时。2026-10-14 整片实测：会话峰值 15687 MiB、桌面基线约 880 MiB，
+# 启动前等待的空闲显存（MiB）。2026-10-14 整片实测：会话峰值 15687 MiB、桌面基线约 880 MiB，
 # 即 llama-server 自身约 14800 MiB。票据 08 整片验收：桌面占用在 0.6–1.2 GB 间漂移，空闲 14742 MiB 时 server
 # 加载后桌面占用由约 1236 降到约 597 MiB、翻译正常（推测为 WDDM 换出，未核实）；用户裁定阈值取 14700（2026-10-15），低于它时等待／失败。
 MIN_FREE_MIB = 14700
-FREE_VRAM_TIMEOUT_SECONDS = 120.0
-FREE_VRAM_POLL_SECONDS = 2.0
-FREE_VRAM_WARN_SECONDS = 30.0  # 等显存超过这么久记一次 warning
 
-log = logging.getLogger(__name__)
-
-_OOM = re.compile(r"out of memory|cuda_error_out_of_memory|cudaerrormemoryallocation|vk_error_out_of_device_memory|std::bad_alloc",
-                  re.IGNORECASE)
-
-
-class InfraFailure(RuntimeError):
-    """可通过重启 server 重试的基础设施失败（加载期退出／超时、显存不足）。"""
-
-
-def explicit_oom(message: str) -> bool:
-    return bool(_OOM.search(message))
-
-
-def nvidia_smi(query: str) -> int | None:
-    try:
-        result = subprocess.run(["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
-                                capture_output=True, text=True, timeout=10,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    first = result.stdout.split()[0] if result.returncode == 0 and result.stdout.strip() else ""
-    return int(first) if first.isdigit() else None
-
-
-def wait_for_free_vram(min_mib: int = MIN_FREE_MIB, timeout: float = FREE_VRAM_TIMEOUT_SECONDS, *,
-                       query: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
-                       sleep: Callable[[float], None] = time.sleep,
-                       clock: Callable[[], float] = time.monotonic) -> int:
-    """轮询 `nvidia-smi memory.free` 直到不低于阈值；超时抛 `InfraFailure` 并写明最后一次读数。"""
-    started = clock()
-    deadline = started + timeout
-    warned = False
-    while True:
-        free = query()
-        if free is not None and free >= min_mib:
-            return free
-        seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
-        if not warned and clock() - started > FREE_VRAM_WARN_SECONDS:
-            warned = True
-            log.warning("[translate] waiting for free GPU memory: %s < %d MiB after %.0f s", seen, min_mib,
-                        clock() - started)
-        if clock() >= deadline:
-            raise InfraFailure(f"Free GPU memory {seen} stayed below {min_mib} MiB for {timeout:.0f} s; "
-                               "another process may hold the GPU")
-        sleep(FREE_VRAM_POLL_SECONDS)
-
-
-# --- 驻留证据（stock 引擎加载日志） ------------------------------------------------------------
-
-def residency_evidence(log: str) -> dict[str, Any]:
-    """从加载日志提取显式的层与 buffer 放置；不把 mmap 当作 CPU 驻留。"""
-    offloads = re.findall(r'offloaded (\d+)/(\d+) layers to GPU', log)
-    buffers = re.findall(r'load_tensors:\s+(\S+) model buffer size\s*=\s*([\d.]+) MiB', log)
-    gpu_buffers = {device: float(size) for device, size in buffers
-                   if re.fullmatch(r'(?:CUDA\d+|Vulkan\d+|SYCL\d+|Metal)', device)}
-    cpu_buffers = {device: float(size) for device, size in buffers if device.startswith('CPU')}
-    loaded, total = map(int, offloads[-1]) if offloads else (None, None)
-    return {'gpu_layers_offloaded': loaded, 'model_layers_total': total,
-            'layers_not_offloaded': total - loaded if total is not None else None,
-            'partial_layer_offload': loaded < total if total is not None else None,
-            'gpu_model_buffers_mib': gpu_buffers, 'cpu_model_buffers_mib': cpu_buffers,
-            'evidence_source': 'loader-log',
-            'buffer_measurement_scope': 'loader allocations/mappings; not process working set or physical CPU residency'}
-
-
-def validate_residency(evidence: dict[str, Any], requested_layers: int) -> None:
-    """缺少 GPU 证据或出现部分层留在 CPU 时拒绝（产品不允许 CPU 回退）。"""
-    loaded, total = evidence['gpu_layers_offloaded'], evidence['model_layers_total']
-    if loaded is None or total is None or not 0 < loaded <= total:
-        raise RuntimeError('Loader did not prove positive GPU layer offload; inspect runtime logs')
-    if not any(size > 0 for size in evidence['gpu_model_buffers_mib'].values()):
-        raise RuntimeError('Loader did not prove a GPU model buffer; inspect runtime logs')
-    if loaded < total:
-        raise RuntimeError('Partial GPU offload is not allowed')
-    if loaded != min(requested_layers, total):
-        raise RuntimeError('Actual GPU layers differ from explicit request; no silent placement fallback is allowed')
-
-
-def loader_logs(runtime: Path) -> str:
-    # stderr 不另存：`-lv 4` 下它与 `--log-file` 的 server.log 逐字节相同（2026-10-19 审计 B-14）。
-    return '\n'.join(path.read_text(encoding='utf-8', errors='replace')
-                     for name in ('server.log', 'stdout.log')
-                     if (path := runtime / name).exists())
-
-
-# --- server -----------------------------------------------------------------------------
-
-def server_command(engine: Path, model: Path, port: int, log_file: Path) -> list[str]:
-    return [str(engine), "-m", str(model), "--host", "127.0.0.1", "--port", str(port),
-            "-c", str(CONTEXT_SIZE), "-np", "1", "-ngl", str(LAYERS), "-b", "256", "-ub", "128",
-            "-t", str(THREADS), "-tb", str(THREADS_BATCH), "-ctk", "f16", "-ctv", "f16", "--cache-ram", "8192",
-            "-fa", "on", "--fit", "off", "--no-webui", "--log-file", str(log_file), "-lv", "4"]
-
-
-def port_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.5)
-        return sock.connect_ex(("127.0.0.1", port)) != 0
-
-
-def check_model(model: Path, cache_path: Path) -> dict[str, Any]:
-    if model.name != MODEL_ASSET["file"]:
-        raise ValueError(f"Translation model must be {MODEL_ASSET['file']}, got {model.name}")
-    if model.stat().st_size != MODEL_ASSET["size"]:
-        raise ValueError(f"Translation model size differs from the frozen asset: {model}")
-    return verify_model(model, MODEL_ASSET["sha256"], cache_path)
-
-
-def check_engine(engine: Path, identity: dict[str, Any], cache_path: Path) -> dict[str, str]:
-    """`llama-server.exe` 与同目录全部 DLL 必须等于 `identity.json` 的 `runtime_file_sha256`（size+mtime 缓存）。"""
-    expected = identity.get("runtime_file_sha256")
-    if not isinstance(expected, dict) or engine.name not in expected:
-        raise ValueError(f"{engine.with_name('identity.json')} does not list {engine.name} in runtime_file_sha256")
-    files = [engine] + sorted(engine.parent.glob("*.dll"))
-    unlisted = [path.name for path in files if path.name not in expected]
-    if unlisted:
-        raise ValueError(f"Engine directory has files not in identity.json: {unlisted}")
-    return {path.name: verify_model(path, expected[path.name], cache_path)["sha256"] for path in files}
-
-
-class ManagedServer:
-    """一次 server session：进入时等显存、启动并核对驻留；退出时总是终止进程并记峰值显存。"""
-
-    def __init__(self, runtime_dir: Path, *, engine: Path, model: Path, port: int, model_cache: Path,
-                 on_pid: Callable[[int | None], None] = lambda pid: None):
-        self.runtime_dir, self.engine, self.model, self.port = runtime_dir, engine, model, port
-        self.model_cache, self.on_pid = model_cache, on_pid
-        self.engine_identity = engine.with_name("identity.json")
-        self.url = f"http://127.0.0.1:{port}"
-        self.process: subprocess.Popen | None = None
-        self.identity: dict[str, Any] = {}
-        self._samples: list[int] = []
-        self._stop = threading.Event()
-
-    @property
-    def pid(self) -> int | None:
-        return self.process.pid if self.process is not None else None
-
-    def _sample_gpu(self) -> None:
-        while not self._stop.wait(2.0):
-            if (used := nvidia_smi("memory.used")) is not None:
-                self._samples.append(used)
-
-    def __enter__(self) -> "ManagedServer":
-        if not self.engine.is_file() or not self.engine_identity.is_file():
-            raise FileNotFoundError(f"llama-server or its identity.json missing: {self.engine}")
-        if not port_free(self.port):
-            raise RuntimeError(f"Port {self.port} is occupied (running llama-server pids: {list_llama_servers()}); "
-                               "do not share another model server")
-        engine_identity = read_json(self.engine_identity)
-        engine_files = check_engine(self.engine, engine_identity, self.model_cache)
-        verification = check_model(self.model, self.model_cache)
-        free_mib = wait_for_free_vram()
-        self.runtime_dir.mkdir(parents=True, exist_ok=True)
-        command = server_command(self.engine, self.model, self.port, self.runtime_dir / "server.log")
-        self.identity = {
-            "candidate": CANDIDATE, "model_path": str(self.model), "asset": MODEL_ASSET,
-            "model_verification": verification, "engine": str(self.engine), "engine_sha256": engine_files[self.engine.name],
-            "engine_files_verified": len(engine_files), "engine_identity": engine_identity,
-            "engine_identity_sha256": sha256_file(self.engine_identity),
-            "command": command, "free_vram_mib_before_start": free_mib, "started_at_utc": utc_now()}
-        opener = build_opener(ProxyHandler({}))
-        load_start = time.perf_counter()
-        with (self.runtime_dir / "stdout.log").open("wb") as out:
-            self.process = subprocess.Popen(command, stdout=out, stderr=subprocess.DEVNULL,
-                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        self.identity["server_pid"] = self.process.pid
-        self.on_pid(self.process.pid)  # 加载期间 GPU 锁里就有 server pid
-        threading.Thread(target=self._sample_gpu, daemon=True).start()
-        try:
-            while True:
-                if self.process.poll() is not None:
-                    oom = " (out of memory)" if explicit_oom(loader_logs(self.runtime_dir)) else ""
-                    message = f"llama-server exited {self.process.returncode} during load{oom}; see {self.runtime_dir}"
-                    log.error("[translate] %s", message)
-                    raise InfraFailure(message)
-                if time.perf_counter() - load_start > LOAD_TIMEOUT_SECONDS:
-                    message = f"Model load exceeded {LOAD_TIMEOUT_SECONDS} seconds"
-                    log.error("[translate] %s", message)
-                    raise InfraFailure(message)
-                try:
-                    with opener.open(self.url + "/health", timeout=1) as response:
-                        if response.status == 200:
-                            break
-                except OSError:
-                    time.sleep(0.5)
-            self.identity["cold_load_seconds"] = time.perf_counter() - load_start
-            log.info("[translate] llama-server pid %d loaded in %.1f s (free VRAM before start %d MiB)",
-                     self.process.pid, self.identity["cold_load_seconds"], free_mib)
-            with opener.open(self.url + "/props", timeout=10) as response:
-                self.identity["props"] = json.loads(response.read())
-            residency = residency_evidence(loader_logs(self.runtime_dir))
-            self.identity["residency"] = residency
-            validate_residency(residency, LAYERS)
-            atomic_write_json(self.runtime_dir / "engine.json", self.identity)
-        except BaseException:
-            self.__exit__(None, None, None)
-            raise
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self._stop.set()
-        process = self.process
-        stop = None
-        if process is not None:
-            stop = "exited"  # 进程已自行退出，`server_exit_code` 才是它自己的退出码
-            if process.poll() is None:
-                process.terminate()
-                stop = "terminated"  # Windows 上 terminate() 让退出码固定为 1，不是故障
-                try:
-                    process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-                    stop = "killed"
-            self.on_pid(None)
-        self.identity.update(stopped_at_utc=utc_now(),
-                             server_exit_code=process.poll() if process else None, server_stop=stop,
-                             peak_device_memory_mib=max(self._samples, default=None))
-        if self.runtime_dir.exists():
-            atomic_write_json(self.runtime_dir / "engine-final.json", self.identity)
+TRANSLATE_SPEC = ServerSpec(
+    stage="translate", candidate="hy-mt2-30b-a3b-apex-i-compact", model_asset=MODEL_ASSET, layers=99,
+    context=CONTEXT_SIZE,
+    extra_args=("-b", "256", "-ub", "128", "-t", "8", "-tb", "8", "-ctk", "f16", "-ctv", "f16", "--cache-ram", "8192",
+                "-fa", "on", "--fit", "off"),
+    min_free_mib=MIN_FREE_MIB, load_timeout_s=180)

@@ -1,4 +1,4 @@
-"""`just smoke` 入口：依次在独立子进程中运行真实模型验证（环境 smoke、冻结窗口门禁与产品翻译 smoke；占 GPU、加载模型，
+"""`just smoke` 入口：依次在独立子进程中运行真实模型验证（环境 smoke、冻结窗口门禁、产品翻译与产品专名 smoke；占 GPU、加载模型，
 每次运行前须经用户批准；不属于任何 gate）。
 
 用法：`python scripts/smoke/run_all.py [名称 ...]`，省略名称时按 SMOKES 顺序全跑；每项是本目录下的
@@ -23,7 +23,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 GPU_LOCK = REPO / ".local/gpu.lock"
 SMOKES = ("forced_align", "vad_pyannote", "ct2_after_torch", "llama_stock", "stt_frozen_window", "x0_frozen_window",
-          "translate_product", "whisper_score")
+          "translate_product", "names_product", "whisper_score")
 PRIVATE_DLL_DIR = "whisper-runtime-provisional"
 
 

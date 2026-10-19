@@ -49,6 +49,8 @@ VAD = "vad.json"
 ASR = "asr.json"
 ALIGN = "align.json"
 JA_CUES = "ja-cues.json"
+NAME_TABLE = "name-table.json"  # names 阶段产物（阶段产物，参与 is_current）
+NAMES_APPLY = "names-apply.json"  # 发布时替换的审计产物，不参与 is_current
 PUBLISHED = "published.json"
 FAILURE = "failure.json"
 # cross 引擎的审计产物（两路原始结果与裁决记录）：不在 STAGE_ARTIFACTS，不参与 `is_current` 与阶段计划，
@@ -58,7 +60,7 @@ ASR_X0 = "asr-x0.json"
 ASR_JUDGE = "asr-judge.json"
 
 # failure.json 记录"已完成产物"时按此顺序检查是否存在。
-STAGE_ARTIFACTS = (PROBE, AUDIO_16K, VAD, ASR, ALIGN, JA_CUES, PUBLISHED)
+STAGE_ARTIFACTS = (PROBE, AUDIO_16K, VAD, ASR, ALIGN, JA_CUES, NAME_TABLE, PUBLISHED)
 # 顶层必须带 offset_s 的本地坐标产物。
 LOCAL_TIME_ARTIFACTS = frozenset({VAD, ASR, ALIGN})
 

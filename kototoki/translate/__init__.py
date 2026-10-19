@@ -1,7 +1,8 @@
 """翻译子系统：对编排器只暴露 `plan`／`TranslatePlan`（run 目录、期望身份、是否需要模型）、`translate_document`、
 `Session` 与产品配方 hash `RECIPE_HASH`。
 
-`server`、`client`、`batching`、`generate`、`procs` 是内部实现；编排器不导入它们，也看不到 llama-server。
+`server`（翻译的 `ServerSpec`）、`batching`、`generate` 是内部实现；llama-server 生命周期与客户端在共享的
+`kototoki.llama_server`。编排器不导入它们，也看不到 llama-server。
 子系统不取 GPU 锁、不做时间换算。见 docs/architecture/modules/translation-subsystem.md。
 """
 

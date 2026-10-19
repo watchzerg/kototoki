@@ -163,6 +163,15 @@ class ArtifactTests(TempCase):
         self.assertEqual((failure["stage"], failure["error_type"], failure["message"]), ("asr", "RuntimeError", "boom"))
         self.assertEqual(failure["completed"], [a.PROBE, a.VAD])
 
+    def test_name_artifacts_are_named_and_the_table_is_listed_as_completed(self) -> None:
+        self.assertEqual((a.NAME_TABLE, a.NAMES_APPLY), ("name-table.json", "names-apply.json"))
+        self.assertIn(a.NAME_TABLE, a.STAGE_ARTIFACTS)
+        self.assertNotIn(a.NAMES_APPLY, a.STAGE_ARTIFACTS)  # 审计产物，不是阶段产物
+        a.write_artifact(self.root / a.NAME_TABLE, self.identity(), {"entries": []})
+        a.write_artifact(self.root / a.NAMES_APPLY, self.identity(), {"changes": []})
+        a.write_failure(self.root, "names", RuntimeError("boom"))
+        self.assertEqual(a.read_json(self.root / a.FAILURE)["completed"], [a.NAME_TABLE])
+
 
 class ModelVerificationTests(TempCase):
     def setUp(self) -> None:

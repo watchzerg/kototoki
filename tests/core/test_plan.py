@@ -30,13 +30,16 @@ def models(stage: str) -> dict[str, str]:
 
 
 class PlanCase(unittest.TestCase):
+    names_enabled = False  # 默认关闭 names：其余各组用例即"enabled=false 时链与 sources 同加入 names 之前"
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
         (self.root / "in").mkdir()
         toml = self.root / "kototoki.toml"
-        toml.write_text('[paths]\ninput_dir = "in"\noutput_dir = "out"\n', encoding="utf-8")
+        toml.write_text('[paths]\ninput_dir = "in"\noutput_dir = "out"\n'
+                        f'[names]\nenabled = {"true" if self.names_enabled else "false"}\n', encoding="utf-8")
         self.config = load(toml)
         self.work = self.root / "out" / ".work" / "0123456789ab"
         self.work.mkdir(parents=True)
@@ -47,7 +50,12 @@ class PlanCase(unittest.TestCase):
         translate.plan = lambda work_dir, document, config: types.SimpleNamespace(
             work_dir=work_dir, run_dir=work_dir / "translate" / "x", document=document, needs_model=bool(document.cues),
             identity={"ja_srt_sha256": document.source_sha256, "recipe_hash": "a" * 64, "seed": config.translate.seed})
-        self.enterContext(mock.patch.dict(sys.modules, {"kototoki.translate": translate}))
+        recipes = types.ModuleType("kototoki.names.recipes")
+        recipes.BUILD_RECIPE_HASH, recipes.APPLY_RECIPE_HASH = "d" * 64, "e" * 64
+        names = types.ModuleType("kototoki.names")
+        names.recipes = recipes
+        self.enterContext(mock.patch.dict(sys.modules, {"kototoki.translate": translate, "kototoki.names": names,
+                                                        "kototoki.names.recipes": recipes}))
 
     # --- 逐级写出产物 ---------------------------------------------------------------------------
 
@@ -67,6 +75,10 @@ class PlanCase(unittest.TestCase):
         align_sha = artifacts.sha256_file(self.work / artifacts.ALIGN)
         srt.write_srt(text, self.work / plan.JA_SRT)
         artifacts.write_artifact(self.work / artifacts.JA_CUES, plan.cues_identity(align_sha, self.config), {"cues": []})
+
+    def write_names(self) -> None:
+        identity = plan.names_identity(artifacts.sha256_file(self.work / plan.JA_SRT), self.config)
+        artifacts.write_artifact(self.work / artifacts.NAME_TABLE, identity, {"entries": []})
 
     def publish(self, current: plan.Plan) -> None:
         texts = {kind: "" if current.no_speech else SRT_JA for kind in artifacts.FINAL_SUFFIXES}
@@ -174,6 +186,99 @@ class ChainTests(PlanCase):
         self.assertEqual(self.next().stage, "asr")
 
 
+class NamesChainTests(PlanCase):
+    """`[names] enabled = true`：链是 cues → names → translate，`sources` 多 `names` 与 `names_apply`。"""
+    names_enabled = True
+
+    def write_upstream(self) -> None:
+        self.write_vad()
+        self.write_asr()
+        self.write_align()
+        self.write_cues()
+
+    def test_identities_follow_the_recipe_hashes_and_seed(self) -> None:
+        ja_sha = artifacts.sha256_bytes(SRT_JA.encode("utf-8"))
+        self.assertEqual(plan.names_identity(ja_sha, self.config),
+                         {"ja_srt_sha256": ja_sha, "recipe_hash": "d" * 64, "seed": self.config.names.seed})
+        self.assertEqual(plan.names_apply_identity("f" * 64),
+                         artifacts.derived_identity(upstream={artifacts.NAME_TABLE: "f" * 64}, recipe_hash="e" * 64))
+
+    def test_chain_runs_cues_then_names_then_translate(self) -> None:
+        self.write_vad()
+        self.write_asr()
+        self.write_align()
+        self.assertEqual(self.next().stage, "cues")
+        self.write_cues()
+        current = self.next()
+        self.assertEqual(current.stage, "names")
+        self.assertEqual(current.identities["names"],
+                         plan.names_identity(artifacts.sha256_file(self.work / plan.JA_SRT), self.config))
+        self.assertNotIn("names_apply", current.identities)  # 表不当前时还没有替换身份
+        self.write_names()
+        current = self.next()
+        self.assertEqual(current.stage, "translate")
+        table_sha = artifacts.sha256_file(self.work / artifacts.NAME_TABLE)
+        self.assertEqual(current.identities["names_apply"], plan.names_apply_identity(table_sha))
+        self.assertEqual(set(current.sources), {"probe", "vad", "asr", "align", "ja_cues", "names", "names_apply",
+                                                "translate", "no_speech"})
+        self.publish(current)
+        self.assertEqual(self.next().stage, "done")
+
+    def test_stale_table_stops_at_names(self) -> None:
+        self.write_upstream()
+        self.write_names()
+        self.assertEqual(self.next().stage, "translate")
+        self.write_cues(SRT_JA.replace("こんにちは", "さようなら"))  # ja.srt 变了：表身份不再匹配
+        self.assertEqual(self.next().stage, "names")
+        self.write_cues()
+        changed = replace(self.config, names=replace(self.config.names, seed=1))
+        self.assertEqual(plan.next_stage(self.target, changed, models).stage, "names")
+        (self.work / artifacts.NAME_TABLE).unlink()
+        self.assertEqual(self.next().stage, "names")
+
+    def test_hand_edited_entries_only_change_names_apply_and_republish(self) -> None:
+        self.write_upstream()
+        self.write_names()
+        first = self.next()
+        self.publish(first)
+        self.assertEqual(self.next().stage, "done")
+        # 改 entries 不改 identity 块：表仍当前，不回到 names，但 names_apply 身份变了，需重新发布。
+        table = artifacts.read_json(self.work / artifacts.NAME_TABLE)
+        table["entries"] = [{"ja": "山田", "zh": "山田"}]
+        (self.work / artifacts.NAME_TABLE).write_text(artifacts.canonical(table), encoding="utf-8")
+        second = self.next()
+        self.assertEqual(second.stage, "translate")
+        self.assertEqual(second.identities["names"], first.identities["names"])
+        self.assertNotEqual(second.sources["names_apply"], first.sources["names_apply"])
+        self.publish(second)
+        self.assertEqual(self.next().stage, "done")
+
+    def test_advance_continues_from_names(self) -> None:
+        self.write_upstream()
+        current = self.next()
+        self.assertEqual(current.stage, "names")
+        # 表没写出来：stage 不变，调用方据此记失败。
+        self.assertEqual(plan.advance(current, self.target, self.config, models).stage, "names")
+        self.write_names()
+        current = plan.advance(current, self.target, self.config, models)
+        self.assertEqual(current.stage, "translate")
+        self.assertIn("names_apply", current.sources)
+
+    def test_no_speech_path_has_no_names_keys(self) -> None:
+        self.write_vad(chunks=[])
+        current = self.next()
+        self.assertEqual((current.stage, set(current.sources)), ("publish", {"probe", "vad", "no_speech"}))
+
+    def test_disabling_names_skips_the_stage_and_republishes(self) -> None:
+        self.write_upstream()
+        self.write_names()
+        self.publish(self.next())
+        off = replace(self.config, names=replace(self.config.names, enabled=False))
+        current = plan.next_stage(self.target, off, models)
+        self.assertEqual(current.stage, "translate")  # sources 少了两个键：已发布记录不再匹配
+        self.assertNotIn("names", current.sources)
+
+
 class PurityTests(PlanCase):
     def test_repeated_calls_agree_and_leave_inputs_untouched(self) -> None:
         self.write_vad()
@@ -247,7 +352,9 @@ class StageTableTests(unittest.TestCase):
     def test_inputs_outputs_and_identity_keys(self) -> None:
         self.assertEqual(plan.STAGE_INPUTS["align"], (("wav", artifacts.AUDIO_16K), ("asr", artifacts.ASR)))
         self.assertEqual(plan.STAGE_OUTPUT["cues"], artifacts.JA_CUES)
-        self.assertEqual([plan.IDENTITY_KEY[s] for s in plan.STAGES], ["vad", "asr", "align", "ja_cues", "translate"])
+        self.assertEqual(plan.STAGE_OUTPUT["names"], artifacts.NAME_TABLE)
+        self.assertEqual([plan.IDENTITY_KEY[s] for s in plan.STAGES],
+                         ["vad", "asr", "align", "ja_cues", "names", "translate"])
         for bad in (lambda: plan.recipe_hash("cues"), lambda: plan.model_files("cues", {}),
                     lambda: plan.recipe_hash("asr"), lambda: plan.model_files("asr", {}, engine="x9")):
             with self.assertRaises(ValueError):

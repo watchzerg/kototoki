@@ -1,6 +1,6 @@
 # 当前架构总览
 
-仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频生产日文、中文与中日双语 SRT，STT 默认 W0、可选 X0，翻译用产品配方 `dp10-cut-degrade-v1`。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `dp10-cut`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，翻译基线见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)（模型与采样）／[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)（完整 SRT 流程），产品配方见 [ADR-0011](../adr/0011-dp10-cut-product-recipe.md)。
+仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频生产日文、中文与中日双语 SRT，STT 默认 W0、可选 X0，翻译用产品配方 `dp10-cut-degrade-v1`，翻译前用 Qwen3.8 建专名表、发布时统一专名译法（[ADR-0014](../adr/0014-name-consistency-in-product.md)）。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `dp10-cut`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，翻译基线见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)（模型与采样）／[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)（完整 SRT 流程），产品配方见 [ADR-0011](../adr/0011-dp10-cut-product-recipe.md)。
 
 本页是理解当前系统的入口，覆盖正式代码；"当前"指同一仓库版本的已实现结构，不代表全部环境已验收。阅读顺序：本页 → [模块边界](module-boundaries.md) → 受影响的模块页 → 源码与测试。
 
@@ -22,9 +22,10 @@
 | [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py` |
 | [日文 cue](modules/japanese-cues.md) | 双语字幕流水线中把 `align.json` 字符时间回填（插值、外推、整窗 `fallback`）并切成日文 cue 的纯函数，产出 `ja-cues.json` payload 与 `ja.srt` 文本；时间轴上唯一加 `offset_s` 的地方 | `kototoki/cues.py` |
 | [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0／x0／cross 逐窗转写（`asr.json`，窗口级 `failed_windows`，x0 触顶窗口置空；`cross` 为可选引擎，w0 与 x0 共驻、Whisper 交叉打分裁判，另写三个审计产物）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
-| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志（目的地与格式）与发布记录 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/logs.py` |
-| [阶段计划](modules/stage-plan.md) | 双语字幕流水线的阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段期望身份，以及按产物身份判定"下一个要跑的阶段"与发布状态（`next_stage`／`advance`）；编排与 worker 壳共用，翻译阶段的身份转问翻译子系统 | `kototoki/plan.py` |
-| [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：整批共用一个受管 llama-server session、产品配方 `dp10-cut-degrade-v1`（`dp10-cut` 切包与 joint 批次请求，终态失败按 10→5→1 降级）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
+| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／专名建表／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、发布时专名替换与三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志（目的地与格式）与发布记录 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/logs.py` |
+| [阶段计划](modules/stage-plan.md) | 双语字幕流水线的阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段期望身份，以及按产物身份判定"下一个要跑的阶段"与发布状态（`next_stage`／`advance`）；编排与 worker 壳共用，翻译阶段的身份转问翻译子系统，names 身份延迟导入 `names.recipes` 取配方 hash | `kototoki/plan.py` |
+| [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：整批共用一个受管 llama-server session、产品配方 `dp10-cut-degrade-v1`（`dp10-cut` 切包与 joint 批次请求，终态失败按 10→5→1 降级）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数；与专名建表共用的 llama-server 中间层（`ServerSpec`／`ManagedServer`／`LlamaClient`，来源与命令行拼装记在本页） | `kototoki/translate/`、`kototoki/merge.py`、`kototoki/llama_server.py` |
+| [专名一致性](modules/name-consistency.md) | 双语字幕流水线的 names 阶段与发布时替换：整批共用一个 Qwen3.8 llama-server session（最多启动 3 次、启动失败即 unavailable）、整份 `ja.srt` 一次建 `name-table-v2` 表并归一（终态失败写空表照常发布）、按日文锚定 cue 替换译文里的专名写法（规则一＋孤立单字）；`BUILD`／`APPLY` 配方与 hash | `kototoki/names/` |
 | 历史实验代码（冻结或只作回归参考） | 不建模块页；复现历史时按各自 README 使用冻结配置与旧身份，见下方列表 | 见下 |
 
 历史实验代码：[whisper](../../experiments/whisper/README.md)、[qwen](../../experiments/qwen/README.md)、[x0_flow](../../experiments/x0_flow/README.md)、[japanese_ctc](../../experiments/japanese_ctc/README.md)、[framework_equivalence](../../experiments/framework_equivalence/README.md)、[components](../../experiments/components/README.md)、[crisp](../../experiments/crisp/README.md)、[asr_candidates](../../experiments/asr_candidates/README.md)、[vad_comparison](../../experiments/vad_comparison/README.md)（除 `vad_stage.py` 外）、[fullfilm_comparison](../../experiments/fullfilm_comparison/README.md)、[performance](../../experiments/performance/README.md)、`experiments/analysis/`；翻译侧 [translation_flow](../../experiments/translation_flow/README.md)（v1／v2，v2 冻结）、[translation_eval](../../experiments/translation_eval/README.md)、[translation_judge](../../experiments/translation_judge/README.md)、[translation_compat](../../experiments/translation_compat/README.md)、[translation_corpus](../../experiments/translation_corpus/README.md)、[translation_four_quantization](../../experiments/translation_four_quantization/README.md)、[translation_v4](../../experiments/translation_v4/README.md)，以及 `experiments/` 根下 `translation_*.py`、`run_experiment.py`、`run_round2.py`、`x0_flow_evaluate.py` 等单文件脚本。其中当前模块仍在导入的少数符号见[模块边界](module-boundaries.md#依赖方向)。
@@ -58,19 +59,25 @@ flowchart TB
   JOB -->|直接调用| CUES["cues（纯函数）"]
   JOB -->|直接调用| MERGE["merge（纯函数）"]
   JOB -->|next_stage / advance，期望身份| PLAN["plan（阶段计划）"]
+  JOB -->|持有 session、apply| NM["names/（专名）"]
   JOB -->|持有 session| TR["translate/（子系统）"]
   JOB -.->|子进程：--jobs 文件 + 退出码| WK["workers.vad / workers.asr / workers.align"]
   WK -->|身份、模型清单| PLAN
   PLAN -.->|translate.plan（延迟导入）| TR
+  PLAN -.->|names.recipes 两个 hash（延迟导入）| NM
   WK --> VAD["vad"]
   WK --> ASR["asr_whisper ／ asr_qwen"]
   WK --> ALIGN["align"]
-  TR -->|HTTP| LLAMA["llama-server（独立进程）"]
+  TR --> LS["llama_server（中间层）"]
+  NM --> LS
+  LS -->|进程与 HTTP| LLAMA["llama-server（独立进程）"]
   MEDIA --> BASE
   CUES --> BASE
   MERGE --> BASE
   PLAN --> BASE
   TR --> BASE
+  NM --> BASE
+  LS --> BASE
   WK --> BASE
   VAD --> BASE
   ASR --> BASE
@@ -86,7 +93,7 @@ flowchart TB
 
 | 入口 | 解释器 | 模块 |
 | --- | --- | --- |
-| `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；翻译另起本机 llama-server | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
+| `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；专名建表（Qwen3.8-27B）与翻译（Hy-MT2）先后各起一个本机 llama-server | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
 | `python -m experiments.vad_comparison.vad_stage` | `.local/envs/vad-pyannote-gpu-v1` | 外部 VAD 阶段 |
 | `python -m experiments.w0_demo.run` | `.local/envs/whisper-latest` | W0 pipeline |
 | `python -m experiments.x0_demo.run`／`just x0-demo` | 根 `.venv`，子进程用 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |

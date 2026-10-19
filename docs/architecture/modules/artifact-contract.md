@@ -8,7 +8,7 @@
 
 ## 当前行为规格
 
-**布局**（`kototoki/artifacts.py`）：最终 SRT 镜像输入目录层级，`S1/ep01.mkv` → `<out>/S1/ep01.{ja,zh,ja-zh}.srt`（`final_srt_paths`）。每个视频的工作目录是 `<out>/.work/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`）；`register_work_dir` 在 `.work/index.json` 登记 id ↔ 相对路径，同一 id 已登记为另一路径时报错（短 id 碰撞）。相对路径不得是绝对路径、含 `..` 或任何段含 `:`（盘符、NTFS 备用数据流）；`register_work_dir` 读改写 `index.json`，由编排器在扫描阶段串行调用。产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`PUBLISHED`、`FAILURE` 等）；翻译 run 目录的键归翻译子系统（`translate.plan`，见[翻译子系统](translation-subsystem.md)），本模块不拼它。
+**布局**（`kototoki/artifacts.py`）：最终 SRT 镜像输入目录层级，`S1/ep01.mkv` → `<out>/S1/ep01.{ja,zh,ja-zh}.srt`（`final_srt_paths`）。每个视频的工作目录是 `<out>/.work/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`）；`register_work_dir` 在 `.work/index.json` 登记 id ↔ 相对路径，同一 id 已登记为另一路径时报错（短 id 碰撞）。相对路径不得是绝对路径、含 `..` 或任何段含 `:`（盘符、NTFS 备用数据流）；`register_work_dir` 读改写 `index.json`，由编排器在扫描阶段串行调用。产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`NAME_TABLE`、`PUBLISHED`、`FAILURE` 等）；翻译 run 目录的键归翻译子系统（`translate.plan`，见[翻译子系统](translation-subsystem.md)），本模块不拼它。
 
 **坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）；只有 `align.json` 的 `units[].start/end` 含 offset；`ja-cues.json` 与 SRT 的 cue 时间是最终 SRT 时间。
 
@@ -33,6 +33,8 @@
 
 **cross 审计产物**：`engine = "cross"` 时 asr 阶段在 `.work/<id>/` 额外写三个审计文件，名称是 `artifacts.py` 的模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`，身份按单引擎计算）与 `asr-judge.json`（`offset_s`、每窗口两路原文、分歧区间、逐区间分数与决定，以及文件级计数汇总，身份同 cross 的 `asr.json`；字段见 [STT worker](stt-workers.md#cross-引擎)）。三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。它们**不是阶段产物**：不在 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游；asr 阶段的产物契约只认 `asr.json`。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。`asr.json` 本身的结构、`offset_s` 强制检查与失败窗口约定不变。
 
+**专名产物**（[专名一致性](name-consistency.md)）：`NAME_TABLE = "name-table.json"` 是 names 阶段的阶段产物（在 `STAGE_ARTIFACTS`，参与 `is_current`，由编排经 `write_artifact` 写出，payload 为 `name-table-v2` 表与 `meta`／`build`）；`NAMES_APPLY = "names-apply.json"` 是发布时替换的审计产物（`summary`、`changes`、`unresolved`，由编排写出），与 cross 的三个审计文件同一地位：不在 `STAGE_ARTIFACTS`／`STAGE_OUTPUT`，不参与 `is_current`。两者的身份由[阶段计划](stage-plan.md)给出，并以 `names`／`names_apply` 键进 `published.json` 的 `sources`，`[names] enabled = false` 时两键都不出现。两者都含转写内容，只写在工作目录。
+
 **SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。`write_srt` 原子写出、拒绝覆盖源文件；是否允许覆盖最终文件由 `publish_blockers` 判定。
 
 ## 接口与依赖
@@ -51,3 +53,5 @@
 票据 `.scratch/bilingual-subtitle-pipeline/issues/00-foundation.md`；规格 §4、§6、§7.1、§1.2 第三轮裁定表。原子写取自 `experiments/translation_v3/common.py`，模型哈希缓存取自 `experiments/translation_v3/server.py::verify_model`。
 
 2026-10-19 `cross` 引擎交付，依据 [ADR-0012](../../adr/0012-cross-asr-judge.md) 与[产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)，票据 `.scratch/cross-asr-judge/`；增量说明已吸收进本页（审计产物）并删除。
+
+2026-10-19 专名一致性进产品（[ADR-0014](../../adr/0014-name-consistency-in-product.md)）：票据 `.scratch/name-consistency-product/issues/05-config-assets-plan.md` 加 `NAME_TABLE`／`NAMES_APPLY` 两个常量，06 同步本页。

@@ -36,6 +36,7 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(cfg.input.video_extensions, (".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"))
         self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 1.0, "。！？!?", "、，,", 0.3))
         self.assertEqual(cfg.translate, config.TranslateConfig(port=8080, seed=20261008))
+        self.assertEqual(cfg.names, config.NamesConfig(port=8081, seed=20261019, enabled=True))
         self.assertEqual(cfg.source, self.root / "kototoki.toml")
 
     def test_cue_rules_have_the_shape_build_cues_expects(self) -> None:
@@ -78,8 +79,18 @@ class LoadTests(unittest.TestCase):
         with self.assertRaisesRegex(config.ConfigError, r"one of w0, x0, cross, got 'w1'"):
             config.load(self.write(MINIMAL + '[stt]\nengine = "w1"\n'), environ={})
 
+    def test_names_model_is_relative_to_models_root(self) -> None:
+        default = config.load(self.write(MINIMAL), environ={})
+        self.assertEqual(default.models.names,
+                         config.REPO_ROOT / ".local/models/glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf")
+        cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[names]\nmodel = "g/x.gguf"\nport = 9\nseed = 1\n'
+                                              'enabled = false\n'), environ={})
+        self.assertEqual(cfg.models.names, self.root / "m" / "g" / "x.gguf")
+        self.assertEqual(cfg.names, config.NamesConfig(port=9, seed=1, enabled=False))
+
     def test_unknown_keys_and_sections_are_errors(self) -> None:
         for text, needle in ((MINIMAL + "bogus = 1\n", "bogus"),
+                             (MINIMAL + "[names]\nthink = true\n", "think"),
                              (MINIMAL + "[vad]\ndevice = \"cpu\"\n", "device"),
                              (MINIMAL + "[run]\nbreak_stale_lock = true\n", "break_stale_lock"),
                              (MINIMAL + "[extra]\nx = 1\n", "[extra]"),
@@ -91,6 +102,8 @@ class LoadTests(unittest.TestCase):
         bad = (('[paths]\ninput_dir = "in"\n', "output_dir is required"),
                (MINIMAL + "[run]\nextract_workers = \"4\"\n", "must be an integer"),
                (MINIMAL + "[run]\nforce = 1\n", "true or false"),
+               (MINIMAL + "[names]\nenabled = 1\n", r"\[names\] enabled must be true or false"),
+               (MINIMAL + "[names]\nenabled = \"true\"\n", "true or false"),
                (MINIMAL + "[stt]\nengine = \"w1\"\n", "engine must be one of"),
                (MINIMAL + "[input]\nvideo_extensions = \".mkv\"\n", "list of nonempty strings"),
                (MINIMAL + "[run]\nextract_workers = 0\n", "at least 1"))

@@ -1,14 +1,16 @@
-"""代码常量 == 资产清单 `assets.toml`：防止模型 SHA 表、翻译模型身份与默认路径里的版本号三处漂移。
+"""代码常量 == 资产清单 `assets.toml`：防止模型 SHA 表、翻译与专名建表的模型身份、默认路径里的版本号漂移。
 
 清单是身份的唯一权威（docs/development/dependencies.md）；代码常量保留用于运行时自校验，这里逐项钉住相等。
 """
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 import tomllib
 import unittest
 
 from kototoki import config, plan, recipes
+from kototoki.names import recipes as names_recipes
 from kototoki.translate.server import MODEL_ASSET
 
 with (config.REPO_ROOT / "assets.toml").open("rb") as _stream:
@@ -35,6 +37,12 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(model["files"], {MODEL_ASSET["file"]: {"sha256": MODEL_ASSET["sha256"],
                                                                 "size": MODEL_ASSET["size"]}})
 
+    def test_names_model_asset_equals_manifest(self) -> None:
+        model, asset = MODELS["qwen3.8-27b-ud-iq3_s"], names_recipes.BUILD["model_asset"]
+        self.assertEqual((model["repo"], model["revision"]),
+                         (names_recipes.NAMES_SERVER["repo"], names_recipes.NAMES_SERVER["revision"]))
+        self.assertEqual(model["files"], {asset["file"]: {"sha256": asset["sha256"], "size": asset["size"]}})
+
     def test_default_model_paths_point_into_manifest_dirs(self) -> None:
         defaults = config.DEFAULTS
         self.assertEqual(defaults["vad"]["model"], f"{MODELS['pyannote-segmentation-3.0']['dir']}/pytorch_model.bin")
@@ -44,6 +52,9 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(defaults["align"]["model"], MODELS["mms-1b-all"]["dir"])
         self.assertEqual(defaults["translate"]["model"],
                          f"{MODELS['hy-mt2-30b-a3b-apex-i-compact']['dir']}/{MODEL_ASSET['file']}")
+        names = MODELS["qwen3.8-27b-ud-iq3_s"]
+        self.assertEqual(list(names["files"]), [PurePosixPath(defaults["names"]["model"]).name])
+        self.assertEqual(defaults["names"]["model"], f"{names['dir']}/{PurePosixPath(defaults['names']['model']).name}")
         self.assertEqual(defaults["paths"]["models_root"], ".local/models")
 
 

@@ -4,13 +4,14 @@
 产物是否当前（`artifacts.is_current`）。本模块只产出期望身份，不比对产物内容、不写文件、不加载模型；
 模型文件 SHA256 由调用方经 `ModelSha` 回调提供（编排用 `workers/gpu.verify_models` 加 size+mtime 缓存）。
 不依赖 torch、ffmpeg 与网络；翻译阶段的 run 目录、身份与"是否需要模型"归翻译子系统（`translate.plan`），
-核对到该阶段时才导入它。
+核对到该阶段时才导入它。names 阶段的身份由本模块自己算，只经 `kototoki.names.recipes` 延迟取两个配方 hash。
 
 阶段链（规格 §3）::
 
-    probe/extract ─► vad ─► asr ─► align ─► cues ─► translate ─► publish
-                      vad.json 无语音时直接 ─────────────────────► publish
+    probe/extract ─► vad ─► asr ─► align ─► cues ─► names ─► translate ─► publish
+                      vad.json 无语音时直接 ──────────────────────────────► publish
 
+`[names] enabled = false` 时链跳过 names，`sources` 不含 `names`／`names_apply`。
 `next_stage` 对一个文件从 vad 起逐阶段核对，返回第一个需要运行的阶段与此前各阶段的期望身份；
 某阶段跑完后用 `advance` 从该阶段继续核对，不再从头重算。
 """
@@ -33,15 +34,18 @@ JA_SRT = "ja.srt"  # cues 阶段写出、翻译读取的日文 SRT（工作目�
 
 GPU_STAGES = ("vad", "asr", "align")
 # 需要核对身份的阶段，按链上顺序；`publish`／`done` 是计划的终态，不是阶段。
-STAGES = (*GPU_STAGES, "cues", "translate")
+STAGES = (*GPU_STAGES, "cues", "names", "translate")
 # 阶段产物（工作目录内文件名）。
-STAGE_OUTPUT = {"vad": artifacts.VAD, "asr": artifacts.ASR, "align": artifacts.ALIGN, "cues": artifacts.JA_CUES}
+STAGE_OUTPUT = {"vad": artifacts.VAD, "asr": artifacts.ASR, "align": artifacts.ALIGN, "cues": artifacts.JA_CUES,
+                "names": artifacts.NAME_TABLE}
 # GPU 阶段 worker 的 jobs 输入：(输入名 → 工作目录内文件)。
 STAGE_INPUTS = {"vad": (("wav", artifacts.AUDIO_16K),),
                 "asr": (("wav", artifacts.AUDIO_16K), ("vad", artifacts.VAD)),
                 "align": (("wav", artifacts.AUDIO_16K), ("asr", artifacts.ASR))}
-# `published.json` 的 `sources` 里各阶段身份的键（`cues` 阶段的产物是 `ja-cues.json`）。
-IDENTITY_KEY = {"vad": "vad", "asr": "asr", "align": "align", "cues": "ja_cues", "translate": "translate"}
+# `published.json` 的 `sources` 里各阶段身份的键（`cues` 阶段的产物是 `ja-cues.json`）；
+# 发布时替换的审计产物 `names-apply.json` 另有键 `names_apply`，不是阶段。
+IDENTITY_KEY = {"vad": "vad", "asr": "asr", "align": "align", "cues": "ja_cues", "names": "names",
+                "translate": "translate"}
 
 ASR_RECIPES = {"w0": recipes.W0, "x0": recipes.X0, "cross": recipes.CROSS}
 
@@ -149,6 +153,18 @@ def cues_identity(align_sha256: str, config: Config) -> dict[str, Any]:
                                       recipe_hash=recipes.recipe_hash(recipes.CUES), config=asdict(config.cues))
 
 
+def names_identity(ja_srt_sha256: str, config: Config) -> dict[str, Any]:
+    """`name-table.json` 的期望身份；模型 SHA256 在建表配方里，故不进身份。"""
+    recipe = importlib.import_module("kototoki.names.recipes").BUILD_RECIPE_HASH
+    return {"ja_srt_sha256": ja_srt_sha256, "recipe_hash": recipe, "seed": config.names.seed}
+
+
+def names_apply_identity(table_sha256: str) -> dict[str, Any]:
+    """`names-apply.json` 的期望身份：它只进 `published.json` 的 `sources`，不参与 `is_current`。"""
+    recipe = importlib.import_module("kototoki.names.recipes").APPLY_RECIPE_HASH
+    return artifacts.derived_identity(upstream={artifacts.NAME_TABLE: table_sha256}, recipe_hash=recipe)
+
+
 def translate_plan(work_dir: Path, config: Config) -> TranslatePlan:
     """翻译子系统的 `TranslatePlan`（run 目录、`identity`、`needs_model`）；读 `ja.srt`，不写文件。"""
     translate = importlib.import_module("kototoki.translate")
@@ -181,7 +197,8 @@ class Target:
 class Plan:
     """`stage` 是第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`translate`），或终态
     `publish`（无语音，直接发布零条目 SRT）／`done`（已发布且身份匹配、最终文件未改动）。
-    `identities` 是 `probe` 与从 vad 起到 `stage`（含）各阶段的期望身份，键同 `published.json` 的 `sources`；
+    `identities` 是 `probe` 与从 vad 起到 `stage`（含）各阶段的期望身份，键同 `published.json` 的 `sources`
+    （names 阶段启用且表当前时另含 `names_apply`）；
     `translate` 是核对到翻译阶段后翻译子系统给出的计划（run 目录、是否需要模型），此前为 None。
     """
     stage: str
@@ -192,7 +209,11 @@ class Plan:
     @property
     def sources(self) -> dict[str, Any]:
         """`published.json` 的 `sources`：参与"已是最新"判定的全部身份与 `no_speech`。"""
-        keys = ("probe", "vad") if self.no_speech else ("probe", "vad", "asr", "align", "ja_cues", "translate")
+        if self.no_speech:
+            keys = ("probe", "vad")
+        else:  # 链里有 names（`[names] enabled`）时身份里才有这两个键，Plan 不必持有 config
+            names = ("names", "names_apply") if "names" in self.identities else ()
+            keys = ("probe", "vad", "asr", "align", "ja_cues", *names, "translate")
         return {key: self.identities[key] for key in keys} | {"no_speech": self.no_speech}
 
 
@@ -215,6 +236,14 @@ def _check_from(target: Target, config: Config, models: ModelSha, plan: Plan) ->
     try:
         for stage in STAGES[STAGES.index(plan.stage):]:
             key = IDENTITY_KEY[stage]
+            if stage == "names":
+                if not config.names.enabled:
+                    continue
+                ids[key] = names_identity(artifacts.sha256_file(work / JA_SRT), config)
+                if not artifacts.is_current(work / STAGE_OUTPUT[stage], ids[key]):
+                    return Plan(stage, ids, False)
+                ids["names_apply"] = names_apply_identity(artifacts.sha256_file(work / artifacts.NAME_TABLE))
+                continue
             if stage == "translate":
                 translate = translate_plan(work, config)
                 ids[key] = translate.identity
@@ -243,8 +272,10 @@ def _publish_state(target: Target, plan: Plan) -> Plan:
     """已发布记录的 `sources` 等于期望且三份最终文件未改动即 `done`；否则维持 `publish`／`translate`。"""
     record = artifacts.read_published(target.work_dir)
     expected = plan.sources
-    if record is not None and artifacts.canonical({key: record["sources"].get(key) for key in expected}) \
-            == artifacts.canonical(expected):
+    # names 两键即使期望里没有也要比：从启用改为停用时，记录里多出的键同样表示"已发布内容不是这份计划"。
+    keys = set(expected) | {"names", "names_apply"}
+    if record is not None and artifacts.canonical({key: record["sources"].get(key) for key in keys}) \
+            == artifacts.canonical({key: expected.get(key) for key in keys}):
         if all(path.is_file() and artifacts.sha256_file(path) == record["sha256"][kind]
                for kind, path in target.finals.items()):
             return replace(plan, stage="done")

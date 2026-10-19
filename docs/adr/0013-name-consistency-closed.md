@@ -2,7 +2,7 @@
 
 状态：已接受（2026-10-19）。  
 日期：2026-10-19。  
-关系：**不替代任何已有 ADR。** 翻译基线（[ADR-0010](0010-dp10-cut-translation-flow-baseline.md)）与产品配方（[ADR-0011](0011-dp10-cut-product-recipe.md)）不变；本线从未进入产品包 `kototoki/`，技术设计不改。  
+关系：**不替代任何已有 ADR。** 第 3 条"不进产品"已被 [ADR-0014](0014-name-consistency-in-product.md) 替代（用户 2026-10-19 另行裁定）；第 1、2 条仍有效。翻译基线（[ADR-0010](0010-dp10-cut-translation-flow-baseline.md)）与产品配方（[ADR-0011](0011-dp10-cut-product-recipe.md)）不变；本线从未进入产品包 `kototoki/`，技术设计不改。  
 范围：`experiments/name_consistency/` 这条"通用模型从日文侧建专名表＋生成后程序替换"的研究线。六轮报告见[调研索引](../research/INDEX.md#翻译后审校与人名专名一致性2026-10-19已结题adr-0013)。
 
 ## 决定

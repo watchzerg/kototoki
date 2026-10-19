@@ -42,7 +42,7 @@ recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carries the same packing int
 ### 双语字幕流水线
 
 **双语字幕流水线**：
-产品包 `kototoki/`，入口 `python -m kototoki [kototoki.toml]`：一批日语视频按阶段整批推进（probe／extract → vad → asr → align → ja-cues → translate → 发布），每部产出 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`。
+产品包 `kototoki/`，入口 `python -m kototoki [kototoki.toml]`：一批日语视频按阶段整批推进（probe／extract → vad → asr → align → ja-cues → names → translate → 发布），每部产出 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`。
 _Avoid_: 产品后端, 正式后端
 
 **STT 引擎（w0／x0／cross）**：
@@ -70,5 +70,21 @@ _Avoid_: 计划器, 调度计划
 
 **发布**：
 三份最终 SRT 先写入工作目录暂存、记入 `published.json` 再一起移到输出目录；用户改动过的最终文件在 `force = false` 时不被覆盖。
+
+**专名表（name table）**：
+`names` 阶段为每部影片的 `ja.srt` 建的专名清单（`name-table.json`，schema `name-table-v2`）：若干实体，各带种类（person／class／org／place／other）、规范中文译名、写法、`zh_variants` 与 evidence；`build.status` 为 `ok`／`failed`／`too_long`，后两者是空表。表在工作目录里，可人工校对（改 `entries` 后重跑只重做替换）；条目是转写内容，不进日志（`kototoki/names/table.py`，[ADR-0014](docs/adr/0014-name-consistency-in-product.md)）。
+_Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是历史命名）
+
+**实体（entity）**：
+专名表的一个条目所指的对象：一个人物、职阶、组织或地点，以 `entity_ja`（模型认出的正确日文全称）标识，对应一个规范中文译名 `zh`；同一实体在日文转写里可以有多个写法。
+
+**写法（form）**：
+实体在 `ja.srt` 里实际出现的一个日文写法（含 ASR 误写）及它对应的中文 `{ja, zh}`，如 シンジ → 真嗣、碇 → 碇；同一实体的各写法按日文去重，`entity_ja` 本身也是其中之一。不是翻译配方里的"提示变体"，也与 `zh_variants`（模型列出的译文里可能出现的别的中文写法）不同。
+
+**锚定 cue**：
+替换时，日文里出现某个实体最长 `form.ja` 的 cue 就由该写法锚定（短写法不再重复处理同一 cue），该 cue 的译文以这个写法的 `zh` 为替换目标；替换只发生在锚定 cue 内（`kototoki/names/apply.py`）。
+
+**落点**：
+在锚定 cue 的译文里找到的、应被换成目标中文的那一段：先找同实体其他写法的中文与过特异性检验的 `zh_variants`（变体层），找不到再用跨 cue 统计（统计层）；统计层落点按规则一扩展到整个名字。落点重叠、紧邻复合名连接符或不在词边界上时不替换，记入 `names-apply.json` 的 `unresolved`。
 
 Legacy CLI defaults (old PyanNet / fixed30) are **not** the adopted baselines; see [ADR-0003](docs/adr/0003-new-pyannote-baselines.md).

@@ -2,7 +2,7 @@
 
 沿用 `tests.core.test_job.JobCase` 的接缝：媒体阶段换成真实 `media.probe`／`extract`（ffmpeg／ffprobe 取
 `config.load` 的默认路径，缺失时 setUp 失败而不是跳过），GPU 阶段仍由 `tests/fake_worker.py` 子进程顶替、
-cue 构建与翻译仍是假实现；不经 `python -m kototoki` 子进程、不起 llama-server、不加载模型。
+cue 构建、专名建表与替换、翻译仍是假实现；不经 `python -m kototoki` 子进程、不起 llama-server、不加载模型。
 """
 
 from __future__ import annotations
@@ -54,7 +54,11 @@ class EndToEndTests(JobCase):
                              (recipes.SAMPLE_RATE, 1, 2))
             self.assertAlmostEqual(reader.getnframes() / recipes.SAMPLE_RATE, SECONDS, delta=0.1)
         self.assertEqual([launch["ids"] for launch in self.launches()], [self.ids(rel)] * 3)
-        self.assertEqual(self.calls, ["session_enter", f"translate:{self.ids(rel)[0]}", "session_exit", "merge"])
+        identifier = self.ids(rel)[0]
+        self.assertEqual(self.calls, ["names_session_enter", f"names:{identifier}", "names_session_exit",
+                                      "session_enter", f"translate:{identifier}", "session_exit", "merge"])
+        for name in (artifacts.NAME_TABLE, artifacts.NAMES_APPLY):
+            self.assertTrue((work / name).is_file(), name)
 
         self.assertEqual(self.final(rel, "ja").read_text(encoding="utf-8"), SRT_JA)
         self.assertEqual(self.final(rel, "zh").read_text(encoding="utf-8"), SRT_ZH)
@@ -65,6 +69,7 @@ class EndToEndTests(JobCase):
         published = artifacts.read_published(work)
         self.assertIsNotNone(published)
         self.assertEqual(set(published["sha256"]), {"ja", "zh", "ja-zh"})
+        self.assertLessEqual({"names", "names_apply"}, set(published["sources"]))
 
     def test_missing_jpn_track_is_logged_as_warning(self) -> None:
         rel = "no-jpn.mkv"

@@ -1,12 +1,14 @@
-"""批次编排：扫描、CPU 阶段、GPU 阶段子进程、ja-cues、翻译、一起发布（规格 §3、§4、§6、§7.1）。
+"""批次编排：扫描、CPU 阶段、GPU 阶段子进程、ja-cues、专名建表、翻译、一起发布（规格 §3、§4、§6、§7.1）。
 
 对外只有 `run(config) -> Summary`。流程按"阶段 × 整批"推进::
 
     扫描（大小采样稳定性、镜像、短 id、发布前置判定）
     → probe/extract（线程池，整批完成）
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
-    → ja-cues（进程内）→ translate（进程内，整批一个 session；翻译子系统的计划说要模型时才取 GPU 锁、建 session）
-    → 三份 SRT 一起发布
+    → ja-cues（进程内）
+    → names（进程内，整批一个 Qwen session；有非零条目的 `ja.srt` 要建表时才取 GPU 锁、建 session；`[names] enabled`）
+    → translate（进程内，整批一个 session；翻译子系统的计划说要模型时才取 GPU 锁、建 session）
+    → 专名替换（发布时的纯函数，写 `names-apply.json`）→ 三份 SRT 一起发布
 
 阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
 某阶段跑完再 `advance` 继续核对；产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。GPU 阶段产物
@@ -15,7 +17,7 @@
 完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）。
 
 锁：启动即取 `<output_dir>/.work/lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
-锁文件记录编排器、当前 worker 与 llama-server 的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
+锁文件记录编排器、当前 worker 与 llama-server（names 或 translate）的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
 锁、Job Object 与进程身份取自 `experiments/translation_v3/procs.py`（复制，不导入）。
 """
 
@@ -350,6 +352,7 @@ class Summary:
     no_speech: list[str] = field(default_factory=list)     # VAD 为空，发布零条目 SRT
     failed: dict[str, str] = field(default_factory=dict)   # 相对路径 → 失败阶段
     fallback_cues: int = 0                                 # 译文回退为日文的 cue 数
+    name_replacements: int = 0                             # 发布时专名替换的处数（`names-apply.json` 的 changes 条数）
 
     @property
     def exit_code(self) -> int:
@@ -386,7 +389,11 @@ def stable_files(files: list[tuple[str, Path]], interval_s: float,
     return stable, [rel for rel, _ in unstable]
 
 
-# --- 翻译与合并的延迟导入、模型核对 ----------------------------------------------------------------
+# --- 专名、翻译与合并的延迟导入、模型核对 -----------------------------------------------------------
+
+def _names_module() -> Any:
+    return importlib.import_module("kototoki.names")
+
 
 def _translate_module() -> Any:
     return importlib.import_module("kototoki.translate")
@@ -592,7 +599,7 @@ def advance_or_fail(ctx: _Context, video: VideoFile, stage: str) -> bool:
     return True
 
 
-# --- ja-cues、翻译与发布 -------------------------------------------------------------------------
+# --- ja-cues、专名建表、翻译与发布 ----------------------------------------------------------------
 
 def build_ja_cues(config: Config, video: VideoFile) -> None:
     align = artifacts.read_json(video.work_dir / artifacts.ALIGN)
@@ -600,6 +607,75 @@ def build_ja_cues(config: Config, video: VideoFile) -> None:
     srt.write_srt(text, video.work_dir / JA_SRT)
     assert video.plan is not None
     artifacts.write_artifact(video.work_dir / artifacts.JA_CUES, video.plan.identities["ja_cues"], payload)
+
+
+def _names_line(relative: str, result: Any) -> str:
+    """一部影片建表结果的日志行：只有计数、token 与耗时，条目文字不进日志。"""
+    if result.status != "ok":
+        return f"[names] done {relative}: build failed ({result.payload['build']['reason']}), empty table"
+    if result.attempts == 0:
+        return f"[names] done {relative}: no cues, empty table"
+    meta = result.payload["meta"]
+    dropped = sum(len(meta[key]) for key in ("dropped_shape", "dropped_honorific", "dropped_ja_shape"))
+    return (f"[names] done {relative}: {len(result.payload['entries'])} entries ({dropped} dropped), "
+            f"{meta['prompt_tokens']} prompt tok, {meta['completion_tokens']} completion tok, {result.seconds:.1f} s")
+
+
+def names_batch(ctx: _Context, batch: list[VideoFile]) -> None:
+    """为 `batch` 建专名表并写 `name-table.json`；建表终态失败（`too_long`／`failed`）写空表、记 WARNING，影片照常往下走。
+
+    只有某个文件的 `ja.srt` 有 cue 时才取 GPU 锁、建 session；session 建不起来只让需要模型的文件失败。
+    """
+    if not batch:
+        return
+    started = time.perf_counter()
+    logger.info(f"[names] start: {len(batch)} file(s)")
+    names = _names_module()
+    documents: dict[str, srt.SourceDocument] = {}
+    for video in batch:
+        try:
+            documents[video.relative] = srt.read_srt(video.work_dir / JA_SRT)
+        except Exception as error:
+            ctx.fail(video, "names", error)
+    needed = [video for video in batch if not video.failed and documents[video.relative].cues]
+    session: Any = None
+    if needed:
+        try:
+            ctx.ensure_gpu_lock()
+            session = names.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid))
+        except Exception as error:
+            for video in needed:
+                ctx.fail(video, "names", error)
+    with session if session is not None else contextlib.nullcontext():
+        for video in batch:
+            if video.failed:
+                continue
+            assert video.plan is not None
+            try:
+                result = names.build_document(video.work_dir, documents[video.relative], session,
+                                              ctx.config.names.seed)
+                artifacts.write_artifact(video.work_dir / artifacts.NAME_TABLE, video.plan.identities["names"],
+                                         result.payload)
+            except Exception as error:
+                ctx.fail(video, "names", error)
+                continue
+            line = _names_line(video.relative, result)
+            (logger.info if result.status == "ok" else logger.warning)(line)
+            advance_or_fail(ctx, video, "names")
+    ctx.gpu_lock.update(server_pid=None)
+    logger.info(f"[names] end: {time.perf_counter() - started:.1f}s")
+
+
+def apply_names(video: VideoFile, document: srt.SourceDocument, translations: Mapping[str, str]
+                ) -> tuple[dict[str, str], int]:
+    """按 `name-table.json` 替换译文，写审计文件 `names-apply.json`；返回替换后的译文与替换处数。"""
+    assert video.plan is not None
+    stored = artifacts.read_json(video.work_dir / artifacts.NAME_TABLE)
+    table = {key: value for key, value in stored.items() if key != "identity"}
+    result = _names_module().apply(table, document, translations)
+    artifacts.write_artifact(video.work_dir / artifacts.NAMES_APPLY, video.plan.identities["names_apply"],
+                             {"summary": result.summary, "changes": result.changes, "unresolved": result.unresolved})
+    return dict(result.translations), len(result.changes)
 
 
 def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[dict[str, str], int, str]]:
@@ -641,8 +717,12 @@ def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[di
     return results
 
 
-def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate_dir: str, fallback: int) -> bool:
-    """三份 SRT 先写到工作目录暂存，`publish_blockers` 放行 → `record_published` → 移动；成功后删 failure.json。"""
+def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate_dir: str, fallback: int,
+            replacements: int | None = None) -> bool:
+    """三份 SRT 先写到工作目录暂存，`publish_blockers` 放行 → `record_published` → 移动；成功后删 failure.json。
+
+    `replacements` 是发布时专名替换的处数；names 停用或无语音时为 None。
+    """
     staging = video.work_dir / PUBLISH_DIR
     staged = {kind: staging / path.name for kind, path in video.finals.items()}
     for kind, path in staged.items():
@@ -664,7 +744,9 @@ def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate
     (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
     ctx.summary.published.append(video.relative)
     ctx.summary.fallback_cues += fallback
-    logger.info(f"[publish] {video.relative}" + (" (no speech)" if video.no_speech else ""))
+    ctx.summary.name_replacements += replacements or 0
+    logger.info(f"[publish] {video.relative}" + (" (no speech)" if video.no_speech else "")
+                + (f", {replacements} name replacement(s)" if replacements is not None else ""))
     return True
 
 
@@ -779,6 +861,7 @@ def _run(ctx: _Context) -> None:
             continue
         advance_or_fail(ctx, video, "cues")
 
+    names_batch(ctx, planned("names"))
     translated = translate_batch(ctx, planned("translate"))
     ctx.gpu_lock.release()
 
@@ -791,16 +874,19 @@ def _run(ctx: _Context) -> None:
             elif stage == "translate" and video.relative in translated:
                 translations, fallback, translate_dir = translated[video.relative]
                 document = video.plan.translate.document
+                replacements = None
+                if config.names.enabled:
+                    translations, replacements = apply_names(video, document, translations)
                 texts = {"ja": (video.work_dir / JA_SRT).read_text(encoding="utf-8"),
                          "zh": srt.render_srt(document, translations),
                          "ja-zh": _merge_module().merge(document, translations) if document.cues else ""}
-                publish(ctx, video, texts, translate_dir, fallback)
+                publish(ctx, video, texts, translate_dir, fallback, replacements)
         except Exception as error:
             ctx.fail(video, "publish", error)
 
     logger.info(f"[summary] {summary.total} video(s): {len(summary.published)} published "
                 f"({len(summary.no_speech)} no speech), {len(summary.up_to_date)} up to date, "
                 f"{len(summary.failed)} failed, {len(summary.blocked)} blocked, {len(summary.unstable)} unstable, "
-                f"{summary.fallback_cues} fallback cue(s)")
+                f"{summary.fallback_cues} fallback cue(s), {summary.name_replacements} name replacement(s)")
     for rel, stage in summary.failed.items():
         logger.info(f"[summary] failed at {stage}: {rel}")

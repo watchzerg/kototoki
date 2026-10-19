@@ -34,6 +34,7 @@ SRT_JA = "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n"
 SRT_ZH = "1\n00:00:01,000 --> 00:00:02,000\n你好\n"
 DEAD_PID = 999999999
 FAKE_SERVER_PID = 12345
+FAKE_NAMES_SERVER_PID = 23456
 
 
 def fake_worker_command(stage: str, jobs_path: Path) -> list[str]:
@@ -70,7 +71,8 @@ class JobCase(unittest.TestCase):
         if self.FAKE_MEDIA:
             self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
             self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
-        self.enterContext(mock.patch("kototoki.job.cues.build_cues", return_value=({"cues": []}, SRT_JA)))
+        self.empty_cues: set[str] = set()  # 相对路径：伪 cue 构建给出零条目 `ja.srt`
+        self.enterContext(mock.patch("kototoki.job.cues.build_cues", side_effect=self._build_cues))
         self.enterContext(mock.patch("kototoki.job.gpu.verify_models", return_value=FAKE_MODELS))
         self.enterContext(mock.patch("kototoki.job.contain_children"))  # 不把测试进程放进 Job Object
 
@@ -105,7 +107,44 @@ class JobCase(unittest.TestCase):
         translate.translate_document = self._translate_document
         merge = types.ModuleType("kototoki.merge")
         merge.merge = self._merge
-        self.enterContext(mock.patch.dict(sys.modules, {"kototoki.translate": translate, "kototoki.merge": merge}))
+
+        # 假专名模块：建表按 `name_entries` 给表，替换把各条目 `zh_variants` 里的写法换成条目的 `zh`。
+        self.name_entries: list[dict] = []          # 伪建表给出的条目；默认空表，不改译文
+        self.names_status: dict[str, str] = {}      # work id → 伪建表终态（failed／too_long）
+        self.names_errors: set[str] = set()         # work id：伪 build_document 抛 NamesError
+        self.names_session_error: Exception | None = None  # 设置后 names.Session() 构造即抛
+        self.names_snapshots: list[dict] = []
+        self.applied: list[dict] = []               # 伪 apply 收到的表（不含身份块）
+
+        class NamesError(RuntimeError):
+            pass
+
+        class NamesSession:
+            def __init__(self, config, on_server_pid):
+                if case.names_session_error is not None:
+                    raise case.names_session_error
+                self.on_server_pid = on_server_pid
+
+            def __enter__(self):
+                case.calls.append("names_session_enter")
+                self.on_server_pid(FAKE_NAMES_SERVER_PID)
+                return self
+
+            def __exit__(self, *exc):
+                case.calls.append("names_session_exit")
+                return False
+
+        names = types.ModuleType("kototoki.names")
+        names.Session = NamesSession
+        names.NamesError = NamesError
+        names.build_document = self._build_document
+        names.apply = self._apply
+        names.BUILD_RECIPE_HASH, names.APPLY_RECIPE_HASH = "d" * 64, "e" * 64
+        names_recipes = types.ModuleType("kototoki.names.recipes")
+        names_recipes.BUILD_RECIPE_HASH, names_recipes.APPLY_RECIPE_HASH = "d" * 64, "e" * 64
+        self.enterContext(mock.patch.dict(sys.modules, {
+            "kototoki.translate": translate, "kototoki.merge": merge,
+            "kototoki.names": names, "kototoki.names.recipes": names_recipes}))
 
     # --- 假实现 -------------------------------------------------------------------------------
 
@@ -140,6 +179,44 @@ class JobCase(unittest.TestCase):
             sample_rate=16000, samples=len(pcm) // 2, pcm_sha256=hashlib.sha256(pcm).hexdigest(),
             decoded_duration_s=10.0, video_duration_s=10.0, offset_s=0.0, pan="",
             compensation=self.compensation.get(rel, {}), warnings=self.media_warnings.get(rel, ((), ()))[1])
+
+    def _build_cues(self, align, options):
+        """`empty_cues` 里的文件给零条目 SRT；按 align 身份里的 PCM SHA 认出文件（伪 extract 每个文件不同）。"""
+        pcm = align["identity"]["upstream"][artifacts.AUDIO_16K]
+        empty = {hashlib.sha256(hashlib.sha256(rel.encode()).digest()).hexdigest() for rel in self.empty_cues}
+        return {"cues": []}, "" if pcm in empty else SRT_JA
+
+    def _build_document(self, work_dir, document, session, seed):
+        identifier = Path(work_dir).name
+        self.calls.append(f"names:{identifier}")
+        gpu_lock = self.config.gpu_lock
+        self.names_snapshots.append({
+            "lock": json.loads(gpu_lock.read_text(encoding="utf-8")) if gpu_lock.is_file() else None,
+            "session": session is not None, "seed": seed,
+            "ja_srt": (Path(work_dir) / "ja.srt").is_file()})
+        if document.cues and session is None:
+            raise AssertionError("a document with cues was built without a session")
+        if identifier in self.names_errors:
+            raise sys.modules["kototoki.names"].NamesError("fake names transport failure")
+        status = self.names_status.get(identifier, "ok")
+        entries = [dict(entry) for entry in self.name_entries] if status == "ok" and document.cues else []
+        payload = {"schema": "name-table-v2", "prompt_version": "fake", "work_guess": None, "entries": entries,
+                   "meta": {"seed": seed, "attempt": 1, "dropped_shape": [], "dropped_honorific": [{"ja": "x"}],
+                            "dropped_ja_shape": [], "prompt_tokens": 100, "completion_tokens": 20, "seconds": 1.5},
+                   "build": {"status": status, "reason": None if status == "ok" else f"fake {status}"}}
+        return types.SimpleNamespace(payload=payload, attempts=1 if document.cues else 0, seconds=1.5, status=status)
+
+    def _apply(self, table, document, translations):
+        self.applied.append(table)
+        changes, out = [], dict(translations)
+        for cue in document.cues:
+            for entry in table["entries"]:
+                for variant in entry["zh_variants"]:
+                    if variant in out[cue.id]:
+                        out[cue.id] = out[cue.id].replace(variant, entry["zh"])
+                        changes.append({"cue_id": cue.id, "span": variant, "target": entry["zh"]})
+        return types.SimpleNamespace(translations=out, changes=changes, unresolved=[],
+                                     summary={"cues": len(document.cues), "totals": {"changes": len(changes)}})
 
     def _translate_plan(self, work_dir, document, config):
         """伪计划：目录键与真实子系统同形；已翻译过（`translate_done`）或零条目即不需要模型。"""
@@ -379,7 +456,9 @@ class StageTests(JobCase):
         stages = [e["stage"] for e in self.entries("file")]
         self.assertEqual(stages, ["vad"] * 3 + ["asr"] * 3 + ["align"] * 3)
         ids = self.ids("a.mkv", "b.mkv", "c.mkv")
-        self.assertEqual(self.calls, ["session_enter", *[f"translate:{i}" for i in ids], "session_exit"] + ["merge"] * 3)
+        self.assertEqual(self.calls, ["names_session_enter", *[f"names:{i}" for i in ids], "names_session_exit",
+                                      "session_enter", *[f"translate:{i}" for i in ids], "session_exit"]
+                         + ["merge"] * 3)
         for snapshot in self.translate_snapshots:  # 翻译开始时 9 个 GPU 步骤已完成、尚无最终文件
             self.assertEqual(len(snapshot["processed"]), 9)
             self.assertEqual(snapshot["finals"], [])
@@ -666,10 +745,10 @@ class PlanCallTests(JobCase):
             summary = self.run_job()
             self.assertEqual(len(summary.published), 3)
             self.assertEqual(next_stage.call_count, 3)
-            # a、c 各推进 vad／asr／align／cues 四次，b 只推进 vad 一次。
-            self.assertEqual(advance.call_count, 4 + 4 + 1)
+            # a、c 各推进 vad／asr／align／cues／names 五次，b 只推进 vad 一次。
+            self.assertEqual(advance.call_count, 5 + 5 + 1)
             self.assertEqual(sorted(call.args[0].stage for call in advance.call_args_list),
-                             ["align"] * 2 + ["asr"] * 2 + ["cues"] * 2 + ["vad"] * 3)
+                             ["align"] * 2 + ["asr"] * 2 + ["cues"] * 2 + ["names"] * 2 + ["vad"] * 3)
 
             next_stage.reset_mock()
             advance.reset_mock()
@@ -729,10 +808,183 @@ class TranslatePlanTests(JobCase):
         self.assertEqual(self.final("a.mkv", "ja-zh").stat().st_size, 0)
 
 
+GREETING = {"entity_ja": "こんにちは", "kind": "other", "confidence": "high", "zh": "您好",
+            "forms": [{"ja": "こんにちは", "zh": "您好"}], "zh_variants": ["你好"], "evidence": [1]}
+
+
+class NamesTests(JobCase):
+    def table(self, rel: str) -> dict:
+        return artifacts.read_json(self.work_dir(rel) / artifacts.NAME_TABLE)
+
+    def test_table_built_after_cues_before_translate_with_its_own_server(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        summary = self.run_job()
+        self.assertEqual(summary.published, ["a.mkv", "b.mkv"])
+        ids = self.ids("a.mkv", "b.mkv")
+        self.assertEqual(self.calls[:self.calls.index("session_enter")],
+                         ["names_session_enter", *[f"names:{i}" for i in ids], "names_session_exit"])
+        for snapshot in self.names_snapshots:
+            self.assertTrue(snapshot["ja_srt"])
+            self.assertEqual((snapshot["lock"]["server_pid"], snapshot["seed"]),
+                             (FAKE_NAMES_SERVER_PID, self.config.names.seed))
+        self.assertEqual(self.translate_snapshots[0]["lock"]["server_pid"], FAKE_SERVER_PID)
+        for rel in ("a.mkv", "b.mkv"):
+            table = self.table(rel)
+            self.assertEqual(table["identity"], {
+                "ja_srt_sha256": artifacts.sha256_file(self.work_dir(rel) / "ja.srt"), "recipe_hash": "d" * 64,
+                "seed": self.config.names.seed})
+            self.assertEqual(table["build"]["status"], "ok")
+            sources = artifacts.read_published(self.work_dir(rel))["sources"]
+            self.assertEqual(sources["names"], table["identity"])
+            self.assertEqual(sources["names_apply"]["upstream"],
+                             {artifacts.NAME_TABLE: artifacts.sha256_file(self.work_dir(rel) / artifacts.NAME_TABLE)})
+
+    def test_publish_uses_replaced_translations_and_writes_audit(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.name_entries = [GREETING]
+        console = io.StringIO()
+        summary = self.run_job(console=console)
+        self.assertEqual((summary.published, summary.name_replacements), (["a.mkv", "b.mkv"], 2))
+        for rel in ("a.mkv", "b.mkv"):
+            self.assertEqual(self.final(rel, "zh").read_text(encoding="utf-8"), SRT_ZH.replace("你好", "您好"))
+            self.assertEqual(self.final(rel, "ja-zh").read_text(encoding="utf-8"),
+                             "1\n00:00:01,000 --> 00:00:02,000\n您好\nこんにちは\n")
+            self.assertEqual(self.final(rel, "ja").read_text(encoding="utf-8"), SRT_JA)
+            audit = artifacts.read_json(self.work_dir(rel) / artifacts.NAMES_APPLY)
+            self.assertEqual(audit["identity"], artifacts.read_published(self.work_dir(rel))["sources"]["names_apply"])
+            self.assertEqual((len(audit["changes"]), audit["unresolved"]), (1, []))
+            self.assertEqual(audit["summary"]["cues"], 1)
+        self.assertEqual(self.applied[0]["entries"], [GREETING])
+        self.assertNotIn("identity", self.applied[0])
+        log = console.getvalue()
+        self.assertIn("[publish] a.mkv, 1 name replacement(s)", log)
+        self.assertIn("0 fallback cue(s), 2 name replacement(s)", log)
+        self.assertNotIn("您好", log)  # 表里的条目文字不进日志
+
+    def test_edited_table_only_republishes(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.run_job()
+        path = self.work_dir("a.mkv") / artifacts.NAME_TABLE
+        table = artifacts.read_json(path)
+        table["entries"] = [dict(GREETING, zh="嗨")]  # 用户校对：改表里的中文
+        artifacts.atomic_write_json(path, table)
+        self.calls.clear()
+        self.names_snapshots.clear()
+        launches = len(self.launches())
+        self.config.gpu_lock.unlink(missing_ok=True)
+
+        summary = self.run_job()
+        self.assertEqual((summary.published, summary.up_to_date, summary.name_replacements), (["a.mkv"], ["b.mkv"], 1))
+        self.assertEqual(len(self.launches()), launches)
+        self.assertEqual(self.calls, [f"translate:{self.ids('a.mkv')[0]}", "merge"])  # 不建表、不建翻译 session
+        self.assertFalse(self.translate_snapshots[-1]["session"])
+        self.assertIsNone(self.translate_snapshots[-1]["lock"])
+        self.assertEqual(self.final("a.mkv", "zh").read_text(encoding="utf-8"), SRT_ZH.replace("你好", "嗨"))
+        self.assertEqual(artifacts.read_json(path)["entries"], table["entries"])  # 手改的表不被重建覆盖
+
+    def test_session_failure_only_fails_files_with_cues(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.empty_cues = {"b.mkv"}
+        self.names_session_error = RuntimeError("names llama-server unavailable")
+        summary = self.run_job()
+        self.assertEqual(summary.failed, {"a.mkv": "names", "c.mkv": "names"})
+        self.assertEqual(summary.published, ["b.mkv"])
+        self.assertEqual(self.calls, [f"names:{self.ids('b.mkv')[0]}", f"translate:{self.ids('b.mkv')[0]}"])
+        self.assertFalse(self.names_snapshots[0]["session"])
+        self.assertEqual(self.failure("a.mkv")["stage"], "names")
+        self.assertEqual(self.table("b.mkv")["entries"], [])
+        self.assertFalse((self.work_dir("a.mkv") / artifacts.NAME_TABLE).exists())
+
+    def test_build_error_fails_that_file_only(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.names_errors = set(self.ids("a.mkv"))
+        summary = self.run_job()
+        self.assertEqual((summary.failed, summary.published), ({"a.mkv": "names"}, ["b.mkv"]))
+        self.assertEqual(self.failure("a.mkv")["error_type"], "NamesError")
+        self.assertNotIn(f"translate:{self.ids('a.mkv')[0]}", self.calls)
+
+        self.names_errors.clear()  # 重跑同一命令：只对失败的影片再建表
+        self.calls.clear()
+        again = self.run_job()
+        self.assertEqual((again.published, again.up_to_date), (["a.mkv"], ["b.mkv"]))
+        self.assertEqual(self.calls[:3], ["names_session_enter", f"names:{self.ids('a.mkv')[0]}", "names_session_exit"])
+
+    def test_terminal_build_failure_publishes_with_empty_table(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.name_entries = [GREETING]
+        self.names_status = {self.ids("a.mkv")[0]: "failed"}
+        console = io.StringIO()
+        summary = self.run_job(console=console)
+        self.assertEqual((summary.published, summary.failed, summary.name_replacements), (["a.mkv", "b.mkv"], {}, 1))
+        self.assertEqual((self.table("a.mkv")["build"]["status"], self.table("a.mkv")["entries"]), ("failed", []))
+        self.assertEqual(self.final("a.mkv", "zh").read_text(encoding="utf-8"), SRT_ZH)
+        warnings = [m[2] for m in map(LOG_LINE.match, console.getvalue().splitlines()) if m and m[1] == "WARNING"]
+        self.assertEqual(warnings, ["[names] done a.mkv: build failed (fake failed), empty table"])
+
+    def test_broken_table_fails_publish(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.run_job()
+        path = self.work_dir("a.mkv") / artifacts.NAME_TABLE
+        table = artifacts.read_json(path)
+        del table["entries"]  # 用户改坏了表：伪 apply 取不到 entries 即抛
+        artifacts.atomic_write_json(path, table)
+        self.final("b.mkv", "zh").unlink()
+        summary = self.run_job()
+        self.assertEqual((summary.failed, summary.published), ({"a.mkv": "publish"}, ["b.mkv"]))
+        self.assertEqual(self.failure("a.mkv")["stage"], "publish")
+
+    def test_zero_cue_document_needs_no_lock_or_session(self) -> None:
+        self.make_inputs("a.mkv")
+        self.empty_cues = {"a.mkv"}
+        disabled = replace(self.config, names=replace(self.config.names, enabled=False))
+        self.run_job(disabled)
+        self.calls.clear()
+        self.config.gpu_lock.unlink(missing_ok=True)
+        summary = self.run_job()  # 启用 names：已发布影片建表并重新发布，零条目不起 server、不取锁
+        self.assertEqual(summary.published, ["a.mkv"])
+        self.assertEqual(self.calls, [f"names:{self.ids('a.mkv')[0]}", f"translate:{self.ids('a.mkv')[0]}"])
+        self.assertEqual((self.names_snapshots[-1]["lock"], self.names_snapshots[-1]["session"]), (None, False))
+        self.assertEqual(self.table("a.mkv")["entries"], [])
+
+    def test_enabling_names_builds_tables_without_retranslating(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        disabled = replace(self.config, names=replace(self.config.names, enabled=False))
+        self.run_job(disabled)
+        self.calls.clear()
+        self.name_entries = [GREETING]
+        summary = self.run_job()
+        self.assertEqual((summary.published, summary.name_replacements), (["a.mkv", "b.mkv"], 2))
+        ids = self.ids("a.mkv", "b.mkv")
+        self.assertEqual(self.calls, ["names_session_enter", *[f"names:{i}" for i in ids], "names_session_exit",
+                                      *[f"translate:{i}" for i in ids], "merge", "merge"])  # 翻译 run 已完成，不起 Hy-MT2
+        self.assertEqual(self.names_snapshots[-1]["lock"]["server_pid"], FAKE_NAMES_SERVER_PID)
+
+    def test_disabled_names_leave_no_trace(self) -> None:
+        self.make_inputs("a.mkv")
+        self.name_entries = [GREETING]
+        disabled = replace(self.config, names=replace(self.config.names, enabled=False))
+        console = io.StringIO()
+        summary = self.run_job(disabled, console=console)
+        self.assertEqual((summary.published, summary.name_replacements), (["a.mkv"], 0))
+        self.assertEqual((self.names_snapshots, self.applied), ([], []))
+        self.assertNotIn("[names]", console.getvalue())
+        self.assertIn("[publish] a.mkv\n", console.getvalue())
+        work = self.work_dir("a.mkv")
+        self.assertFalse((work / artifacts.NAME_TABLE).exists() or (work / artifacts.NAMES_APPLY).exists())
+        self.assertNotIn("names", artifacts.read_published(work)["sources"])
+        self.assertEqual(self.final("a.mkv", "zh").read_text(encoding="utf-8"), SRT_ZH)
+
+        again = self.run_job()  # 从停用改为启用：建表并重新发布
+        self.assertEqual((again.published, again.name_replacements), (["a.mkv"], 1))
+        self.assertEqual(self.run_job(disabled).published, ["a.mkv"])  # 再停用：去掉替换后重新发布
+        self.assertEqual(self.final("a.mkv", "zh").read_text(encoding="utf-8"), SRT_ZH)
+
+
 class ImportAndOutputDirTests(JobCase):
     def test_job_and_main_import_no_inference_stack(self) -> None:
+        # 编排器在进程内延迟导入的专名与翻译子系统同样不得带进推理栈或 experiments。
         code = (
-            "import sys, kototoki.job, kototoki.__main__\n"
+            "import sys, kototoki.job, kototoki.__main__, kototoki.names, kototoki.translate\n"
             "banned = {'torch', 'ctranslate2', 'faster_whisper', 'transformers', 'pyannote', 'torchaudio',\n"
             "          'torchcodec', 'experiments'}\n"
             "bad = sorted(m for m in sys.modules if m.split('.')[0] in banned)\n"
@@ -781,6 +1033,12 @@ class RunLogTests(JobCase):
     def run_logged(self, config=None, **kwargs) -> tuple[list[str], list[str]]:
         """跑一次，返回 (控制台行, 本次运行日志文件行)。"""
         before = set((self.output / artifacts.WORK_DIR).glob("run-*.log"))
+        # 日志文件名精确到秒：同一用例内第二次运行若落在同一秒会复用文件名，先等到下一秒。
+        stamp = lambda: time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        if any(path.name.startswith(f"run-{stamp()}") for path in before):
+            current = stamp()
+            while stamp() == current:
+                time.sleep(0.05)
         console = io.StringIO()
         job.run(config or self.config, worker_command=kwargs.pop("worker_command", fake_worker_command),
                 sleep=kwargs.pop("sleep", lambda seconds: None), console=console)
@@ -800,7 +1058,7 @@ class RunLogTests(JobCase):
         for line in file:
             self.assertRegex(line, LOG_LINE)
         self.assertIn("[summary] 2 video(s): 2 published (0 no speech), 0 up to date, 0 failed, 0 blocked, "
-                      "0 unstable, 0 fallback cue(s)", self.entries_at(file, "INFO"))
+                      "0 unstable, 0 fallback cue(s), 0 name replacement(s)", self.entries_at(file, "INFO"))
 
     def test_warnings_use_level_not_wording(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
@@ -896,7 +1154,7 @@ class RunLogTests(JobCase):
             _, file = self.run_logged()
         self.assertIn("[transformers] third-party note", self.entries_at(file, "WARNING"))
         self.assertIn("own note", self.entries_at(file, "INFO"))
-        self.assertNotIn("dropped", "\n".join(file))
+        self.assertNotIn("below root level", "\n".join(file))
 
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")

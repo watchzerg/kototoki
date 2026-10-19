@@ -2,6 +2,8 @@
 
 状态：**已结题**（2026-10-19，[ADR-0013](../../docs/adr/0013-name-consistency-closed.md)）：最佳已知配置冻结如下，不再开新轮次，不进产品。票据 `.scratch/name-consistency/`，背景与六轮结论见[方向讨论记录](../../docs/research/2026-10-19-name-consistency-direction.md)与[调研索引](../../docs/research/INDEX.md#翻译后审校与人名专名一致性2026-10-19已结题adr-0013)。不属于产品包 `kototoki/`，产品不导入。
 
+2026-10-20 按 [ADR-0014](../../docs/adr/0014-name-consistency-in-product.md) 移植进产品 `kototoki/names/`，本目录冻结（上文“不进产品”已被 ADR-0014 取代；产品只复制、不导入）。
+
 ## 最佳已知配置（冻结）
 
 - 建表：no-think（llama-server `--reasoning off`），提示 v5，seed 20261019，程序兜底全开（zh 形状过滤、称呼词黑名单、evidence<3 降级、日文写法形状过滤）——即 `build_table.py` 的默认行为。

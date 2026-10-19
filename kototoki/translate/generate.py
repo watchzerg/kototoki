@@ -38,8 +38,9 @@ from kototoki.srt import SourceDocument
 from . import degrade
 from . import recipes as R
 from .batching import Batch, Scene, build_batches, cue_positions, scene_from_document, source_key
-from .client import LlamaClient
-from .server import InfraFailure, ManagedServer, explicit_oom
+from kototoki.llama_server import InfraFailure, LlamaClient, ManagedServer, explicit_oom
+
+from .server import TRANSLATE_SPEC
 
 TRANSLATE_DIR = "translate"  # 工作目录内的翻译根目录
 RUN_SCHEMA = "kototoki-translate-run-v1"
@@ -128,7 +129,8 @@ class Session:
         self.unavailable: str | None = None
 
     def _managed_server(self, runtime_dir: Path, on_pid: Callable[[int | None], None]) -> ManagedServer:
-        return ManagedServer(runtime_dir, engine=self.config.paths.llama_server, model=self.config.models.translate,
+        return ManagedServer(runtime_dir, TRANSLATE_SPEC, engine=self.config.paths.llama_server,
+                             model=self.config.models.translate,
                              port=self.config.translate.port,
                              model_cache=artifacts.model_cache_path(self.config.paths.output_dir), on_pid=on_pid)
 
