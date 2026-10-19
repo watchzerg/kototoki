@@ -215,6 +215,93 @@ class RenormalizeTests(unittest.TestCase):
         self.assertEqual((table["work"], table["prompt_version"]), ("w", "p"))
 
 
+class HonorificTests(unittest.TestCase):
+    @staticmethod
+    def parse(entries: list[dict]) -> tuple[list, list]:
+        honorific: list = []
+        _, out = bt.parse_reply(json.dumps({"entries": entries}, ensure_ascii=False), 10, None, honorific)
+        return out, honorific
+
+    def test_is_honorific_matching(self):
+        for ja in ("父さん", "お父さん", "父様", "父上", "ご父さん", "兄ちゃん", "お兄ちゃん", "先輩", "あの人", "君",
+                   "お主", "僕", "お 父 さ ん", "皆さん", "みんな", "おじさん"):
+            self.assertTrue(bt.is_honorific(ja), ja)
+        for ja in ("衛宮くん", "衛宮君", "衛宮士郎", "シロウ", "遠坂", "桜ちゃん", "セイバー", "マスター", "サーヴァント",
+                   "さん", "くん", "お", ""):
+            self.assertFalse(bt.is_honorific(ja), ja)
+
+    def test_honorific_form_dropped_and_recorded(self):
+        entry = {"entity_ja": "遠坂時臣", "zh": "远坂时臣", "forms": [
+            {"ja": "遠坂時臣", "zh": "远坂时臣"}, {"ja": "父さん", "zh": "时臣"}, {"ja": "時臣", "zh": "时臣"}]}
+        entries, honorific = self.parse([entry])
+        self.assertEqual([f["ja"] for f in entries[0]["forms"]], ["遠坂時臣", "時臣"])
+        self.assertEqual(honorific, [{"entity_ja": "遠坂時臣", "ja": "父さん"}])
+
+    def test_entity_with_only_honorific_forms_dropped(self):
+        bad = {"entity_ja": "父さん", "zh": "父亲", "forms": [{"ja": "お父さん", "zh": "父亲"}]}
+        good = {"entity_ja": "凛", "zh": "凛", "forms": [{"ja": "凛", "zh": "凛"}]}
+        entries, honorific = self.parse([bad, good])
+        self.assertEqual([e["entity_ja"] for e in entries], ["凛"])
+        self.assertEqual(honorific, [{"entity_ja": "父さん", "ja": "父さん"}, {"entity_ja": "父さん", "ja": "お父さん"}])
+
+    def test_name_with_kun_suffix_kept(self):
+        entry = {"entity_ja": "衛宮士郎", "zh": "卫宫士郎", "forms": [
+            {"ja": "衛宮士郎", "zh": "卫宫士郎"}, {"ja": "衛宮くん", "zh": "卫宫"}, {"ja": "衛宮君", "zh": "卫宫"}]}
+        entries, honorific = self.parse([entry])
+        self.assertEqual(len(entries[0]["forms"]), 3)
+        self.assertEqual(honorific, [])
+
+    def test_all_honorifics_in_list_are_matched(self):
+        for ja in bt.HONORIFIC_JA:
+            self.assertTrue(bt.is_honorific(ja), ja)
+
+    def test_main_writes_meta_and_renormalize_applies_blacklist(self):
+        reply = {"entries": [{"entity_ja": "時臣", "zh": "时臣", "forms": [
+            {"ja": "時臣", "zh": "时臣"}, {"ja": "父さん", "zh": "时臣"}]}]}
+        text = json.dumps(reply, ensure_ascii=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            srt, out = write_srt(tmp), Path(tmp) / "table.json"
+            seeds = []
+
+            def fake_post(url, body, timeout):
+                seeds.append(body["seed"])
+                return {"model": "m", "choices": [{"message": {"content": text}, "finish_reason": "stop"}], "usage": {}}
+
+            with mock.patch.object(bt, "post_chat", fake_post):
+                self.assertEqual(bt.main(["--srt", str(srt), "--work", "w", "--out", str(out), "--seed", "7"]), 0)
+                table = json.loads(out.read_text(encoding="utf-8"))
+                self.assertEqual(seeds, [7])
+                self.assertEqual(table["meta"], {"seed": 7, "dropped_shape": [],
+                                                 "dropped_honorific": [{"entity_ja": "時臣", "ja": "父さん"}]})
+                # 旧表（无 meta）重算：seed 从配对的请求文件取回
+                old = json.loads(out.read_text(encoding="utf-8"))
+                del old["meta"]
+                out.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+                new = Path(tmp) / "new.json"
+                self.assertEqual(bt.main(["--renormalize", str(out), "--out", str(new)]), 0)
+            renorm = json.loads(new.read_text(encoding="utf-8"))
+        self.assertEqual(renorm["meta"]["seed"], 7)
+        self.assertEqual(renorm["meta"]["dropped_honorific"], [{"entity_ja": "時臣", "ja": "父さん"}])
+        self.assertEqual([f["ja"] for f in renorm["entries"][0]["forms"]], ["時臣"])
+
+    def test_default_seed_unchanged_and_retry_bumps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            srt, out = write_srt(tmp), Path(tmp) / "table.json"
+            seeds = []
+
+            def fake_post(url, body, timeout):
+                seeds.append(body["seed"])
+                finish = "length" if len(seeds) == 1 else "stop"
+                return {"model": "m", "choices": [{"message": {"content": json.dumps(GOOD, ensure_ascii=False)},
+                                                   "finish_reason": finish}], "usage": {}}
+
+            with mock.patch.object(bt, "post_chat", fake_post):
+                bt.main(["--srt", str(srt), "--work", "w", "--out", str(out), "--seed", "100"])
+            table = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(seeds, [100, 101])
+        self.assertEqual(table["meta"]["seed"], 101)
+
+
 class ConfidenceTests(unittest.TestCase):
     @staticmethod
     def parse(kind: str, confidence: str, evidence: list[int]) -> dict:
