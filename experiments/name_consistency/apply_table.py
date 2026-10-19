@@ -15,6 +15,12 @@
 changes 里记 extended_from。落点（扩展后）紧邻 ·／・ 或拉丁字母时不替换，记 compound（可能是复合名的一段，如 安里·玛尤）。
 --min-confidence 低于阈值的实体整条跳过，列在 summary 的 entries_skipped_confidence。
 
+统计层候选含单字；互为子串的候选只留锚定 cue 最多的一个作主候选，扩展要求超串的支持不少于原落点的一半。
+最终落点两侧若紧邻清单外的汉字（BOUNDARY_CHARS）说明没落在词边界上，不替换，记 boundary（变体层同样适用）。
+目标名核对：form.zh 必须出现在同实体同目标的 form 锚定的 cue 里（appears），或与译者的主写法接近（near），
+或是职阶的纯 ASCII 名（class_ascii）；否则整个 form 不动，记 unverified_name 并列入 summary 的 unverified_forms。
+--no-name-check 关闭核对。
+
 已知限制：单字的 form.ja（如 凛）会过度锚定（任何含该字的 cue 都被锚定），目前不处理。
 
 命令（仓库根目录）：
@@ -39,6 +45,10 @@ MIN_SUPPORT = 2  # 统计候选至少在这么多条锚定 cue 内出现
 MIN_RATIO = 0.8  # 候选出现的 cue 中，锚定 cue 至少占这个比例（特异性）
 MIN_SHARE = 0.04  # 相对支持度：至少占锚定 cue 数的这个比例，防止锚定很多的条目被偶发短语带偏
 MAX_EXTEND = 6  # 统计层落点向左右扩展时，最多比原落点长这么多字
+EXTEND_SHARE = 0.5  # 扩展后的超串至少要有原落点这么大比例的锚定 cue 支持，否则 叫白 之类语境串会取代 白
+# 可以紧挨在专名旁边的常见虚词／动词单字，属人工判断的经验清单，不是穷举；落点另一侧若是清单外的汉字，视为没落在词边界上
+BOUNDARY_EXTRA = "叫是和跟与及或把被让给对向从为比像说想看听问找杀救帮爱恨等请快别来去回着了的吗吧呢啊呀哦嗯哟也都就才还又再只已"
+BOUNDARY_CHARS = frozenset(consistency.EDGE_STOP) | frozenset(BOUNDARY_EXTRA)
 BLOCK_SEPARATOR = re.compile(r"\r?\n(?:[ \t]*\r?\n)+")
 BLOCK_HEAD = re.compile(r"(\d+)[ \t]*\r?\n([^\r\n]*-->[^\r\n]*)(?:\r?\n|\Z)")
 
@@ -193,32 +203,52 @@ class StatLayer:
         self.zh = zh
         self.rendering: str | None = None
         self.alternatives: list[str] = []
-        if result.rendering and self.accept(result.rendering):
-            self.rendering = result.rendering
-        self.alternatives = [a for a in result.alternatives if self.accept(a)]
+        # 候选池：consistency 的主译法与替代译法（2–6 字），加上锚定 cue 里反复出现的单个汉字（如 白）
+        pool = [c for c in [result.rendering, *result.alternatives] if c]
+        accepted = [c for c in dict.fromkeys(pool) if self.accept(c)]
+        char_cues: dict[str, int] = defaultdict(int)
+        for i in inside:
+            for ch in {ch for ch in zh_texts[i] if "一" <= ch <= "鿿"}:
+                char_cues[ch] += 1
+        singles = [ch for ch, n in sorted(char_cues.items()) if n >= self.min_anchored and ch not in pool]
+        accepted += [ch for ch in singles if self.accept(ch, record=False)]
+        # 互为子串的候选算一族，每族只留锚定 cue 数最多的（并列取更长的）作主候选；族内其余串只在扩展时参考
+        bases: list[str] = []
+        for candidate in sorted(accepted, key=lambda c: (-self.counts(c)[0], -len(c), c)):
+            if not any(candidate in base or base in candidate for base in bases):
+                bases.append(candidate)
+                if candidate in singles:
+                    a_count, b_count = self.counts(candidate)
+                    self.kept.append({"text": candidate, "anchored": a_count, "other": b_count})
+        self.rendering, self.alternatives = (bases[0], bases[1:]) if bases else (None, [])
+        # 近形变体（亚丝娜／亚斯娜）以最长且支持最多的多字候选为参照，不受单字主候选影响
+        long_ones = [c for c in accepted if len(c) >= 3]
+        self.near_base = max(long_ones, key=lambda c: (self.counts(c)[0], len(c), c)) if long_ones else None
 
     def counts(self, candidate: str) -> tuple[int, int]:
         return support(self.lowered, self.inside, candidate)
 
-    def accept(self, candidate: str, near: bool = False) -> bool:
-        """过滤并记录；near 为近形变体（只在个别 cue 出现，不要求 a ≥ 2）。"""
+    def accept(self, candidate: str, near: bool = False, record: bool = True) -> bool:
+        """过滤并记录；near 为近形变体（只在个别 cue 出现，不要求 a ≥ 2）；record=False 时不记落选（单字池太大）。"""
         a, b = self.counts(candidate)
         reason = shape_problem(candidate, self.zh, 6)
         if reason is None and (a < (1 if near else self.min_anchored) or a / max(a + b, 1) < MIN_RATIO):
             reason = "specificity"
-        record = {"text": candidate, "anchored": a, "other": b}
+        item = {"text": candidate, "anchored": a, "other": b}
+        record_it = record
         if reason:
-            if not near:
-                self.dropped.append({**record, "reason": reason})
+            if not near and record_it:
+                self.dropped.append({**item, "reason": reason})
             return False
-        if not near:
-            self.kept.append(record)
+        if not near and record_it:
+            self.kept.append(item)
         return True
 
     def extend(self, text: str, start: int, end: int) -> tuple[int, int]:
         """把落点向左右扩展到周围连续 CJK／拉丁／间隔点串内的最长且有统计支持的超串；没有则原样返回。
 
-        支持度口径同候选过滤（锚定 cue 数、特异性、相对支持度）；超串首尾不是虚词，也不含整个 zh。
+        支持度口径同候选过滤（锚定 cue 数、特异性、相对支持度），另要求不少于原落点锚定 cue 数的 EXTEND_SHARE；
+        超串首尾不是虚词，也不含整个 zh。
         含间隔点的超串必须覆盖整段连续串（两端都到 CJK／拉丁／间隔点串的边界），否则会把 艾米亚·希罗 截成 米亚·希罗。
         """
         run_start, run_end = start, end
@@ -227,6 +257,7 @@ class StatLayer:
         while run_end < len(text) and self.RUN_CHAR.match(text[run_end]):
             run_end += 1
         best, best_key = (start, end), (0, 0)
+        needed = max(self.min_anchored, EXTEND_SHARE * self.counts(text[start:end])[0])
         for left in range(0, min(start - run_start, MAX_EXTEND) + 1):
             for right in range(0, min(run_end - end, MAX_EXTEND - left) + 1):
                 if left + right == 0:
@@ -239,7 +270,7 @@ class StatLayer:
                 if ("·" in superstring or "・" in superstring) and (start - left, end + right) != (run_start, run_end):
                     continue
                 a, b = self.counts(superstring)
-                if a >= self.min_anchored and a / (a + b) >= MIN_RATIO and (len(superstring), a) > best_key:
+                if a >= needed and a / (a + b) >= MIN_RATIO and (len(superstring), a) > best_key:
                     best, best_key = (start - left, end + right), (len(superstring), a)
         return best
 
@@ -247,10 +278,10 @@ class StatLayer:
         found = [a for a in self.alternatives if a in text]
         if self.rendering and self.rendering in text:
             found.append(self.rendering)
-        if not found and self.rendering:
-            near = consistency.variant_in(self.rendering, text)
+        if self.near_base and self.near_base not in text:
+            near = consistency.variant_in(self.near_base, text)
             if near and self.accept(near, near=True):
-                found = [near]
+                found.append(near)
         return found
 
 
@@ -282,6 +313,7 @@ class Unit:
     variants: list[str]  # 过滤后的 zh_variants
     variants_dropped: list[dict]
     stat: "StatLayer | None" = None
+    name_check: str | None = None
 
 
 def locate(unit: Unit, text: str, stat: StatLayer | None) -> Match | None:
@@ -315,11 +347,27 @@ def overlapping(a: Match, b: Match) -> bool:
     return any(s1 < e2 and s2 < e1 for s1, e1, _ in a.spans for s2, e2, _ in b.spans)
 
 
+def bad_boundary(text: str, start: int, end: int) -> bool:
+    """落点紧邻的汉字不在 BOUNDARY_CHARS 里：它多半只是更长词（或更长名字）的一段，不是完整的名字。"""
+    return any("一" <= text[k] <= "鿿" and text[k] not in BOUNDARY_CHARS
+               for k in (start - 1, end) if 0 <= k < len(text))
+
+
+def is_near_name(target: str, rendering: str) -> bool:
+    """目标与译者实际用的主写法接近：等长且编辑距离 ≤ 1（伊莉亚／伊莉雅），或目标至少一半汉字出现在主写法里。"""
+    if len(target) == len(rendering) and consistency.edit_distance(target, rendering) <= 1:
+        return True
+    chars = [ch for ch in target if "一" <= ch <= "鿿"]
+    return bool(chars) and sum(ch in rendering for ch in chars) / len(chars) >= 0.5
+
+
 COUNTERS = ("anchored", "replaced_variant", "replaced_stat", "already_canonical", "partial_canonical",
-            "unresolved_not_found", "unresolved_overlap", "unresolved_compound")
+            "unresolved_not_found", "unresolved_overlap", "unresolved_compound", "unresolved_boundary",
+            "unresolved_unverified_name")
 
 
-def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low") -> dict:
+def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low",
+                name_check: bool = True) -> dict:
     zh_texts = [cue.text for cue in zh_cues]
     lowered = [text.lower() for text in zh_texts]
     entities = table["entries"]
@@ -340,17 +388,47 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
             others = [f["zh"] for f in forms if f["zh"] and f["zh"] != target and (target in f["zh"] or f["zh"] in target)]
             units.append(Unit(e, form["ja"], target, others, anchored, kept, dropped))
 
+    def stat_of(unit: Unit) -> StatLayer | None:
+        if unit.stat is None and unit.anchored:
+            unit.stat = StatLayer(unit.target, zh_texts, unit.anchored)
+        return unit.stat
+
+    # 目标名核对：目标 zh 必须得到译者自己用法的佐证，否则整个 form 不动
+    unverified: list[dict] = []
+    for unit in units:
+        if not unit.anchored:
+            continue
+        if not name_check:
+            unit.name_check = "disabled"
+            continue
+        siblings = [v for v in units if v.entity == unit.entity and v.target == unit.target]
+        if any(unit.target in zh_texts[i] for v in siblings for i in v.anchored):
+            unit.name_check = "appears"
+        elif any(is_near_name(unit.target, rendering) for v in siblings if stat_of(v)
+                 for rendering in [stat_of(v).rendering, stat_of(v).near_base, *stat_of(v).alternatives] if rendering):
+            unit.name_check = "near"
+        elif entities[unit.entity].get("kind") == "class" and unit.target.isascii():
+            unit.name_check = "class_ascii"
+        else:
+            unit.name_check = "unverified"
+            stat = stat_of(unit)
+            unverified.append({"entity_ja": entities[unit.entity]["entity_ja"], "form_ja": unit.form_ja,
+                               "target": unit.target, "anchored": len(unit.anchored),
+                               "dominant_rendering": stat.rendering if stat else None})
+
     matches: dict[tuple[int, int], Match | None] = {}
     for u, unit in enumerate(units):
+        if unit.name_check == "unverified":
+            continue
         pending = []
         for i in unit.anchored:
             matches[(u, i)] = locate(unit, zh_texts[i], None)
             if matches[(u, i)] is None:
                 pending.append(i)
         if pending:
-            unit.stat = StatLayer(unit.target, zh_texts, unit.anchored)
+            stat = stat_of(unit)
             for i in pending:
-                matches[(u, i)] = locate(unit, zh_texts[i], unit.stat)
+                matches[(u, i)] = locate(unit, zh_texts[i], stat)
 
     per_cue: dict[int, list[int]] = defaultdict(list)
     for (u, i), match in matches.items():
@@ -372,17 +450,20 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
         entity = entities[unit.entity]
         stat = unit.stat
         row = {"form_ja": unit.form_ja, "target": unit.target, **dict.fromkeys(COUNTERS, 0),
-               "anchored": len(unit.anchored),
+               "anchored": len(unit.anchored), "name_check": unit.name_check,
                "stat_rendering": stat.rendering if stat else None,
                "stat_alternatives": stat.alternatives if stat else [],
                "zh_variants_dropped": unit.variants_dropped,
                "stat_candidates_kept": stat.kept if stat else [],
                "stat_candidates_dropped": stat.dropped if stat else []}
         for i in unit.anchored:
-            match = matches[(u, i)]
+            match = matches.get((u, i))
             record = {"index": ja_cues[i].number, "ja": ja_cues[i].text, "zh": zh_cues[i].text,
                       "entry": entity["entity_ja"], "form_ja": unit.form_ja, "target": unit.target}
-            if match is None:
+            if unit.name_check == "unverified":
+                row["unresolved_unverified_name"] += 1
+                unresolved.append({**record, "reason": "unverified_name"})
+            elif match is None:
                 row["unresolved_not_found"] += 1
                 unresolved.append({**record, "reason": "not_found"})
             elif (u, i) in overlapped:
@@ -397,6 +478,12 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
                 if any(in_compound(zh_cues[i].text, start, end) for start, end, _ in todo):
                     row["unresolved_compound"] += 1
                     unresolved.append({**record, "reason": "compound"})
+                    continue
+                # 边界：紧邻清单外的汉字说明落点只是更长词的一段，该落点不动；一个落点都不剩才记 boundary
+                todo = [span for span in todo if not bad_boundary(zh_cues[i].text, span[0], span[1])]
+                if not todo:
+                    row["unresolved_boundary"] += 1
+                    unresolved.append({**record, "reason": "boundary"})
                     continue
                 row[f"replaced_{match.layer}"] += 1
                 edits[i].extend((start, end, unit.target) for start, end, _ in todo)
@@ -432,7 +519,8 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
     totals["cues_changed"] = len(edits)
     totals["entries_with_replacements"] = sum(1 for row in per_entity if row["replaced_variant"] + row["replaced_stat"])
     return {"new_texts": new_texts, "changes": changes, "unresolved": unresolved,
-            "summary": {"entries": per_entity, "entries_skipped_confidence": skipped, "totals": totals}}
+            "summary": {"entries": per_entity, "entries_skipped_confidence": skipped,
+                        "unverified_forms": unverified, "totals": totals}}
 
 
 def render_srt(content: str, cues: list[Cue], new_texts: list[str]) -> str:
@@ -459,7 +547,7 @@ def run_apply(args: argparse.Namespace) -> int:
     zh_content, zh_cues = read_srt(args.zh)
     if len(ja_cues) != len(zh_cues):
         raise SystemExit(f"cue count differs: ja {len(ja_cues)} vs zh {len(zh_cues)}")
-    result = apply_table(table, ja_cues, zh_cues, args.min_confidence)
+    result = apply_table(table, ja_cues, zh_cues, args.min_confidence, not args.no_name_check)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "zh.replaced.srt").write_bytes(render_srt(zh_content, zh_cues, result["new_texts"]).encode("utf-8"))
     write_jsonl(args.out_dir / "changes.jsonl", result["changes"])
@@ -502,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--min-confidence", choices=list(CONFIDENCE_LEVELS), default="low",
                         help="低于该置信度的条目整条跳过（默认 low：全部应用）")
+    parser.add_argument("--no-name-check", action="store_true", help="不核对目标名是否得到译者用法的佐证（对照用）")
     return run_apply(parser.parse_args(argv))
 
 
