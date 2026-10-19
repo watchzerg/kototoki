@@ -515,6 +515,60 @@ class ApplyTableTest(unittest.TestCase):
         out = self.run_apply()
         self.assertEqual(self.result_texts(out)[0], "找白聊")
 
+    def test_modifier_is_not_swallowed(self):
+        """笨蛋 只在 2 个锚定 cue 里出现（弱候选），紧贴 伊莉亚（强）：扩展不能把强落点连同修饰词吞掉，修饰词原样保留。"""
+        pairs = [("イリア1", "伊莉亚来了"), ("イリア2", "伊莉亚去了"), ("イリア3", "伊莉亚在笑"), ("イリア4", "是伊莉亚啊"),
+                 ("バカイリア1", "笨蛋伊莉亚"), ("バカイリア2", "笨蛋伊莉亚来了"), ("朝", "早上好"), ("夜", "晚上好")]
+        self.write_pairs(table(entity("イリア", "伊莉雅", [("イリア", "伊莉雅")])), pairs)
+        out = self.run_apply(extra=["--pool-by-target"])
+        self.assertEqual(self.result_texts(out), ["伊莉雅来了", "伊莉雅去了", "伊莉雅在笑", "是伊莉雅啊",
+                                                  "笨蛋伊莉雅", "笨蛋伊莉雅来了", "早上好", "晚上好"])
+        changes = {c["index"]: c for c in self.read_jsonl(out / "changes.jsonl")}
+        self.assertEqual((changes[5]["span"], changes[6]["span"]), ("伊莉亚", "伊莉亚"))
+        self.assertNotIn("extended_from", changes[5])
+        # 因茨贝伦 -> 艾因茨贝伦 这种真正的片段扩展仍由 test_stat_span_extension 覆盖
+
+    def test_extension_must_not_swallow_stronger_candidate(self):
+        """单看 笨蛋（2 个 cue）的支持度，超串 笨蛋伊莉亚（同样 2 个 cue）总能过 EXTEND_SHARE；超串里的强落点要一并比。"""
+        zh = ["伊莉亚来了"] * 6 + ["笨蛋伊莉亚", "笨蛋伊莉亚来了", "早上好", "晚上好"]
+        stat = apply_table.StatLayer("伊莉雅", zh, list(range(8)), isolated_singles=True, pool_bigrams=True)
+        text = "笨蛋伊莉亚"
+        self.assertEqual(stat.extend(text, 0, 2), (0, 5))  # 不带对手：被吞
+        self.assertEqual(stat.extend(text, 0, 2, [(2, 5, 8)]), (0, 2))  # 带上强落点：不吞
+
+    def test_residual_edge_word_is_stripped_in_later_passes(self):
+        """第 1 遍 如果白 因紧邻 果 被 boundary 挡住；白 被换光后第 2 遍 如果白 自成候选，不能整段变成 士郎：
+        如果 在别处后面接很多不同的字（常用词），只有 白 是名字。"""
+        pairs = [("シロ1", "白来了"), ("シロ2", "白去了"), ("シロ3", "是白啊"), ("シロ4", "如果白来了"), ("シロ5", "如果白去了"),
+                 ("シロ6", "白了"), ("シロ7", "白啊"), ("シロ8", "白来"), ("シロ9", "白去"), ("朝", "如果你来了"), ("昼", "如果是他"), ("夕", "如果能去"), ("夜", "如果有人"), ("暮", "如果不在"), ("暗", "如果没有")]
+        self.write_pairs(table(entity("シロ", "士郎", [("シロ", "士郎")])), pairs)
+        out = self.run_apply()  # 1 遍：保守地不动
+        self.assertEqual(self.result_texts(out)[3:5], ["如果白来了", "如果白去了"])
+        out = self.run_apply(extra=["--iterate", "2"])
+        self.assertEqual(self.result_texts(out)[:5], ["士郎来了", "士郎去了", "是士郎啊", "如果士郎来了", "如果士郎去了"])
+        self.assertEqual(self.result_texts(out)[9:], [p[1] for p in pairs[9:]])
+
+    def test_weak_name_check(self):
+        """--weak-name-check：非 high 条目的 zh 一次都没在译文里出现就整条跳过；出现一次（任意 cue）照常处理；high 条目不查。"""
+        forms = [("アンリ", "安赫尔"), ("シロ", "士郎"), ("リン", "凛")]
+        pairs = [("アンリ1", "安里来了"), ("アンリ2", "安里去了"), ("シロ1", "希罗来了"), ("シロ2", "希罗去了"),
+                 ("リン1", "琳来了"), ("リン2", "琳去了"), ("朝", "凛在这里")]  # 凛 只在一条非锚定 cue 里
+        tbl = table(entity("アンリ", "安赫尔", [forms[0]], confidence="medium"),
+                    entity("シロ", "士郎", [forms[1]], confidence="high"),     # 士郎 不在译文，但 high 不查
+                    entity("リン", "凛", [forms[2]], confidence="medium"))
+        self.write_pairs(tbl, pairs)
+        out = self.run_apply(extra=["--weak-name-check"])
+        self.assertEqual(self.result_texts(out), ["安里来了", "安里去了", "士郎来了", "士郎去了", "凛来了", "凛去了", "凛在这里"])
+        summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["entries_skipped_unverified"],
+                         [{"entity_ja": "アンリ", "zh": "安赫尔", "confidence": "medium"}])
+        self.assertEqual([row["entity_ja"] for row in summary["entries"]], ["シロ", "リン"])
+        self.assertEqual(summary["entries_skipped_confidence"], [])
+        # 不开时三个条目都处理
+        out = self.run_apply()
+        self.assertEqual(self.result_texts(out)[:2], ["安赫尔来了", "安赫尔去了"])
+        self.assertEqual(json.loads((out / "summary.json").read_text(encoding="utf-8"))["entries_skipped_unverified"], [])
+
     def test_crlf_preserved(self):
         (self.dir / "zh.srt").write_bytes(srt([c[1] for c in CUES], "\r\n").encode("utf-8"))
         (self.dir / "ja.srt").write_bytes(srt([c[0] for c in CUES], "\r\n").encode("utf-8"))

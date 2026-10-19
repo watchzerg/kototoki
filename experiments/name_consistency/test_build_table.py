@@ -109,9 +109,10 @@ class ParseTests(unittest.TestCase):
 
 class CapTests(unittest.TestCase):
     def test_caps_after_dedupe(self):
-        forms = [{"ja": f"写法{i}", "zh": f"译{i}"} for i in range(20)]
-        entry = {"entity_ja": "写法0", "zh": "译0", "forms": forms,
-                 "zh_variants": ["a"] * 3 + [f"译{i}" for i in range(12)], "evidence": [1, 1, 2, 3]}
+        zh = [f"译{chr(0x4e00 + i)}" for i in range(20)]  # zh 不许含数字，用不同汉字区分
+        forms = [{"ja": f"写法{i}", "zh": zh[i]} for i in range(20)]
+        entry = {"entity_ja": "写法0", "zh": zh[0], "forms": forms,
+                 "zh_variants": ["a"] * 3 + zh[:12], "evidence": [1, 1, 2, 3]}
         _, entries = bt.parse_reply(json.dumps({"entries": [entry]}, ensure_ascii=False), 3)
         self.assertEqual(len(entries[0]["forms"]), 12)
         self.assertEqual(len(entries[0]["zh_variants"]), 8)
@@ -135,6 +136,125 @@ class CapTests(unittest.TestCase):
             self.assertIn(needle, prompt)
 
 
+class ShapeTests(unittest.TestCase):
+    @staticmethod
+    def parse(entry: dict) -> tuple[list, list]:
+        dropped: list = []
+        _, entries = bt.parse_reply(json.dumps({"entries": [entry]}, ensure_ascii=False), 10, dropped)
+        return entries, dropped
+
+    def test_annotated_entity_zh_drops_whole_entity_and_is_recorded(self):
+        good = {"entity_ja": "凛", "zh": "凛", "forms": [{"ja": "凛", "zh": "凛"}]}
+        bad = {"entity_ja": "マキリ", "kind": "org", "zh": "间桐(误识为Makiri)",
+               "forms": [{"ja": "マキリ", "zh": "间桐"}]}
+        dropped: list = []
+        _, entries = bt.parse_reply(json.dumps({"entries": [bad, good]}, ensure_ascii=False), 10, dropped)
+        self.assertEqual([e["entity_ja"] for e in entries], ["凛"])
+        self.assertEqual(dropped, [{"entity_ja": "マキリ", "field": "zh", "value": "间桐(误识为Makiri)"}])
+
+    def test_bad_form_zh_drops_only_that_form(self):
+        entry = {"entity_ja": "間桐", "zh": "间桐", "forms": [
+            {"ja": "間桐", "zh": "间桐"}, {"ja": "マトウ", "zh": "间桐（误识）"}, {"ja": "マキリ", "zh": "Makiri"}]}
+        entries, dropped = self.parse(entry)
+        self.assertEqual([f["ja"] for f in entries[0]["forms"]], ["間桐", "マキリ"])
+        self.assertEqual(dropped, [{"entity_ja": "間桐", "field": "form.zh", "ja": "マトウ", "value": "间桐（误识）"}])
+
+    def test_bad_variant_drops_only_that_variant(self):
+        entry = {"entity_ja": "セイバー", "zh": "Saber", "forms": [{"ja": "セイバー", "zh": "Saber"}],
+                 "zh_variants": ["塞巴", "Saber Alter", "Unit-01", "Saber"]}
+        entries, dropped = self.parse(entry)
+        self.assertEqual(entries[0]["zh_variants"], ["塞巴", "Saber"])
+        self.assertEqual([(d["field"], d["value"]) for d in dropped],
+                         [("zh_variants", "Saber Alter"), ("zh_variants", "Unit-01")])
+
+    def test_ascii_names_and_long_separated_names_pass(self):
+        long_name = "伊莉雅丝菲尔·冯·爱因兹贝伦"  # 去掉间隔号后 12 字
+        for zh in ("Saber", "Rider", long_name, "阿尔托莉雅・潘德拉贡"):
+            entry = {"entity_ja": "x", "zh": zh, "forms": [{"ja": "x", "zh": zh}], "zh_variants": [zh]}
+            entries, dropped = self.parse(entry)
+            self.assertEqual((entries[0]["zh"], dropped), (zh, []), zh)
+            self.assertEqual(entries[0]["zh_variants"], [zh])
+
+    def test_length_and_character_limits(self):
+        # 13 字、仅间隔号、含数字、含空白、全角标点、全角字母
+        for zh in ("一二三四五六七八九十甲乙丙", "·", "真嗣2", "真 嗣", "真嗣，", "ｓａｂｅｒ", ""):
+            self.assertIsNone(bt._clean_zh(zh), zh)
+        self.assertEqual(bt._clean_zh(" 真嗣 "), "真嗣")
+        self.assertEqual(bt._clean_zh("一二三四五六七八九十甲乙"), "一二三四五六七八九十甲乙")
+
+    def test_main_writes_meta_dropped_shape(self):
+        reply = {"entries": [{"entity_ja": "桜", "zh": "樱", "forms": [{"ja": "桜", "zh": "樱"}, {"ja": "S", "zh": "樱(注)"}]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            srt, out = write_srt(tmp), Path(tmp) / "table.json"
+            response = {"model": "m", "choices": [{"message": {"content": json.dumps(reply, ensure_ascii=False)},
+                                                   "finish_reason": "stop"}], "usage": {}}
+            with mock.patch.object(bt, "post_chat", lambda *a: response):
+                self.assertEqual(bt.main(["--srt", str(srt), "--work", "w", "--out", str(out)]), 0)
+            table = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(table["meta"]["dropped_shape"],
+                         [{"entity_ja": "桜", "field": "form.zh", "ja": "S", "value": "樱(注)"}])
+
+
+class RenormalizeTests(unittest.TestCase):
+    def test_renormalize_reuses_raw_reply_without_network(self):
+        reply = {"entries": [
+            {"entity_ja": "桜", "zh": "樱", "forms": [{"ja": "桜", "zh": "樱"}]},
+            {"entity_ja": "マキリ", "zh": "间桐(误识为Makiri)", "forms": [{"ja": "マキリ", "zh": "间桐"}]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            srt, old = write_srt(tmp), Path(tmp) / "old.json"
+            reply_path = Path(tmp) / "old.json.reply.txt"
+            reply_path.write_text(json.dumps(reply, ensure_ascii=False), encoding="utf-8")
+            old.write_text(json.dumps({"schema": "name-table-v2", "work": "w", "prompt_version": "p", "source_srt": str(srt),
+                                       "entries": [], "raw_reply_path": str(reply_path)}), encoding="utf-8")
+            new = Path(tmp) / "new.json"
+            with mock.patch.object(bt, "post_chat", side_effect=AssertionError("no network")):
+                self.assertEqual(bt.main(["--renormalize", str(old), "--out", str(new)]), 0)
+            table = json.loads(new.read_text(encoding="utf-8"))
+        self.assertEqual([e["entity_ja"] for e in table["entries"]], ["桜"])
+        self.assertEqual(table["meta"]["dropped_shape"][0]["entity_ja"], "マキリ")
+        self.assertEqual((table["work"], table["prompt_version"]), ("w", "p"))
+
+
+class ConfidenceTests(unittest.TestCase):
+    @staticmethod
+    def parse(kind: str, confidence: str, evidence: list[int]) -> dict:
+        entry = {"entity_ja": "桜", "kind": kind, "confidence": confidence, "zh": "樱",
+                 "forms": [{"ja": "桜", "zh": "樱"}], "evidence": evidence}
+        return bt.parse_reply(json.dumps({"entries": [entry]}), 10)[1][0]
+
+    def test_prompt_v5_states_confidence_criteria(self):
+        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v5")
+        prompt = bt.SYSTEM_PROMPT
+        for needle in ("≥3", "medium", "low", "父さん", "キリエ・エレイソン", "シンジ 与 シロウ", "マトウ増健"):
+            self.assertIn(needle, prompt)
+        self.assertIn('"confidence": "medium"', prompt)  # JSON 示例里有 medium 条目
+        self.assertIn("绝不能合并成一个实体", prompt)
+
+    def test_person_high_with_two_cues_downgraded_to_medium(self):
+        entry = self.parse("person", "high", [3, 5])
+        self.assertEqual(entry["confidence"], "medium")
+        self.assertEqual(entry["confidence_note"], "downgraded: evidence<3")
+
+    def test_invalid_cues_do_not_count_toward_threshold(self):
+        entry = self.parse("person", "high", [3, 5, 99, 0])  # 99、0 越界，被剔除
+        self.assertEqual(entry["confidence"], "medium")
+
+    def test_person_high_with_three_cues_unchanged(self):
+        entry = self.parse("person", "high", [3, 5, 7])
+        self.assertEqual(entry["confidence"], "high")
+        self.assertNotIn("confidence_note", entry)
+
+    def test_non_person_and_non_high_not_downgraded(self):
+        for kind in ("class", "org", "place", "other"):
+            entry = self.parse(kind, "high", [1])
+            self.assertEqual(entry["confidence"], "high")
+            self.assertNotIn("confidence_note", entry)
+        for confidence in ("medium", "low"):
+            entry = self.parse("person", confidence, [])
+            self.assertEqual(entry["confidence"], confidence)
+            self.assertNotIn("confidence_note", entry)
+
+
 class MainTests(unittest.TestCase):
     def fake_response(self, reply: str) -> dict:
         return {"model": "Qwen3.8-27B", "choices": [{"message": {"content": reply}, "finish_reason": "stop"}],
@@ -156,8 +276,10 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(Path(table["raw_reply_path"]).exists())
         self.assertEqual(table["schema"], "name-table-v2")
-        self.assertEqual(table["prompt_version"], "build-table-prompt-v4")
-        self.assertEqual(table["entries"][0]["confidence"], "high")
+        self.assertEqual(table["prompt_version"], "build-table-prompt-v5")
+        # GOOD 的 evidence 只有 2 条有效 cue（2、3），person 的 high 被降级
+        self.assertEqual(table["entries"][0]["confidence"], "medium")
+        self.assertEqual(table["entries"][0]["confidence_note"], "downgraded: evidence<3")
         self.assertEqual(table["work"], "hf3")
         self.assertEqual(table["model"], {"url": "http://127.0.0.1:8081", "model_id_from_server": "Qwen3.8-27B", "think": False})
         self.assertEqual(table["timing"]["prompt_tokens"], 123)

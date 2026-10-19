@@ -26,6 +26,11 @@ changes 里记 extended_from。落点（扩展后）紧邻 ·／・ 或拉丁字
 并把锚定 cue 里反复出现的二字组放进候选池。
 --bigram-isolation：单字的孤立改用语料口径，落点边界检查对统计层的单字同口径；孤立单字默认的 BOUNDARY_CHARS 口径不变。
 --iterate N：把输出再跑一遍直到不动点或 N 遍，changes 记 pass，summary["passes"] 记每遍改动的 cue 数。
+修饰词：扩展不得吞进比原落点更强的落点（超串支持度须不少于它的一半）；紧贴强落点、支持度不到它一半的弱落点
+（笨蛋伊莉亚 的 笨蛋）当修饰词，不替换，边界检查也不把它当"更长词"。迭代第 2 遍起，候选首尾的常用词（如果白 的 如果：
+别处接 ≥ EDGE_WORD_BRANCH 种不同汉字）同样当修饰词去掉，只替换名字部分。
+--weak-name-check：confidence 非 high 的整条实体，其 zh 或任一 form 的 zh 须在整份译文里至少出现一次，否则整条跳过，
+列在 summary 的 entries_skipped_unverified；high 条目不查，与逐 form 的 --name-check 互不影响。
 
 已知限制：单字的 form.ja（如 凛）会过度锚定（任何含该字的 cue 都被锚定），目前不处理。
 
@@ -51,6 +56,8 @@ MIN_SUPPORT = 2  # 统计候选至少在这么多条锚定 cue 内出现
 MIN_RATIO = 0.8  # 候选出现的 cue 中，锚定 cue 至少占这个比例（特异性）
 MIN_SHARE = 0.04  # 相对支持度：至少占锚定 cue 数的这个比例，防止锚定很多的条目被偶发短语带偏
 WORD_MIN_COUNT = 2  # 二字组在非锚定 cue 里出现这么多次就算"词"（明白、白色），单字挨着它就不算孤立
+EDGE_WORD_CUES = 5  # 候选首／尾的二字组至少出现在这么多 cue 里，且向候选内侧延伸出 EDGE_WORD_BRANCH 种以上不同汉字，才算常用词（如果）；
+EDGE_WORD_BRANCH = 4  # 名字的片段（伊莉 后面只有 亚／雅）后面的字很固定，够不到
 MAX_EXTEND = 6  # 统计层落点向左右扩展时，最多比原落点长这么多字
 EXTEND_SHARE = 0.5  # 扩展后的超串至少要有原落点这么大比例的锚定 cue 支持，否则 叫白 之类语境串会取代 白
 # 可以紧挨在专名旁边的常见虚词／动词单字，属人工判断的经验清单，不是穷举；落点另一侧若是清单外的汉字，视为没落在词边界上
@@ -112,6 +119,7 @@ class Match:
     layer: str
     spans: list[tuple[int, int, str]]
     extended_from: dict[tuple[int, int], str] = field(default_factory=dict)  # 扩展后的落点 (起, 止) -> 原落点文本
+    modifiers: list[tuple[int, int]] = field(default_factory=list)  # 紧贴强落点的弱候选（笨蛋伊莉亚 的 笨蛋）：不替换，也不算"更长词"
 
 
 def entity_forms(entity: dict) -> list[dict]:
@@ -209,12 +217,14 @@ class StatLayer:
     RUN_CHAR = re.compile(r"[一-鿿A-Za-z·・]")
 
     def __init__(self, zh: str, zh_texts: list[str], anchored: list[int], isolated_singles: bool = False,
-                 bigram_isolation: bool = False, pool_bigrams: bool = False):
+                 bigram_isolation: bool = False, pool_bigrams: bool = False, strip_edges: bool = False):
         """isolated_singles：单字候选的 a／b 只数孤立出现（两侧是非汉字或 BOUNDARY_CHARS 内的汉字），
         扩展的超串首尾也不得是 BOUNDARY_CHARS。
         bigram_isolation：孤立改用语料口径——相邻汉字构成的二字组在非锚定 cue 里出现不足 WORD_MIN_COUNT 次
         （不是词）才算孤立；同时开启上一项的扩展限制。
-        pool_bigrams：候选池里再加上锚定 cue 里反复出现的二字组（consistency 的池因背景计数过严而漏掉它们）。"""
+        pool_bigrams：候选池里再加上锚定 cue 里反复出现的二字组（consistency 的池因背景计数过严而漏掉它们）。
+        strip_edges：迭代第 2 遍起为真，候选串首尾的常用词不算名字的一部分（见 strip_edge_word）。"""
+        self.strip_edges = strip_edges
         inside = set(anchored)
         self.bigram_isolation = bigram_isolation
         self.isolated_singles = isolated_singles or bigram_isolation
@@ -307,12 +317,14 @@ class StatLayer:
             self.kept.append(item)
         return True
 
-    def extend(self, text: str, start: int, end: int) -> tuple[int, int]:
+    def extend(self, text: str, start: int, end: int, rivals: list[tuple[int, int, int]] = ()) -> tuple[int, int]:
         """把落点向左右扩展到周围连续 CJK／拉丁／间隔点串内的最长且有统计支持的超串；没有则原样返回。
 
         支持度口径同候选过滤（锚定 cue 数、特异性、相对支持度），另要求不少于原落点锚定 cue 数的 EXTEND_SHARE；
         超串首尾不是虚词，也不含整个 zh。
         含间隔点的超串必须覆盖整段连续串（两端都到 CJK／拉丁／间隔点串的边界），否则会把 艾米亚·希罗 截成 米亚·希罗。
+        rivals 是同一段文本里其他统计落点 (起, 止, 锚定 cue 数)：超串若吞进比原落点更强的落点，支持度须不少于它的 EXTEND_SHARE，
+        否则弱落点（笨蛋，2 个 cue）会借着"超串的支持度≥自己的一半"把强落点（伊莉，22 个 cue）连同前置修饰词一起吞掉。
         """
         run_start, run_end = start, end
         while run_start > 0 and self.RUN_CHAR.match(text[run_start - 1]):
@@ -335,9 +347,34 @@ class StatLayer:
                 if ("·" in superstring or "・" in superstring) and (start - left, end + right) != (run_start, run_end):
                     continue
                 a, b = self.counts(superstring)
-                if a >= needed and a / (a + b) >= MIN_RATIO and (len(superstring), a) > best_key:
+                swallowed = max((n for s0, e0, n in rivals if s0 < end + right and e0 > start - left), default=0)
+                if (a >= max(needed, EXTEND_SHARE * swallowed) and a / (a + b) >= MIN_RATIO
+                        and (len(superstring), a) > best_key):
                     best, best_key = (start - left, end + right), (len(superstring), a)
         return best
+
+    def strip_edge_word(self, candidate: str) -> tuple[int, int]:
+        """候选串去掉首／尾的常用词（见 EDGE_WORD_CUES，不能是目标的一部分，如 如果）后剩下的 (左, 右) 偏移；没有则 (0, 0)。
+
+        迭代第 2 遍里，主译法被换光后，残留的 如果白 会因为"只出现在锚定 cue"而自成候选，整段被换掉；其实只有 白 是名字。
+        """
+        if not self.strip_edges or len(candidate) < 3:
+            return 0, 0
+        for lead, trail, word in ((2, 0, candidate[:2]), (0, 2, candidate[-2:])):
+            cues, branches = 0, set()
+            for text in self.lowered:
+                k = text.find(word)
+                hit = False
+                while k != -1:
+                    side = k + 2 if lead else k - 1  # 候选里常用词在首：看它后面；在尾：看它前面
+                    if 0 <= side < len(text) and "一" <= text[side] <= "鿿":
+                        branches.add(text[side])
+                    hit = True
+                    k = text.find(word, k + 1)
+                cues += hit
+            if cues >= EDGE_WORD_CUES and len(branches) >= EDGE_WORD_BRANCH and word not in self.zh:
+                return lead, trail
+        return 0, 0
 
     def candidates(self, text: str) -> list[str]:
         found = [a for a in self.alternatives if a in text]
@@ -351,19 +388,42 @@ class StatLayer:
 
 
 def extend_spans(match: Match, target: str, found: list[str], text: str, stat: StatLayer) -> Match:
-    """统计层落点尝试向外扩展（艾因茨贝伦 而不是 因茨贝伦）；目标本身和它的省略形不扩展。"""
+    """统计层落点尝试向外扩展（艾因茨贝伦 而不是 因茨贝伦）；目标本身和它的省略形不扩展。
+
+    紧贴着更强落点、支持度不到它一半的弱落点（笨蛋伊莉亚 的 笨蛋）是前置／后置修饰词，不是名字的一种译法：
+    从落点里去掉，记入 match.modifiers，边界检查时不把它当"更长词"。
+    """
+    weights = {(s, e): stat.counts(t)[0] for s, e, t in match.spans if t in found}
     spans, last_end = [], 0
     for start, end, span_text in match.spans:
         if start < last_end:
             continue  # 已被前一个扩展后的落点吞并
         if span_text in found and span_text not in target:
-            new_start, new_end = stat.extend(text, start, end)
+            lead, trail = stat.strip_edge_word(span_text)
+            if lead or trail:  # 如果白：词是修饰，只留名字部分
+                match.modifiers.append((start, start + lead) if lead else (end - trail, end))
+                start, end, span_text = start + lead, end - trail, span_text[lead:len(span_text) - trail]
+                spans.append((start, end, span_text))
+                last_end = end
+                continue
+            rivals = [(s, e, n) for (s, e), n in weights.items() if (s, e) != (start, end)]
+            new_start, new_end = stat.extend(text, start, end, rivals)
             if (new_start, new_end) != (start, end):
                 match.extended_from[(new_start, new_end)] = span_text
+                weights.pop((start, end), None)
+                weights[(new_start, new_end)] = stat.counts(text[new_start:new_end])[0]
                 start, end, span_text = new_start, new_end, text[new_start:new_end]
         spans.append((start, end, span_text))
         last_end = end
-    match.spans = spans
+    kept = []
+    for start, end, span_text in spans:
+        mine = weights.get((start, end))
+        if mine is not None and any(s != start and (e == start or s == end) and mine < EXTEND_SHARE * n
+                                    for (s, e), n in weights.items()):
+            match.modifiers.append((start, end))
+        else:
+            kept.append((start, end, span_text))
+    match.spans = kept
     return match
 
 
@@ -412,18 +472,19 @@ def overlapping(a: Match, b: Match) -> bool:
     return any(s1 < e2 and s2 < e1 for s1, e1, _ in a.spans for s2, e2, _ in b.spans)
 
 
-def bad_boundary(text: str, start: int, end: int) -> bool:
-    """落点紧邻的汉字不在 BOUNDARY_CHARS 里：它多半只是更长词（或更长名字）的一段，不是完整的名字。"""
-    return any("一" <= text[k] <= "鿿" and text[k] not in BOUNDARY_CHARS
+def bad_boundary(text: str, start: int, end: int, modifiers: list[tuple[int, int]] = ()) -> bool:
+    """落点紧邻的汉字不在 BOUNDARY_CHARS 里：它多半只是更长词（或更长名字）的一段，不是完整的名字。
+    紧邻的汉字若属于 modifiers（紧贴强落点的弱候选）则不算。"""
+    return any("一" <= text[k] <= "鿿" and text[k] not in BOUNDARY_CHARS and not any(s <= k < e for s, e in modifiers)
                for k in (start - 1, end) if 0 <= k < len(text))
 
 
-def unit_boundary(unit: "Unit", layer: str, text: str, start: int, end: int) -> bool:
+def unit_boundary(unit: "Unit", match: Match, text: str, start: int, end: int) -> bool:
     """落点边界检查；bigram 口径下统计层的单字落点改用语料判断孤立，其余仍用 BOUNDARY_CHARS 清单。"""
-    stat = unit.stat
+    stat, layer = unit.stat, match.layer
     if layer == "stat" and stat is not None and stat.bigram_isolation and end - start == 1 and "一" <= text[start] <= "鿿":
         return not stat.char_isolated(text, start)
-    return bad_boundary(text, start, end)
+    return bad_boundary(text, start, end, match.modifiers)
 
 
 def is_near_name(target: str, rendering: str) -> bool:
@@ -441,8 +502,11 @@ COUNTERS = ("anchored", "replaced_variant", "replaced_stat", "already_canonical"
 
 def apply_pass(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low",
                name_check: bool = False, isolated_singles: bool = True, pool_by_target: bool = False,
-               bigram_isolation: bool = False) -> dict:
-    """对一份译文跑一遍；statuses 记每个（实体，form，cue）这一遍落在哪个计数器上，供多遍合并时去重。"""
+               bigram_isolation: bool = False, residual: bool = False, weak_name_check: bool = False) -> dict:
+    """对一份译文跑一遍；statuses 记每个（实体，form，cue）这一遍落在哪个计数器上，供多遍合并时去重。
+    residual：这是迭代的第 2 遍起，输入已被上一遍替换过（统计层据此去掉候选首尾的常用词）。
+    weak_name_check：confidence 不是 high 的整条实体，要求它的 zh 或任一 form 的 zh 在整份译文（任意 cue）里至少出现一次，
+    否则整条跳过（entries_skipped_unverified）；high 条目不查。与逐 form 的 name_check 无关。"""
     zh_texts = [cue.text for cue in zh_cues]
     lowered = [text.lower() for text in zh_texts]
     entities = table["entries"]
@@ -450,6 +514,17 @@ def apply_pass(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confiden
     skipped = [{"entity_ja": entity["entity_ja"], "confidence": entity.get("confidence")} for entity in entities
                if CONFIDENCE_LEVELS.get(entity.get("confidence", "high"), 2) < threshold]
     skipped_names = {item["entity_ja"] for item in skipped}
+    skipped_unverified = []
+    if weak_name_check:
+        whole = "\n".join(lowered)
+        for entity in entities:
+            if entity["entity_ja"] in skipped_names or entity.get("confidence", "high") == "high":
+                continue
+            names = {entity["zh"], *(form["zh"] for form in entity_forms(entity))} - {""}
+            if not any(name.lower() in whole for name in names):
+                skipped_unverified.append({"entity_ja": entity["entity_ja"], "zh": entity["zh"],
+                                           "confidence": entity.get("confidence")})
+        skipped_names |= {item["entity_ja"] for item in skipped_unverified}
 
     units: list[Unit] = []
     for e, entity in enumerate(entities):
@@ -474,10 +549,10 @@ def apply_pass(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confiden
             if key not in pooled:
                 members = [v for v in units if (v.entity, v.target) == key]
                 pooled[key] = StatLayer(unit.target, zh_texts, sorted({i for v in members for i in v.anchored}),
-                                        isolated_singles, bigram_isolation, pool_bigrams=True)
+                                        isolated_singles, bigram_isolation, pool_bigrams=True, strip_edges=residual)
             unit.stat = pooled[key]
         else:
-            unit.stat = StatLayer(unit.target, zh_texts, anchored, isolated_singles, bigram_isolation)
+            unit.stat = StatLayer(unit.target, zh_texts, anchored, isolated_singles, bigram_isolation, strip_edges=residual)
         return unit.stat
 
     # 目标名核对：目标 zh 必须得到译者自己用法的佐证，否则整个 form 不动
@@ -575,7 +650,7 @@ def apply_pass(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confiden
                     unresolved.append({**record, "reason": "compound"})
                     continue
                 # 边界：紧邻清单外的汉字说明落点只是更长词的一段，该落点不动；一个落点都不剩才记 boundary
-                todo = [span for span in todo if not unit_boundary(unit, match.layer, zh_cues[i].text, span[0], span[1])]
+                todo = [span for span in todo if not unit_boundary(unit, match, zh_cues[i].text, span[0], span[1])]
                 if not todo:
                     mark("unresolved_boundary")
                     unresolved.append({**record, "reason": "boundary"})
@@ -616,12 +691,14 @@ def apply_pass(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confiden
     return {"new_texts": new_texts, "changes": changes, "unresolved": unresolved, "statuses": statuses,
             "changed_cues": sorted(edits),
             "summary": {"entries": per_entity, "entries_skipped_confidence": skipped,
+                        "entries_skipped_unverified": skipped_unverified,
                         "unverified_forms": unverified, "totals": totals}}
 
 
 def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confidence: str = "low",
                 name_check: bool = False, iterate: int = 1, isolated_singles: bool = True,
-                pool_by_target: bool = False, bigram_isolation: bool = False) -> dict:
+                pool_by_target: bool = False, bigram_isolation: bool = False,
+                weak_name_check: bool = False) -> dict:
     """跑 apply_pass；iterate > 1 时把输出当输入再跑，直到一遍 0 改动或达到遍数上限。
 
     多遍的口径：changes 每条记 pass；summary["passes"] 是每遍改动的 cue 数；
@@ -633,7 +710,7 @@ def apply_table(table: dict, ja_cues: list[Cue], zh_cues: list[Cue], min_confide
     changes, passes, changed_cues, final = [], [], set(), {}
     for number in range(1, max(1, iterate) + 1):
         result = apply_pass(table, ja_cues, current, min_confidence, name_check, isolated_singles, pool_by_target,
-                            bigram_isolation)
+                            bigram_isolation, residual=number > 1, weak_name_check=weak_name_check)
         changes.extend({"pass": number, **change} for change in result["changes"])
         passes.append(len(result["changed_cues"]))
         changed_cues.update(result["changed_cues"])
@@ -695,7 +772,7 @@ def run_apply(args: argparse.Namespace) -> int:
     if len(ja_cues) != len(zh_cues):
         raise SystemExit(f"cue count differs: ja {len(ja_cues)} vs zh {len(zh_cues)}")
     result = apply_table(table, ja_cues, zh_cues, args.min_confidence, args.name_check, args.iterate,
-                         args.isolated_singles, args.pool_by_target, args.bigram_isolation)
+                         args.isolated_singles, args.pool_by_target, args.bigram_isolation, args.weak_name_check)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "zh.replaced.srt").write_bytes(render_srt(zh_content, zh_cues, result["new_texts"]).encode("utf-8"))
     write_jsonl(args.out_dir / "changes.jsonl", result["changes"])
@@ -746,6 +823,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="单字孤立改用语料口径：相邻二字组在非锚定 cue 里出现不足 2 次才算孤立（隐含孤立单字的扩展限制）")
     parser.add_argument("--iterate", type=int, default=1, metavar="N",
                         help="把输出当输入再跑，直到一遍 0 改动或达到 N 遍（默认 1）")
+    parser.add_argument("--weak-name-check", action="store_true",
+                        help="confidence 非 high 的整条实体，其 zh（或任一 form 的 zh）须在译文里至少出现一次，否则跳过")
     parser.add_argument("--name-check", action="store_true", help="核对目标名是否得到译者用法的佐证（第二轮已放弃，只作对照）")
     return run_apply(parser.parse_args(argv))
 

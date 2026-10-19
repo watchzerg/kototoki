@@ -18,20 +18,25 @@ from urllib.request import ProxyHandler, Request, build_opener
 SCHEMA = "name-table-v2"
 KINDS = ("person", "class", "org", "place", "other")
 SRT_BLOCK = re.compile(r"(\d+)\s*\n[\d:,]+ --> [\d:,]+\s*\n(.*?)(?:\n\s*\n|\Z)", re.S)
-PROMPT_VERSION = "build-table-prompt-v4"
+PROMPT_VERSION = "build-table-prompt-v5"
 CONFIDENCES = ("high", "medium", "low")
 MAX_FORMS = 12
 MAX_ITEMS = 8
-MAX_ZH_CHARS = 20
-# 日文写法对应的中文若含空白、括号、冒号或加号，多半是模型夹带的注释，整个写法丢弃。
-BAD_ZH = re.compile(r"[\s（）()\[\]【】:：＋+]")
+MAX_ZH_LEN = 12
+# person 条目 evidence 里的 cue 少于此数，confidence 不得为 high（与提示里的规则一致）。
+MIN_HIGH_PERSON_CUES = 3
+SEPARATORS = "·・"
+# 中文译名只许由 CJK 统一表意文字（含扩展 A）、间隔号 ·／・、ASCII 字母组成；括号、空白、数字、冒号等
+# 多半是模型夹带的注释（如"间桐(误识为Makiri)"）。长度按去掉间隔号后的字数算，1–12。
+ZH_SHAPE = re.compile(r"[㐀-䶿一-鿿" + SEPARATORS + r"A-Za-z]+")
 
 SYSTEM_PROMPT = """你是日本动画／电影字幕的专名整理员。用户给出的是一部作品日语字幕轨的 ASR（自动语音识别）转写稿，每行格式为"cue 编号<TAB>日文台词"。
 ASR 会把同一个专名写成不同形式，例如：汉字误替（彩波 对 綾波）、片假名变体（アスカ／アスカー）、写错的汉字（真司 对 真嗣）、片假名被转成平假名（あすか）等。
 
 任务：通读全片，抽取"固定专名"，把指同一对象的各种写法归并为一条，并为每个日文写法分别给出中文。
 收录：人名、角色名；职阶名／称号（如 チルドレン、エヴァ初号機）；反复出现的组织名、地名。反复出现、指代固定身份的称号也要收，即使它在普通语境里是普通名词（如 使徒），因为译文里这类称号的译法最容易摇摆。
-不收：亲属称呼和人称称呼（お兄ちゃん、先輩、あの人、お主 等）；作品名的片段；单个泛用词；只出现一次且无法确认是专名的片段。
+不收：亲属称呼和人称称呼（お兄ちゃん、先輩、あの人、お主、父さん 等），这类称呼词一律不收；祷词、咒文、台词片段（如 キリエ・エレイソン 这类祷词）不是人名，不收；作品名的片段；单个泛用词；只出现一次且无法确认是专名的片段。
+两个不同角色即使名字读音或字形相近，也绝不能合并成一个实体（例如 シンジ 与 シロウ 是两个人，各自成条）。
 
 每条给出：
 - entity_ja：该对象的正确日文全称（若你认出作品，用官方写法；否则用转写稿中最可信的写法）。
@@ -47,14 +52,18 @@ ASR 会把同一个专名写成不同形式，例如：汉字误替（彩波 对
   * 反例：真嗣的 zh_variants 里不能放"第三适格者"（称号）；绫波丽的不能放"明日香"（其他角色名）。这些不是同一个词的写法，替换后会改变句意。
 - kind：person（人名、角色名）、class（职阶名／称号）、org（组织）、place（地名）、other（其他）之一。
 - evidence：该对象（含各种误识写法）出现的 cue 编号，整数列表，最多 8 个，取有代表性的几条即可，必须是输入里真实存在的编号。
-- confidence：high（认出作品，且该 zh 是通行译名）、medium（认出作品，但对这一条不确定）、low（认不出作品，或 zh 只是合理的音译）之一。
+- confidence：high、medium、low 之一，按下列可操作的判据给，宁可给低也不要给错的 high：
+  * high：只给你能凭作品知识说出该角色身份（他/她是谁、与主角的关系）、并且确定其通行中文译名的条目；并且该名字（含各种写法）在转写稿里出现在 ≥3 条 cue 里。
+  * medium：认出作品，但说不出这一条具体是谁，或中文译名只是你推断的；或者这个名字是从 ASR 误识碎片拼出来的（如 マトウ増健、造剣 这类不成词的碎片）。次要角色、只出现两三次的名字通常是 medium，这是正常输出。
+  * low：认不出作品，zh 只是音译。
 
 条目总数最多约 60 条，优先收录在片中反复出现的专名；只出现一两次的次要名字可以省略。
 
 请先判断这是哪部作品，写入 work_guess；认不出则为 null。认出作品后，才能据此纠正误识并使用通行译名。
 
 输出要求：严格的 JSON 对象，不要任何解释文字，不要 markdown 代码块标记。格式：
-{"work_guess": "作品名或 null", "entries": [{"entity_ja": "", "kind": "person", "confidence": "high", "zh": "", "forms": [{"ja": "", "zh": ""}], "zh_variants": [], "evidence": []}]}"""
+{"work_guess": "作品名或 null", "entries": [{"entity_ja": "", "kind": "person", "confidence": "high", "zh": "", "forms": [{"ja": "", "zh": ""}], "zh_variants": [], "evidence": []}, {"entity_ja": "", "kind": "person", "confidence": "medium", "zh": "", "forms": [{"ja": "", "zh": ""}], "zh_variants": [], "evidence": []}]}
+（第二条是次要角色的示例：confidence 为 medium 是正常输出，不是缺陷。）"""
 
 SEED = 20261019
 # Qwen3 官方 non-thinking 推荐采样；贪心解码会陷入无休止重复。
@@ -128,24 +137,33 @@ def _strings(values: Any) -> list[str]:
 
 
 def _clean_zh(value: Any) -> str | None:
-    """中文译名合格则返回去空白后的串，否则 None。"""
+    """中文译名合格（见 ZH_SHAPE）则返回去空白后的串，否则 None。"""
     if not isinstance(value, str):
         return None
     value = value.strip()
-    if not value or len(value) > MAX_ZH_CHARS or BAD_ZH.search(value):
+    length = len(value.translate({ord(c): None for c in SEPARATORS}))
+    if not 1 <= length <= MAX_ZH_LEN or not ZH_SHAPE.fullmatch(value):
         return None
     return value
 
 
-def _forms(raw_forms: Any, entity: str, entity_zh: str) -> list[dict[str, str]]:
-    """校验、按 ja 去重（先到先得）；entity_ja 缺席时以实体全称补到最前。"""
+def _drop(dropped: list[dict[str, Any]] | None, entity: str, field: str, value: Any, **extra: Any) -> None:
+    if dropped is not None:
+        dropped.append({"entity_ja": entity, "field": field, **extra, "value": value})
+
+
+def _forms(raw_forms: Any, entity: str, entity_zh: str, dropped: list[dict[str, Any]] | None = None
+           ) -> list[dict[str, str]]:
+    """校验、按 ja 去重（先到先得）；entity_ja 缺席时以实体全称补到最前。zh 形状不合的写法丢弃并记录。"""
     forms: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw in raw_forms if isinstance(raw_forms, list) else []:
         if not isinstance(raw, dict) or not isinstance(raw.get("ja"), str):
             continue
         ja, zh = raw["ja"].strip(), _clean_zh(raw.get("zh"))
-        if ja and zh and ja not in seen:
+        if ja and zh is None:
+            _drop(dropped, entity, "form.zh", raw.get("zh"), ja=ja)
+        elif ja and ja not in seen:
             seen.add(ja)
             forms.append({"ja": ja, "zh": zh})
     zh = _clean_zh(entity_zh)
@@ -154,8 +172,29 @@ def _forms(raw_forms: Any, entity: str, entity_zh: str) -> list[dict[str, str]]:
     return forms[:MAX_FORMS]
 
 
-def parse_reply(reply: str, cue_count: int) -> tuple[str | None, list[dict[str, Any]]]:
-    """解析并校验回复，返回 (work_guess, entries)。缺关键字段的条目丢弃，全部丢光则抛 ValueError。"""
+def _zh_variants(values: Any, entity: str, dropped: list[dict[str, Any]] | None) -> list[str]:
+    """去空白、保序去重；形状不合的变体丢弃并记录。"""
+    out: list[str] = []
+    for value in _strings(values):
+        if _clean_zh(value) is None:
+            _drop(dropped, entity, "zh_variants", value)
+        else:
+            out.append(value)
+    return out[:MAX_ITEMS]
+
+
+def _downgrade_thin_person(entry: dict[str, Any]) -> dict[str, Any]:
+    """person 条目的 evidence（已校验、去重的 cue 编号）少于 3 条时，high 降为 medium 并留下 confidence_note。"""
+    if entry["kind"] == "person" and entry["confidence"] == "high" and len(entry["evidence"]) < MIN_HIGH_PERSON_CUES:
+        entry["confidence"] = "medium"
+        entry["confidence_note"] = "downgraded: evidence<3"
+    return entry
+
+
+def parse_reply(reply: str, cue_count: int, dropped: list[dict[str, Any]] | None = None
+                ) -> tuple[str | None, list[dict[str, Any]]]:
+    """解析并校验回复，返回 (work_guess, entries)。缺关键字段的条目丢弃，全部丢光则抛 ValueError。
+    因 zh 形状不合被丢的实体／写法／变体追加进 `dropped`（若给出）。"""
     data = json.loads(_json_text(reply))
     raw_entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(raw_entries, list) or not raw_entries:
@@ -171,22 +210,25 @@ def parse_reply(reply: str, cue_count: int) -> tuple[str | None, list[dict[str, 
         if not (isinstance(entity, str) and entity.strip() and isinstance(zh, str) and zh.strip()):
             continue
         entity, zh = entity.strip(), zh.strip()
-        forms = _forms(raw.get("forms"), entity, zh)
+        if _clean_zh(zh) is None:
+            _drop(dropped, entity, "zh", zh)
+            continue
+        forms = _forms(raw.get("forms"), entity, zh, dropped)
         if entity in seen or not forms:
             continue
         seen.add(entity)
         kind = raw.get("kind")
         evidence = [i for i in raw.get("evidence", []) if type(i) is int and 1 <= i <= cue_count] \
             if isinstance(raw.get("evidence"), list) else []
-        entries.append({
+        entries.append(_downgrade_thin_person({
             "entity_ja": entity,
             "kind": kind if kind in KINDS else "other",
             "confidence": raw.get("confidence") if raw.get("confidence") in CONFIDENCES else "medium",
             "zh": zh,
             "forms": forms,
-            "zh_variants": _strings(raw.get("zh_variants"))[:MAX_ITEMS],
+            "zh_variants": _zh_variants(raw.get("zh_variants"), entity, dropped),
             "evidence": sorted(set(evidence))[:MAX_ITEMS],
-        })
+        }))
     if not entries:
         raise ValueError("no valid entries after validation")
     return guess, entries
@@ -222,15 +264,43 @@ def run_once(url: str, messages: list[dict[str, str]], think: bool, out: Path, a
     return reply, response, seconds
 
 
+def renormalize_table(old_table: Path, out: Path) -> dict[str, Any]:
+    """不重跑模型：读旧表指向的原始回复（`raw_reply_path`），按当前规则重新校验归一，写新表。
+
+    work、model、timing、prompt_version 沿用旧表（回复仍是当时那版提示产生的），cue 总数取自旧表的 source_srt。
+    """
+    old = json.loads(old_table.read_text(encoding="utf-8"))
+    reply_path = Path(old.get("raw_reply_path") or f"{old_table}.reply.txt")
+    if not reply_path.is_absolute() and not reply_path.exists():
+        reply_path = old_table.parent / reply_path.name
+    cue_count = max(index for index, _ in read_srt_cues(Path(old["source_srt"])))
+    dropped: list[dict[str, Any]] = []
+    guess, entries = parse_reply(reply_path.read_text(encoding="utf-8"), cue_count, dropped)
+    table = {**old, "work_guess": guess, "entries": entries, "meta": {"dropped_shape": dropped},
+             "renormalized_from": str(old_table)}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(table, ensure_ascii=False, indent=2), encoding="utf-8")
+    return table
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="从整片 ja.srt 建专名表")
-    parser.add_argument("--srt", type=Path, required=True)
-    parser.add_argument("--work", required=True)
+    parser.add_argument("--srt", type=Path)
+    parser.add_argument("--work")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--renormalize", type=Path, metavar="OLD_TABLE",
+                        help="不重跑模型：对旧表的原始回复按当前规则重新归一，写到 --out")
     parser.add_argument("--url", default="http://127.0.0.1:8081")
     parser.add_argument("--think", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="只写出渲染好的提示，不发请求")
     args = parser.parse_args(argv)
+
+    if args.renormalize:
+        table = renormalize_table(args.renormalize, args.out)
+        print(f"entries={len(table['entries'])} dropped_shape={len(table['meta']['dropped_shape'])}")
+        return 0
+    if not (args.srt and args.work):
+        parser.error("--srt and --work are required unless --renormalize is given")
 
     cues = read_srt_cues(args.srt)
     if not cues:
@@ -248,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     total_seconds = 0.0
+    dropped: list[dict[str, Any]] = []
     last_error: Exception | None = None
     for attempt in (1, 2):
         reply, response, seconds = run_once(args.url, messages, args.think, args.out, attempt)
@@ -256,7 +327,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if finish_reason == "length":
                 raise ValueError("reply truncated (finish_reason=length), refusing to parse")
-            guess, entries = parse_reply(reply, cue_count)
+            dropped = []
+            guess, entries = parse_reply(reply, cue_count, dropped)
             break
         except ValueError as exc:  # json.JSONDecodeError 是其子类
             last_error = exc
@@ -274,13 +346,14 @@ def main(argv: list[str] | None = None) -> int:
         "model": {"url": args.url, "model_id_from_server": response.get("model"), "think": args.think},
         "work_guess": guess,
         "entries": entries,
+        "meta": {"dropped_shape": dropped},
         "timing": {"prompt_chars": prompt_chars, "prompt_tokens": usage.get("prompt_tokens", 0),
                    "completion_tokens": usage.get("completion_tokens", 0), "seconds": round(total_seconds, 2),
                    "finish_reason": finish_reason},
         "raw_reply_path": f"{args.out}.reply{'' if attempt == 1 else f'.{attempt}'}.txt",
     }
     args.out.write_text(json.dumps(table, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"entries={len(entries)} work_guess={guess} seconds={table['timing']['seconds']}")
+    print(f"entries={len(entries)} dropped_shape={len(dropped)} work_guess={guess} seconds={table['timing']['seconds']}")
     return 0
 
 
