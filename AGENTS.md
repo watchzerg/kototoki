@@ -31,6 +31,7 @@
 - 翻译代码中的 `reasoning_effort:no_think` 是 Hy-MT2 chat-template token，不是 agent 设置；`reasoning_effort` 不做批量替换。
 - 翻译流程基线保持 `dp10-cut`（[ADR-0010](docs/adr/0010-dp10-cut-translation-flow-baseline.md)，2026-10-17 起；之前为 `dp6-grp`、`b10-joint`），直到用户另行决定；产品配方为 `dp10-cut-degrade-v1`（[ADR-0011](docs/adr/0011-dp10-cut-product-recipe.md)，2026-10-18 起），切包与邻文同 dp10-cut。
 - **不自动选用"翻译多次再挑选"的方法**（多样本／多 seed＋MBR 或 reranking、best-of-N、多次全量翻译投票及其更省变体）：不提议、不列候选、不在无人值守时执行，除非用户明确要求；v4 `mbr8c`、v5 `mbr8s` 已放弃，边界情况先问（[ADR-0008](docs/adr/0008-no-multi-translation-selection.md)）。
+- 专名一致性研究线（`experiments/name_consistency/`，建表＋生成后替换）已结题：最佳已知配置冻结在 [ADR-0013](docs/adr/0013-name-consistency-closed.md)，不再提议或开启新轮次，不进产品；重开只由用户明确要求。
 - v3、v4、v5（剧集）确认集已开封，新的确认须用全新隔离的集合。第二轮（v2）已停止并冻结：其台账 1300+ 行，只按节读取，其作业不再恢复；先验只取[v1/v2 教训](docs/research/2026-10-10-hy30-flow-v1-v2-lessons.md)。
 
 ### 重任务与环境

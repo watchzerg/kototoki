@@ -132,7 +132,7 @@ class CapTests(unittest.TestCase):
 
     def test_prompt_states_granularity_and_variant_rules(self):
         prompt = bt.SYSTEM_PROMPT
-        for needle in ("绝不收", "第七观测者", "指同一对象", "绝不把全名填给只说了姓或名的写法", "固定身份的称号", "forms"):
+        for needle in ("绝不收", "第三适格者", "指同一对象", "绝不把全名填给只说了姓或名的写法", "固定身份的称号", "forms"):
             self.assertIn(needle, prompt)
 
 
@@ -302,18 +302,11 @@ class HonorificTests(unittest.TestCase):
         self.assertEqual(table["meta"]["seed"], 101)
 
 
-class PromptV6Tests(unittest.TestCase):
-    # 真实作品（EVA、Fate）的名字会污染输出：提示里只许出现虚构的示例名。
-    REAL_WORK_NAMES = ("碇", "シンジ", "真嗣", "真司", "アスカ", "綾波", "绫波", "レイ", "明日香", "初号機", "初号机",
-                       "弐号機", "使徒", "チルドレン", "適格者", "适格者", "エヴァ", "EVA", "Evangelion", "シロウ",
-                       "士郎", "マトウ", "増健", "造剣", "キリエ", "エレイソン", "衛宮", "遠坂")
+class PromptV5Tests(unittest.TestCase):
+    # 第六轮试过把示例全换成虚构作品（v6）：模型更常把写法挂错实体，已回退到 v5 的真实作品示例。
 
-    def test_version_is_v6(self):
-        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v6")
-
-    def test_prompt_has_no_real_work_names(self):
-        for name in self.REAL_WORK_NAMES:
-            self.assertNotIn(name, bt.SYSTEM_PROMPT, name)
+    def test_version_is_v5(self):
+        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v5")
 
     def test_prompt_keeps_every_illustration(self):
         prompt = bt.SYSTEM_PROMPT
@@ -454,10 +447,10 @@ class ConfidenceTests(unittest.TestCase):
                  "forms": [{"ja": "桜", "zh": "樱"}], "evidence": evidence}
         return bt.parse_reply(json.dumps({"entries": [entry]}), 10)[1][0]
 
-    def test_prompt_v6_states_confidence_criteria(self):
-        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v6")
+    def test_prompt_v5_states_confidence_criteria(self):
+        self.assertEqual(bt.PROMPT_VERSION, "build-table-prompt-v5")
         prompt = bt.SYSTEM_PROMPT
-        for needle in ("≥3", "medium", "low", "父さん", "ソルヴェ・テネブラス", "タクミ 与 タクマ", "ホズミ増尋"):
+        for needle in ("≥3", "medium", "low", "父さん", "キリエ・エレイソン", "シンジ 与 シロウ", "マトウ増健"):
             self.assertIn(needle, prompt)
         self.assertIn('"confidence": "medium"', prompt)  # JSON 示例里有 medium 条目
         self.assertIn("绝不能合并成一个实体", prompt)
@@ -508,7 +501,7 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(Path(table["raw_reply_path"]).exists())
         self.assertEqual(table["schema"], "name-table-v2")
-        self.assertEqual(table["prompt_version"], "build-table-prompt-v6")
+        self.assertEqual(table["prompt_version"], "build-table-prompt-v5")
         # GOOD 的 evidence 只有 2 条有效 cue（2、3），person 的 high 被降级
         self.assertEqual(table["entries"][0]["confidence"], "medium")
         self.assertEqual(table["entries"][0]["confidence_note"], "downgraded: evidence<3")
