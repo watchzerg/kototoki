@@ -1,0 +1,288 @@
+"""从整片日文 SRT 建多对一专名表（name-table-v2：每个日文写法各带一个同粒度的中文）。
+
+读 `ja.srt`，剥掉时间轴，整片一次放进提示，经 llama-server 的 OpenAI 兼容接口取回 JSON 表，
+校验、归一后写 `table.json`，并在旁边留下原始请求、原始回复。不加载模型，只发 HTTP。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from time import perf_counter
+from typing import Any
+from urllib.request import ProxyHandler, Request, build_opener
+
+SCHEMA = "name-table-v2"
+KINDS = ("person", "class", "org", "place", "other")
+SRT_BLOCK = re.compile(r"(\d+)\s*\n[\d:,]+ --> [\d:,]+\s*\n(.*?)(?:\n\s*\n|\Z)", re.S)
+PROMPT_VERSION = "build-table-prompt-v4"
+CONFIDENCES = ("high", "medium", "low")
+MAX_FORMS = 12
+MAX_ITEMS = 8
+MAX_ZH_CHARS = 20
+# 日文写法对应的中文若含空白、括号、冒号或加号，多半是模型夹带的注释，整个写法丢弃。
+BAD_ZH = re.compile(r"[\s（）()\[\]【】:：＋+]")
+
+SYSTEM_PROMPT = """你是日本动画／电影字幕的专名整理员。用户给出的是一部作品日语字幕轨的 ASR（自动语音识别）转写稿，每行格式为"cue 编号<TAB>日文台词"。
+ASR 会把同一个专名写成不同形式，例如：汉字误替（彩波 对 綾波）、片假名变体（アスカ／アスカー）、写错的汉字（真司 对 真嗣）、片假名被转成平假名（あすか）等。
+
+任务：通读全片，抽取"固定专名"，把指同一对象的各种写法归并为一条，并为每个日文写法分别给出中文。
+收录：人名、角色名；职阶名／称号（如 チルドレン、エヴァ初号機）；反复出现的组织名、地名。反复出现、指代固定身份的称号也要收，即使它在普通语境里是普通名词（如 使徒），因为译文里这类称号的译法最容易摇摆。
+不收：亲属称呼和人称称呼（お兄ちゃん、先輩、あの人、お主 等）；作品名的片段；单个泛用词；只出现一次且无法确认是专名的片段。
+
+每条给出：
+- entity_ja：该对象的正确日文全称（若你认出作品，用官方写法；否则用转写稿中最可信的写法）。
+- zh：该对象在这部作品的中文官方译名或中文圈通行译名全称（认出作品时必须用通行写法；认不出作品时给出合理的音译）。仅用于展示。
+- forms：转写稿里实际出现的每一个日文写法（包括正确的和被 ASR 误识的），每个写法单独给出它对应的中文 {"ja": 日文写法, "zh": 中文}。最多 12 个，不要重复列出同一个写法，entity_ja 本身也必须是其中一个写法。
+  * 粒度必须一致：每个日文写法单独给中文。写法只说姓，就只给姓的中文；只说名，就只给名的中文；绝不把全名填给只说了姓或名的写法。原因：之后的替换只能把句子里的这个写法换成它的 zh，不能给句子添上原文没说的字。被误识的写法同样按它所指的那一部分给中文（误识的只有名，就映射到名）。
+  * 例如碇シンジ：forms 为 {"ja": "碇シンジ", "zh": "碇真嗣"}、{"ja": "シンジ", "zh": "真嗣"}、{"ja": "碇", "zh": "碇"}、{"ja": "真司", "zh": "真嗣"}（真司是 ASR 把"名"写错的汉字）。
+  * 只收指同一对象的写法。别的角色、别的称号，即使读音或字形相似，也不要放进来（例如 アスカ 不属于 碇シンジ，エヴァ弐号機 不属于 エヴァ初号機）。
+  * ja 只写专名本身的裸形式：不带助词（の、は、を、に、が、と 等），不带前后的其他词，不写成短语或句子，不带残留的中文字或标点（反例：シンジを呼んでいる、アスカの代わりに?、的レイ、素人シンジ）。
+  * forms 里的 zh 只写中文译名本身，不要括号、冒号、加号、空格，不要附带任何注释或说明。
+- zh_variants：只收"同一个词的不同写法"，最多 8 个，不要重复。可收：音译的异写、英文原文、字面意译、繁简异体。绝不收该角色的真名、别名、称号，也不收其他角色的名字。
+  * 正例：写法 シンジ→真嗣 的 zh_variants 可为 ["真司", "真治", "Shinji"]；写法 綾波レイ→绫波丽 的可为 ["绫波零", "綾波丽", "Rei Ayanami"]；初号機→初号机 的可为 ["EVA初号机", "Evangelion Unit-01"]。
+  * 反例：真嗣的 zh_variants 里不能放"第三适格者"（称号）；绫波丽的不能放"明日香"（其他角色名）。这些不是同一个词的写法，替换后会改变句意。
+- kind：person（人名、角色名）、class（职阶名／称号）、org（组织）、place（地名）、other（其他）之一。
+- evidence：该对象（含各种误识写法）出现的 cue 编号，整数列表，最多 8 个，取有代表性的几条即可，必须是输入里真实存在的编号。
+- confidence：high（认出作品，且该 zh 是通行译名）、medium（认出作品，但对这一条不确定）、low（认不出作品，或 zh 只是合理的音译）之一。
+
+条目总数最多约 60 条，优先收录在片中反复出现的专名；只出现一两次的次要名字可以省略。
+
+请先判断这是哪部作品，写入 work_guess；认不出则为 null。认出作品后，才能据此纠正误识并使用通行译名。
+
+输出要求：严格的 JSON 对象，不要任何解释文字，不要 markdown 代码块标记。格式：
+{"work_guess": "作品名或 null", "entries": [{"entity_ja": "", "kind": "person", "confidence": "high", "zh": "", "forms": [{"ja": "", "zh": ""}], "zh_variants": [], "evidence": []}]}"""
+
+SEED = 20261019
+# Qwen3 官方 non-thinking 推荐采样；贪心解码会陷入无休止重复。
+SAMPLING = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}
+_NAME = {"type": "string", "maxLength": 40}
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["work_guess", "entries"],
+    "properties": {
+        "work_guess": {"type": ["string", "null"]},
+        "entries": {"type": "array", "maxItems": 80, "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["entity_ja", "kind", "confidence", "zh", "forms", "zh_variants", "evidence"],
+            "properties": {
+                "entity_ja": _NAME,
+                "kind": {"type": "string", "enum": list(KINDS)},
+                "confidence": {"type": "string", "enum": list(CONFIDENCES)},
+                "zh": _NAME,
+                "forms": {"type": "array", "maxItems": MAX_FORMS, "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["ja", "zh"],
+                    "properties": {"ja": _NAME, "zh": _NAME},
+                }},
+                "zh_variants": {"type": "array", "maxItems": MAX_ITEMS, "items": _NAME},
+                "evidence": {"type": "array", "maxItems": MAX_ITEMS, "items": {"type": "integer"}},
+            },
+        }},
+    },
+}
+
+USER_TEMPLATE = "以下是全片的 ASR 转写稿（共 {count} 条）：\n\n{lines}\n\n请按要求输出专名表 JSON。"
+
+
+def read_srt_cues(path: Path) -> list[tuple[int, str]]:
+    """返回 (cue 编号, 文本)；多行 cue 以空格连接，时间轴丢弃。"""
+    text = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    cues = []
+    for index, body in SRT_BLOCK.findall(text + "\n\n"):
+        cues.append((int(index), body.strip().replace("\n", " ")))
+    return cues
+
+
+def render_lines(cues: list[tuple[int, str]]) -> str:
+    return "\n".join(f"{index}\t{text}" for index, text in cues)
+
+
+def build_messages(cues: list[tuple[int, str]]) -> list[dict[str, str]]:
+    user = USER_TEMPLATE.format(count=len(cues), lines=render_lines(cues))
+    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+
+
+def _json_text(reply: str) -> str:
+    """去掉思考块与围栏，截取最外层 `{...}`。"""
+    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
+    start, end = reply.find("{"), reply.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("reply contains no JSON object")
+    return reply[start:end + 1]
+
+
+def _strings(values: Any) -> list[str]:
+    """去空白、去空串、保序去重。"""
+    out: list[str] = []
+    for value in values if isinstance(values, list) else []:
+        if isinstance(value, str) and value.strip() and value.strip() not in out:
+            out.append(value.strip())
+    return out
+
+
+def _clean_zh(value: Any) -> str | None:
+    """中文译名合格则返回去空白后的串，否则 None。"""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > MAX_ZH_CHARS or BAD_ZH.search(value):
+        return None
+    return value
+
+
+def _forms(raw_forms: Any, entity: str, entity_zh: str) -> list[dict[str, str]]:
+    """校验、按 ja 去重（先到先得）；entity_ja 缺席时以实体全称补到最前。"""
+    forms: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in raw_forms if isinstance(raw_forms, list) else []:
+        if not isinstance(raw, dict) or not isinstance(raw.get("ja"), str):
+            continue
+        ja, zh = raw["ja"].strip(), _clean_zh(raw.get("zh"))
+        if ja and zh and ja not in seen:
+            seen.add(ja)
+            forms.append({"ja": ja, "zh": zh})
+    zh = _clean_zh(entity_zh)
+    if entity not in seen and zh:
+        forms.insert(0, {"ja": entity, "zh": zh})
+    return forms[:MAX_FORMS]
+
+
+def parse_reply(reply: str, cue_count: int) -> tuple[str | None, list[dict[str, Any]]]:
+    """解析并校验回复，返回 (work_guess, entries)。缺关键字段的条目丢弃，全部丢光则抛 ValueError。"""
+    data = json.loads(_json_text(reply))
+    raw_entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(raw_entries, list) or not raw_entries:
+        raise ValueError("entries must be a non-empty list")
+    guess = data.get("work_guess")
+    guess = guess.strip() if isinstance(guess, str) and guess.strip() else None
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            continue
+        entity, zh = raw.get("entity_ja"), raw.get("zh")
+        if not (isinstance(entity, str) and entity.strip() and isinstance(zh, str) and zh.strip()):
+            continue
+        entity, zh = entity.strip(), zh.strip()
+        forms = _forms(raw.get("forms"), entity, zh)
+        if entity in seen or not forms:
+            continue
+        seen.add(entity)
+        kind = raw.get("kind")
+        evidence = [i for i in raw.get("evidence", []) if type(i) is int and 1 <= i <= cue_count] \
+            if isinstance(raw.get("evidence"), list) else []
+        entries.append({
+            "entity_ja": entity,
+            "kind": kind if kind in KINDS else "other",
+            "confidence": raw.get("confidence") if raw.get("confidence") in CONFIDENCES else "medium",
+            "zh": zh,
+            "forms": forms,
+            "zh_variants": _strings(raw.get("zh_variants"))[:MAX_ITEMS],
+            "evidence": sorted(set(evidence))[:MAX_ITEMS],
+        })
+    if not entries:
+        raise ValueError("no valid entries after validation")
+    return guess, entries
+
+
+def post_chat(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
+    """POST 到 llama-server；绕过系统代理。测试里整体替换本函数。"""
+    request = Request(url.rstrip("/") + "/v1/chat/completions",
+                      data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                      headers={"Content-Type": "application/json"})
+    with build_opener(ProxyHandler({})).open(request, timeout=timeout) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    if not isinstance(result, dict):
+        raise ValueError("expected server JSON object")
+    return result
+
+
+def run_once(url: str, messages: list[dict[str, str]], think: bool, out: Path, attempt: int
+             ) -> tuple[str, dict[str, Any], float]:
+    """发一次请求，原样落盘请求与回复文本，返回 (回复文本, 响应, 秒数)。重试时 seed 加一。"""
+    # 思考模式下思考本身会吃掉输出预算（实测 4096 全被思考用光），给 8192；服务器端用 --reasoning-budget 限制思考长度。
+    body = {"messages": messages, **SAMPLING, "seed": SEED + attempt - 1, "max_tokens": 8192 if think else 4096,
+            "response_format": {"type": "json_schema",
+                                "json_schema": {"name": "name_table", "schema": RESPONSE_SCHEMA}},
+            "chat_template_kwargs": {"enable_thinking": think}, "stream": False}
+    suffix = "" if attempt == 1 else f".{attempt}"
+    Path(f"{out}.request{suffix}.json").write_text(json.dumps(body, ensure_ascii=False, indent=1), encoding="utf-8")
+    start = perf_counter()
+    response = post_chat(url, body, 1800.0)
+    seconds = perf_counter() - start
+    reply = response["choices"][0]["message"].get("content") or ""
+    Path(f"{out}.reply{suffix}.txt").write_text(reply, encoding="utf-8")
+    return reply, response, seconds
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="从整片 ja.srt 建专名表")
+    parser.add_argument("--srt", type=Path, required=True)
+    parser.add_argument("--work", required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--url", default="http://127.0.0.1:8081")
+    parser.add_argument("--think", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", help="只写出渲染好的提示，不发请求")
+    args = parser.parse_args(argv)
+
+    cues = read_srt_cues(args.srt)
+    if not cues:
+        print(f"no cues in {args.srt}", file=sys.stderr)
+        return 2
+    cue_count = max(index for index, _ in cues)
+    messages = build_messages(cues)
+    prompt_chars = sum(len(m["content"]) for m in messages)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.dry_run:
+        prompt_path = Path(f"{args.out}.prompt.txt")
+        prompt_path.write_text("\n\n".join(f"[{m['role']}]\n{m['content']}" for m in messages), encoding="utf-8")
+        print(f"prompt_chars={prompt_chars} cues={len(cues)} -> {prompt_path}")
+        return 0
+
+    total_seconds = 0.0
+    last_error: Exception | None = None
+    for attempt in (1, 2):
+        reply, response, seconds = run_once(args.url, messages, args.think, args.out, attempt)
+        total_seconds += seconds
+        finish_reason = response["choices"][0].get("finish_reason")
+        try:
+            if finish_reason == "length":
+                raise ValueError("reply truncated (finish_reason=length), refusing to parse")
+            guess, entries = parse_reply(reply, cue_count)
+            break
+        except ValueError as exc:  # json.JSONDecodeError 是其子类
+            last_error = exc
+            print(f"attempt {attempt}: reply rejected: {exc}", file=sys.stderr)
+    else:
+        print(f"giving up; raw replies kept next to {args.out}: {last_error}", file=sys.stderr)
+        return 1
+
+    usage = response.get("usage") or {}
+    table = {
+        "schema": SCHEMA,
+        "work": args.work,
+        "prompt_version": PROMPT_VERSION,
+        "source_srt": str(args.srt),
+        "model": {"url": args.url, "model_id_from_server": response.get("model"), "think": args.think},
+        "work_guess": guess,
+        "entries": entries,
+        "timing": {"prompt_chars": prompt_chars, "prompt_tokens": usage.get("prompt_tokens", 0),
+                   "completion_tokens": usage.get("completion_tokens", 0), "seconds": round(total_seconds, 2),
+                   "finish_reason": finish_reason},
+        "raw_reply_path": f"{args.out}.reply{'' if attempt == 1 else f'.{attempt}'}.txt",
+    }
+    args.out.write_text(json.dumps(table, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"entries={len(entries)} work_guess={guess} seconds={table['timing']['seconds']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
