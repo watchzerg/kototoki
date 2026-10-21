@@ -14,6 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-21：用户裁定立项[第十轮（v10）Q0 突破 H0 接缝的广度探索](2026-10-21-q0-exploration-v10.md)（planned）：以 Q0 为对照，按 A 复现与裁判偏好检验 → B 为 Qwen 写的提示（攻 unnatural）→ C 邻文梯度与输出包放大 → D 产品 ASR 源上的 ASR 感知翻译与专名表注入 → E 整片简报 → F 有界思考的顺序广度探索，允许中途按同样的门新增方向；只做质量线，成本线（并行槽位、短 ID、共用 server）另立项；ADR-0008 边界的整片简报与 ADR-0013 边界的专名表注入获批在研究侧做；不开确认集、不改产品。
 2026-10-21：用户裁定翻译分两条基线（[ADR-0015](../adr/0015-two-translation-baselines.md)）：**H0**＝Hy-MT2＋`dp10-cut`（产品 `dp10-cut-degrade-v1`），**Q0**＝v9 的 `qwen-wide`（Qwen3.8-27B，只有 dev 筛选证据，未进产品）；后续翻译测试须写明以哪条为对照。L3 与产品是否改用 Q0 仍未裁定。
 2026-10-21：[字幕翻译流程第九轮（v9）通用模型在同一接缝下直接翻译](2026-10-21-general-model-translation-v9.md)结题（concluded，待用户裁定 L3）：用产品 names 阶段的 Qwen3.8-27B UD-IQ3_S 翻译 dp10-cut 的同一批包（同切包、同 ID JSON grammar、Hy joint 提示原样拆成 chat、官方 non-thinking 采样），dev 三 seed 全集裁判；`qwen-wide`（前 20＋后 5 只读邻文）accuracy 剧集 −0.058［−0.104, −0.010］、电影 −0.091［−0.152, −0.028］，两类都显著好于 Hy-MT2，`qwen-narrow` 非劣无改善；代价 unnatural 显著上升、墙钟 3.3×，无邻文泄漏、无交付失败；建议进入 L3（重复 seed＋剧集确认集）交用户裁定。GPU 10 run、裁判 $87.41。
 2026-10-20：专名一致性产品路径验收（[验收记录](acceptance/2026-10-20-name-consistency-product.md)，[ADR-0014](../adr/0014-name-consistency-in-product.md) 判据 ①–③ 满足，④ 待用户抽看）：HF II／III w0 整批重跑 `python -m kototoki`（用户授权的 GPU 作业，117 s；STT 与翻译按身份跳过，names 建表 49.5／40.5 s，整机显存峰值 13445 MiB），两表第一次尝试即 `ok`（20／15 条），替换 55／32 个 cue；不一致率 0.151 → 0.135、0.121 → 0.094；研究脚本在产品表上的输出与产品发布的 `zh.srt` 逐字节相同。
@@ -223,6 +224,10 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 ### 字幕质量探索第五轮（2026-10-16）
 
 - [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），用户已裁定放弃（ADR-0008）；其余后续列在第 8 节
+
+### 字幕翻译流程第十轮：Q0 通用模型线突破 H0 接缝的广度探索（2026-10-21）
+
+- [方案、进度与结论](2026-10-21-q0-exploration-v10.md)：planned（立项未执行）。对照 Q0（`qwen-wide`），六个阶段：A 重复 seed 复现＋非 LLM 佐证与盲读表；B `qwen-joint-v2` 针对自然度的 system 提示；C 邻文梯度（前 50／整场景）与输出包 10→15；D 在 HF II／III 产品 `ja.srt` 上做 Q0 对 H0 基线、ASR 感知提示、专名表注入对替换（复用 v5 第 02 步分桶与 `v5-asr-pairwise-v1`）；E 每部一次请求的整片简报；F 有界思考。每臂有对照、终点与门，预算 GPU 50 run／裁判 $450，A 不复现则全轮停止；不组合、不锁定候选，结题交候选成分清单。不做：多样本、语序重排、成本线、其他模型、改产品、开确认集
 
 ### 字幕翻译流程第九轮：通用模型在同一接缝下直接翻译（2026-10-21）
 

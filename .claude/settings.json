@@ -35,8 +35,7 @@
       "Bash(git push:*)",
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
-      "Edit(./.local/gpu.lock)",
-      "Write(./.local/gpu.lock)"
+      "Edit(./.local/gpu.lock)"
     ]
   }
 }
