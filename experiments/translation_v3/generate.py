@@ -191,9 +191,17 @@ def translate_scene(client: Any, scene: Scene, recipe: Recipe, seed: int, cache_
             stage = "translation"
             history = ([{"ja": text_of[key], "zh": row["translations"][key]} for key in scene.ids[:batch.start]]
                        if recipe.target_context else None)
+            info = row["batches"][batch.index]
+            if recipe.model:  # v9: chat completions on the general model (qwen.py), same packs and grammar
+                from . import qwen
+                record = {"stage": stage, "batch_index": batch.index}
+                row["requests"].append(record)
+                result = qwen.run_step(client, qwen.messages(window), R.translation_grammar(recipe, ids), seed, ids,
+                                       cache_state, record, recipe)
+                row["translations"].update(result)
+                continue
             prompt = R.render_translation(recipe, window, terms, history, scene.work_id, batch.pauses,
                                          batch.groups)
-            info = row["batches"][batch.index]
             if recipe.candidates == 1:
                 record = {"stage": stage, "batch_index": batch.index}
                 row["requests"].append(record)

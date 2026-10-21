@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-10-21：用户裁定翻译分两条基线（[ADR-0015](../adr/0015-two-translation-baselines.md)）：**H0**＝Hy-MT2＋`dp10-cut`（产品 `dp10-cut-degrade-v1`），**Q0**＝v9 的 `qwen-wide`（Qwen3.8-27B，只有 dev 筛选证据，未进产品）；后续翻译测试须写明以哪条为对照。L3 与产品是否改用 Q0 仍未裁定。
+2026-10-21：[字幕翻译流程第九轮（v9）通用模型在同一接缝下直接翻译](2026-10-21-general-model-translation-v9.md)结题（concluded，待用户裁定 L3）：用产品 names 阶段的 Qwen3.8-27B UD-IQ3_S 翻译 dp10-cut 的同一批包（同切包、同 ID JSON grammar、Hy joint 提示原样拆成 chat、官方 non-thinking 采样），dev 三 seed 全集裁判；`qwen-wide`（前 20＋后 5 只读邻文）accuracy 剧集 −0.058［−0.104, −0.010］、电影 −0.091［−0.152, −0.028］，两类都显著好于 Hy-MT2，`qwen-narrow` 非劣无改善；代价 unnatural 显著上升、墙钟 3.3×，无邻文泄漏、无交付失败；建议进入 L3（重复 seed＋剧集确认集）交用户裁定。GPU 10 run、裁判 $87.41。
 2026-10-20：专名一致性产品路径验收（[验收记录](acceptance/2026-10-20-name-consistency-product.md)，[ADR-0014](../adr/0014-name-consistency-in-product.md) 判据 ①–③ 满足，④ 待用户抽看）：HF II／III w0 整批重跑 `python -m kototoki`（用户授权的 GPU 作业，117 s；STT 与翻译按身份跳过，names 建表 49.5／40.5 s，整机显存峰值 13445 MiB），两表第一次尝试即 `ok`（20／15 条），替换 55／32 个 cue；不一致率 0.151 → 0.135、0.121 → 0.094；研究脚本在产品表上的输出与产品发布的 `zh.srt` 逐字节相同。
 2026-10-19：用户裁定专名一致性进产品（[ADR-0014](../adr/0014-name-consistency-in-product.md)，只替代 ADR-0013 第 3 条）：直接集成、冻结配置原样移植、不调参；`names` 阶段在 `ja-cues` 与 `translate` 之间，发布时替换，建表终态失败写空表照常发布，`[names] enabled` 默认开，已交付影片下次整批运行重新发布（不重译）；第一轮 §5 第 3 条的 MQM 抽样与整片人工观感没有补做，用户接受研究期证据（逐行 good 89%、成对 88／20／3）；验收只看总体正向（见上一条）。
 2026-10-19：用户裁定专名一致性研究线结题（[ADR-0013](../adr/0013-name-consistency-closed.md)）：最佳已知配置冻结为 no-think 建表（提示 v5，程序兜底全开）＋替换默认（规则一、孤立单字），四部合计 161 处改动 good 89%／有害 2.5%；六轮之后剩余误差都在规则层之外（模型知识错、一次性音译），不再开新轮次、不进产品；提示已从 v6 回退到 v5。
@@ -221,6 +223,10 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 ### 字幕质量探索第五轮（2026-10-16）
 
 - [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），用户已裁定放弃（ADR-0008）；其余后续列在第 8 节
+
+### 字幕翻译流程第九轮：通用模型在同一接缝下直接翻译（2026-10-21）
+
+- [方案、进度与结论](2026-10-21-general-model-translation-v9.md)：concluded（建议 L3，待裁定）。固定 dp10-cut 的切包、邻文位置、joint 语义与 ID JSON 输出，只换模型为 Qwen3.8-27B UD-IQ3_S（b11669、`--reasoning off`、`qwen-joint-v1` 为 Hy joint 文字原样拆成 system／user、GBNF 作 chat grammar），臂 `qwen-narrow`／`qwen-wide`（前 20＋后 5 只读邻文），对照 Hy-MT2 dp10-cut 同包同期裁判。结果（dev 三 seed、5397 cue）：wide 剧集 −0.058、电影 −0.091（都显著，来自 wrong-referent、mistranslation、major+），narrow 非劣无改善，宽邻文对 Qwen 有效（与 v3 对 Hy-MT2 的 ctx3 结论相反）；unnatural 显著上升、墙钟 3.3×、显存 13 GB；专名指标无一致方向；无泄漏。保留设施：`translation_v3/qwen.py`、`Recipe.model`／`wide_context`、`scene_batching_v6 --round v9`。未覆盖：重复 seed、确认集、产品时间轴、非 LLM 裁判
 
 ### 字幕翻译流程第八轮：同一句话小组内语序重排（2026-10-18）
 

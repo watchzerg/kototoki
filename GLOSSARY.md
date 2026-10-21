@@ -38,6 +38,15 @@ is the control of round v8. `gap_pack` is the recipe field for silence-aware pac
 injected into `dp10-cut` packs with the `joint-understanding-v2` prompt, `group-reorder-v1`) produced no
 reordering and the line was closed on 2026-10-18; it is kept as a recipe, not a baseline. The product
 recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carries the same packing into `kototoki/`.
+Since 2026-10-21 this line is named **H0**, with **Q0** beside it (ADR-0015).
+
+**H0**：
+专用翻译模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Hy-MT2 30B-A3B APEX-I-Compact＋采样 `official30b-cached-v1`（ADR-0005），研究侧配方 `dp10-cut`（ADR-0010），产品配方 `dp10-cut-degrade-v1`（ADR-0011）。即上条 Translation baseline 的现名，产品当前使用。
+_Avoid_: Hy 基线、旧基线
+
+**Q0**：
+通用模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Qwen3.8-27B UD-IQ3_S（与产品 `names` 同一模型），`translation_v3` 配方 `qwen-wide`——切包与 H0 相同，只读邻文前 20／后 5（`wide-context-v1`），提示 `qwen-joint-v1`。证据只到 v9 dev 筛选（accuracy 两类显著优于 H0，unnatural 变差、墙钟约 3.3 倍）；未进产品，`translate-srt` 暂不支持。
+_Avoid_: qwen-wide（指基线时）、通用模型基线、X0（那是 Qwen-ASR 的 STT 基线）
 
 ### 双语字幕流水线
 

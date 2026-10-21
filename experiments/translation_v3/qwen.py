@@ -1,0 +1,235 @@
+"""v9: Qwen3.8-27B UD-IQ3_S translating the same packs (docs/research/2026-10-21-general-model-translation-v9.md).
+
+``qwen-joint-v1`` is the Hy-MT2 joint prompt split into chat messages without rewording: the system message is
+the task text of ``adapters.render("hy-mt2-30b")`` with the joint sentence (everything before the read-only
+context), the user message is the read-only context and the target JSON. The request goes to
+``/v1/chat/completions`` (``--jinja``, ``--reasoning off``) with the unchanged ID GBNF as ``grammar`` (the same
+constraint text as the control, so validation stays ``recipes.parse_translation`` plus the key order check).
+The input budget is measured on the server-rendered chat prompt (``/apply-template`` + ``/tokenize``).
+
+Server: ``kototoki.llama_server.ManagedServer`` with the names-stage ``ServerSpec`` values (official b11669
+build, ``-b 512 -ub 512 -fa on --jinja --reasoning off``, 99 layers) and the v9 context; the v3 GPU lock and a
+KILL_ON_JOB_CLOSE job are added here. Model identity and server values are copied from
+``kototoki/names/recipes.py`` (2026-10-21) so a product change does not move the v9 recipe hashes.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+import json
+from pathlib import Path
+import time
+from typing import Any, Iterator
+from urllib.error import HTTPError, URLError
+
+from experiments.translation_demo import adapters
+
+from . import recipes as R
+from .common import REPO, object_hash, sha256_bytes
+
+MODEL = R.QWEN_MODEL
+MODEL_ASSET = {"repo": "unsloth/Qwen3.8-27B-GGUF", "revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+               "file": "Qwen3.8-27B-UD-IQ3_S.gguf", "size": 12040883104,
+               "sha256": "d847e2c1e4aa276e4b7b8e9ad7628050e61e165d49ab995407bc36677a6f3864"}
+MODEL_PATH = REPO / ".local/models/glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf"
+ENGINE = REPO / ".local/tools/llama.cpp/b11669-cuda13.4/llama-server.exe"
+ENGINE_VERSION = "b11669-cuda13.4"
+LAYERS = 99
+EXTRA_ARGS = ("-b", "512", "-ub", "512", "-fa", "on", "--jinja", "--reasoning", "off")
+MIN_FREE_MIB = 13000
+LOAD_TIMEOUT_SECONDS = 180
+NARROW_CONTEXT = 8192
+WIDE_CONTEXT = 16384
+
+PROMPT_VERSION = "qwen-joint-v1"
+CONTEXT_HEADER = "【只读日文上下文】\n"
+# Qwen official non-thinking sampling; presence_penalty 0 (§4.2: 1.5 only if the smoke shows repetition loops).
+SAMPLING = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0}
+SEED_STEP = 1  # attempt N uses seed + (N - 1) * SEED_STEP, as in the names stage
+REQUEST_SHAPE = "chat-completions+gbnf-grammar+apply-template-budget"
+
+
+def context_size(recipe: R.Recipe) -> int:
+    return WIDE_CONTEXT if recipe.wide_context else NARROW_CONTEXT
+
+
+def max_input_tokens(recipe: R.Recipe) -> int:
+    return context_size(recipe) - R.N_PREDICT - R.GUARD_TOKENS
+
+
+def system_template() -> str:
+    """The fixed system text (window-independent): the joint task text before the read-only context."""
+    return messages({"id": "x", "source_language": "ja", "target_language": "zh-Hans",
+                     "context": [{"id": "x", "text": "x"}], "translate_ids": ["x"]})[0]["content"]
+
+
+def versions(recipe: R.Recipe) -> dict[str, Any]:
+    return {"model": MODEL, "asset_sha256": MODEL_ASSET["sha256"], "engine": ENGINE_VERSION,
+            "server_args": [LAYERS, *EXTRA_ARGS], "prompt": [PROMPT_VERSION, sha256_bytes(system_template().encode())],
+            "request": REQUEST_SHAPE, "seed_step": SEED_STEP}
+
+
+def fixed(recipe: R.Recipe) -> dict[str, Any]:
+    return {"sampling": SAMPLING | {"seed": "<run seed>"}, "n_predict": R.N_PREDICT, "context_size": context_size(recipe),
+            "guard_tokens": R.GUARD_TOKENS, "cache_prompt": R.CACHE_PROMPT, "max_attempts": R.MAX_ATTEMPTS,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "overflow": "recorded-failure-no-truncation-no-auto-shrink"}
+
+
+def messages(window: dict[str, Any]) -> list[dict[str, str]]:
+    native = adapters.render(R.FAMILY, window)
+    if native.count(R.C0_INSTRUCTION) != 1:
+        raise ValueError("Frozen C0 instruction changed; version the qwen prompt")
+    native = native.replace(R.C0_INSTRUCTION, R.JOINT_INSTRUCTION, 1)
+    task = native.split("<｜hy_User｜>", 1)[1].rsplit(R.ASSISTANT_MARKER, 1)[0]
+    if task.count("\n" + CONTEXT_HEADER) != 1:
+        raise ValueError("Frozen C0 task layout changed; version the qwen prompt")
+    system, user = task.split("\n" + CONTEXT_HEADER, 1)
+    return [{"role": "system", "content": system}, {"role": "user", "content": CONTEXT_HEADER + user}]
+
+
+def request_body(messages_: list[dict[str, str]], seed: int, grammar: str) -> dict[str, Any]:
+    return {"messages": messages_, **SAMPLING, "seed": seed, "max_tokens": R.N_PREDICT, "grammar": grammar,
+            "cache_prompt": R.CACHE_PROMPT, "chat_template_kwargs": {"enable_thinking": False}, "stream": False}
+
+
+def parse(text: str, ids: list[str]) -> dict[str, str]:
+    """``recipes.parse_translation`` (ID set, non-empty values, one envelope) plus the target order."""
+    result = R.parse_translation(text, ids)
+    if list(result) != ids:
+        raise ValueError("Translation ID order mismatch")
+    return result
+
+
+def run_step(client: Any, messages_: list[dict[str, str]], grammar: str, seed: int, ids: list[str],
+             cache_state: dict[str, Any], record: dict[str, Any], recipe: R.Recipe) -> dict[str, str]:
+    """``generate.run_step`` for chat completions: budget on the rendered prompt, at most two attempts
+    (the second with seed + 1); attempt records use the same keys as the Hy-MT2 path."""
+    from experiments.translation_demo.run import explicit_oom
+    from .generate import CONTEXT_ERROR, FATAL_KINDS, StepFailed, _http_body, whitespace_ratio
+    attempts: list[dict[str, Any]] = record.setdefault("attempts", [])
+    last: StepFailed | None = None
+    budget = max_input_tokens(recipe)
+    for number in range(1, R.MAX_ATTEMPTS + 1):
+        started = time.perf_counter()
+        used_seed = seed + (number - 1) * SEED_STEP
+        body = request_body(messages_, used_seed, grammar)
+        attempt: dict[str, Any] = {"attempt": number, "seed": used_seed,
+                                   "prompt_sha256": sha256_bytes(json.dumps(messages_, ensure_ascii=False).encode()),
+                                   "grammar_sha256": sha256_bytes(grammar.encode("utf-8")), "dispatched": False}
+        attempts.append(attempt)
+        try:
+            try:
+                rendered = client.request("/apply-template", {"messages": messages_,
+                                                              "chat_template_kwargs": {"enable_thinking": False}})
+                tokens = client.tokenize(rendered["prompt"])
+            except (URLError, ConnectionError, TimeoutError) as exc:
+                raise StepFailed(f"tokenize transport: {exc}", "server") from exc
+            attempt.update(input_tokens=len(tokens), rendered_prompt_sha256=sha256_bytes(rendered["prompt"].encode()))
+            if len(tokens) > budget:
+                raise StepFailed(f"context_budget: {len(tokens)} input tokens + {R.N_PREDICT} + {R.GUARD_TOKENS} "
+                                 f"> {context_size(recipe)}; no truncation or auto-shrink", "context")
+            attempt["request_sha256"] = object_hash(body)
+            attempt["dispatched"] = True
+            completion_start = time.perf_counter()
+            try:
+                response = client.chat_completion(body)
+            except HTTPError as exc:
+                text = _http_body(client) + str(exc)
+                kind = "oom" if explicit_oom(text) else "context" if CONTEXT_ERROR.search(text) else "server_error"
+                raise StepFailed(f"HTTP {exc.code}: {text[:500]}", kind) from exc
+            except (URLError, ConnectionError, TimeoutError) as exc:
+                raise StepFailed(f"completion transport: {exc}", "server") from exc
+            finally:
+                attempt.update(completion_seconds=time.perf_counter() - completion_start,
+                               exchange=getattr(client, "last_exchange", None))
+            timings = response.get("timings") if isinstance(response.get("timings"), dict) else {}
+            usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+            choice = (response.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            content = message.get("content")
+            reasoning = message.get("reasoning_content")
+            attempt.update(output_tokens=usage.get("completion_tokens"), tokens_evaluated=usage.get("prompt_tokens"),
+                           timings=timings, stop_type=choice.get("finish_reason"),
+                           stopped_limit=choice.get("finish_reason") == "length", truncated=False,
+                           content_chars=len(content) if isinstance(content, str) else None,
+                           reasoning_chars=len(reasoning) if isinstance(reasoning, str) else 0)
+            if usage.get("prompt_tokens") is not None and usage["prompt_tokens"] != len(tokens):
+                attempt["prompt_token_mismatch"] = [len(tokens), usage["prompt_tokens"]]
+            if not cache_state.get("checked"):
+                reuse = timings.get("cache_n")
+                cache_state.update(checked=True, first_cache_n=reuse, verified=type(reuse) is int and reuse == 0,
+                                   exchange=attempt.get("exchange"))
+                attempt["cache_reset_check"] = dict(cache_state)
+                if not cache_state["verified"]:
+                    raise StepFailed(f"First completion lacks timings.cache_n == 0 (got {reuse!r})", "cache")
+            if response.get("error") is not None:
+                text = json.dumps(response["error"], ensure_ascii=False)
+                raise StepFailed("server error: " + text, "oom" if explicit_oom(text) else "server_error")
+            if attempt["stopped_limit"]:
+                attempt["whitespace_ratio"] = whitespace_ratio(content)
+                raise StepFailed("generation reached the output/context limit", "limit")
+            if not isinstance(content, str) or not content.strip():
+                raise StepFailed("empty generated text", "parse")
+            try:
+                result = parse(content, ids)
+            except ValueError as exc:
+                attempt["whitespace_ratio"] = whitespace_ratio(content)
+                raise StepFailed(f"validation: {exc}", "parse") from exc
+            attempt["status"] = "accepted"
+            record["status"] = "accepted"
+            return result
+        except StepFailed as exc:
+            attempt.update(status="failed", error=str(exc)[:2000], error_kind=exc.kind)
+            last = exc
+            if exc.kind in FATAL_KINDS or exc.kind == "context":
+                break
+        finally:
+            attempt["elapsed_seconds"] = time.perf_counter() - started
+    assert last is not None
+    record.update(status="failed", error_kind=last.kind)
+    raise last
+
+
+def server_spec(recipe: R.Recipe):
+    from kototoki.llama_server import ServerSpec
+    return ServerSpec(stage="v9-translate", candidate=MODEL, model_asset=dict(MODEL_ASSET), layers=LAYERS,
+                      context=context_size(recipe), extra_args=EXTRA_ARGS, min_free_mib=MIN_FREE_MIB,
+                      load_timeout_s=LOAD_TIMEOUT_SECONDS)
+
+
+def session_factory(root: Path, run_id: str, recipe: R.Recipe, *, port: int = 8080, break_stale_lock: bool = False,
+                    timeout: float = 600.0):
+    """Real GPU session: v3 gpu.lock + product ManagedServer (Qwen spec) in a kill-on-close job + loopback client."""
+    @contextmanager
+    def factory(run_dir: Path, index: int) -> Iterator[Any]:
+        from kototoki.llama_server import LlamaClient, ManagedServer
+        from .generate import SessionHandle
+        from .procs import KillOnCloseJob, process_created
+        from .server import GpuLock
+        lock = GpuLock(run_id)
+        lock.acquire(break_stale=break_stale_lock)
+        job = KillOnCloseJob()
+        holder: dict[str, Any] = {}
+
+        def on_pid(pid: int | None) -> None:
+            if pid is None:
+                return
+            holder["created"] = process_created(pid)
+            holder["kill_on_job_close"] = job.assign(holder["server"].process)
+            lock.update(server_pid=pid, server_created=holder["created"])
+        try:
+            server = ManagedServer(run_dir / "runtime" / f"session-{index:02d}", server_spec(recipe), engine=ENGINE,
+                                   model=MODEL_PATH, port=port, model_cache=root / "cache/model-verification.json",
+                                   on_pid=on_pid)
+            holder["server"] = server
+            with server:
+                client = LlamaClient(server.url, timeout=timeout, trace_dir=run_dir / "transport" / f"session-{index:02d}")
+                yield SessionHandle(client, dict(server.identity, server_created=holder.get("created"),
+                                                 kill_on_job_close=holder.get("kill_on_job_close"),
+                                                 gpu_lock_replaced_stale=lock.stale, owner_pid=lock.pid,
+                                                 owner_created=lock.created))
+        finally:
+            job.close()
+            lock.release()
+    return factory

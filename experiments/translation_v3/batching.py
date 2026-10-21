@@ -12,6 +12,8 @@ and keeps a read-only neighbour only while the silence towards it is below ``con
 
 ``recipe.groups`` (v8, ``group-reorder-v1``) splits each pack's targets into "same sentence" groups
 (``sentence_groups``, rule R2+) and records the groups of two or more cues for the prompt.
+
+``recipe.wide_context`` (v9, ``wide-context-v1``) replaces only the neighbour rule; the cuts are unchanged.
 """
 
 from __future__ import annotations
@@ -215,6 +217,14 @@ def _neighbours(scene: Scene, start: int, stop: int, recipe: Recipe) -> tuple[in
     """[left, right) visible range; with gap_split, neighbours stop at a gap >= context_gap and the
     after-side is dropped first while more than max_visible cues would be visible."""
     n = len(scene.cues)
+    if recipe.wide_context is not None:
+        # v9 wide-context-v1: plain counts cut only at the scene edge; above max_visible the after-side goes first.
+        left, right = max(0, start - recipe.context_before), min(n, stop + recipe.context_after)
+        while right - left > recipe.wide_context["max_visible"] and right > stop:
+            right -= 1
+        while right - left > recipe.wide_context["max_visible"] and left < start:
+            left += 1
+        return left, right
     if recipe.gap_pack is not None:
         return _pack_neighbours(scene, start, stop, recipe)
     left, right = max(0, start - recipe.context_before), min(n, stop + recipe.context_after)

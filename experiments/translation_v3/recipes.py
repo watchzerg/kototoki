@@ -96,6 +96,11 @@ JOINT2_INSTRUCTION = ("先共同理解全部可见台词及跨条目的条件、
                       "只调语序、不改含义；每个值都不能为空，长度与各自原文大致相称，不把整句塞进一个值。"
                       "未列入 groups 的 ID 各自单独成组。不同组之间仍各自只承载对应源 ID，不搬运邻条事实、不提前补完后文。"
                       "保留原文歧义和信息揭示顺序。")
+# v9 (docs/research/2026-10-21-general-model-translation-v9.md): a general model translates the same packs
+# (``model`` + ``prompt="qwen-joint"``, request and server in qwen.py); ``wide_context`` widens the read-only
+# neighbours at render time only (plain counts to the scene edge, no silence gating), the cuts are unchanged.
+WIDE_CONTEXT_VERSION = "wide-context-v1"
+QWEN_MODEL = "qwen3.8-27b-ud-iq3_s"
 SAMPLE_SEED_STRIDE = 1_000_003
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "samplers")
 SAMPLER_NAMES = ("top_k", "top_p", "min_p", "temperature")
@@ -199,6 +204,15 @@ def _check_pause_marks(marks: Any) -> None:
         raise ValueError("pause_marks must be {'min_gap': positive seconds}")
 
 
+def _check_model(recipe: "Recipe") -> None:
+    if recipe.model != QWEN_MODEL or recipe.prompt != "qwen-joint":
+        raise ValueError(f"model {QWEN_MODEL!r} and prompt 'qwen-joint' go together")
+    if (recipe.preanalysis or recipe.review or recipe.sampling or recipe.target_context or recipe.candidates != 1
+            or recipe.glossary or recipe.pause_marks or recipe.groups or recipe.category_overrides
+            or recipe.grammar_ws != "unbounded"):
+        raise ValueError("qwen-joint supports only batching and neighbour fields")
+
+
 @dataclass(frozen=True)
 class Recipe:
     name: str
@@ -227,6 +241,9 @@ class Recipe:
     pause_marks: dict[str, Any] | None = None
     # v8 field: {"gap": seconds}, R2+ sentence groups inside each pack (see GROUPS_VERSION).
     groups: dict[str, Any] | None = None
+    # v9 fields: model (qwen.MODEL; None = Hy-MT2) and wide_context ({"max_visible": n}, see WIDE_CONTEXT_VERSION).
+    model: str | None = None
+    wide_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         safe_name(self.name, "recipe name")
@@ -238,8 +255,15 @@ class Recipe:
                 raise ValueError(f"{name} must be a positive integer")
         if any(type(v) is not int or v < 0 for v in (self.context_before, self.context_after)):
             raise ValueError("context_before/context_after must be nonnegative integers")
-        if self.prompt not in ("c0", "joint"):
-            raise ValueError("prompt must be 'c0' or 'joint'")
+        if self.prompt not in ("c0", "joint", "qwen-joint"):
+            raise ValueError("prompt must be 'c0', 'joint' or 'qwen-joint'")
+        if self.model is not None or self.prompt == "qwen-joint":
+            _check_model(self)
+        if self.wide_context is not None and (
+                not isinstance(self.wide_context, dict) or set(self.wide_context) != {"max_visible"}
+                or type(self.wide_context["max_visible"]) is not int
+                or self.wide_context["max_visible"] < (self.gap_pack or {}).get("max", self.batch_count or 1)):
+            raise ValueError("wide_context must be {'max_visible': int >= the largest pack}")
         if self.grammar_ws not in GRAMMAR_WS:
             raise ValueError("grammar_ws must be 'unbounded' or 'bounded'")
         if self.preanalysis not in (None, "terms"):
@@ -330,14 +354,20 @@ class Recipe:
         if self.candidates > 1:
             from .mbr import MBR_VERSION
             versions["multi"] = [MULTI_VERSION, SAMPLE_SEED_STRIDE, MBR_VERSION]
+        if self.wide_context:
+            versions["wide_context"] = WIDE_CONTEXT_VERSION
+        fixed = {"sampling_profile": SAMPLING_PROFILE, "sampling": sampling(0) | {"seed": "<run seed>"},
+                 "n_predict": N_PREDICT, "context_size": CONTEXT_SIZE, "guard_tokens": GUARD_TOKENS,
+                 "cache_prompt": CACHE_PROMPT, "max_attempts": MAX_ATTEMPTS, "stop": STOP,
+                 "overflow": "recorded-failure-no-truncation-no-auto-shrink"}
+        if self.model:
+            from . import qwen
+            versions["model"] = qwen.versions(self)
+            fixed = qwen.fixed(self)
         if self.category_overrides:
             versions["routed"] = {category: self.for_category(category).spec()["versions"]
                                   for category in sorted(self.category_overrides)}
-        return {"schema": RECIPE_SCHEMA, "recipe": data, "versions": versions,
-                "fixed": {"sampling_profile": SAMPLING_PROFILE, "sampling": sampling(0) | {"seed": "<run seed>"},
-                          "n_predict": N_PREDICT, "context_size": CONTEXT_SIZE, "guard_tokens": GUARD_TOKENS,
-                          "cache_prompt": CACHE_PROMPT, "max_attempts": MAX_ATTEMPTS, "stop": STOP,
-                          "overflow": "recorded-failure-no-truncation-no-auto-shrink"}}
+        return {"schema": RECIPE_SCHEMA, "recipe": data, "versions": versions, "fixed": fixed}
 
     @property
     def recipe_hash(self) -> str:
@@ -382,10 +412,17 @@ BUILTIN: dict[str, Recipe] = {recipe.name: recipe for recipe in (
 # v8 candidate (docs/research/2026-10-18-group-reorder-v8.md): dp10-cut packs and neighbours + R2+ sentence groups
 # (< 1.0 s, within a pack) + joint-understanding-v2 in batches that have a group of >= 2 targets.
 BUILTIN["grp1"] = replace(BUILTIN["dp10-cut"], name="grp1", groups={"gap": 1.0})
+# v9 candidates (docs/research/2026-10-21-general-model-translation-v9.md): the dp10-cut packs translated by
+# Qwen3.8-27B UD-IQ3_S with qwen-joint-v1; qwen-wide shows 20 cues before and 5 after (render time only).
+BUILTIN["qwen-narrow"] = replace(BUILTIN["dp10-cut"], name="qwen-narrow", prompt="qwen-joint",
+                                 model=QWEN_MODEL)
+BUILTIN["qwen-wide"] = replace(BUILTIN["qwen-narrow"], name="qwen-wide", context_before=20, context_after=5,
+                               wide_context={"max_visible": 35})
 _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,
                                "selector": None, "glossary": None, "gap_split": None,
-                               "gap_pack": None, "pause_marks": None, "groups": None}
+                               "gap_pack": None, "pause_marks": None, "groups": None, "model": None,
+                               "wide_context": None}
 
 
 def compose(name: str, base: str | Recipe, **overrides: Any) -> Recipe:

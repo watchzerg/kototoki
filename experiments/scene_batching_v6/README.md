@@ -30,6 +30,19 @@
 - `pooled --variant R --seed-sets a,b,c/d,e,f [--against R2]`：两组独立 seed 的配对差取均值。
 - `simulate`（`sim7.py`，离线）：dev 与产品 `ja.srt`（`.local/quality-exploration-v5/01/out-w0/`）上的间隔分布与各配方的包大小分布 → `sim/sim.json`。
 
+## v9（通用模型在同一接缝下直接翻译）
+
+[v9 研究文档](../../docs/research/2026-10-21-general-model-translation-v9.md)复用本包：`--round v9`，根目录 `.local/general-model-translation-v9/`，三个臂 `dp10-cut`（Hy-MT2 对照，本轮新生成，无对照副本）、`qwen-narrow`、`qwen-wide`（`v9.py`）。
+
+| 命令 | 作用 | 资源 |
+| --- | --- | --- |
+| `status` | 同上 | 离线 |
+| `check-batches [--seed S]` | 三个臂在整个 dev 上按配方算出的每场景目标 ID 序列必须逐字相同；给 seed 时再核对 run 文件 → `checks/` | 离线 |
+| `smoke --recipe R` | Qwen 臂在主 seed 块的 5 个包（剧集 3、电影 2，各取一部作品第一个 ≥6 条的包）上生成一次，保存原始回复 → `smoke/R.json` | **GPU** |
+| `generate --recipe R --seed S` | Hy 臂走 v3 compat server，Qwen 臂走 `translation_v3/qwen.py`；可续跑 | **GPU** |
+| `judge-run --recipe R --seed S` | 该 run 的全集裁判（包组成只取决于 split，三个臂相同）；退出码 75 = 配额阻塞 | **Claude 配额** |
+| `compare9 --variant R [--against R2] --seeds S…` | 全集配对 Δ：accuracy、各 accuracy 类别、fluency 及 grammar／unnatural／register、major+、critical（作品等权、剧集／电影分开、窗口 bootstrap），§5 的 L1 关门与 L2 非劣／改善标志，逐作品 Δ，交付与代价（墙钟、载入、token、生成 tok/s、显存峰值、重试、失败）→ `summaries/v9-R-vs-R2.json` | 离线 |
+
 ## 验证
 
-`uv run --locked --offline python -m unittest experiments.scene_batching_v6.test_v6 experiments.scene_batching_v6.test_v7`（v6 离线 14 项：间隔分类、对比统计、已有配方 hash 不变、gap_split 校验与切批规则、随机场景不变量、受影响 cue 判定；v7 13 项：已有配方与 gsnap5 hash 不变、新字段进 hash 与校验、动态规划与暴力枚举一致、硬边界与小包不变量、小组拆分、邻文规则、标记位置与提示／grammar、生成链路发送标记、受影响 cue 计入标记、非劣判定、模拟计数）。真实数据上的端到端运行记录在研究文档 §7、§9。
+`uv run --locked --offline python -m unittest experiments.scene_batching_v6.test_v6 experiments.scene_batching_v6.test_v7 experiments.scene_batching_v6.test_v9`（v6 离线 14 项：间隔分类、对比统计、已有配方 hash 不变、gap_split 校验与切批规则、随机场景不变量、受影响 cue 判定；v7 13 项：已有配方与 gsnap5 hash 不变、新字段进 hash 与校验、动态规划与暴力枚举一致、硬边界与小包不变量、小组拆分、邻文规则、标记位置与提示／grammar、生成链路发送标记、受影响 cue 计入标记、非劣判定、模拟计数）。真实数据上的端到端运行记录在研究文档 §7、§9。v9 7 项：cue 指标与未交付、L1 关门与 L2 标志、专名错误规则、代价字段、dev 上三臂目标 ID 相同、smoke 包选取。
