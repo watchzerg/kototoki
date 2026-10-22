@@ -66,16 +66,46 @@ def load_units() -> dict[str, list[dict]]:
     return {u[0]["film"]: u for u in (A.read_units(p["units"]) for p in FILMS.values())}
 
 
-def arm_texts(arm: str, root: Path = D_ROOT) -> dict[str, list[list[str]]]:
+def cue_texts(arm: str, film: str, seed: int, root: Path = D_ROOT) -> list[str]:
+    """The arm's Chinese per product cue. From the SRT when ``translate-srt`` wrote one; otherwise (partial
+    delivery) from the delivery record, where a value ``srt.validate_translations`` rejects counts as
+    undelivered (empty), like a missing cue."""
+    path = zh_path(arm, film, seed, root)
+    if arm.endswith("+rep"):  # a cue the base arm did not deliver stays undelivered after replacement
+        base = cue_texts(arm[:-len("+rep")], film, seed, root)
+        return ["" if not b else c["text"] for b, c in zip(base, A.read_srt(path))]
+    if path.is_file():
+        return [c["text"] for c in A.read_srt(path)]
+    from experiments.translation_flow import srt
+    document = srt.read_srt(FILMS[film]["ja"])
+    tag = f"srt-{document.source_sha256[:12]}"
+    row = json.loads((root / "root/deliveries" / f"{arm}__s{seed}__{tag}" / "scenes" / f"{tag}.json")
+                     .read_text(encoding="utf-8"))
+    report = srt.validate_translations(document, row.get("translations", {}))
+    bad = {r["id"] for r in report["invalid"]} | set(report["missing_ids"])
+    return ["" if c.id in bad else row["translations"][c.id] for c in document.cues]
+
+
+def delivery_failures(arm: str, root: Path = D_ROOT) -> dict[str, int]:
+    """Cues per film x seed that ``translate-srt`` could not deliver (0 when the SRT was written)."""
+    out = {}
+    for film in FILMS:
+        for seed in SEEDS:
+            out[f"{film}.s{seed}"] = 0 if zh_path(arm, film, seed, root).is_file() else sum(
+                not t for t in cue_texts(arm, film, seed, root))
+    return out
+
+
+def arm_texts(arm: str, root: Path = D_ROOT, seeds: tuple[int, ...] = SEEDS) -> dict[str, list[list[str]]]:
     """unit film id -> per unit, per seed: the arm's Chinese of the unit's product cues (joined like v5)."""
     out = {}
     for unit_film, units in load_units().items():
         film = UNIT_FILM[unit_film]
-        docs = [A.read_srt(zh_path(arm, film, s, root)) for s in SEEDS]
+        docs = [cue_texts(arm, film, s, root) for s in seeds]
         n = len(A.read_srt(FILMS[film]["ja"]))
         if any(len(d) != n for d in docs):
             raise ValueError(f"{arm} {film}: cue count differs from the product ja.srt ({n})")
-        out[unit_film] = [[" ".join(d[j]["text"] for j in u["asr_ids"]) for d in docs] for u in units]
+        out[unit_film] = [[" ".join(d[j] for j in u["asr_ids"]) for d in docs] for u in units]
     return out
 
 
@@ -90,18 +120,19 @@ def sample_units(units: dict[str, list[dict]], quotas: dict[str, int]) -> list[t
     return chosen
 
 
-def plan(x_arm: str, y_arm: str, quotas: dict[str, Any], *, root: Path = D_ROOT) -> Path:
+def plan(x_arm: str, y_arm: str, quotas: dict[str, Any], *, root: Path = D_ROOT,
+         seeds: tuple[int, ...] = SEEDS) -> Path:
     """Write the judge plan for y (candidate) vs x (control); plans are written once."""
     name = f"{y_arm}-vs-{x_arm}"
     path = root / "judge" / name / "plan.json"
     if path.exists():
         raise SystemExit(f"{path} exists; plans are written once")
     units = load_units()
-    tx, ty = arm_texts(x_arm, root), arm_texts(y_arm, root)
+    tx, ty = arm_texts(x_arm, root, seeds), arm_texts(y_arm, root, seeds)
     rng = random.Random(f"v10-D-sides-{name}")
     items = []
     for n, (film, i, bucket) in enumerate(sample_units(units, quotas)):
-        k = n % len(SEEDS)
+        k = n % len(seeds)
         x, y = tx[film][i][k], ty[film][i][k]
         flip = rng.random() < 0.5
         items.append({"id": f"q{n + 1:04d}", "arm": "main", "bucket": bucket, "film": film, "unit": i,
@@ -109,7 +140,7 @@ def plan(x_arm: str, y_arm: str, quotas: dict[str, Any], *, root: Path = D_ROOT)
                       "a": y if flip else x, "b": x if flip else y, "x_side": "B" if flip else "A"})
     rng.shuffle(items)
     atomic_write_json(path, {"profile": A.PROFILE, "x_arm": x_arm, "y_arm": y_arm, "quota": quotas,
-                             "seeds": list(SEEDS), "items": items})
+                             "seeds": list(seeds), "items": items})
     return path
 
 
@@ -160,7 +191,8 @@ def estimate(name: str, *, root: Path = D_ROOT) -> dict[str, Any]:
     return report
 
 
-def inconsistency(arms: list[str], *, root: Path = D_ROOT) -> dict[str, Any]:
+def inconsistency(arms: list[str], *, root: Path = D_ROOT, seeds: tuple[int, ...] = SEEDS,
+                  name: str = "inconsistency") -> dict[str, Any]:
     """``apply_table measure``口径 (quality_v5 consistency on the whole film), per arm: film x seed and mean."""
     from experiments.quality_v5 import consistency
     out: dict[str, Any] = {}
@@ -168,11 +200,11 @@ def inconsistency(arms: list[str], *, root: Path = D_ROOT) -> dict[str, Any]:
         rows = {}
         for film, paths in FILMS.items():
             ja = consistency.read_srt_texts(paths["ja"])
-            for seed in SEEDS:
-                zh = consistency.read_srt_texts(zh_path(arm, film, seed, root))
+            for seed in seeds:
+                zh = cue_texts(arm, film, seed, root)
                 rows[f"{film}.s{seed}"] = consistency.work_summary(consistency.analyze_work(list(zip(ja, zh))))
         out[arm] = {"runs": rows, "mean_inconsistency": A.mean([r["inconsistency"] for r in rows.values() if r["inconsistency"] is not None])}
-    atomic_write_json(root / "inconsistency.json", out)
+    atomic_write_json(root / f"{name}.json", out)
     return out
 
 
@@ -201,17 +233,27 @@ def product_timing(recipes: tuple[str, ...] = ("dp10-cut", "qwen-wide"), *, root
     return out
 
 
-def replace_names(arm: str, *, root: Path = D_ROOT) -> str:
+def replace_names(arm: str, *, root: Path = D_ROOT, seeds: tuple[int, ...] = SEEDS) -> str:
     """Product-equivalent chain on an arm: ``apply_table`` with its default parameters and the product table
     (``<arm>+rep``); summaries next to the outputs."""
     from experiments.name_consistency import apply_table as T
     target = f"{arm}+rep"
     for film, paths in FILMS.items():
         table = json.loads(paths["table"].read_text(encoding="utf-8"))
-        _, ja_cues = T.read_srt(paths["ja"])
-        for seed in SEEDS:
+        ja_content, ja_cues = T.read_srt(paths["ja"])
+        for seed in seeds:
             src, out = zh_path(arm, film, seed, root), zh_path(target, film, seed, root)
-            zh_content, zh_cues = T.read_srt(src)
+            if src.is_file():
+                zh_content, zh_cues = T.read_srt(src)
+            else:  # partial delivery: replace on the stripped delivered values (cue_texts re-blanks the gaps)
+                from experiments.translation_flow import srt
+                tag = f"srt-{srt.read_srt(paths['ja']).source_sha256[:12]}"
+                row = json.loads((root / "root/deliveries" / f"{arm}__s{seed}__{tag}" / "scenes" / f"{tag}.json")
+                                 .read_text(encoding="utf-8"))
+                document = srt.read_srt(paths["ja"])
+                texts = [" ".join(row["translations"][c.id].split()).strip() or "…" for c in document.cues]
+                zh_content = T.render_srt(ja_content, ja_cues, texts)
+                zh_cues = T.parse_srt(zh_content)
             result = T.apply_table(table, ja_cues, zh_cues)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(T.render_srt(zh_content, zh_cues, result["new_texts"]).encode("utf-8"))
