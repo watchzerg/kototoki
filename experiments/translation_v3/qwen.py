@@ -61,7 +61,19 @@ QWEN_JOINT_V2_STYLE = ("字幕中文的要求：\n"
                        "- 简洁易读，长度与原文相称，不为凑字添词。\n"
                        "- 语气词、称呼和口头禅换成中文里自然的说法，同一人物的口吻前后一致。\n"
                        "- 不解释、不加注、不加括号说明。")
-SYSTEMS = {"qwen-joint-v2": (QWEN_JOINT_V2_ROLE, QWEN_JOINT_V2_STYLE)}
+# v2b: the one wording revision allowed by §4.2 after v2 improved unnatural but lost accuracy (meaning drift:
+# modality stated as fact, idioms swapped for Chinese sayings of another meaning, referents rewritten). Same role;
+# the style block keeps naturalness, drops the nudge to omit pronouns / honorific forms, adds "change wording only".
+QWEN_JOINT_V2B_STYLE = ("字幕中文的要求：\n"
+                        "- 用自然的中文口语，像中文母语者在同样情境下会说的话；在每条之内按中文习惯组织语序和用词，"
+                        "避免翻译腔和逐词直译，不机械保留日文的句式和助词。\n"
+                        "- 自然化只改说法、不改意思：谁对谁说、指代对象、推测／愿望／不确定等语气的强弱、否定与条件都与原文一致；"
+                        "拿不准的惯用说法按原意翻译，不套用意思不同的中文俗语。\n"
+                        "- 简洁易读，长度与原文相称，不为凑字添词。\n"
+                        "- 语气词、称呼和口头禅换成中文里自然的说法，同一人物的口吻前后一致。\n"
+                        "- 不解释、不加注、不加括号说明。")
+SYSTEMS = {"qwen-joint-v2": (QWEN_JOINT_V2_ROLE, QWEN_JOINT_V2_STYLE),
+           "qwen-joint-v2b": (QWEN_JOINT_V2_ROLE, QWEN_JOINT_V2B_STYLE)}
 # "asr": a paragraph appended to the system text: the source is a speech-recognition transcript (§4.4 D1).
 ASR_TEXTS = {"qwen-asr-aware-v1": (
     "注意：日文原文是语音识别自动生成的稿子，可能含有同音或近音误识、片假名人名与外来语的误读、断句错误和漏字。"
