@@ -196,8 +196,10 @@ def translate_scene(client: Any, scene: Scene, recipe: Recipe, seed: int, cache_
                 from . import qwen
                 record = {"stage": stage, "batch_index": batch.index}
                 row["requests"].append(record)
-                result = qwen.run_step(client, qwen.messages(window), R.translation_grammar(recipe, ids), seed, ids,
-                                       cache_state, record, recipe)
+                result = qwen.run_step(client, qwen.messages(window, recipe, scene.work_id),
+                                       R.translation_grammar(recipe, ids), seed, ids, cache_state, record, recipe)
+                if (recipe.qwen_options or {}).get("names"):
+                    info["names_injected"] = len(qwen.names_for_window(recipe, scene.work_id, window))
                 row["translations"].update(result)
                 continue
             prompt = R.render_translation(recipe, window, terms, history, scene.work_id, batch.pauses,

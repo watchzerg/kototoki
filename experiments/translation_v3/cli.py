@@ -251,15 +251,20 @@ def cmd_translate_srt(args: argparse.Namespace) -> int:
     document = srt.read_srt(args.srt)
     tag = f"srt-{document.source_sha256[:12]}"
     scene = Scene(tag, tuple(Cue(c.id, c.text, c.start_ms / 1000, c.end_ms / 1000) for c in document.cues),
-                  category=args.category)
+                  work_id=args.work_id, category=args.category)
     recipe = load_recipe(args.recipe, args.root)
     recipe.for_category(args.category)  # fail before loading the model if routing needs a category
     run_id = run_id_for(recipe, args.seed, tag)
     run_dir = args.root / "deliveries" / run_id
-    factory = managed_session_factory(args.root, run_id, port=args.port, break_stale_lock=args.break_stale_lock)
+    if recipe.model:  # v10: Qwen recipes on a whole film (qwen.session_factory, same lock and job object)
+        from . import qwen
+        factory = qwen.session_factory(args.root, run_id, recipe, port=args.port, break_stale_lock=args.break_stale_lock)
+    else:
+        factory = managed_session_factory(args.root, run_id, port=args.port, break_stale_lock=args.break_stale_lock)
     run = run_generation(run_dir, recipe, args.seed, [scene], scope=tag,
                          sources={"srt": document.source_sha256}
-                         | ({"category": args.category} if args.category else {}), session_factory=factory)
+                         | ({"category": args.category} if args.category else {})
+                         | ({"work_id": args.work_id} if args.work_id else {}), session_factory=factory)
     row = read_json(run_dir / "scenes" / f"{tag}.json")
     report = srt.validate_translations(document, row.get("translations", {}) if row["status"] == "complete" else {})
     if report["status"] != "complete":
@@ -331,6 +336,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--out", type=Path, required=True)
     s.add_argument("--category", choices=["anime_series", "animation_movie"],
                    help="content category; required by recipes with category_overrides")
+    s.add_argument("--work-id", help="work id for per-work recipe material (glossary, Qwen name table / brief)")
     gpu_options(s)
     s.set_defaults(func=cmd_translate_srt)
     return p

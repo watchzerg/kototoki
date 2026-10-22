@@ -1,4 +1,5 @@
-"""CLI: python -m experiments.scene_batching_v6 [--round v7|v9] <command> (layout: q2.py; v7: v7.py; v9: v9.py)."""
+"""CLI: python -m experiments.scene_batching_v6 [--round v7|v9|v10] <command> (layout: q2.py; v7: v7.py; v9: v9.py;
+v10: v9 commands on the v10 root plus v10.py)."""
 
 from __future__ import annotations
 
@@ -6,15 +7,16 @@ import argparse
 import json
 import sys
 
-from . import q1, q2, sim7, status, v7, v9
+from . import q1, q2, sim7, status, v7, v9, v10
 from .common import V6_ROOT, V7_ROOT
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scene_batching_v6")
-    parser.add_argument("--round", choices=("v6", "v7", "v9"), default="v6",
+    parser.add_argument("--round", choices=("v6", "v7", "v9", "v10"), default="v6",
                         help="v7: root .local/gap-aware-batching-v7, full-set subsets and comparisons; "
-                             "v9: root .local/general-model-translation-v9 (general-model arms)")
+                             "v9: root .local/general-model-translation-v9 (general-model arms); "
+                             "v10: root .local/q0-exploration-v10 (v9 commands + v10 ones)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("simulate", help="v7 offline: batch-size distributions on dev and product timing -> sim/sim.json")
     sub.add_parser("status", help="offline: runs, subsets, judge progress, GPU lock")
@@ -63,9 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     a9.add_argument("what", choices=("names", "leak", "reading", "spend"))
     a9.add_argument("--seeds", type=int, nargs="+", default=[])
     args = parser.parse_args(argv)
-    root = {"v7": V7_ROOT, "v9": v9.V9_ROOT}.get(args.round, V6_ROOT)
+    root = {"v7": V7_ROOT, "v9": v9.V9_ROOT, "v10": v10.V10_ROOT}.get(args.round, V6_ROOT)
     v9_only = ("smoke", "check-batches", "judge-run", "compare9", "analyze9")
-    if (args.round == "v9") != (args.command in v9_only) and args.command not in ("status", "generate"):
+    v9_like = args.round in ("v9", "v10")
+    if v9_like != (args.command in v9_only) and args.command not in ("status", "generate"):
         parser.error(f"{args.command} is not a --round {args.round} command")
     if args.command == "simulate":
         report = sim7.simulate(V7_ROOT)
@@ -78,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         out = status.status(root)
     elif args.command == "q1":
         out = {"written": str(q1.main())}
-    elif args.command == "generate" and args.round == "v9":
+    elif args.command == "generate" and v9_like:
         out = v9.generate(args.recipe, args.seed, root=root, break_stale_lock=args.break_stale_lock)
     elif args.command == "smoke":
         out = v9.smoke(args.recipe, root=root, break_stale_lock=args.break_stale_lock)

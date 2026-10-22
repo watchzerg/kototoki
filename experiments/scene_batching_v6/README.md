@@ -43,6 +43,10 @@
 | `judge-run --recipe R --seed S` | 该 run 的全集裁判（包组成只取决于 split，三个臂相同）；退出码 75 = 配额阻塞 | **Claude 配额** |
 | `compare9 --variant R [--against R2] --seeds S…` | 全集配对 Δ：accuracy、各 accuracy 类别、fluency 及 grammar／unnatural／register、major+、critical（作品等权、剧集／电影分开、窗口 bootstrap），§5 的 L1 关门与 L2 非劣／改善标志，逐作品 Δ，交付与代价（墙钟、载入、token、生成 tok/s、显存峰值、重试、失败）→ `summaries/v9-R-vs-R2.json` | 离线 |
 
+## v10（Q0 线的广度探索）
+
+[v10 研究文档](../../docs/research/2026-10-21-q0-exploration-v10.md)：`--round v10` 跑 v9 的全部命令（`generate`、`smoke`、`check-batches`、`judge-run`、`compare9`、`analyze9`），根目录改为 `.local/q0-exploration-v10/`；对照是 Q0（`qwen-wide`），A1 复现在重复 seed 20261021–23 上新生成 `qwen-wide` 与 `dp10-cut`。`v10.py`：`copy_control` 把 v9 主 seed 的 Q0 译文（`run.json`＋`scenes/`，不含裁判）复制进 v10 根目录供同期重判。`a2.py`（离线）：`similarity` 逐 cue 算与中文参考的 chrF 与 bge-m3 余弦（CPU），Q0 − H0 配对 Δ、与裁判 Δ 符号的一致率 → `A2/similarity.json`；`blind_sheet` 生成盲序人工阅读表 `A2/blind-sheet.md` 与答案键 `A2/blind-key.json`。
+
 ## 验证
 
-`uv run --locked --offline python -m unittest experiments.scene_batching_v6.test_v6 experiments.scene_batching_v6.test_v7 experiments.scene_batching_v6.test_v9`（v6 离线 14 项：间隔分类、对比统计、已有配方 hash 不变、gap_split 校验与切批规则、随机场景不变量、受影响 cue 判定；v7 13 项：已有配方与 gsnap5 hash 不变、新字段进 hash 与校验、动态规划与暴力枚举一致、硬边界与小包不变量、小组拆分、邻文规则、标记位置与提示／grammar、生成链路发送标记、受影响 cue 计入标记、非劣判定、模拟计数）。真实数据上的端到端运行记录在研究文档 §7、§9。v9 7 项：cue 指标与未交付、L1 关门与 L2 标志、专名错误规则、代价字段、dev 上三臂目标 ID 相同、smoke 包选取。
+`uv run --locked --offline python -m unittest experiments.scene_batching_v6.test_v6 experiments.scene_batching_v6.test_v7 experiments.scene_batching_v6.test_v9`（v6 离线 14 项：间隔分类、对比统计、已有配方 hash 不变、gap_split 校验与切批规则、随机场景不变量、受影响 cue 判定；v7 13 项：已有配方与 gsnap5 hash 不变、新字段进 hash 与校验、动态规划与暴力枚举一致、硬边界与小包不变量、小组拆分、邻文规则、标记位置与提示／grammar、生成链路发送标记、受影响 cue 计入标记、非劣判定、模拟计数）。真实数据上的端到端运行记录在研究文档 §7、§9。v9 7 项：cue 指标与未交付、L1 关门与 L2 标志、专名错误规则、代价字段、dev 上三臂目标 ID 相同、smoke 包选取。v10（`test_v10`）：旧配方 hash 不变、`qwen_options` 校验与进 hash、v2 保留 v1 规则与 user 消息、ASR／专名／简报渲染、context 覆盖、A2 一致率与门。

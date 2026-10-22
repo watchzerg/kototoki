@@ -1,6 +1,6 @@
 # 字幕翻译流程第十轮探索（v10）：Q0 通用模型线突破 H0 接缝的广度探索——方案、进度与结论
 
-状态：planned（2026-10-21 立项，未执行；进度见 §7，待裁定见 §8）  
+状态：in progress（2026-10-21 立项，2026-10-22 开始执行；进度见 §7，待裁定见 §8）  
 范围：以 **Q0**（[ADR-0015](../adr/0015-two-translation-baselines.md)：Qwen3.8-27B UD-IQ3_S＋`qwen-wide`）为对照，按广度优先逐个打破 H0 机制里源于 Hy-MT2 的约束：裁判与复现地基、为 Qwen 写的提示、理解范围（邻文与输出包）、产品 ASR 源上的 ASR 感知翻译与专名表注入、整片简报、有界思考模式。**只做质量线，不做成本线**（并行槽位、短 ID、与 names 共用 server 都不在本轮，用户 2026-10-21 裁定）。不改产品 `kototoki/`，不改任何基线身份，不开封确认集，不做多样本再挑选（[ADR-0008](../adr/0008-no-multi-translation-selection.md)），不重开语序重排（v8 已关闭）。  
 执行载体：tracker 目录 `.scratch/q0-exploration-v10/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**  
 先读：[v9 研究文档](2026-10-21-general-model-translation-v9.md)全文（Q0 的身份、代价、§7.1 结论与 §8 待裁定）、[ADR-0015](../adr/0015-two-translation-baselines.md)、[v5 §3](2026-10-16-quality-exploration-v5.md) 判定纪律与 v5 第 02 步（ASR 源 vs 参考源的配对评测设施）、[v7 研究文档](2026-10-16-gap-aware-batching-v7.md) §2.1（裁判漂移、同包重判）、[v3 报告](2026-10-10-hy30-flow-v3-report.md) §4（批大小、邻文、joint 的机制结论，只对 Hy-MT2 成立）、[v8 研究文档](2026-10-18-group-reorder-v8.md) §7.2–§8（语序重排关闭的理由与重开前提）、[ADR-0013](../adr/0013-name-consistency-closed.md)／[ADR-0014](../adr/0014-name-consistency-in-product.md)（专名表的冻结配置、剩余误差来源与"注入提示版未采纳"的边界）、`experiments/translation_v3/qwen.py`（Q0 的请求与提示拆分）、`experiments/scene_batching_v6/v9.py`（驱动、同包重判、配对比较）。
@@ -195,6 +195,7 @@ D2 也可在 dev 作品上补做：每部先用产品 names 阶段同款请求�
 | 日期 | 票据 | 结果 |
 | --- | --- | --- |
 | 2026-10-21 | 立项 | 本文；tracker 骨架已建；未执行 |
+| 2026-10-22 | 01 离线实现 | 完成。`translation_v3.Recipe.qwen_options`（默认值不进 hash，只能配 Qwen）每个键改一件事：`system`（`qwen-joint-v2`：v1 规则全文原样保留，前加译者角色、后加字幕自然度要求）、`asr`（`qwen-asr-aware-v1`）、`names`（`qwen-name-table-v1`）、`brief`（`qwen-work-brief-v1`）、`context`；无选项时消息与 v1 逐字相同，`qwen-wide` `719237b9…`、`dp10-cut` `ee72ce66…` hash 不变。`translate-srt` 支持 Qwen 配方（`qwen.session_factory`、`--work-id`）。`scene_batching_v6 --round v10`（v9 命令换根目录）、`v10.py`（Q0 对照译文复制供同期重判）、`a2.py`（chrF／bge-m3 相似度、一致率、盲读表）。离线测试新增 7 项，相关 91 项通过。 |
 
 ### 7.1 结论
 

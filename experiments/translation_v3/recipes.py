@@ -211,6 +211,9 @@ def _check_model(recipe: "Recipe") -> None:
             or recipe.glossary or recipe.pause_marks or recipe.groups or recipe.category_overrides
             or recipe.grammar_ws != "unbounded"):
         raise ValueError("qwen-joint supports only batching and neighbour fields")
+    if recipe.qwen_options is not None:
+        from . import qwen
+        qwen.check_options(recipe.qwen_options)
 
 
 @dataclass(frozen=True)
@@ -244,6 +247,8 @@ class Recipe:
     # v9 fields: model (qwen.MODEL; None = Hy-MT2) and wide_context ({"max_visible": n}, see WIDE_CONTEXT_VERSION).
     model: str | None = None
     wide_context: dict[str, Any] | None = None
+    # v10 field (docs/research/2026-10-21-q0-exploration-v10.md): Qwen prompt/request options, see qwen.check_options.
+    qwen_options: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         safe_name(self.name, "recipe name")
@@ -259,6 +264,8 @@ class Recipe:
             raise ValueError("prompt must be 'c0', 'joint' or 'qwen-joint'")
         if self.model is not None or self.prompt == "qwen-joint":
             _check_model(self)
+        elif self.qwen_options is not None:
+            raise ValueError("qwen_options needs the Qwen model")
         if self.wide_context is not None and (
                 not isinstance(self.wide_context, dict) or set(self.wide_context) != {"max_visible"}
                 or type(self.wide_context["max_visible"]) is not int
@@ -422,7 +429,7 @@ _FIELDS = {field.name for field in fields(Recipe)}
 V4_DEFAULTS: dict[str, Any] = {"category_overrides": None, "sampling": None, "target_context": 0, "candidates": 1,
                                "selector": None, "glossary": None, "gap_split": None,
                                "gap_pack": None, "pause_marks": None, "groups": None, "model": None,
-                               "wide_context": None}
+                               "wide_context": None, "qwen_options": None}
 
 
 def compose(name: str, base: str | Recipe, **overrides: Any) -> Recipe:
