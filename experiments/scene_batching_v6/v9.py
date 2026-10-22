@@ -140,7 +140,7 @@ def smoke(recipe_name: str, *, root: Path = V9_ROOT, port: int = 8080, break_sta
             record: dict[str, Any] = {"stage": "translation", "batch_index": batch_index}
             row = {"scene_id": scene.scene_id, "category": scene.category, "batch_index": batch_index,
                    "target_ids": ids, "before_ids": list(batch.before_ids), "after_ids": list(batch.after_ids),
-                   "messages": qwen.messages(window), "record": record}
+                   "messages": qwen.messages(window, recipe, scene.work_id), "record": record}
             try:
                 row["translations"] = qwen.run_step(handle.client, row["messages"], R.translation_grammar(recipe, ids),
                                                     seed, ids, cache_state, record, recipe)

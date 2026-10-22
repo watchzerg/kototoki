@@ -34,3 +34,34 @@ def copy_control(seed: int, *, root: Path = V10_ROOT, source: Path = v9.V9_ROOT,
     shutil.copytree(src / "scenes", dst / "scenes")
     atomic_write_json(dst / "run.json", run | {"copied_from": str(src.relative_to(REPO))})
     return dst
+
+
+def summary(report: dict[str, Any]) -> dict[str, Any]:
+    """Compact view of a ``v9.compare`` report: Δ and CI90 per category for the metrics the v10 gates read."""
+    out: dict[str, Any] = {"variant": report.get("variant"), "against": report.get("against"),
+                           "seeds": report.get("seeds"), "cues": report.get("cues")}
+    for metric in ("accuracy", "unnatural", "wrong-referent", "mistranslation", "addition", "omission", "register",
+                   "grammar", "major_plus", "critical"):
+        block = report["full"].get(metric)
+        if not block:
+            continue
+        out[metric] = {c: [round(block["delta"][c], 4) if block["delta"].get(c) is not None else None,
+                           [round(x, 4) for x in (block["bootstrap"].get(c) or {}).get("ci90") or []]]
+                       for c in ("anime_series", "animation_movie")}
+    return out
+
+
+def write_recipe(name: str, base: str, *, root: Path = V10_ROOT, comment: str = "", **fields: Any) -> Path:
+    """``<root>/recipes/<name>.json`` ({"name", "base", ...fields}); refuses to change an existing file."""
+    import json
+    from experiments.translation_v3.recipes import load_recipe
+    path = root / "recipes" / f"{name}.json"
+    data = {"name": name, "base": base, **({"comment": comment} if comment else {}), **fields}
+    if path.is_file():
+        if read_json(path) != data:
+            raise ValueError(f"{path} exists with different content")
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    load_recipe(name, root)  # validates
+    return path

@@ -64,9 +64,20 @@ def main(argv: list[str] | None = None) -> int:
     a9 = sub.add_parser("analyze9", help="v9 offline: names / leak / reading list / judge spend")
     a9.add_argument("what", choices=("names", "leak", "reading", "spend"))
     a9.add_argument("--seeds", type=int, nargs="+", default=[])
+    c10 = sub.add_parser("compare10", help="v10 offline: compare9 + compact gate view")
+    c10.add_argument("--variant", required=True)
+    c10.add_argument("--against", default=v10.Q0)
+    c10.add_argument("--seeds", type=int, nargs="+", required=True)
+    c10.add_argument("--label", default="")
+    cc = sub.add_parser("copy-q0", help="v10 offline: copy v9 Q0 translations of a main seed for re-judging")
+    cc.add_argument("--seed", type=int, required=True)
+    a10 = sub.add_parser("a2", help="v10 offline: A2 similarity (CPU bge-m3) or the blind sheet")
+    a10.add_argument("what", choices=("similarity", "blind"))
     args = parser.parse_args(argv)
     root = {"v7": V7_ROOT, "v9": v9.V9_ROOT, "v10": v10.V10_ROOT}.get(args.round, V6_ROOT)
-    v9_only = ("smoke", "check-batches", "judge-run", "compare9", "analyze9")
+    v9_only = ("smoke", "check-batches", "judge-run", "compare9", "analyze9", "compare10", "copy-q0", "a2")
+    if args.command in ("compare10", "copy-q0", "a2") and args.round != "v10":
+        parser.error(f"{args.command} is a --round v10 command")
     v9_like = args.round in ("v9", "v10")
     if v9_like != (args.command in v9_only) and args.command not in ("status", "generate"):
         parser.error(f"{args.command} is not a --round {args.round} command")
@@ -94,6 +105,13 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "compare9":
         out = v9.compare(args.variant, args.seeds, against=args.against, root=root, label=args.label)
         out = {k: out.get(k) for k in ("state", "cues", "cue_counts", "decision")}
+    elif args.command == "compare10":
+        out = v10.summary(v9.compare(args.variant, args.seeds, against=args.against, root=root, label=args.label))
+    elif args.command == "copy-q0":
+        out = {"copied": str(v10.copy_control(args.seed, root=root))}
+    elif args.command == "a2":
+        from . import a2
+        out = a2.blind_sheet() if args.what == "blind" else {k: v for k, v in a2.similarity().items() if k != "sets"}
     elif args.command == "analyze9":
         if args.what == "names":
             out = {a: {k: r[k] for k in ("errors", "inconsistency_by_category")}

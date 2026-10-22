@@ -76,13 +76,34 @@ def collect(windows: dict, only: str | None = None) -> dict[str, dict[str, Any]]
     return out
 
 
+def embed(texts: list[str], encode: Callable[[list[str]], list[list[float]]] | None, out_root: Path) -> dict[str, list[float]]:
+    """Vectors for ``texts``, cached in ``A2/embeddings.pkl`` (text -> vector; transcript content, .local only)."""
+    import pickle
+    path = out_root / "A2" / "embeddings.pkl"
+    cache = pickle.loads(path.read_bytes()) if path.is_file() else {}
+    missing = [t for t in texts if t not in cache]
+    if missing:
+        cache.update(zip(missing, (encode or cpu_encoder())(missing)))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(pickle.dumps(cache))
+    return {t: cache[t] for t in texts}
+
+
+def warm(*, out_root: Path = V10_ROOT) -> int:
+    """Embed the reference and the v9 main-seed translations ahead of A1 (CPU)."""
+    windows = E.reference_for(V4_ROOT, q2.SET)
+    data = collect(windows, "v9-main")
+    texts = sorted({u["zh"] for w in windows.values() for u in w.units}
+                   | {t for d in data.values() for arm in d["tr"].values() for t in arm.values()})
+    return len(embed(texts, None, out_root))
+
+
 def similarity(encode: Callable[[list[str]], list[list[float]]] | None = None, *, out_root: Path = V10_ROOT) -> dict[str, Any]:
     windows = E.reference_for(V4_ROOT, q2.SET)
     ref = {u["id"]: u["zh"] for w in windows.values() for u in w.units}
     data = collect(windows)
-    encode = encode or cpu_encoder()
     texts = sorted({ref[k] for k in ref} | {t for d in data.values() for arm in d["tr"].values() for t in arm.values()})
-    vectors = dict(zip(texts, encode(texts)))
+    vectors = embed(texts, encode, out_root)
 
     def cos(a: str, b: str) -> float:
         return sum(x * y for x, y in zip(vectors[a], vectors[b]))
