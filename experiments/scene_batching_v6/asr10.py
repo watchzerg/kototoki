@@ -199,3 +199,21 @@ def product_timing(recipes: tuple[str, ...] = ("dp10-cut", "qwen-wide"), *, root
                 "mean_visible": A.mean([t + b + a for t, b, a in zip(targets, before, after)])}
     atomic_write_json(root / "product-timing.json", out)
     return out
+
+
+def replace_names(arm: str, *, root: Path = D_ROOT) -> str:
+    """Product-equivalent chain on an arm: ``apply_table`` with its default parameters and the product table
+    (``<arm>+rep``); summaries next to the outputs."""
+    from experiments.name_consistency import apply_table as T
+    target = f"{arm}+rep"
+    for film, paths in FILMS.items():
+        table = json.loads(paths["table"].read_text(encoding="utf-8"))
+        _, ja_cues = T.read_srt(paths["ja"])
+        for seed in SEEDS:
+            src, out = zh_path(arm, film, seed, root), zh_path(target, film, seed, root)
+            zh_content, zh_cues = T.read_srt(src)
+            result = T.apply_table(table, ja_cues, zh_cues)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(T.render_srt(zh_content, zh_cues, result["new_texts"]).encode("utf-8"))
+            atomic_write_json(out.with_suffix(".summary.json"), result["summary"])
+    return target
