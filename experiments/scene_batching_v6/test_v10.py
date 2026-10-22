@@ -7,7 +7,7 @@ import unittest
 from experiments.translation_v3 import qwen
 from experiments.translation_v3 import recipes as R
 
-from . import a2
+from . import a2, asr10
 
 WINDOW = {"id": "w", "source_language": "ja", "target_language": "zh-Hans",
           "context": [{"id": "a", "text": "ハルカが来た"}, {"id": "b", "text": "行こう"}], "translate_ids": ["b"]}
@@ -74,6 +74,24 @@ class A2Test(unittest.TestCase):
         self.assertEqual(a2.verdict({"pooled": {"chrf": boot(0.01, 0.02), "bge_m3": boot(-0.01, 0.01)}})["gate"], "pass")
         self.assertEqual(a2.verdict({"pooled": {"chrf": boot(-0.03, -0.01), "bge_m3": boot(-0.01, 0.01)}})["gate"],
                          "flag-judge-preference")
+
+
+class AsrStageTest(unittest.TestCase):
+    units = {"f": [{"bucket": b} for b in ["exact"] * 5 + ["light"] * 4 + ["heavy"] * 3 + ["missed"] * 2]}
+
+    def test_sample_is_fixed_per_bucket(self):
+        a = asr10.sample_units(self.units, {"exact": 2, "light": "all", "heavy": 1, "missed": 2})
+        self.assertEqual(a, asr10.sample_units(self.units, {"exact": 2, "light": "all", "heavy": 1}))
+        self.assertEqual([b for _, _, b in a], ["exact"] * 2 + ["light"] * 4 + ["heavy"])
+        self.assertEqual(a[:2], asr10.sample_units(self.units, {"exact": 2})[:2])
+
+    def test_bootstrap_and_names(self):
+        rows = [{"px": 1, "py": 0}] * 10
+        self.assertEqual(asr10._boot(rows), [-1.0, -1.0])
+        self.assertIsNone(asr10._boot([]))
+        errors = [{"category": "terminology", "note": ""}, {"category": "mistranslation", "note": "人名译错"},
+                  {"category": "grammar", "note": "语序"}]
+        self.assertEqual(asr10._names(errors), 2)
 
 
 if __name__ == "__main__":

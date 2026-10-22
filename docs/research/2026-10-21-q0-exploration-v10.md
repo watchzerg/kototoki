@@ -196,6 +196,7 @@ D2 也可在 dev 作品上补做：每部先用产品 names 阶段同款请求�
 | --- | --- | --- |
 | 2026-10-21 | 立项 | 本文；tracker 骨架已建；未执行 |
 | 2026-10-22 | 01 离线实现 | 完成。`translation_v3.Recipe.qwen_options`（默认值不进 hash，只能配 Qwen）每个键改一件事：`system`（`qwen-joint-v2`：v1 规则全文原样保留，前加译者角色、后加字幕自然度要求）、`asr`（`qwen-asr-aware-v1`）、`names`（`qwen-name-table-v1`）、`brief`（`qwen-work-brief-v1`）、`context`；无选项时消息与 v1 逐字相同，`qwen-wide` `719237b9…`、`dp10-cut` `ee72ce66…` hash 不变。`translate-srt` 支持 Qwen 配方（`qwen.session_factory`、`--work-id`）。`scene_batching_v6 --round v10`（v9 命令换根目录）、`v10.py`（Q0 对照译文复制供同期重判）、`a2.py`（chrF／bge-m3 相似度、一致率、盲读表）。离线测试新增 7 项，相关 91 项通过。 |
+| 2026-10-22 | 09 D 离线（提前做） | 完成。`scene_batching_v6/asr10.py`：HF II／III 产品 w0 `ja.srt`（与 v5 第 02 步单元、产品专名表同源）上各臂 `translate-srt` 输出约定；复用 v5 第 02 步单元与分桶、`v5-asr-pairwise-v1` 配对裁判（x＝对照臂、y＝候选臂、同 seed，各比较同一批单元）；各桶 Δ（候选−对照）CI90、偏好、critical／addition／人名错误；整片不一致率。偏离：不判 missed 桶（两侧都从 ASR 源翻译，都为空）。注入表：产品表全部 form 平铺（35／28 条），按窗口命中过滤。产品时间轴（v9 §8 第 6 项）：平均包 7.4／8.3 条；dp10-cut 可见邻文前 0.4、后 0.05 条（静默门控），qwen-wide 前 19.6、后 5.0 条。 |
 
 ### 7.1 结论
 

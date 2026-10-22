@@ -45,7 +45,7 @@
 
 ## v10（Q0 线的广度探索）
 
-[v10 研究文档](../../docs/research/2026-10-21-q0-exploration-v10.md)：`--round v10` 跑 v9 的全部命令（`generate`、`smoke`、`check-batches`、`judge-run`、`compare9`、`analyze9`），根目录改为 `.local/q0-exploration-v10/`；对照是 Q0（`qwen-wide`），A1 复现在重复 seed 20261021–23 上新生成 `qwen-wide` 与 `dp10-cut`。`v10.py`：`copy_control` 把 v9 主 seed 的 Q0 译文（`run.json`＋`scenes/`，不含裁判）复制进 v10 根目录供同期重判。`a2.py`（离线）：`similarity` 逐 cue 算与中文参考的 chrF 与 bge-m3 余弦（CPU），Q0 − H0 配对 Δ、与裁判 Δ 符号的一致率 → `A2/similarity.json`；`blind_sheet` 生成盲序人工阅读表 `A2/blind-sheet.md` 与答案键 `A2/blind-key.json`。
+[v10 研究文档](../../docs/research/2026-10-21-q0-exploration-v10.md)：`--round v10` 跑 v9 的全部命令（`generate`、`smoke`、`check-batches`、`judge-run`、`compare9`、`analyze9`），根目录改为 `.local/q0-exploration-v10/`；对照是 Q0（`qwen-wide`），A1 复现在重复 seed 20261021–23 上新生成 `qwen-wide` 与 `dp10-cut`。`v10.py`：`copy_control` 把 v9 主 seed 的 Q0 译文（`run.json`＋`scenes/`，不含裁判）复制进 v10 根目录供同期重判。`a2.py`（离线）：`similarity` 逐 cue 算与中文参考的 chrF 与 bge-m3 余弦（CPU），Q0 − H0 配对 Δ、与裁判 Δ 符号的一致率 → `A2/similarity.json`；`blind_sheet` 生成盲序人工阅读表 `A2/blind-sheet.md` 与答案键 `A2/blind-key.json`。`asr10.py`（D 阶段）：HF II／III 产品 w0 `ja.srt` 上各臂 `translate-srt` 的输出约定（`D/zh/<arm>/<film>.s<seed>.zh.srt`）、产品专名表转注入表（`name_tables`）、复用 quality_v5 第 02 步的单元与分桶及 `v5-asr-pairwise-v1` 裁判做"候选 vs 对照"配对（`plan`／`judge`／`estimate`：各桶 Δ＝候选−对照惩罚、CI90、偏好、critical／addition／人名错误），整片不一致率（`inconsistency`），产品时间轴的包与邻文分布（`product_timing`）。
 
 ## 验证
 
