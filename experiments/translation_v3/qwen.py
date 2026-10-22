@@ -85,7 +85,13 @@ NAMES_HEADER = "本作品专名的固定中文译法（日文写法 → 中文�
 # "brief": {work_id: text} (§4.5 E1); the text is produced per work beforehand and is not a translation.
 BRIEF_VERSION = "qwen-work-brief-v1"
 BRIEF_HEADER = "本作品的翻译简报（仅供理解，不要输出）：\n"
-OPTION_KEYS = ("system", "asr", "names", "brief", "context")
+# "thinking": {"budget": N, "min_visible": K} (§4.6 F1): the server runs ``--reasoning on --reasoning-budget N``;
+# packs with at least K target cues ask for thinking (``enable_thinking``) and get N more output tokens, the
+# others are requested exactly as v1 (non-thinking). The thought goes to ``reasoning_content`` and is not parsed.
+# The ID grammar applies from the first generated token, so a thinking pack gets it behind a free thought prefix
+# (the template opens ``<think>``; the budget sampler forces ``</think>``); a thought may not contain "<".
+THOUGHT_GRAMMAR_VERSION = "thought-prefix-v1"
+OPTION_KEYS = ("system", "asr", "names", "brief", "context", "thinking")
 
 
 def check_options(options: Any) -> None:
@@ -109,6 +115,10 @@ def check_options(options: Any) -> None:
         raise ValueError("qwen_options.brief must map work ids to non-empty texts")
     if "context" in options and (type(options["context"]) is not int or options["context"] < WIDE_CONTEXT):
         raise ValueError(f"qwen_options.context must be an integer >= {WIDE_CONTEXT}")
+    thinking = options.get("thinking")
+    if thinking is not None and (not isinstance(thinking, dict) or set(thinking) != {"budget", "min_visible"}
+                                 or not all(type(v) is int and v > 0 for v in thinking.values())):
+        raise ValueError("qwen_options.thinking must be {budget: int > 0, min_visible: int > 0}")
 
 
 def _options(recipe: R.Recipe | None) -> dict[str, Any]:
@@ -144,8 +154,29 @@ def context_size(recipe: R.Recipe) -> int:
     return WIDE_CONTEXT if recipe.wide_context else NARROW_CONTEXT
 
 
-def max_input_tokens(recipe: R.Recipe) -> int:
-    return context_size(recipe) - R.N_PREDICT - R.GUARD_TOKENS
+def thinks(recipe: R.Recipe | None, ids: list[str]) -> bool:
+    thinking = _options(recipe).get("thinking")
+    return bool(thinking) and len(ids) >= thinking["min_visible"]
+
+
+def max_tokens(recipe: R.Recipe | None, ids: list[str]) -> int:
+    return R.N_PREDICT + (_options(recipe)["thinking"]["budget"] if thinks(recipe, ids) else 0)
+
+
+def max_input_tokens(recipe: R.Recipe, ids: list[str] | None = None) -> int:
+    return context_size(recipe) - max_tokens(recipe, ids or []) - R.GUARD_TOKENS
+
+
+def think_grammar(grammar: str) -> str:
+    return 'root ::= thought "</think>" ws answer\nthought ::= [^<]*\n' + grammar.replace("root ::=", "answer ::=", 1)
+
+
+def extra_args(recipe: R.Recipe) -> tuple[str, ...]:
+    thinking = _options(recipe).get("thinking")
+    if not thinking:
+        return EXTRA_ARGS
+    assert EXTRA_ARGS[-2:] == ("--reasoning", "off")
+    return (*EXTRA_ARGS[:-1], "on", "--reasoning-budget", str(thinking["budget"]))
 
 
 def system_template() -> str:
@@ -156,7 +187,7 @@ def system_template() -> str:
 
 def versions(recipe: R.Recipe) -> dict[str, Any]:
     out = {"model": MODEL, "asset_sha256": MODEL_ASSET["sha256"], "engine": ENGINE_VERSION,
-           "server_args": [LAYERS, *EXTRA_ARGS], "prompt": [PROMPT_VERSION, sha256_bytes(system_template().encode())],
+           "server_args": [LAYERS, *extra_args(recipe)], "prompt": [PROMPT_VERSION, sha256_bytes(system_template().encode())],
            "request": REQUEST_SHAPE, "seed_step": SEED_STEP}
     options = _options(recipe)
     if options:
@@ -165,6 +196,9 @@ def versions(recipe: R.Recipe) -> dict[str, Any]:
             extra["names"] = [NAMES_VERSION, sha256_bytes(NAMES_HEADER.encode())]
         if "brief" in options:
             extra["brief"] = [BRIEF_VERSION, sha256_bytes(BRIEF_HEADER.encode())]
+        if "thinking" in options:
+            extra["thinking"] = dict(options["thinking"], grammar=[THOUGHT_GRAMMAR_VERSION,
+                                                                   sha256_bytes(think_grammar("root ::= x").encode())])
         out["options"] = extra
     return out
 
@@ -173,6 +207,8 @@ def fixed(recipe: R.Recipe) -> dict[str, Any]:
     return {"sampling": SAMPLING | {"seed": "<run seed>"}, "n_predict": R.N_PREDICT, "context_size": context_size(recipe),
             "guard_tokens": R.GUARD_TOKENS, "cache_prompt": R.CACHE_PROMPT, "max_attempts": R.MAX_ATTEMPTS,
             "chat_template_kwargs": {"enable_thinking": False},
+            **({"thinking": dict(_options(recipe)["thinking"], packs="target cues >= min_visible",
+                                 max_tokens="n_predict + budget")} if "thinking" in _options(recipe) else {}),
             "overflow": "recorded-failure-no-truncation-no-auto-shrink"}
 
 
@@ -206,9 +242,10 @@ def _v1_messages(window: dict[str, Any]) -> tuple[str, str]:
     return system, CONTEXT_HEADER + user
 
 
-def request_body(messages_: list[dict[str, str]], seed: int, grammar: str) -> dict[str, Any]:
-    return {"messages": messages_, **SAMPLING, "seed": seed, "max_tokens": R.N_PREDICT, "grammar": grammar,
-            "cache_prompt": R.CACHE_PROMPT, "chat_template_kwargs": {"enable_thinking": False}, "stream": False}
+def request_body(messages_: list[dict[str, str]], seed: int, grammar: str, *, think: bool = False,
+                 max_tokens_: int = R.N_PREDICT) -> dict[str, Any]:
+    return {"messages": messages_, **SAMPLING, "seed": seed, "max_tokens": max_tokens_, "grammar": grammar,
+            "cache_prompt": R.CACHE_PROMPT, "chat_template_kwargs": {"enable_thinking": think}, "stream": False}
 
 
 def parse(text: str, ids: list[str]) -> dict[str, str]:
@@ -227,25 +264,29 @@ def run_step(client: Any, messages_: list[dict[str, str]], grammar: str, seed: i
     from .generate import CONTEXT_ERROR, FATAL_KINDS, StepFailed, _http_body, whitespace_ratio
     attempts: list[dict[str, Any]] = record.setdefault("attempts", [])
     last: StepFailed | None = None
-    budget = max_input_tokens(recipe)
+    think = thinks(recipe, ids)
+    if think:
+        grammar = think_grammar(grammar)
+    limit = max_tokens(recipe, ids)
+    budget = max_input_tokens(recipe, ids)
     for number in range(1, R.MAX_ATTEMPTS + 1):
         started = time.perf_counter()
         used_seed = seed + (number - 1) * SEED_STEP
-        body = request_body(messages_, used_seed, grammar)
-        attempt: dict[str, Any] = {"attempt": number, "seed": used_seed,
+        body = request_body(messages_, used_seed, grammar, think=think, max_tokens_=limit)
+        attempt: dict[str, Any] = {"attempt": number, "seed": used_seed, "thinking": think,
                                    "prompt_sha256": sha256_bytes(json.dumps(messages_, ensure_ascii=False).encode()),
                                    "grammar_sha256": sha256_bytes(grammar.encode("utf-8")), "dispatched": False}
         attempts.append(attempt)
         try:
             try:
                 rendered = client.request("/apply-template", {"messages": messages_,
-                                                              "chat_template_kwargs": {"enable_thinking": False}})
+                                                              "chat_template_kwargs": {"enable_thinking": think}})
                 tokens = client.tokenize(rendered["prompt"])
             except (URLError, ConnectionError, TimeoutError) as exc:
                 raise StepFailed(f"tokenize transport: {exc}", "server") from exc
             attempt.update(input_tokens=len(tokens), rendered_prompt_sha256=sha256_bytes(rendered["prompt"].encode()))
             if len(tokens) > budget:
-                raise StepFailed(f"context_budget: {len(tokens)} input tokens + {R.N_PREDICT} + {R.GUARD_TOKENS} "
+                raise StepFailed(f"context_budget: {len(tokens)} input tokens + {limit} + {R.GUARD_TOKENS} "
                                  f"> {context_size(recipe)}; no truncation or auto-shrink", "context")
             attempt["request_sha256"] = object_hash(body)
             attempt["dispatched"] = True
@@ -312,7 +353,7 @@ def run_step(client: Any, messages_: list[dict[str, str]], grammar: str, seed: i
 def server_spec(recipe: R.Recipe):
     from kototoki.llama_server import ServerSpec
     return ServerSpec(stage="v9-translate", candidate=MODEL, model_asset=dict(MODEL_ASSET), layers=LAYERS,
-                      context=context_size(recipe), extra_args=EXTRA_ARGS, min_free_mib=MIN_FREE_MIB,
+                      context=context_size(recipe), extra_args=extra_args(recipe), min_free_mib=MIN_FREE_MIB,
                       load_timeout_s=LOAD_TIMEOUT_SECONDS)
 
 

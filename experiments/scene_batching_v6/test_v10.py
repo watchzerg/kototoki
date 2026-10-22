@@ -63,6 +63,20 @@ class OptionsTest(unittest.TestCase):
         self.assertEqual(qwen.context_size(R.BUILTIN["qwen-wide"]), qwen.WIDE_CONTEXT)
 
 
+    def test_thinking_only_on_long_packs(self):
+        recipe = arm(context=20480, thinking={"budget": 1024, "min_visible": 10})
+        self.assertEqual(qwen.extra_args(recipe)[-4:], ("--reasoning", "on", "--reasoning-budget", "1024"))
+        self.assertEqual(qwen.extra_args(R.BUILTIN["qwen-wide"]), qwen.EXTRA_ARGS)
+        short, long = [str(i) for i in range(9)], [str(i) for i in range(10)]
+        self.assertFalse(qwen.thinks(recipe, short))
+        self.assertTrue(qwen.thinks(recipe, long))
+        self.assertEqual(qwen.max_tokens(recipe, long), R.N_PREDICT + 1024)
+        self.assertEqual(qwen.max_input_tokens(recipe, short), qwen.max_input_tokens(R.BUILTIN["qwen-wide"]) + 4096)
+        self.assertFalse(qwen.request_body([], 1, "g")["chat_template_kwargs"]["enable_thinking"])
+        with self.assertRaises(ValueError):
+            arm(thinking={"budget": 1024})
+
+
 class A2Test(unittest.TestCase):
     def test_agreement_signs(self):
         sim = {"a": 0.1, "b": -0.2, "c": 0.0, "d": 0.3}
