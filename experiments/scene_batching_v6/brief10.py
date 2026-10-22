@@ -5,11 +5,13 @@ sampling 0.7 / 0.8 / 20 / 0 with presence_penalty 1.5, prompt budget context −
 attempts with seed + 1). Input: the whole Japanese of the work (dev: its dev scenes in scene order, one cue per
 line, a blank line between scenes; product: the film's ``ja.srt``). Output: free text of at most 300 Chinese
 characters; it is not a translation and no subtitle is produced. A reply over the limit or cut by the token
-limit is a failed attempt. Briefs are transcript content: they stay under ``.local`` and are not printed.
+limit or an empty reply is a failed attempt; the length is asked for in the prompt and recorded (Han characters),
+not enforced. Briefs are transcript content: they stay under ``.local`` and are not printed.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -21,7 +23,8 @@ from experiments.translation_v3.common import atomic_write_json, sha256_bytes, u
 from .v10 import V10_ROOT
 
 VERSION = "work-brief-v1"
-MAX_CHARS = 300
+MAX_CHARS = 300  # asked for in the prompt
+HAN = re.compile(r"[一-鿿]")
 MAX_TOKENS = 1024
 CONTEXT = 20480
 BUDGET = CONTEXT - MAX_TOKENS - 512
@@ -72,7 +75,8 @@ def build(kind: str, *, root: Path = V10_ROOT, port: int = 8080, break_stale_loc
     result: dict[str, Any] = {"version": VERSION, "system_sha256": sha256_bytes(SYSTEM.encode()),
                               "started_at_utc": utc_now(), "briefs": {}, "meta": {}}
     started = time.perf_counter()
-    with factory(run_dir, 1) as handle:
+    index = len(list((run_dir / "runtime").glob("session-*"))) + 1 if (run_dir / "runtime").is_dir() else 1
+    with factory(run_dir, index) as handle:
         client = handle.client
         for work, lines in sorted(works.items()):
             msgs = messages(lines)
@@ -91,9 +95,10 @@ def build(kind: str, *, root: Path = V10_ROOT, port: int = 8080, break_stale_loc
                 choice = reply["choices"][0]
                 text = ((choice.get("message") or {}).get("content") or "").strip()
                 row = {"seed": SEED + attempt, "seconds": time.perf_counter() - t0, "finish": choice.get("finish_reason"),
-                       "chars": len(text), "completion_tokens": (reply.get("usage") or {}).get("completion_tokens")}
+                       "chars": len(text), "han_chars": len(HAN.findall(text)),
+                       "completion_tokens": (reply.get("usage") or {}).get("completion_tokens")}
                 meta["attempts"].append(row)
-                if choice.get("finish_reason") != "length" and text and len(text) <= MAX_CHARS * 1.2:
+                if choice.get("finish_reason") != "length" and text:
                     result["briefs"][work] = text
                     meta["status"] = "ok"
                     break
