@@ -214,6 +214,25 @@ class SplittingTests(CueTestCase):
         payload, _ = build_cues(align, rules(max_duration_s=1.5, **PLAIN))
         self.assertEqual(spans(payload), [(2000, 3500, "あいう"), (3500, 5000, "えおか")])
 
+    def test_single_overlong_char_at_sentence_end_is_kept_whole(self):
+        """硬切递归到句末单个词汇字符时，该字符本身超限也不再切，不产生空 cue（2026-10-24 整批运行实例）。"""
+        by_duration = [("あ", 0.0, 0.2), ("い", 0.2, 7.5)] + [("。", None)] + [("う", 8.0, 8.2)]
+        by_chars = [("あ", 0.0, 0.2), ("い", 0.2, 0.4)] + untimed("！" * 30 + "。") + [("う", 1.0, 1.2)]
+        for name, chars, expected in (
+                ("duration", by_duration, [(0, 200, "あ"), (200, 7500, "い。"), (8000, 8200, "う")]),
+                ("chars", by_chars, [(0, 200, "あ"), (200, 400, "い" + "！" * 30 + "。"), (1000, 1200, "う")])):
+            with self.subTest(case=name):
+                payload, srt_text = build_cues(make_align([window(0, 10, chars)]), rules(**PLAIN))
+                self.assertEqual(spans(payload), expected)
+                self.assertWellFormed(payload, srt_text)
+
+    def test_single_overlong_char_at_text_end_is_kept_whole(self):
+        """同上，但超限字符是全文最后一个词汇字符（此前越界取 `lexical[n]`）。"""
+        align = make_align([window(0, 10, [("あ", 0.0, 0.2), ("い", 0.2, 7.5)])])
+        payload, srt_text = build_cues(align, rules(**PLAIN))
+        self.assertEqual(spans(payload), [(0, 200, "あ"), (200, 7500, "い")])
+        self.assertWellFormed(payload, srt_text)
+
 
 class TimingAdjustmentTests(CueTestCase):
     def test_lead_out_extends_end_but_not_past_next_start(self):

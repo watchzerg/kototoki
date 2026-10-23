@@ -181,7 +181,7 @@ def build_cues(align: Mapping[str, Any], rules: Mapping[str, Any]) -> tuple[dict
         return chars(a, b) <= rules["max_chars"] and duration(a, b) <= rules["max_duration_s"]
 
     def cut(a: int, b: int) -> list[tuple[int, int]]:
-        if fits(a, b):
+        if fits(a, b) or b - a == 1:  # 单个词汇字符本身超限（拖长音、附着大量标点）时不再切，否则硬切会递归出空区间
             return [(a, b)]
         soft = [j for j in range(a + 1, b) if soft_break[j] and fits(a, j)]
         if soft:
