@@ -202,6 +202,39 @@ class SegmentStatsTest(unittest.TestCase):
         self.assertTrue(points and all(p["silence_s"] >= 10.0 for p in points))
         self.assertEqual({p["side"] for p in points} - {"before", "after"}, set())
 
+    def test_affected_positions_and_split(self):
+        gaps = [0.5] * 39
+        gaps[9] = 12.0
+        scene = timed_scene(gaps, "HF-II")
+        affected = v11.affected_positions([scene], 10.0)
+        pos = affected["HF-II"]
+        self.assertTrue(pos and pos < set(range(40)))
+        self.assertEqual(v11.affected_positions([scene], 20.0)["HF-II"], set())
+        hit, miss = min(pos), min(set(range(40)) - pos)
+        units = {"hf-ii": [{"asr_ids": [hit]}, {"asr_ids": [miss]}, {"asr_ids": [miss, hit]}, {"asr_ids": []}]}
+        rows = [{"film": "hf-ii", "unit": i, "bucket": "exact", "px": 1, "py": 0, "winner": "y",
+                 "x_errors": [{"category": "mistranslation", "severity": "minor"}], "y_errors": []} for i in range(3)]
+        identical = [{"film": "hf-ii", "unit": 3, "bucket": "exact", "seed_index": 0}]
+        (ra, ia), (ru, iu) = v11.split_affected(rows, identical, units, affected)
+        self.assertEqual(([r["unit"] for r in ra], [r["unit"] for r in ru]), ([0, 2], [1]))
+        self.assertEqual((ia, [u["unit"] for u in iu]), ([], [3]))
+        self.assertEqual(v11._category_counts(ra)["all"]["mistranslation"], [2, 0])
+
+    def test_product_judge_lock_refuses_live_owner(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from experiments.translation_v3.procs import ProcessLock
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            held = ProcessLock(root / "judge" / "y-vs-x" / ".lock", {"run_id": "y-vs-x"})
+            held.acquire()
+            try:
+                self.assertEqual(asr10.judge("y-vs-x", root=root), 0)  # no plan.json: would raise without the lock
+            finally:
+                held.release()
+            self.assertFalse((root / "judge" / "y-vs-x" / ".lock").exists())
+
 
 class NamesDiagnosisTest(unittest.TestCase):
     entries = [{"entity_ja": "古見硝子", "zh": "古见硝子", "kind": "person", "confidence": "high",

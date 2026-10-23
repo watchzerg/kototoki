@@ -183,6 +183,8 @@ def product(command: str, *, x: str | None = None, y: str | None = None, arms: l
         return asr10.judge(name or f"{y}-vs-{x}", root=root)
     if command == "estimate":
         return asr10.estimate(name or f"{y}-vs-{x}", root=root)
+    if command == "estimate08":
+        return estimate08(name or f"{y}-vs-{x}", root=root)
     if command == "inconsistency":
         return asr10.inconsistency(list(arms), root=root, seeds=seeds, name=name or "inconsistency")
     if command == "replace":
@@ -190,3 +192,66 @@ def product(command: str, *, x: str | None = None, y: str | None = None, arms: l
     if command == "failures":
         return {a: asr10.delivery_failures(a, root=root, seeds=seeds) for a in arms}
     raise ValueError(command)
+
+
+# --- ticket 08: units affected by the cross-segment truncation --------------------------------
+
+def affected_positions(scenes: list, gap: float = 10.0) -> dict[str, set[int]]:
+    """scene id -> 0-based cue positions that are targets of a pack whose read-only neighbours ``seg<gap>``
+    truncates (fewer before or after neighbours than ``qwen-wide``; the packs themselves are identical)."""
+    from experiments.translation_v3 import recipes as R
+    from experiments.translation_v3.batching import build_batches
+    from .seg11 import seg_recipe
+    out: dict[str, set[int]] = {}
+    for scene in scenes:
+        base, cut = build_batches(scene, R.BUILTIN["qwen-wide"]), build_batches(scene, seg_recipe(gap))
+        assert [b.target_ids for b in base] == [c.target_ids for c in cut]
+        pos: set[int] = set()
+        for b, c in zip(base, cut):
+            if len(b.before_ids) != len(c.before_ids) or len(b.after_ids) != len(c.after_ids):
+                pos.update(range(c.start, c.stop))
+        out[scene.scene_id] = pos
+    return out
+
+
+def split_affected(rows: list[dict], identical: list[dict], units: dict[str, list[dict]],
+                   affected: dict[str, set[int]]) -> tuple[tuple[list, list], tuple[list, list]]:
+    """((rows, identical) of affected units, (rows, identical) of the rest). A unit is affected when any of its
+    product cues (``asr_ids``, positions in the product ``ja.srt``) sits in an affected pack."""
+    def hit(r: dict) -> bool:
+        unit = units[r["film"]][r["unit"]]
+        return any(i in affected[asr10.UNIT_FILM[r["film"]]] for i in unit["asr_ids"])
+    return (([r for r in rows if hit(r)], [u for u in identical if hit(u)]),
+            ([r for r in rows if not hit(r)], [u for u in identical if not hit(u)]))
+
+
+def _category_counts(rows: list[dict], categories=("mistranslation", "addition", "omission", "terminology")) -> dict:
+    """Per bucket, per category: [control, candidate] error counts over the judged rows."""
+    out: dict[str, dict[str, list[int]]] = {}
+    for bucket in (*asr10.JUDGED, "all"):
+        js = [r for r in rows if bucket == "all" or r["bucket"] == bucket]
+        if js:
+            out[bucket] = {c: [sum(e["category"] == c for r in js for e in r["x_errors"]),
+                               sum(e["category"] == c for r in js for e in r["y_errors"])] for c in categories}
+    return out
+
+
+def estimate08(name: str, *, gap: float = 10.0, root: Path = C_ROOT) -> dict[str, Any]:
+    """``asr10.estimate`` split into the units affected by the truncation and the rest (§4 ticket 08), with the
+    affected units' mistranslation / addition counts → ``C/judge/<name>/estimate08.json``."""
+    from experiments.quality_v5 import asr_source as A
+    from .seg11 import product_scenes
+    folder = root / "judge" / name
+    rows = A.collect(folder / "plan.json", folder / "packets")
+    plan_ = read_json(folder / "plan.json")
+    units = asr10.load_units()
+    affected = affected_positions(product_scenes(), gap)
+    (ra, ia), (ru, iu) = split_affected(rows, plan_.get("identical", []), units, affected)
+    report = {"comparison": name, "gap": gap,
+              "affected_cue_positions": {f: len(p) for f, p in affected.items()},
+              "affected_units": {"judged": len(ra), "identical_delta_zero": len(ia)},
+              "unaffected_units": {"judged": len(ru), "identical_delta_zero": len(iu)},
+              "affected": asr10.summarize(name, ra, ia), "unaffected": asr10.summarize(name, ru, iu),
+              "affected_error_counts": _category_counts(ra)}
+    atomic_write_json(folder / "estimate08.json", report)
+    return report

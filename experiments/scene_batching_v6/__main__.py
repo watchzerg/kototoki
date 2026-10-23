@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     c11.add_argument("--seeds", type=int, nargs="+", required=True)
     c11.add_argument("--label", default="")
     pr = sub.add_parser("product", help="v11 stage C (asr10 on C/, seeds 20261054-56): plan skips identical units")
-    pr.add_argument("what", choices=("plan", "judge", "estimate", "inconsistency", "replace", "failures"))
+    pr.add_argument("what", choices=("plan", "judge", "estimate", "estimate08", "inconsistency", "replace", "failures"))
     pr.add_argument("--x", help="control arm")
     pr.add_argument("--y", help="candidate arm")
     pr.add_argument("--arms", nargs="*", default=[])

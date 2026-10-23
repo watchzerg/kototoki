@@ -158,8 +158,19 @@ def plan(x_arm: str, y_arm: str, quotas: dict[str, Any], *, root: Path = D_ROOT,
 
 
 def judge(name: str, *, root: Path = D_ROOT) -> int:
+    """Judge the plan's packets under a per-comparison lock (``judge/<name>/.lock``): a second driver started
+    on the same comparison while one is live exits with 0 and judges nothing (a dead owner's lock is replaced)."""
+    from experiments.translation_v3.procs import LockError, ProcessLock
     folder = root / "judge" / name
-    return A.judge(folder / "plan.json", load_units(), folder / "packets")
+    lock = ProcessLock(folder / ".lock", {"run_id": name})
+    lock.kind = "product judge lock"
+    try:
+        lock.acquire(break_stale=True)
+    except LockError as exc:
+        print(f"not judging {name}: {exc}")
+        return 0
+    with lock:
+        return A.judge(folder / "plan.json", load_units(), folder / "packets")
 
 
 def _boot(rows: list[dict], value=lambda r: r["py"] - r["px"], draws: int = 4000,
