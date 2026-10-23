@@ -56,7 +56,8 @@ def _density(scene: Scene, time: float) -> tuple[int, int]:
 def scene_stats(scene: Scene, gap: float, points: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     base, cut = build_batches(scene, R.BUILTIN["qwen-wide"]), build_batches(scene, seg_recipe(gap))
     assert [b.target_ids for b in base] == [c.target_ids for c in cut]
-    row = Counter(packs=len(base), cues=len(scene.cues))
+    row = Counter(packs=len(base), cues=len(scene.cues), affected_packs=0, affected_cues=0, affected_before=0,
+                  affected_after=0)
     sums = Counter()
     for b, c in zip(base, cut):
         sums["before_base"] += len(b.before_ids)
