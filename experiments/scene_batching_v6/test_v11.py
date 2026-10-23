@@ -186,5 +186,27 @@ class DevDiffTest(unittest.TestCase):
         self.assertEqual(ctrl["a"], {"accuracy": 0.0})
 
 
+class NamesDiagnosisTest(unittest.TestCase):
+    entries = [{"entity_ja": "古見硝子", "zh": "古见硝子", "kind": "person", "confidence": "high",
+                "forms": [{"ja": "古見さん", "zh": "古见同学"}, {"ja": "古見", "zh": "古见"}]},
+               {"entity_ja": "只野仁人", "zh": "只野仁人", "kind": "person", "confidence": "medium",
+                "forms": [{"ja": "只野くん", "zh": "只野同学"}]}]
+
+    def test_hits_and_presence(self):
+        from . import names11
+        hit = names11._entries_hit(self.entries, "古見さんは来た")
+        self.assertEqual([(h["entity_ja"], [f["ja"] for f in h["forms"]]) for h in hit], [("古見硝子", ["古見さん", "古見"])])
+        self.assertEqual(names11._zh_present(self.entries, "只野同学来了"), [{"entity_ja": "只野仁人", "found": ["只野同学"]}])
+        self.assertEqual(names11._entries_hit(self.entries, "こんにちは"), [])
+
+    def test_pre_class(self):
+        from . import names11
+        base = {"entries_in_ja": [], "table_zh_in_cand": [], "cand_name_without_ja_form": [], "table_vs_reference": []}
+        self.assertEqual(names11.pre_class(base), "d")
+        self.assertEqual(names11.pre_class(base | {"cand_name_without_ja_form": [{"entity_ja": "x"}]}), "c?")
+        self.assertEqual(names11.pre_class(base | {"table_vs_reference": [{"entity_ja": "x"}]}), "ab?")
+        self.assertEqual(names11.pre_class(base | {"entries_in_ja": [{"entity_ja": "x"}]}), "m?")
+
+
 if __name__ == "__main__":
     unittest.main()
