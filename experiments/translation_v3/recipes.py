@@ -100,6 +100,11 @@ JOINT2_INSTRUCTION = ("先共同理解全部可见台词及跨条目的条件、
 # (``model`` + ``prompt="qwen-joint"``, request and server in qwen.py); ``wide_context`` widens the read-only
 # neighbours at render time only (plain counts to the scene edge, no silence gating), the cuts are unchanged.
 WIDE_CONTEXT_VERSION = "wide-context-v1"
+# v11 (docs/research/2026-10-22-q0-product-route-v11.md): optional ``silence_gap`` seconds in ``wide_context``
+# truncates the read-only neighbours at the first silence >= the gap on either side of the pack (the cuts
+# are unchanged); recipes without the key keep wide-context-v1 and their hash.
+WIDE_CONTEXT_V2_VERSION = "wide-context-v2"
+WIDE_CONTEXT_KEYS = {"max_visible", "silence_gap"}
 QWEN_MODEL = "qwen3.8-27b-ud-iq3_s"
 SAMPLE_SEED_STRIDE = 1_000_003
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "samplers")
@@ -267,10 +272,12 @@ class Recipe:
         elif self.qwen_options is not None:
             raise ValueError("qwen_options needs the Qwen model")
         if self.wide_context is not None and (
-                not isinstance(self.wide_context, dict) or set(self.wide_context) != {"max_visible"}
+                not isinstance(self.wide_context, dict) or not {"max_visible"} <= set(self.wide_context) <= WIDE_CONTEXT_KEYS
                 or type(self.wide_context["max_visible"]) is not int
-                or self.wide_context["max_visible"] < (self.gap_pack or {}).get("max", self.batch_count or 1)):
-            raise ValueError("wide_context must be {'max_visible': int >= the largest pack}")
+                or self.wide_context["max_visible"] < (self.gap_pack or {}).get("max", self.batch_count or 1)
+                or ("silence_gap" in self.wide_context and (
+                    type(self.wide_context["silence_gap"]) not in (int, float) or self.wide_context["silence_gap"] <= 0))):
+            raise ValueError("wide_context must be {'max_visible': int >= the largest pack[, 'silence_gap': seconds > 0]}")
         if self.grammar_ws not in GRAMMAR_WS:
             raise ValueError("grammar_ws must be 'unbounded' or 'bounded'")
         if self.preanalysis not in (None, "terms"):
@@ -362,7 +369,8 @@ class Recipe:
             from .mbr import MBR_VERSION
             versions["multi"] = [MULTI_VERSION, SAMPLE_SEED_STRIDE, MBR_VERSION]
         if self.wide_context:
-            versions["wide_context"] = WIDE_CONTEXT_VERSION
+            versions["wide_context"] = (WIDE_CONTEXT_V2_VERSION if "silence_gap" in self.wide_context
+                                        else WIDE_CONTEXT_VERSION)
         fixed = {"sampling_profile": SAMPLING_PROFILE, "sampling": sampling(0) | {"seed": "<run seed>"},
                  "n_predict": N_PREDICT, "context_size": CONTEXT_SIZE, "guard_tokens": GUARD_TOKENS,
                  "cache_prompt": CACHE_PROMPT, "max_attempts": MAX_ATTEMPTS, "stop": STOP,

@@ -211,6 +211,14 @@ def compare(variant: str, seeds: list[int], *, against: str = CONTROL, root: Pat
             target.update(rows["values"])
     if missing:
         return {"state": "insufficient", "missing_windows": missing}
+    name = f"v9-{variant}-vs-{against}{('-' + label) if label else ''}.json"
+    return report_from_rows(variant, against, seeds, cand, ctrl, scenes, all_windows, root=root, name=name)
+
+
+def report_from_rows(variant: str, against: str, seeds: list[int], cand: dict[str, dict[str, float]],
+                     ctrl: dict[str, dict[str, float]], scenes: set[str], all_windows: dict, *, root: Path,
+                     name: str) -> dict[str, Any]:
+    """The paired report of ``compare`` from per-cue metric rows (v11 overrides identical cues before this)."""
     windows = {k: w for k, w in all_windows.items() if w.meta.scene_id in scenes}
     keys = sorted({u["id"] for w in windows.values() for u in w.units} & cand.keys() & ctrl.keys())
     layout = S4.Layout(windows, set(keys))
@@ -227,7 +235,6 @@ def compare(variant: str, seeds: list[int], *, against: str = CONTROL, root: Pat
     report["decision"] = decision(report)
     report["delivery"] = {f"{n}__s{s}": q2._failed(q2.run_dir(root, n, s)) for n in (variant, against) for s in seeds}
     report["cost"] = {f"{n}__s{s}": cost(q2.run_dir(root, n, s)) for n in (variant, against) for s in seeds}
-    name = f"v9-{variant}-vs-{against}{('-' + label) if label else ''}.json"
     atomic_write_json(root / "summaries" / name, report)
     return report
 

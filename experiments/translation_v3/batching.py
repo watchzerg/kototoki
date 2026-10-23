@@ -220,6 +220,17 @@ def _neighbours(scene: Scene, start: int, stop: int, recipe: Recipe) -> tuple[in
     if recipe.wide_context is not None:
         # v9 wide-context-v1: plain counts cut only at the scene edge; above max_visible the after-side goes first.
         left, right = max(0, start - recipe.context_before), min(n, stop + recipe.context_after)
+        gap = recipe.wide_context.get("silence_gap")
+        if gap is not None:
+            # v11 wide-context-v2: a neighbour is visible only while no silence >= silence_gap lies between it
+            # and the pack (silences inside the pack do not matter; a missing timestamp counts as no silence).
+            low = start
+            while low > left and (silence(scene, low - 1) is None or silence(scene, low - 1) < gap):
+                low -= 1
+            high = stop
+            while high < right and (silence(scene, high - 1) is None or silence(scene, high - 1) < gap):
+                high += 1
+            left, right = low, high
         while right - left > recipe.wide_context["max_visible"] and right > stop:
             right -= 1
         while right - left > recipe.wide_context["max_visible"] and left < start:

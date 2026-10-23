@@ -82,6 +82,13 @@ ASR_TEXTS = {"qwen-asr-aware-v1": (
 # "names": {"filter": "window"|"all", "tables": {work_id: [{"source", "translation"}]}} (§4.4 D2).
 NAMES_VERSION = "qwen-name-table-v1"
 NAMES_HEADER = "本作品专名的固定中文译法（日文写法 → 中文）。原文出现这些写法时使用对应译法：\n"
+# v11 (docs/research/2026-10-22-q0-product-route-v11.md §4.1 rule (c)): filter "targets" keeps only the entries
+# whose Japanese form occurs in the cues to translate (the read-only neighbours are not searched) and the header
+# adds the one sentence of the revision; it is the single revision the round allows.
+NAMES_VERSION_V2 = "qwen-name-table-v2"
+NAMES_HEADER_V2 = ("本作品专名的固定中文译法（日文写法 → 中文）。原文出现这些写法时使用对应译法；"
+                   "只在原文出现该写法的位置使用，不要把代词、称呼或省略的主语改成名字：\n")
+NAMES_FILTERS = ("window", "all", "targets")
 # "brief": {work_id: text} (§4.5 E1); the text is produced per work beforehand and is not a translation.
 BRIEF_VERSION = "qwen-work-brief-v1"
 BRIEF_HEADER = "本作品的翻译简报（仅供理解，不要输出）：\n"
@@ -103,7 +110,7 @@ def check_options(options: Any) -> None:
         raise ValueError(f"qwen_options.asr must be one of {sorted(ASR_TEXTS)}")
     names = options.get("names")
     if names is not None and (
-            not isinstance(names, dict) or set(names) != {"filter", "tables"} or names["filter"] not in ("window", "all")
+            not isinstance(names, dict) or set(names) != {"filter", "tables"} or names["filter"] not in NAMES_FILTERS
             or not isinstance(names["tables"], dict) or not names["tables"] or not all(
                 isinstance(rows, list) and all(isinstance(r, dict) and set(r) == {"source", "translation"}
                                                and all(isinstance(v, str) and v.strip() for v in r.values()) for r in rows)
@@ -142,10 +149,18 @@ def names_for_window(recipe: R.Recipe | None, work_id: str | None, window: dict[
     if not names or work_id is None:
         return []
     rows = names["tables"].get(work_id, [])
-    if names["filter"] == "window":
-        text = "".join(item["text"] for item in window["context"])
+    if names["filter"] != "all":
+        targets = set(window["translate_ids"])
+        text = "".join(item["text"] for item in window["context"]
+                       if names["filter"] == "window" or item["id"] in targets)
         rows = [r for r in rows if r["source"] in text]
     return [dict(r) for r in rows]
+
+
+def names_header(recipe: R.Recipe | None) -> tuple[str, str]:
+    """(version, header text) of the name-table injection: v2 with the "targets" filter, else v1."""
+    v2 = _options(recipe).get("names", {}).get("filter") == "targets"
+    return (NAMES_VERSION_V2, NAMES_HEADER_V2) if v2 else (NAMES_VERSION, NAMES_HEADER)
 
 
 def context_size(recipe: R.Recipe) -> int:
@@ -193,7 +208,8 @@ def versions(recipe: R.Recipe) -> dict[str, Any]:
     if options:
         extra: dict[str, Any] = {"system_text_sha256": sha256_bytes(system_text(recipe).encode())}
         if "names" in options:
-            extra["names"] = [NAMES_VERSION, sha256_bytes(NAMES_HEADER.encode())]
+            version, header = names_header(recipe)
+            extra["names"] = [version, sha256_bytes(header.encode())]
         if "brief" in options:
             extra["brief"] = [BRIEF_VERSION, sha256_bytes(BRIEF_HEADER.encode())]
         if "thinking" in options:
@@ -226,7 +242,7 @@ def messages(window: dict[str, Any], recipe: R.Recipe | None = None,
             system += "\n\n" + BRIEF_HEADER + options["brief"][work_id]
         entries = names_for_window(recipe, work_id, window)
         if entries:
-            system += "\n\n" + NAMES_HEADER + "\n".join(f"{e['source']} → {e['translation']}" for e in entries)
+            system += "\n\n" + names_header(recipe)[1] + "\n".join(f"{e['source']} → {e['translation']}" for e in entries)
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

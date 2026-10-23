@@ -44,6 +44,8 @@
 
 v10 选项（[研究文档](../../docs/research/2026-10-21-q0-exploration-v10.md)）：`qwen_options`（只能与 `model` 同用，默认 `None` 不进 `spec()`）每个键改一件事，未出现的键保持 `qwen-joint-v1` 行为——`system`（`qwen-joint-v2`：v1 规则全文原样保留，前加译者角色、后加字幕自然度要求）、`asr`（`qwen-asr-aware-v1`：system 末尾加一段"源文是语音识别稿"）、`names`（`{"filter": "window"|"all", "tables": {work_id: [{source, translation}]}}`，`qwen-name-table-v1`，按窗口命中或整表追加到 system）、`brief`（`{work_id: 文本}`，`qwen-work-brief-v1`，追加到 system）、`context`（覆盖 context 大小，≥16384）、`thinking`（`{"budget": N, "min_visible": K}`：server 改 `--reasoning on --reasoning-budget N`，目标 ≥K 条的包 `enable_thinking: true`、`max_tokens` 加 N，ID grammar 前加自由思考前缀 `thought-prefix-v1`——否则 grammar 从第一个 token 起约束、模型不思考；其余包与 v1 相同）。user 消息不变；文本的 sha256 进 `versions.model.options`。`translate-srt` 对带 `model` 的配方改用 `qwen.session_factory`，`--work-id` 给 names／brief 选该部作品。
 
+v11 选项（[研究文档](../../docs/research/2026-10-22-q0-product-route-v11.md)）：`wide_context` 可加 `silence_gap`（秒，>0）：只读邻文从包的首尾向外取，遇到 ≥silence_gap 的静默即停（包内的静默不影响，缺时间戳按无静默），再按条数与 `max_visible` 截；切包不变。带该键时版本为 `wide-context-v2`，不带时仍为 v1、hash 不变。`qwen_options.names.filter` 新增 `targets`：只注入写法出现在**待译 cue** 里的条目（不看只读邻文），并改用 `qwen-name-table-v2` 表头（多一句"只在原文出现该写法的位置使用，不要把代词、称呼或省略的主语改成名字"）；`window`／`all` 仍用 v1 表头。
+
 C0 等价性：`test_recipes` 证明 v3 的 C0 prompt、grammar 和完整 completion 请求（序列化字节）与 v2 `v2_recipes.render_window("c0")`／`completion_request` 一致，批次划分与 `v2_prepare.pack_scene` 一致。
 
 ## 目录布局（根目录下）

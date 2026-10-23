@@ -169,6 +169,7 @@ B 不通过时，N\* 仍进入 C，但只能作"ASR 源专用"成分，并在 §
 | 日期 | 票据 | 结果 |
 | --- | --- | --- |
 | 2026-10-22 | 立项 | 本文；tracker 骨架已建；未执行 |
+| 2026-10-23 | 01 离线实现 | 完成。跨段截断做成 `wide_context.silence_gap`（秒；邻文从包首尾向外取、遇 ≥G 静默即停，包内静默不影响，再按条数与 `max_visible` 截；带键时版本 `wide-context-v2`，`qwen-wide` `719237b9…`、`dp10-cut` `ee72ce66…` hash 不变；`seg10` hash `14fef2f7…`）。§4.1 规则 (c) 的修订提前做成开关：`qwen_options.names.filter: "targets"`（只看待译 cue 命中）自动用 `qwen-name-table-v2` 表头，`window`／`all` 与 v1 逐字相同。送裁判前 diff：产品侧 `asr10.plan(skip_identical=True)` 把两臂相同的单元移出计划，`estimate` 按 Δ＝0 计入（均值与计数只算已判单元）；dev 侧为保"同包"不拆包，`copy_identical_packets` 把对照已判且 20 条 cue 全同的包的判分复制给候选（成本 0），其余包照常判，`compare11` 把相同 cue 的候选行换成对照行（Δ＝0）。`asr10` 根目录与 seed 可传参（v10 默认不变），`scene_batching_v6 --round v11`（`copy-run`、`copy-identical`、`compare11`、`product`）。`test_v11` 9 项，相关 173 项通过。 |
 
 ### 7.1 结论
 

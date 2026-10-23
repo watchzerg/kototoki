@@ -7,16 +7,17 @@ import argparse
 import json
 import sys
 
-from . import q1, q2, sim7, status, v7, v9, v10
+from . import q1, q2, sim7, status, v7, v9, v10, v11
 from .common import V6_ROOT, V7_ROOT
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scene_batching_v6")
-    parser.add_argument("--round", choices=("v6", "v7", "v9", "v10"), default="v6",
+    parser.add_argument("--round", choices=("v6", "v7", "v9", "v10", "v11"), default="v6",
                         help="v7: root .local/gap-aware-batching-v7, full-set subsets and comparisons; "
                              "v9: root .local/general-model-translation-v9 (general-model arms); "
-                             "v10: root .local/q0-exploration-v10 (v9 commands + v10 ones)")
+                             "v10: root .local/q0-exploration-v10 (v9 commands + v10 ones); "
+                             "v11: root .local/q0-product-route-v11 (v9/v10 commands + v11 ones)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("simulate", help="v7 offline: batch-size distributions on dev and product timing -> sim/sim.json")
     sub.add_parser("status", help="offline: runs, subsets, judge progress, GPU lock")
@@ -73,12 +74,35 @@ def main(argv: list[str] | None = None) -> int:
     cc.add_argument("--seed", type=int, required=True)
     a10 = sub.add_parser("a2", help="v10 offline: A2 similarity (CPU bge-m3) or the blind sheet")
     a10.add_argument("what", choices=("similarity", "blind"))
+    cr = sub.add_parser("copy-run", help="v11 offline: copy a v10 run's translations (no judgements) into the v11 root")
+    cr.add_argument("--recipe", required=True)
+    cr.add_argument("--seed", type=int, required=True)
+    ci = sub.add_parser("copy-identical", help="v11 offline: before judging a candidate, copy the control's "
+                                               "judgement of every packet whose cues are all identical")
+    ci.add_argument("--variant", required=True)
+    ci.add_argument("--against", default=v11.Q0)
+    ci.add_argument("--seed", type=int, required=True)
+    c11 = sub.add_parser("compare11", help="v11 offline: compare9 with identical cues at Δ = 0, name errors, "
+                                           "dev inconsistency; compact gate view")
+    c11.add_argument("--variant", required=True)
+    c11.add_argument("--against", default=v11.Q0)
+    c11.add_argument("--seeds", type=int, nargs="+", required=True)
+    c11.add_argument("--label", default="")
+    pr = sub.add_parser("product", help="v11 stage C (asr10 on C/, seeds 20261054-56): plan skips identical units")
+    pr.add_argument("what", choices=("plan", "judge", "estimate", "inconsistency", "replace", "failures"))
+    pr.add_argument("--x", help="control arm")
+    pr.add_argument("--y", help="candidate arm")
+    pr.add_argument("--arms", nargs="*", default=[])
+    pr.add_argument("--name")
     args = parser.parse_args(argv)
-    root = {"v7": V7_ROOT, "v9": v9.V9_ROOT, "v10": v10.V10_ROOT}.get(args.round, V6_ROOT)
-    v9_only = ("smoke", "check-batches", "judge-run", "compare9", "analyze9", "compare10", "copy-q0", "a2")
-    if args.command in ("compare10", "copy-q0", "a2") and args.round != "v10":
+    root = {"v7": V7_ROOT, "v9": v9.V9_ROOT, "v10": v10.V10_ROOT, "v11": v11.V11_ROOT}.get(args.round, V6_ROOT)
+    v9_only = ("smoke", "check-batches", "judge-run", "compare9", "analyze9", "compare10", "copy-q0", "a2",
+               "copy-run", "copy-identical", "compare11", "product")
+    if args.command in ("compare10", "copy-q0", "a2") and args.round not in ("v10", "v11"):
         parser.error(f"{args.command} is a --round v10 command")
-    v9_like = args.round in ("v9", "v10")
+    if args.command in ("copy-run", "copy-identical", "compare11", "product") and args.round != "v11":
+        parser.error(f"{args.command} is a --round v11 command")
+    v9_like = args.round in ("v9", "v10", "v11")
     if v9_like != (args.command in v9_only) and args.command not in ("status", "generate"):
         parser.error(f"{args.command} is not a --round {args.round} command")
     if args.command == "simulate":
@@ -108,7 +132,23 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "compare10":
         out = v10.summary(v9.compare(args.variant, args.seeds, against=args.against, root=root, label=args.label))
     elif args.command == "copy-q0":
-        out = {"copied": str(v10.copy_control(args.seed, root=root))}
+        out = {"copied": str(v10.copy_control(args.seed, root=root) if args.round == "v10"
+                             else v11.copy_run(v11.Q0, args.seed, root=root))}
+    elif args.command == "copy-run":
+        out = {"copied": str(v11.copy_run(args.recipe, args.seed, root=root))}
+    elif args.command == "copy-identical":
+        out = v11.copy_identical_packets(args.variant, args.against, args.seed, root=root)
+    elif args.command == "compare11":
+        out = v11.summary11(v11.compare11(args.variant, args.seeds, against=args.against, root=root, label=args.label))
+    elif args.command == "product":
+        out = v11.product(args.what, x=args.x, y=args.y, arms=args.arms, name=args.name)
+        if args.what == "judge":
+            print(json.dumps({"exit_code": out}))
+            return out
+        if args.what == "estimate":
+            out = {k: v for k, v in out.items() if k != "buckets"} | {
+                "buckets": {b: {k: r[k] for k in ("n", "n_identical", "delta", "ci90", "name_errors",
+                                                  "name_error_delta_ci90")} for b, r in out["buckets"].items()}}
     elif args.command == "a2":
         from . import a2
         out = a2.blind_sheet() if args.what == "blind" else {k: v for k, v in a2.similarity().items() if k != "sets"}

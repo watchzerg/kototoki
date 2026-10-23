@@ -86,11 +86,11 @@ def cue_texts(arm: str, film: str, seed: int, root: Path = D_ROOT) -> list[str]:
     return ["" if c.id in bad else row["translations"][c.id] for c in document.cues]
 
 
-def delivery_failures(arm: str, root: Path = D_ROOT) -> dict[str, int]:
+def delivery_failures(arm: str, root: Path = D_ROOT, seeds: tuple[int, ...] = SEEDS) -> dict[str, int]:
     """Cues per film x seed that ``translate-srt`` could not deliver (0 when the SRT was written)."""
     out = {}
     for film in FILMS:
-        for seed in SEEDS:
+        for seed in seeds:
             out[f"{film}.s{seed}"] = 0 if zh_path(arm, film, seed, root).is_file() else sum(
                 not t for t in cue_texts(arm, film, seed, root))
     return out
@@ -120,8 +120,29 @@ def sample_units(units: dict[str, list[dict]], quotas: dict[str, int]) -> list[t
     return chosen
 
 
+def plan_items(units: dict[str, list[dict]], tx: dict, ty: dict, quotas: dict[str, Any], seeds: tuple[int, ...],
+               name: str, *, skip_identical: bool = False) -> tuple[list[dict], list[dict]]:
+    """(items to judge, identical units left out). The seed index rotates over the sampled units; with
+    ``skip_identical`` (v11 §2.3) a unit whose two texts are byte-identical is not judged and is listed instead
+    (``estimate`` counts it as Δ = 0)."""
+    rng = random.Random(f"v10-D-sides-{name}")
+    items, identical = [], []
+    for n, (film, i, bucket) in enumerate(sample_units(units, quotas)):
+        k = n % len(seeds)
+        x, y = tx[film][i][k], ty[film][i][k]
+        flip = rng.random() < 0.5  # drawn for every unit so the sides of a comparison do not depend on the diff
+        if skip_identical and x == y:
+            identical.append({"bucket": bucket, "film": film, "unit": i, "seed_index": k})
+            continue
+        items.append({"id": f"q{len(items) + 1:04d}", "arm": "main", "bucket": bucket, "film": film, "unit": i,
+                      "seed_index": k, "x": x, "y": y, "y_label": name.split("-vs-")[0], "x_label": name.split("-vs-")[1],
+                      "a": y if flip else x, "b": x if flip else y, "x_side": "B" if flip else "A"})
+    rng.shuffle(items)
+    return items, identical
+
+
 def plan(x_arm: str, y_arm: str, quotas: dict[str, Any], *, root: Path = D_ROOT,
-         seeds: tuple[int, ...] = SEEDS) -> Path:
+         seeds: tuple[int, ...] = SEEDS, skip_identical: bool = False) -> Path:
     """Write the judge plan for y (candidate) vs x (control); plans are written once."""
     name = f"{y_arm}-vs-{x_arm}"
     path = root / "judge" / name / "plan.json"
@@ -129,18 +150,10 @@ def plan(x_arm: str, y_arm: str, quotas: dict[str, Any], *, root: Path = D_ROOT,
         raise SystemExit(f"{path} exists; plans are written once")
     units = load_units()
     tx, ty = arm_texts(x_arm, root, seeds), arm_texts(y_arm, root, seeds)
-    rng = random.Random(f"v10-D-sides-{name}")
-    items = []
-    for n, (film, i, bucket) in enumerate(sample_units(units, quotas)):
-        k = n % len(seeds)
-        x, y = tx[film][i][k], ty[film][i][k]
-        flip = rng.random() < 0.5
-        items.append({"id": f"q{n + 1:04d}", "arm": "main", "bucket": bucket, "film": film, "unit": i,
-                      "seed_index": k, "x": x, "y": y, "y_label": y_arm, "x_label": x_arm,
-                      "a": y if flip else x, "b": x if flip else y, "x_side": "B" if flip else "A"})
-    rng.shuffle(items)
+    items, identical = plan_items(units, tx, ty, quotas, seeds, name, skip_identical=skip_identical)
     atomic_write_json(path, {"profile": A.PROFILE, "x_arm": x_arm, "y_arm": y_arm, "quota": quotas,
-                             "seeds": list(seeds), "items": items})
+                             "seeds": list(seeds), "skip_identical": skip_identical, "identical": identical,
+                             "items": items})
     return path
 
 
@@ -162,31 +175,47 @@ def _names(errors: list[dict]) -> int:
     return sum(e["category"] == "terminology" or bool(NAME_ERROR.search(e.get("note") or "")) for e in errors)
 
 
-def estimate(name: str, *, root: Path = D_ROOT) -> dict[str, Any]:
-    folder = root / "judge" / name
-    rows = A.collect(folder / "plan.json", folder / "packets")
-    report: dict[str, Any] = {"comparison": name, "judged": len(rows), "delta": "py - px (candidate - control)",
-                              "buckets": {}}
+def summarize(name: str, rows: list[dict], identical: list[dict] = ()) -> dict[str, Any]:
+    """Per bucket: Δ = py − px over the judged rows plus one Δ = 0 row per identical unit (v11 §2.3; these
+    rows count in ``n``, ``delta``, the CI90s and ``tie``, but not in the means, counts or preferences of
+    the judged rows, whose penalties are unknown)."""
+    zeros = [{"bucket": u["bucket"], "film": u["film"], "px": 0, "py": 0, "winner": "tie", "x_errors": [],
+              "y_errors": [], "identical": True} for u in identical]
+    report: dict[str, Any] = {"comparison": name, "judged": len(rows), "identical_delta_zero": len(zeros),
+                              "delta": "py - px (candidate - control); identical units enter as 0", "buckets": {}}
     for bucket in (*JUDGED, "light+heavy", "all"):
-        rs = [r for r in rows if bucket == "all" or r["bucket"] == bucket
-              or (bucket == "light+heavy" and r["bucket"] in ("light", "heavy"))]
+        pick = lambda r: bucket == "all" or r["bucket"] == bucket or (  # noqa: E731
+            bucket == "light+heavy" and r["bucket"] in ("light", "heavy"))
+        js = [r for r in rows if pick(r)]
+        rs = js + [r for r in zeros if pick(r)]
         if not rs:
             continue
-        cat = lambda side, c: sum(e["category"] == c for r in rs for e in r[side])  # noqa: E731
-        sev = lambda side, s: sum(e["severity"] == s for r in rs for e in r[side])  # noqa: E731
+        cat = lambda side, c: sum(e["category"] == c for r in js for e in r[side])  # noqa: E731
+        sev = lambda side, s: sum(e["severity"] == s for r in js for e in r[side])  # noqa: E731
         report["buckets"][bucket] = {
-            "n": len(rs), "mean_px": A.mean([r["px"] for r in rs]), "mean_py": A.mean([r["py"] for r in rs]),
+            "n": len(rs), "n_judged": len(js), "n_identical": len(rs) - len(js),
+            "mean_px": A.mean([r["px"] for r in js]), "mean_py": A.mean([r["py"] for r in js]),
             "delta": A.mean([r["py"] - r["px"] for r in rs]), "ci90": _boot(rs, seed=f"v10-D-boot-{bucket}"),
-            "pref_control": A.mean([r["winner"] == "x" for r in rs]),
-            "pref_candidate": A.mean([r["winner"] == "y" for r in rs]),
+            "delta_judged": A.mean([r["py"] - r["px"] for r in js]),
+            "pref_control": A.mean([r["winner"] == "x" for r in js]),
+            "pref_candidate": A.mean([r["winner"] == "y" for r in js]),
             "tie": A.mean([r["winner"] == "tie" for r in rs]),
             "critical": [sev("x_errors", "critical"), sev("y_errors", "critical")],
             "addition": [cat("x_errors", "addition"), cat("y_errors", "addition")],
-            "name_errors": [sum(_names(r["x_errors"]) for r in rs), sum(_names(r["y_errors"]) for r in rs)],
+            "name_errors": [sum(_names(r["x_errors"]) for r in js), sum(_names(r["y_errors"]) for r in js)],
             "name_error_delta_ci90": _boot(rs, lambda r: _names(r["y_errors"]) - _names(r["x_errors"]),
                                            seed=f"v10-D-names-{bucket}"),
             "by_film_delta": {f: A.mean([r["py"] - r["px"] for r in rs if r["film"] == f])
                               for f in sorted({r["film"] for r in rs})}}
+    return report
+
+
+def estimate(name: str, *, root: Path = D_ROOT) -> dict[str, Any]:
+    folder = root / "judge" / name
+    rows = A.collect(folder / "plan.json", folder / "packets")
+    plan_ = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
+    report = summarize(name, rows, plan_.get("identical", []))
+    report["planned"] = len(plan_["items"])
     atomic_write_json(folder / "estimate.json", report)
     return report
 
