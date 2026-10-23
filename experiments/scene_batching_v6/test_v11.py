@@ -186,6 +186,23 @@ class DevDiffTest(unittest.TestCase):
         self.assertEqual(ctrl["a"], {"accuracy": 0.0})
 
 
+class SegmentStatsTest(unittest.TestCase):
+    def test_scene_stats(self):
+        from . import seg11
+        gaps = [0.5] * 39
+        gaps[9] = 12.0
+        scene = timed_scene(gaps)
+        quiet = seg11.scene_stats(scene, 20.0)
+        self.assertEqual((quiet["affected_packs"], quiet["before_base"]), (0, quiet["before_cut"]))
+        points: list = []
+        row = seg11.scene_stats(scene, 10.0, points)
+        self.assertGreater(row["affected_packs"], 0)
+        self.assertEqual(row["packs"], quiet["packs"])
+        self.assertLess(row["before_cut"], row["before_base"])
+        self.assertTrue(points and all(p["silence_s"] >= 10.0 for p in points))
+        self.assertEqual({p["side"] for p in points} - {"before", "after"}, set())
+
+
 class NamesDiagnosisTest(unittest.TestCase):
     entries = [{"entity_ja": "古見硝子", "zh": "古见硝子", "kind": "person", "confidence": "high",
                 "forms": [{"ja": "古見さん", "zh": "古见同学"}, {"ja": "古見", "zh": "古见"}]},
