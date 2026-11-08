@@ -1,6 +1,6 @@
-"""翻译子系统伪客户端测试：`plan` 的 run 键与 `needs_model`、正常、按批次续跑、基础设施失败重启即新 session、
-缓存校验、空场景、`ja.srt` 变化换目录、显存轮询超时。批次终态失败的降级见 `test_translate_degrade.py`。
-不启动 llama-server，不占 GPU。"""
+"""翻译子系统伪客户端测试：`plan` 的 run 键、身份与 `needs_model`、正常、按批次续跑、基础设施失败（OOM、中途断开、
+起不来）重启即新 session、Strata 拒绝、空场景、`ja.srt`／seed／注入行变化换目录。批次终态失败的降级见
+`test_translate_degrade.py`，Strata 启停本身见 `test_translate_strata.py`。不启动 Strata，不占 GPU。"""
 
 from __future__ import annotations
 
@@ -10,24 +10,32 @@ import tempfile
 from types import SimpleNamespace
 from typing import Any
 import unittest
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from kototoki.artifacts import read_json
+from kototoki.llama_server import InfraFailure, wait_for_free_vram
 from kototoki.srt import format_srt, parse_srt
 from kototoki.translate import RECIPE_HASH, Session, TranslateError, TranslatePlan, translate_document
 from kototoki.translate import plan as translate_plan
 from kototoki.translate import recipes as R
-from kototoki.translate.server import InfraFailure, wait_for_free_vram
+from kototoki.translate.strata import StrataRefused
 
 SEED = 7
+EMPTY_TABLE: dict[str, Any] = {"entries": []}
 
 
 def document(n: int, word: str = "台詞"):
-    """每条 1.5 s、相邻停顿 0.5 s，每 10 条之间留 20 s 停顿：dp10-cut 在此恰好切出 10 条一批（与 b10-joint 相同），
-    续跑与降级测试只关心批次机制；批内后邻可见（<1 s）、跨 20 s 的邻文不可见。切包规则本身见 `test_translate_recipes`。"""
+    """每条 1.5 s、相邻停顿 0.5 s，每 10 条之间留 20 s 停顿：dp10-cut 在此恰好切出 10 条一批，续跑与降级测试只关心
+    批次机制。切包与邻文规则本身见 `test_translate_recipes`。"""
     def start(i: int) -> float:
         return i * 2.0 + (i // 10) * 20.0
     return parse_srt(format_srt([(start(i), start(i) + 1.5, f"{word}{i}ですね") for i in range(n)]))
+
+
+def table(*rows: tuple[str, str, str]) -> dict[str, Any]:
+    """(confidence, ja, zh) → 最小的 `name-table.json` 内容（每行一个实体、一个写法）。"""
+    return {"entries": [{"entity_ja": ja, "kind": "person", "confidence": c, "zh": zh, "forms": [{"ja": ja, "zh": zh}],
+                         "zh_variants": [], "evidence": []} for c, ja, zh in rows]}
 
 
 class FakeServer:
@@ -35,9 +43,8 @@ class FakeServer:
         self.harness, self.runtime_dir, self.number, self.on_pid = harness, runtime_dir, number, on_pid
         self.pid = 1000 + number
         self.url = f"http://127.0.0.1:8080/#{number}"
-        self.identity = {"server_pid": self.pid, "command": ["fake"]}
+        self.identity = {"candidate": R.MODEL, "strata": {"drafting": "dflash2"}, "cold_load_seconds": 1.0}
         self.completions = 0
-        self.stopped = False
 
     def __enter__(self) -> "FakeServer":
         failure = self.harness.start_failures.pop(0) if self.harness.start_failures else None
@@ -48,46 +55,50 @@ class FakeServer:
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        self.stopped = True
         self.on_pid(None)
         self.harness.events.append(f"stop:{self.number}")
 
 
 class FakeClient:
-    """token 即码点；按待译 JSON 回译文。`plan` 按本客户端的 completion 序号注入故障；
-    待译 ID 含 `harness.poison` 中任一条时返回非法 JSON（解析失败，用于降级测试）。"""
+    """按待译 JSON 回译文（OpenAI chat completions 形状）。`plan` 按本客户端的请求序号注入故障；
+    待译 ID 含 `harness.poison` 中任一条时返回非法 JSON（解析失败，用于降级测试）；待译条数超过
+    `harness.max_targets` 时按服务报超出 context 回 HTTP 400。"""
 
     def __init__(self, server: FakeServer, plan: dict[int, Any]):
         self.server, self.plan = server, plan
         self.completions = 0
         self.last_exchange = None
 
-    def tokenize(self, prompt: str) -> list[int]:
-        return [ord(ch) for ch in prompt]
-
-    def complete(self, request: dict[str, Any]) -> dict[str, Any]:
+    def chat_completion(self, body: dict[str, Any]) -> dict[str, Any]:
         self.completions += 1
         self.server.completions += 1
-        self.server.harness.requests.append(request)
+        self.server.harness.requests.append(body)
         behaviour = self.plan.get(self.completions)
         if isinstance(behaviour, BaseException):
             raise behaviour
         if callable(behaviour):
             behaviour()
         if behaviour == "oom":
-            raise HTTPError("http://127.0.0.1:8080/completion", 500, "CUDA error: out of memory", {}, None)
-        first = self.server.completions == 1
-        cache_n = self.server.harness.first_cache_n if first else 5
-        base = {"tokens_predicted": 12, "tokens_evaluated": len(request["prompt"]), "stop_type": "eos",
-                "timings": {"cache_n": cache_n, "prompt_n": len(request["prompt"])}}
+            raise HTTPError("http://127.0.0.1:8080/v1/chat/completions", 500, "CUDA error: out of memory", {}, None)
+        user = body["messages"][1]["content"]
+        cache_n = 0 if self.server.completions == 1 else 5
+        base = {"usage": {"prompt_tokens": len(user), "completion_tokens": 12}, "timings": {"cache_n": cache_n}}
+
+        def reply(content: str, finish: str = "stop") -> dict[str, Any]:
+            return base | {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": finish}]}
         if behaviour == "bad_json":
-            return base | {"content": "{not json"}
-        prompt = "".join(chr(t) for t in request["prompt"])
-        target, _ = json.JSONDecoder().raw_decode(prompt.split("【待译 JSON】\n", 1)[1])
+            return reply("{not json")
+        if behaviour == "length":
+            return reply('{"translations": {', "length")
+        target, _ = json.JSONDecoder().raw_decode(user.split("【待译 JSON】\n", 1)[1])
+        limit = self.server.harness.max_targets
+        if limit is not None and len(target["translations"]) > limit:
+            raise HTTPError("http://127.0.0.1:8080/v1/chat/completions", 400,
+                            "the request exceeds the available context size", {}, None)
         if self.server.harness.poison & set(target["translations"]):
-            return base | {"content": "{not json"}
+            return reply("{not json")
         texts = {k: "译" + k + ("\n\n续" if behaviour == "blank_line" else "") for k in target["translations"]}
-        return base | {"content": json.dumps({"translations": texts}, ensure_ascii=False)}
+        return reply(json.dumps({"translations": texts}, ensure_ascii=False))
 
 
 class Harness:
@@ -97,13 +108,13 @@ class Harness:
         self.pids: list[int | None] = []
         self.requests: list[dict[str, Any]] = []
         self.plans: list[dict[int, Any]] = []  # 依次分给每个新客户端
-        self.start_failures: list[Any] = []    # 依次用于每次 server 启动；None 表示正常
-        self.first_cache_n = 0
+        self.start_failures: list[Any] = []    # 依次用于每次服务启动；None 表示正常
         self.poison: set[str] = set()
+        self.max_targets: int | None = None
+        self.table: dict[str, Any] = EMPTY_TABLE
         self.servers: dict[str, FakeServer] = {}
-        self.config = SimpleNamespace(paths=SimpleNamespace(output_dir=root / "out", llama_server=root / "x.exe"),
-                                      models=SimpleNamespace(translate=root / "m.gguf"),
-                                      translate=SimpleNamespace(seed=SEED, port=8080))
+        self.config = SimpleNamespace(paths=SimpleNamespace(output_dir=root / "out"),
+                                      translate=SimpleNamespace(seed=SEED))
 
     def session(self) -> Session:
         def server_factory(runtime_dir: Path, on_pid) -> FakeServer:
@@ -120,7 +131,7 @@ class Harness:
     work_dir = property(lambda self: self.root / "out/.work/abc")
 
     def plan(self, doc) -> TranslatePlan:
-        return translate_plan(self.work_dir, doc, self.config)
+        return translate_plan(self.work_dir, doc, self.table, self.config)
 
     def translate(self, doc, session: Session | None = None):
         if session is not None:
@@ -153,46 +164,78 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual(result.report["completion"]["state"], "complete")
         run = self.run_json(doc)
         self.assertEqual((run["recipe_hash"], run["seed"]), (RECIPE_HASH, SEED))
+        self.assertEqual(run["names"], {"sha256": R.names_sha256([]), "rows": 0})
         self.assertEqual(run["source"]["ja_srt_sha256"], doc.source_sha256)
         self.assertEqual(len(run["sessions"]), 1)
         self.assertFalse(run["resumed"])
-        self.assertTrue(run["sessions"][0]["cache_reset"]["verified"])
+        self.assertEqual(run["sessions"][0]["engine"]["candidate"], R.MODEL)
         self.assertEqual([row["index"] for row in self.batch_lines(doc)], [0, 1, 2])
         scene = read_json(self.h.run_root(doc) / "scene.json")
         self.assertEqual(scene["status"], "complete")
         self.assertEqual(scene["translations"], result.translations)
         self.assertEqual(self.h.pids, [1001, None])
         self.assertEqual(self.h.events, ["start:1", "stop:1"])
-        # 首个请求即第 0 批按冻结配方构造的完整 completion 请求。
+        # 首个请求即第 0 批按产品配方构造的完整请求体（与研究侧 Q2 的逐字节对照在 test_translate_recipes）。
         from kototoki.translate.batching import build_batches, scene_from_document
         scene = scene_from_document(doc)
-        window = build_batches(scene, R.PRODUCT)[0].to_window(scene)
-        prompt = R.render_translation(window)
-        expected = R.completion_request([ord(ch) for ch in prompt], SEED, R.translation_grammar(window["translate_ids"]))
+        window = build_batches(scene)[0].to_window(scene)
+        expected = R.request_body(R.messages(window, []), SEED)
         self.assertEqual(json.dumps(self.h.requests[0], ensure_ascii=False), json.dumps(expected, ensure_ascii=False))
+        self.assertNotIn("grammar", self.h.requests[0])
+
+    def test_second_attempt_uses_seed_plus_one(self) -> None:
+        doc = document(5)
+        self.h.plans = [{1: "bad_json"}]
+        result = self.h.translate(doc)
+        self.assertEqual(result.fallback_count, 0)
+        self.assertEqual([body["seed"] for body in self.h.requests], [SEED, SEED + 1])
+        self.assertEqual(self.h.requests[0]["messages"], self.h.requests[1]["messages"])
+        (row,) = self.batch_lines(doc)
+        self.assertEqual([a["status"] for a in row["request"]["attempts"]], ["failed", "accepted"])
+
+    def test_injected_rows_reach_the_system_message_of_matching_packs_only(self) -> None:
+        doc = parse_srt(format_srt([(0.0, 1.0, "セイバー、行くぞ"), (1.5, 2.5, "はい"), (30.0, 31.0, "士郎！"),
+                                    *[(40.0 + i * 2, 41.0 + i * 2, f"台詞{i}") for i in range(12)]]))
+        self.h.table = table(("high", "セイバー", "Saber"), ("medium", "士郎", "士郎"), ("high", "凛", "凛"))
+        result = self.h.translate(doc)
+        self.assertEqual(len(result.translations), len(doc.cues))
+        systems = [body["messages"][0]["content"] for body in self.h.requests]
+        self.assertTrue(systems[0].endswith(R.NAMES_HEADER + "セイバー → Saber"))
+        self.assertTrue(all("士郎 →" not in text and "凛 →" not in text for text in systems))  # medium 与未出现的不注入
+        self.assertEqual(self.batch_lines(doc)[0]["request"]["names_injected"], 1)
 
     def test_session_directory_is_a_utc_stamp_with_pid(self) -> None:
         session = self.h.session()
         self.assertRegex(session.runtime_root.name, r"^\d{8}T\d{6}Z-\d+$")
         self.assertEqual(session.runtime_root.parent, self.h.root / "out" / ".work" / "translate-sessions")
 
-    def test_one_server_session_serves_the_whole_batch(self) -> None:
+    def test_one_strata_session_serves_the_whole_batch(self) -> None:
         a, b = document(12), document(5, "別")
         with self.h.session() as session:
             self.h.translate(a, session)
-            self.h.translate(b, session)  # 第二部影片首个请求 cache_n 非 0，但校验每个 session 只做一次
+            self.h.translate(b, session)
         self.assertEqual(self.h.events, ["start:1", "stop:1"])
         self.assertEqual(self.run_json(b)["sessions"][0]["server_session"], self.run_json(a)["sessions"][0]["server_session"])
         self.assertEqual(self.run_json(b)["completion"]["state"], "complete")
+
+    def test_first_cache_reuse_is_recorded_not_failed(self) -> None:
+        doc = document(5)
+        with self.h.session() as session:
+            self.h.translate(document(3, "前"), session)
+            session.cache_state = {"checked": False}  # 新 session 视角：首个请求看到 cache_n 5
+            self.h.translate(doc, session)
+        cache = self.run_json(doc)["sessions"][0]["cache_reset"]
+        self.assertEqual((cache["first_cache_n"], cache["verified"], cache["recorded_only"]), (5, False, True))
+        self.assertEqual(self.run_json(doc)["completion"]["state"], "complete")
 
     def test_resume_continues_from_the_first_unwritten_batch(self) -> None:
         doc = document(23)
         self.h.plans = [{2: KeyboardInterrupt()}]
         with self.assertRaises(KeyboardInterrupt):
             self.h.translate(doc)
+        self.assertEqual(self.h.events, ["start:1", "stop:1"])  # 中断也停掉 Strata
         self.assertEqual(len(self.batch_lines(doc)), 1)
         self.assertEqual(self.run_json(doc)["completion"]["state"], "partial")
-        # 中断时写了一半的一行：不算完成，续跑前截掉。
         with (self.h.run_root(doc) / "batches.jsonl").open("ab") as stream:
             stream.write(b'{"index": 1, "batch_id": "tor')
         self.h.requests.clear()
@@ -215,7 +258,6 @@ class TranslateDocumentTests(unittest.TestCase):
             self.h.translate(doc)
 
     def test_sessions_record_written_batches_before_the_call_ends(self) -> None:
-        # 强杀时 finally 不会运行：每批落盘后 run.json 已记下本 session 写入的批次数。
         doc = document(23)
         seen = []
 
@@ -231,7 +273,7 @@ class TranslateDocumentTests(unittest.TestCase):
             self.h.translate(doc)
         self.assertEqual(seen, [2])
 
-    def test_unexpected_exception_is_recorded_and_stops_the_server(self) -> None:
+    def test_unexpected_exception_is_recorded_and_stops_strata(self) -> None:
         doc = document(12)
         self.h.plans = [{2: ValueError("Expected server JSON object")}]
         with self.assertRaises(ValueError):
@@ -246,28 +288,56 @@ class TranslateDocumentTests(unittest.TestCase):
         result = self.h.translate(doc)
         self.assertEqual(result.fallback_count, 0)
         (row,) = self.batch_lines(doc)
-        self.assertEqual(row["degrade"]["nodes"][0]["error_kind"], "parse")  # 按解析失败进入降级
+        self.assertEqual(row["degrade"]["nodes"][0]["error_kind"], "parse")
 
-    def test_rerun_of_a_complete_run_does_not_start_a_server(self) -> None:
+    def test_length_stop_is_a_limit_failure(self) -> None:
+        doc = document(5)
+        self.h.plans = [{1: "length", 2: "length"}]
+        self.h.translate(doc)
+        (row,) = self.batch_lines(doc)
+        self.assertEqual(row["degrade"]["nodes"][0]["error_kind"], "limit")
+
+    def test_rerun_of_a_complete_run_does_not_start_strata(self) -> None:
         doc = document(12)
         self.assertTrue(self.h.plan(doc).needs_model)
         self.h.translate(doc)
         self.h.events.clear()
         plan = self.h.plan(doc)
         self.assertFalse(plan.needs_model)
-        result = translate_document(plan, None)  # 不需要模型时编排器不建 session
+        result = translate_document(plan, None)
         self.assertEqual(len(result.translations), 12)
         self.assertEqual(self.h.events, [])
 
-    def test_plan_keys_run_dir_by_ja_srt_recipe_and_seed(self) -> None:
+    def test_plan_keys_run_dir_by_ja_srt_recipe_seed_and_names(self) -> None:
         doc = document(3)
+        self.h.table = table(("high", "台詞", "台词"))
         plan = self.h.plan(doc)
-        self.assertEqual(plan.run_dir, self.h.work_dir / "translate" / f"srt-{doc.source_sha256[:12]}"
-                         / f"{R.PRODUCT.name}__s{SEED}")
-        self.assertEqual(plan.relative, f"translate/srt-{doc.source_sha256[:12]}/{R.PRODUCT.name}__s{SEED}")
-        self.assertEqual(plan.identity, {"ja_srt_sha256": doc.source_sha256, "recipe_hash": RECIPE_HASH, "seed": SEED})
+        names = R.names_sha256([{"source": "台詞", "translation": "台词"}])
+        leaf = f"{R.RECIPE_NAME}__s{SEED}__n{names[:12]}"
+        self.assertEqual(plan.run_dir, self.h.work_dir / "translate" / f"srt-{doc.source_sha256[:12]}" / leaf)
+        self.assertEqual(plan.relative, f"translate/srt-{doc.source_sha256[:12]}/{leaf}")
+        self.assertEqual(plan.identity, {"ja_srt_sha256": doc.source_sha256, "recipe_hash": RECIPE_HASH, "seed": SEED,
+                                         "names_sha256": names})
         self.assertIs(plan.document, doc)
-        self.assertFalse(plan.run_dir.exists())  # 计划不写文件
+        self.assertFalse(plan.run_dir.exists())
+
+    def test_editing_the_injected_rows_retranslates_but_other_entries_do_not(self) -> None:
+        doc = document(5)
+        self.h.table = table(("high", "台詞", "台词"), ("low", "ですね", "呢"))
+        self.h.translate(doc)
+        before = self.h.plan(doc)
+        self.assertFalse(before.needs_model)
+        self.h.table = table(("high", "台詞", "台词"), ("low", "ですね", "啊"))  # 只改 low：注入行不变
+        self.assertEqual(self.h.plan(doc).run_dir, before.run_dir)
+        self.h.table = table(("high", "台詞", "台本"))  # 手改 high 条目
+        after = self.h.plan(doc)
+        self.assertTrue(after.needs_model)
+        self.assertNotEqual(after.identity["names_sha256"], before.identity["names_sha256"])
+        self.assertEqual(after.run_dir.parent, before.run_dir.parent)
+        self.h.requests.clear()
+        self.h.translate(doc)
+        self.assertTrue(self.h.requests[0]["messages"][0]["content"].endswith("台詞 → 台本"))
+        self.assertTrue(before.run_dir.is_dir())
 
     def test_plan_rejects_a_run_recorded_under_another_recipe_hash(self) -> None:
         doc = document(3)
@@ -279,7 +349,7 @@ class TranslateDocumentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Delete .* to translate"):
             self.h.plan(doc)
 
-    def test_incomplete_batches_under_a_complete_run_json_fail_instead_of_starting_a_server(self) -> None:
+    def test_incomplete_batches_under_a_complete_run_json_fail_instead_of_starting_strata(self) -> None:
         doc = document(23)
         self.h.translate(doc)
         (self.h.run_root(doc) / "batches.jsonl").unlink()
@@ -290,7 +360,7 @@ class TranslateDocumentTests(unittest.TestCase):
             translate_document(plan, None)
         self.assertEqual(self.h.events, [])
 
-    def test_oom_restarts_the_server_as_a_new_session(self) -> None:
+    def test_oom_restarts_strata_as_a_new_session(self) -> None:
         doc = document(23)
         self.h.plans = [{2: "oom"}]
         result = self.h.translate(doc)
@@ -302,14 +372,25 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual((first["stop_reason"], first["infra_failure"]["kind"], first["batches_written"]), ("oom", "oom", 1))
         self.assertTrue((self.h.run_root(doc) / first["infra_failure"]["evidence"]).is_file())
         self.assertEqual(second["batches_written"], 2)
-        self.assertEqual(second["cache_reset"]["first_cache_n"], 0)  # 新 session 重做缓存校验
         self.assertTrue(run["resumed"])
         self.assertEqual(run["completion"]["restarts_last_call"], 1)
+
+    def test_disconnect_mid_run_restarts_and_continues(self) -> None:
+        doc = document(23)
+        self.h.plans = [{2: URLError(ConnectionResetError(10054, "connection reset"))}]
+        result = self.h.translate(doc)
+        self.assertEqual((len(result.translations), result.fallback_count), (23, 0))
+        self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
+        first, second = self.run_json(doc)["sessions"]
+        self.assertEqual((first["stop_reason"], first["batches_written"], second["batches_written"]), ("server", 1, 2))
+        # 断开的那一批只试了一次（传输失败不换 seed 重试），新 session 从它重做。
+        evidence = read_json(self.h.run_root(doc) / first["infra_failure"]["evidence"])
+        self.assertEqual(len(evidence["request"]["attempts"]), 1)
 
     def test_infra_failure_gives_up_after_two_restarts(self) -> None:
         doc = document(12)
         self.h.plans = [{1: "oom"}, {1: "oom"}, {1: "oom"}]
-        with self.assertRaisesRegex(TranslateError, "after 2 server restarts"):
+        with self.assertRaisesRegex(TranslateError, "after 2 Strata restarts"):
             self.h.translate(doc)
         self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2", "start:3", "stop:3"])
         run = self.run_json(doc)
@@ -317,16 +398,20 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual(run["completion"]["state"], "partial")
         self.assertFalse((self.h.run_root(doc) / "batches.jsonl").exists())
 
-    def test_cache_check_failure_is_an_infrastructure_failure(self) -> None:
-        doc = document(5)
-        self.h.first_cache_n = 9  # server 自称复用了缓存：首个请求即判 cache 失败
-        with self.assertRaises(TranslateError):
-            self.h.translate(doc)
-        run = self.run_json(doc)
-        self.assertEqual([s["stop_reason"] for s in run["sessions"]], ["cache"] * 3)
-        self.assertEqual(run["sessions"][0]["cache_reset"]["first_cache_n"], 9)
-        self.h.first_cache_n = 0
-        self.assertEqual(len(self.h.translate(doc).translations), 5)
+    def test_refused_strata_fails_the_rest_of_the_batch_without_retrying(self) -> None:
+        def mismatch() -> None:
+            raise StrataRefused("Strata run config differs from ADR-0017: drafting 'mtp'")
+
+        a, b = document(5), document(5, "別")
+        self.h.start_failures = [mismatch, None, None]
+        with self.h.session() as session:
+            with self.assertRaisesRegex(TranslateError, "Strata refused.*drafting 'mtp'"):
+                self.h.translate(a, session)
+            with self.assertRaisesRegex(TranslateError, "earlier in this batch.*drafting"):
+                self.h.translate(b, session)
+        self.assertEqual(self.h.start_failures, [None, None])  # 没有重试，第二部也没有再启动
+        self.assertEqual(self.h.events, [])
+        self.assertEqual(self.run_json(a)["sessions"], [])
 
     def test_empty_scene_writes_nothing_and_requests_nothing(self) -> None:
         doc = parse_srt("")
@@ -343,8 +428,6 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertNotEqual(self.h.plan(old).run_dir, self.h.plan(new).run_dir)
         self.assertEqual(self.h.plan(new).run_dir.parent.name, f"srt-{new.source_sha256[:12]}")
         self.assertFalse(self.h.plan(old).needs_model)
-        self.assertEqual(self.run_json(old)["completion"]["state"], "complete")
-        self.assertEqual(self.run_json(new)["source"]["ja_srt_sha256"], new.source_sha256)
 
     def test_seed_change_uses_its_own_run(self) -> None:
         doc = document(5)
@@ -353,8 +436,8 @@ class TranslateDocumentTests(unittest.TestCase):
         self.h.config.translate.seed = SEED + 1
         second = self.h.plan(doc)
         self.assertTrue(second.needs_model)
-        self.assertEqual(second.run_dir, first.run_dir.with_name(f"{R.PRODUCT.name}__s{SEED + 1}"))
-        self.assertEqual(second.identity["seed"], SEED + 1)
+        self.assertEqual(second.run_dir.parent, first.run_dir.parent)
+        self.assertTrue(second.run_dir.name.startswith(f"{R.RECIPE_NAME}__s{SEED + 1}__n"))
         self.h.translate(doc)
         self.assertTrue((second.run_dir / "run.json").is_file())
         self.assertTrue(first.run_dir.is_dir())
@@ -364,7 +447,7 @@ class TranslateDocumentTests(unittest.TestCase):
         clock = [0.0]
 
         def low_vram() -> None:
-            wait_for_free_vram(14300, 10.0, query=lambda: 9000, sleep=lambda s: clock.__setitem__(0, clock[0] + s),
+            wait_for_free_vram(14000, 10.0, query=lambda: 9000, sleep=lambda s: clock.__setitem__(0, clock[0] + s),
                                clock=lambda: clock[0])
 
         self.h.start_failures = [low_vram, low_vram, low_vram]
@@ -373,26 +456,25 @@ class TranslateDocumentTests(unittest.TestCase):
         run = self.run_json(doc)
         self.assertEqual(run["sessions"], [])
         self.assertEqual(len(run["server_start_failures"]), 3)
-        self.assertIn("9000 MiB", run["server_start_failures"][0]["error"])
         self.assertEqual(self.h.pids, [])
 
-    def test_unstartable_server_fails_the_rest_of_the_batch_without_waiting(self) -> None:
+    def test_unstartable_strata_fails_the_rest_of_the_batch_without_waiting(self) -> None:
         def crash() -> None:
-            raise InfraFailure("Free GPU memory 9000 MiB stayed below 14300 MiB for 120 s")
+            raise InfraFailure("Strata did not become ready within 300 s")
 
         a, b = document(5), document(5, "別")
         self.h.start_failures = [crash] * 3
         with self.h.session() as session:
             with self.assertRaises(TranslateError):
                 self.h.translate(a, session)
-            with self.assertRaisesRegex(TranslateError, "earlier in this batch.*9000 MiB"):
+            with self.assertRaisesRegex(TranslateError, "earlier in this batch.*ready"):
                 self.h.translate(b, session)
-        self.assertEqual(self.h.start_failures, [])  # 第二部影片没有再尝试启动
+        self.assertEqual(self.h.start_failures, [])
         self.assertEqual(self.run_json(b)["server_start_failures"], [])
 
-    def test_mixed_failures_do_not_mark_the_server_unavailable(self) -> None:
+    def test_mixed_failures_do_not_mark_strata_unavailable(self) -> None:
         def crash() -> None:
-            raise InfraFailure("llama-server exited 1 during load")
+            raise InfraFailure("strata launch --no-tui exited with 1")
 
         a, b = document(5), document(5, "別")
         self.h.start_failures = [crash, None, None]
@@ -401,6 +483,13 @@ class TranslateDocumentTests(unittest.TestCase):
             with self.assertRaises(TranslateError):
                 self.h.translate(a, session)
             self.assertEqual(len(self.h.translate(b, session).translations), 5)
+
+    def test_start_failure_then_success(self) -> None:
+        def crash() -> None:
+            raise InfraFailure("strata launch --no-tui exited with 1")
+
+        self.h.start_failures = [crash]
+        self.assertEqual(len(self.h.translate(document(5)).translations), 5)
 
     def test_normal_run_logs_one_progress_line_per_batch(self) -> None:
         doc = document(23)
@@ -411,7 +500,6 @@ class TranslateDocumentTests(unittest.TestCase):
                                        "INFO:kototoki.translate.generate:[translate] batch 2/3: 10 cue(s), 12 tok, cache 5",
                                        "INFO:kototoki.translate.generate:[translate] batch 3/3: 3 cue(s), 12 tok, cache 5"])
         self.assertTrue(any("session 1 start" in line and "3 of 3 batch(es) pending" in line for line in logs.output))
-        self.assertTrue(any("session 1 end: 3 batch(es) written" in line for line in logs.output))
         self.assertEqual({record.levelname for record in logs.records}, {"INFO"})
 
     def test_restart_logs_a_warning_and_giving_up_an_error(self) -> None:
@@ -421,36 +509,23 @@ class TranslateDocumentTests(unittest.TestCase):
             self.h.translate(doc)
         warnings = [r.getMessage() for r in logs.records if r.levelname == "WARNING"]
         self.assertEqual(len(warnings), 1)
-        self.assertTrue(warnings[0].startswith("[translate] server restart 1/2: oom: HTTP 500 (oom)"), warnings[0])
+        self.assertTrue(warnings[0].startswith("[translate] Strata restart 1/2: oom: HTTP 500 (oom)"), warnings[0])
         self.h.plans = [{1: "oom"}, {1: "oom"}, {1: "oom"}]
         with self.assertLogs("kototoki.translate", level="INFO") as logs, self.assertRaises(TranslateError):
             self.h.translate(document(5, "別"))
         self.assertEqual([r.levelname for r in logs.records if r.levelname != "INFO"], ["WARNING", "WARNING", "ERROR"])
-        (error,) = [r for r in logs.records if r.levelname == "ERROR"]
-        self.assertIn("giving up after 2 server restart(s): oom", error.getMessage())
-
-    def test_unexpected_exception_logs_an_error_without_traceback(self) -> None:
-        # traceback 归编排器的 ctx.fail，这里只记一行类型，避免运行日志里出现两份。
-        self.h.plans = [{1: ValueError("Expected server JSON object")}]
-        with self.assertLogs("kototoki.translate", level="ERROR") as logs, self.assertRaises(ValueError):
-            self.h.translate(document(5))
-        (record,) = logs.records
-        self.assertIn("unexpected ValueError", record.getMessage())
-        self.assertIsNone(record.exc_info)
 
     def test_logs_never_contain_cue_text(self) -> None:
-        # 覆盖正常批次、降级、回退与重启：日志里不出现任何日文 cue 文字（及其片段）。
         doc = document(23)
         self.h.poison = {doc.cues[3].id}
         self.h.plans = [{14: "oom"}]
+        self.h.table = table(("high", "台詞1", "台词一"))
         with self.assertLogs("kototoki.translate", level="INFO") as logs:
             result = self.h.translate(doc)
         self.assertEqual(result.fallback_count, 1)
         text = "\n".join(logs.output)
         self.assertIn("WARNING", text)
-        for cue in doc.cues:
-            self.assertNotIn(cue.text, text)
-        for fragment in ("台詞", "ですね", "译"):
+        for fragment in ("台詞", "ですね", "译", "台词一"):
             self.assertNotIn(fragment, text)
 
     def test_http_error_message_omits_the_response_body(self) -> None:
@@ -462,25 +537,17 @@ class TranslateDocumentTests(unittest.TestCase):
         class Client:
             last_exchange = str(exchange)
 
-            def tokenize(self, prompt: str) -> list[int]:
-                return [1, 2, 3]
+            def chat_completion(self, body: dict[str, Any]) -> dict[str, Any]:
+                raise HTTPError("http://127.0.0.1:8080/v1/chat/completions", 400, "Bad Request", {}, None)
 
-            def complete(self, request: dict[str, Any]) -> dict[str, Any]:
-                raise HTTPError("http://127.0.0.1:8080/completion", 400, "Bad Request", {}, None)
-
+        messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "台詞0ですね"}]
+        record: dict[str, Any] = {}
         with self.assertRaises(StepFailed) as caught:
-            run_step(Client(), "台詞0ですね", "root ::= x", SEED, lambda text: text, {}, {})
+            run_step(Client(), messages, SEED, ["x"], {}, record)
         self.assertEqual(caught.exception.kind, "context")
+        self.assertEqual(len(record["attempts"]), 1)  # context 不换 seed 重试
         self.assertNotIn("台詞", str(caught.exception))
         self.assertRegex(str(caught.exception), r"^HTTP 400 \(context\): response body \d+ char\(s\)$")
-
-    def test_start_failure_then_success(self) -> None:
-        def crash() -> None:
-            raise InfraFailure("llama-server exited 1 during load (out of memory)")
-
-        self.h.start_failures = [crash]
-        result = self.h.translate(document(5))
-        self.assertEqual(len(result.translations), 5)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,11 @@
     → probe/extract（线程池，整批完成）
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
     → ja-cues（进程内）
-    → names（进程内，整批一个 Qwen session；有非零条目的 `ja.srt` 要建表时才取 GPU 锁、建 session；`[names] enabled`）
-    → translate（进程内，整批一个 session；翻译子系统的计划说要模型时才取 GPU 锁、建 session）
-    → 专名替换（发布时的纯函数，写 `names-apply.json`）→ 三份 SRT 一起发布
+    → names（进程内，整批一个 Qwen llama-server session；有非零条目的 `ja.srt` 要建表时才取 GPU 锁、建 session；
+      整批建完即停 server）
+    → translate（进程内，整批一个 Strata session；翻译子系统的计划说要模型时才建，启动前等 names 的显存释放，
+      整批结束、出错或被中断都 `strata launch --stop`）
+    → 三份 SRT 一起发布
 
 阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
 某阶段跑完再 `advance` 继续核对；产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。GPU 阶段产物
@@ -17,7 +19,7 @@
 完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）。
 
 锁：启动即取 `<output_dir>/.work/lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
-锁文件记录编排器、当前 worker 与 llama-server（names 或 translate）的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
+锁文件记录编排器、当前 worker 与服务进程（names 的 llama-server 或翻译的 Strata）的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
 锁、Job Object 与进程身份取自 `experiments/translation_v3/procs.py`（复制，不导入）。
 """
 
@@ -352,7 +354,6 @@ class Summary:
     no_speech: list[str] = field(default_factory=list)     # VAD 为空，发布零条目 SRT
     failed: dict[str, str] = field(default_factory=dict)   # 相对路径 → 失败阶段
     fallback_cues: int = 0                                 # 译文回退为日文的 cue 数
-    name_replacements: int = 0                             # 发布时专名替换的处数（`names-apply.json` 的 changes 条数）
 
     @property
     def exit_code(self) -> int:
@@ -666,18 +667,6 @@ def names_batch(ctx: _Context, batch: list[VideoFile]) -> None:
     logger.info(f"[names] end: {time.perf_counter() - started:.1f}s")
 
 
-def apply_names(video: VideoFile, document: srt.SourceDocument, translations: Mapping[str, str]
-                ) -> tuple[dict[str, str], int]:
-    """按 `name-table.json` 替换译文，写审计文件 `names-apply.json`；返回替换后的译文与替换处数。"""
-    assert video.plan is not None
-    stored = artifacts.read_json(video.work_dir / artifacts.NAME_TABLE)
-    table = {key: value for key, value in stored.items() if key != "identity"}
-    result = _names_module().apply(table, document, translations)
-    artifacts.write_artifact(video.work_dir / artifacts.NAMES_APPLY, video.plan.identities["names_apply"],
-                             {"summary": result.summary, "changes": result.changes, "unresolved": result.unresolved})
-    return dict(result.translations), len(result.changes)
-
-
 def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[dict[str, str], int, str]]:
     """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 回退条数, run 目录相对工作目录)。
 
@@ -717,12 +706,8 @@ def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[di
     return results
 
 
-def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate_dir: str, fallback: int,
-            replacements: int | None = None) -> bool:
-    """三份 SRT 先写到工作目录暂存，`publish_blockers` 放行 → `record_published` → 移动；成功后删 failure.json。
-
-    `replacements` 是发布时专名替换的处数；names 停用或无语音时为 None。
-    """
+def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate_dir: str, fallback: int) -> bool:
+    """三份 SRT 先写到工作目录暂存，`publish_blockers` 放行 → `record_published` → 移动；成功后删 failure.json。"""
     staging = video.work_dir / PUBLISH_DIR
     staged = {kind: staging / path.name for kind, path in video.finals.items()}
     for kind, path in staged.items():
@@ -744,9 +729,8 @@ def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate
     (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
     ctx.summary.published.append(video.relative)
     ctx.summary.fallback_cues += fallback
-    ctx.summary.name_replacements += replacements or 0
     logger.info(f"[publish] {video.relative}" + (" (no speech)" if video.no_speech else "")
-                + (f", {replacements} name replacement(s)" if replacements is not None else ""))
+                + (f", {fallback} fallback cue(s)" if fallback else ""))
     return True
 
 
@@ -874,19 +858,21 @@ def _run(ctx: _Context) -> None:
             elif stage == "translate" and video.relative in translated:
                 translations, fallback, translate_dir = translated[video.relative]
                 document = video.plan.translate.document
-                replacements = None
-                if config.names.enabled:
-                    translations, replacements = apply_names(video, document, translations)
                 texts = {"ja": (video.work_dir / JA_SRT).read_text(encoding="utf-8"),
                          "zh": srt.render_srt(document, translations),
                          "ja-zh": _merge_module().merge(document, translations) if document.cues else ""}
-                publish(ctx, video, texts, translate_dir, fallback, replacements)
+                publish(ctx, video, texts, translate_dir, fallback)
+            elif stage == "done" and video.relative not in summary.up_to_date:
+                # 本次重做了上游（如删掉的表重建后注入行不变），推进后已无需重新发布：与开头的核对同样计入。
+                summary.up_to_date.append(video.relative)
+                (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
+                logger.info(f"[scan] up to date: {video.relative}")
         except Exception as error:
             ctx.fail(video, "publish", error)
 
     logger.info(f"[summary] {summary.total} video(s): {len(summary.published)} published "
                 f"({len(summary.no_speech)} no speech), {len(summary.up_to_date)} up to date, "
                 f"{len(summary.failed)} failed, {len(summary.blocked)} blocked, {len(summary.unstable)} unstable, "
-                f"{summary.fallback_cues} fallback cue(s), {summary.name_replacements} name replacement(s)")
+                f"{summary.fallback_cues} fallback cue(s)")
     for rel, stage in summary.failed.items():
         logger.info(f"[summary] failed at {stage}: {rel}")

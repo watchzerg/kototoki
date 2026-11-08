@@ -1,6 +1,6 @@
 """翻译降级伪客户端测试（票据 09）：三级降级、单条回退、超出 context 进入降级、续跑识别已降级的节点与批次、
 回退终态、改 seed 重试、降级中途的基础设施失败、`report.json`／`scene.json` 内容，以及经编排器写进
-`published.json` 的回退计数。不启动 llama-server，不占 GPU。"""
+`published.json` 的回退计数。不启动 Strata，不占 GPU。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import tempfile
 import types
 from typing import Any
 import unittest
-from unittest import mock
 
 from kototoki import artifacts
 from kototoki.artifacts import read_json
@@ -40,34 +39,36 @@ class DegradeTests(unittest.TestCase):
         """每个请求的待译 ID（从第 `start` 个请求起）。"""
         result = []
         for request in self.h.requests[start:]:
-            prompt = "".join(chr(t) for t in request["prompt"])
-            target, _ = json.JSONDecoder().raw_decode(prompt.split("【待译 JSON】\n", 1)[1])
+            user = request["messages"][1]["content"]
+            target, _ = json.JSONDecoder().raw_decode(user.split("【待译 JSON】\n", 1)[1])
             result.append(list(target["translations"]))
         return result
 
     def test_children_split_halves_then_singles_with_the_batch_neighbour_rule(self) -> None:
         scene = scene_from_document(document(23))
         ids = scene.ids
-        batch = build_batches(scene, R.PRODUCT)[1]  # ids[10:20]；与前一批之间隔 20 s，前邻不可见
-        self.assertEqual((batch.before_ids, batch.after_ids), ((), ()))
-        a, b = children(scene, batch, 0, R.PRODUCT)
+        batch = build_batches(scene)[1]  # ids[10:20]；wide-context-v1 只按条数取邻文，不看停顿
+        self.assertEqual((batch.before_ids, batch.after_ids), (tuple(ids[0:10]), tuple(ids[20:23])))
+        a, b = children(scene, batch, 0)
         self.assertEqual((a.batch_id, b.batch_id), (batch.batch_id + ".a", batch.batch_id + ".b"))
-        self.assertEqual((a.target_ids, a.before_ids, a.after_ids), (tuple(ids[10:15]), (), (ids[15],)))
-        self.assertEqual((b.target_ids, b.before_ids, b.after_ids), (tuple(ids[15:20]), (ids[14],), ()))
-        singles = children(scene, a, 1, R.PRODUCT)
+        self.assertEqual((a.target_ids, a.before_ids, a.after_ids),
+                         (tuple(ids[10:15]), tuple(ids[0:10]), tuple(ids[15:20])))
+        self.assertEqual((b.target_ids, b.before_ids, b.after_ids),
+                         (tuple(ids[15:20]), tuple(ids[0:15]), tuple(ids[20:23])))
+        singles = children(scene, a, 1)
         self.assertEqual([s.batch_id for s in singles], [f"{a.batch_id}.{n}" for n in range(1, 6)])
         self.assertEqual((singles[0].before_ids, singles[0].target_ids, singles[0].after_ids),
-                         ((), (ids[10],), (ids[11],)))
+                         (tuple(ids[0:10]), (ids[10],), tuple(ids[11:16])))
         self.assertEqual((singles[1].before_ids, singles[1].target_ids, singles[1].after_ids),
-                         ((ids[10],), (ids[11],), (ids[12],)))
-        self.assertEqual(children(scene, singles[0], 2, R.PRODUCT), [])
-        last = build_batches(scene, R.PRODUCT)[2]  # 3 条：前半 2 条
-        self.assertEqual([len(c.target_ids) for c in children(scene, last, 0, R.PRODUCT)], [2, 1])
-        self.assertEqual(children(scene, last, 0, R.PRODUCT)[1].after_ids, ())
+                         (tuple(ids[0:11]), (ids[11],), tuple(ids[12:17])))
+        self.assertEqual(children(scene, singles[0], 2), [])
+        last = build_batches(scene)[2]  # 3 条：前半 2 条
+        self.assertEqual([len(c.target_ids) for c in children(scene, last, 0)], [2, 1])
+        self.assertEqual(children(scene, last, 0)[1].after_ids, ())
         # dp10-cut 的批次不一定满 10 条：7 条拆成 4＋3。
         scene = scene_from_document(document(7))
-        (batch,) = build_batches(scene, R.PRODUCT)
-        self.assertEqual([len(c.target_ids) for c in children(scene, batch, 0, R.PRODUCT)], [4, 3])
+        (batch,) = build_batches(scene)
+        self.assertEqual([len(c.target_ids) for c in children(scene, batch, 0)], [4, 3])
 
     def test_three_level_degrade_and_single_fallback(self) -> None:
         doc = document(12)
@@ -81,13 +82,11 @@ class DegradeTests(unittest.TestCase):
         # 原批次 2 次、.a 2 次、.a.1–.a.5（.a.4 两次）、.b 1 次，然后第 1 批。
         self.assertEqual(self.targets(), [ids[0:10]] * 2 + [ids[0:5]] * 2
                          + [[ids[0]], [ids[1]], [ids[2]], [ids[3]], [ids[3]], [ids[4]], ids[5:10], ids[10:12]])
-        self.assertEqual(self.h.events, ["start:1", "stop:1"])  # 终态失败不重启 server
-        # 子批次请求与按冻结配方构造的请求逐字节相同（同一 seed）。
+        self.assertEqual(self.h.events, ["start:1", "stop:1"])  # 终态失败不重启 Strata
+        # 子批次请求与按 Q2 规则对子批次窗口构造的请求逐字节相同（同一 seed）。
         scene = scene_from_document(doc)
-        half = children(scene, build_batches(scene, R.PRODUCT)[0], 0, R.PRODUCT)[1]
-        window = half.to_window(scene)
-        prompt = R.render_translation(window)
-        expected = R.completion_request([ord(ch) for ch in prompt], SEED, R.translation_grammar(window["translate_ids"]))
+        half = children(scene, build_batches(scene)[0], 0)[1]
+        expected = R.request_body(R.messages(half.to_window(scene), []), SEED)
         self.assertEqual(json.dumps(self.h.requests[10], ensure_ascii=False), json.dumps(expected, ensure_ascii=False))
 
         row = self.lines(doc, "batches.jsonl")[0]
@@ -144,12 +143,10 @@ class DegradeTests(unittest.TestCase):
 
     def test_context_overflow_degrades_after_one_attempt(self) -> None:
         doc = document(10)
-        scene = scene_from_document(doc)
-        full = len(R.render_translation(build_batches(scene, R.PRODUCT)[0].to_window(scene)))
-        with mock.patch.object(R, "MAX_INPUT_TOKENS", full - 1):
-            result = self.h.translate(doc)
+        self.h.max_targets = 9  # 服务对 10 条的原批次回 HTTP 400（超出 context）
+        result = self.h.translate(doc)
         self.assertEqual(result.fallback_count, 0)
-        self.assertEqual(len(self.h.requests), 2)  # 原批次未发出 completion；两个半批各一次
+        self.assertEqual([len(t) for t in self.targets()], [10, 5, 5])  # 原批次不换 seed 重试，两个半批各一次
         node = self.lines(doc, "batches.jsonl")[0]["degrade"]["nodes"][0]
         self.assertEqual((node["error_kind"], node["attempts"]), ("context", 1))
 
@@ -220,7 +217,7 @@ class DegradeTests(unittest.TestCase):
         self.h.poison = set()
         self.h.events.clear()
         self.h.requests.clear()
-        again = self.h.translate(doc)  # 同配方同 seed：不启动 server、不再尝试
+        again = self.h.translate(doc)  # 同配方同 seed 同注入行：不启动 Strata、不再尝试
         self.assertEqual((again.fallback_count, again.translations), (1, first.translations))
         self.assertEqual((self.h.events, self.h.requests), ([], []))
         self.assertEqual(again.report["fallback"], first.report["fallback"])
@@ -248,7 +245,7 @@ class DegradeTests(unittest.TestCase):
 
 
 class PublishedFallbackCountTests(JobCase):
-    """编排器 + 真实 `translate_document`（伪 server／伪客户端）：回退计数进 `published.json` 与控制台汇总。"""
+    """编排器 + 真实 `translate_document`（伪 Strata／伪客户端）：回退计数进 `published.json` 与控制台汇总。"""
 
     _translate_plan = staticmethod(generate.plan)  # 真实计划：run 目录与 needs_model 由子系统决定
 
@@ -265,7 +262,8 @@ class PublishedFallbackCountTests(JobCase):
         self.assertEqual((summary.published, summary.fallback_cues), (["a.mkv"], 1))
         record = artifacts.read_published(self.work_dir("a.mkv"))
         self.assertEqual(record["sources"]["translate_fallback_cues"], 1)
-        self.assertTrue(record["translate_dir"].endswith(f"/{R.PRODUCT.name}__s{self.config.translate.seed}"))
+        self.assertRegex(record["translate_dir"],
+                         rf"/{R.RECIPE_NAME}__s{self.config.translate.seed}__n[0-9a-f]{{12}}$")
         report = read_json(self.work_dir("a.mkv") / record["translate_dir"] / "report.json")
         self.assertEqual(report["counts"]["fallback_cues"], 1)
         self.assertIn("1 fallback cue(s)", console.getvalue())

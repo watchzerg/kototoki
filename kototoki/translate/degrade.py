@@ -1,4 +1,4 @@
-"""三级降级（产品配方 `dp10-cut-degrade-v1`，规格 §6）：批次终态失败 → 两个子批次 → 单条 → 保留日文。
+"""三级降级（产品配方 `q2-degrade-v1`，规格 §6）：批次终态失败 → 两个子批次 → 单条 → 保留日文。
 
 终态失败指 `run_step` 用完尝试次数后仍是 `context`／`limit`／`parse`；基础设施失败不在这里处理，
 由 `attempt` 原样抛给 `generate.translate_document` 的重启循环。拆分规则：
@@ -7,8 +7,8 @@
 - 第 1 级（半批）拆成单条 `父ID.a.1`…；
 - 单条仍失败，该 cue 的译文 = 日文原文（回退）。只有 1 条的批次失败即回退，不再拆。
 
-子批次按配方的同一条邻文规则（`batching.neighbours`）取只读邻文、seed 不变，因此提示、grammar 与采样构造与
-原批次完全相同。
+子批次按同一条邻文规则（`batching.neighbours`）取只读邻文、seed 不变，因此提示、专名注入与请求构造与原批次
+完全相同。
 每个子批次的结果（以及失败的原批次）一出来就经 `record` 追加到降级日志，续跑时 `recorded` 里已有的节点
 不再请求；整个批次完成后由调用方写成 `batches.jsonl` 的一行，回退由此对该配方 hash 与 seed 成为终态。
 """
@@ -19,14 +19,13 @@ import logging
 from typing import Any, Callable
 
 from .batching import Batch, Scene, neighbours
-from .recipes import Recipe
 
 REPORT_SCHEMA = "kototoki-translate-report-v1"
 
 log = logging.getLogger(__name__)
 
 
-def children(scene: Scene, node: Batch, level: int, recipe: Recipe) -> list[Batch]:
+def children(scene: Scene, node: Batch, level: int) -> list[Batch]:
     """`node` 终态失败后要请求的子批次；空列表表示该条只能回退。"""
     if len(node.target_ids) == 1:
         return []
@@ -39,14 +38,14 @@ def children(scene: Scene, node: Batch, level: int, recipe: Recipe) -> list[Batc
     ids = scene.ids
     result = []
     for suffix, start, stop in parts:
-        left, right = neighbours(scene, start, stop, recipe)
+        left, right = neighbours(scene, start, stop)
         result.append(Batch(index=node.index, batch_id=f"{node.batch_id}.{suffix}", scene_id=node.scene_id,
                             target_ids=tuple(ids[start:stop]), before_ids=tuple(ids[left:start]),
                             after_ids=tuple(ids[stop:right]), start=start, stop=stop))
     return result
 
 
-def translate_with_degrade(scene: Scene, batch: Batch, recipe: Recipe, attempt: Callable[[Batch], dict[str, Any]],
+def translate_with_degrade(scene: Scene, batch: Batch, attempt: Callable[[Batch], dict[str, Any]],
                            recorded: dict[str, dict[str, Any]], record: Callable[[dict[str, Any]], None]
                            ) -> dict[str, Any]:
     """翻译一个批次，终态失败时降级；返回 `batches.jsonl` 的一行。
@@ -86,7 +85,7 @@ def translate_with_degrade(scene: Scene, batch: Batch, recipe: Recipe, attempt: 
         if accepted:
             translations.update(row["translations"])
             return
-        kids = children(scene, node, level, recipe)
+        kids = children(scene, node, level)
         if kids:
             log.warning("[translate] batch %s failed (%s) at level %d; splitting into %d sub-batch(es)",
                         node.batch_id, row["error_kind"], level, len(kids))

@@ -1,21 +1,21 @@
-"""按批次落盘、可续跑的整片翻译；编排器传入的 `Session` 在整批影片间共用一个 llama-server。
+"""按批次落盘、可续跑的整片翻译；编排器传入的 `Session` 在整批影片间共用一个 Strata 服务（ADR-0019）。
 
-`run_step` 复制自 `experiments/translation_v3/generate.py`（判定逻辑不变，去掉 v4 采样覆盖）。与 v3 的差别：
+`run_step` 复制自 `experiments/translation_v3/strata.py`（判定逻辑不变，去掉思考分支）。与研究侧的差别：
 
-- v3 每次 `run_generation` 新开 server；这里由 `Session` 持有 server，整批影片顺序共用，`cache_n == 0`
-  校验在每个 server session 的首个 completion 做一次。
-- v3 按整场景落盘；这里每完成一批就向 `batches.jsonl` 追加一行，续跑从未完成的批次继续，
+- 研究侧只连接执行者启动好的服务；这里由 `Session` 持有 `strata.StrataServer`：第一次真正需要请求模型时才
+  `strata launch --no-tui`、核对身份，整批影片顺序共用，退出时 `strata launch --stop` 并核实显存释放。
+- 研究侧按整场景落盘；这里每完成一批就向 `batches.jsonl` 追加一行，续跑从未完成的批次继续，
   末尾不完整的一行视为未写入并截掉；`scene.json` 只在全部批次完成后写出。
-- 基础设施失败（OOM、传输、`cache_n` 校验、server 错误、server 启动失败）在同一次调用内停掉 server、
-  启动新 session 重做，最多重启 `MAX_RESTARTS` 次；每次重启在 `run.json` 的 `sessions[]` 新增一项。
-- 批次终态失败（超出 context、生成触顶、解析失败）按 `degrade.py` 拆批降级，单条仍失败保留日文；
-  降级完成的批次照常写入 `batches.jsonl`，回退对该配方 hash 与 seed 是终态，重跑不再尝试。
+- 基础设施失败（OOM、传输／连接断开、server 错误、服务起不来）在同一次调用内停掉服务、重新启动新 session 重做，
+  最多重启 `MAX_RESTARTS` 次；每次重启在 `run.json` 的 `sessions[]` 新增一项。身份不符（`StrataRefused`）不重试。
+- 两次尝试都失败的批次（生成触顶、解析失败、HTTP 报超出 context）按 `degrade.py` 拆批降级，单条仍失败保留日文；
+  研究侧只空出该包的 cue。降级完成的批次照常写入 `batches.jsonl`，回退对该身份是终态，重跑不再尝试。
 
-run 目录由本子系统的 `plan` 决定：`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>/`（`ja.srt` 的 SHA、配方名、
-seed 三级分键；同名配方内容变化时 `run.json` 的 hash 不符即拒绝续跑，删除该目录可重跑），下有 `run.json`、
-`batches.jsonl`、`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、`transport/session-NN/`
-（逐请求原始交换）、`infra-failures/`。`TranslatePlan.needs_model` 告诉编排器是否要取 GPU 锁：零条目或 `run.json`
-已记完成时不需要。server 的运行日志在 `<output_dir>/.work/translate-sessions/<UTC戳>-<pid>/session-NN/`，被整批影片共用。
+run 目录由本子系统的 `plan` 决定：`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>/`（`ja.srt` 的 SHA、
+配方名、seed、注入行的 SHA 四项分键；同名配方内容变化时 `run.json` 的 hash 不符即拒绝续跑，删除该目录可重跑），下有
+`run.json`、`batches.jsonl`、`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、
+`transport/session-NN/`（逐请求原始交换）、`infra-failures/`。`TranslatePlan.needs_model` 告诉编排器是否要取 GPU 锁：
+零条目或 `run.json` 已记完成时不需要。Strata session 的证据在 `<output_dir>/.work/translate-sessions/<UTC戳>-<pid>/session-NN/`。
 """
 
 from __future__ import annotations
@@ -35,12 +35,12 @@ from kototoki.artifacts import atomic_write_json, object_hash, read_json, sha256
 from kototoki.config import Config
 from kototoki.srt import SourceDocument
 
+from kototoki.llama_server import InfraFailure, LlamaClient, explicit_oom
+
 from . import degrade
 from . import recipes as R
 from .batching import Batch, Scene, build_batches, cue_positions, scene_from_document, source_key
-from kototoki.llama_server import InfraFailure, LlamaClient, ManagedServer, explicit_oom
-
-from .server import TRANSLATE_SPEC
+from .strata import StrataRefused, StrataServer
 
 TRANSLATE_DIR = "translate"  # 工作目录内的翻译根目录
 RUN_SCHEMA = "kototoki-translate-run-v1"
@@ -51,9 +51,9 @@ REPORT = "report.json"
 SESSIONS_DIR = "translate-sessions"
 MAX_RESTARTS = 2
 CLIENT_TIMEOUT_SECONDS = 600.0
-FATAL_KINDS = ("oom", "cache", "server")
-# 基础设施失败：停掉当前 server、开新 session 重做，不形成终态。
-INFRA_KINDS = ("oom", "cache", "server", "server_error")
+FATAL_KINDS = ("oom", "server")
+# 基础设施失败：停掉当前服务、开新 session 重做，不形成终态。
+INFRA_KINDS = ("oom", "server", "server_error")
 CONTEXT_ERROR = re.compile(r"exceed[s]? the available context|context size|n_ctx|context length", re.IGNORECASE)
 
 log = logging.getLogger(__name__)
@@ -81,10 +81,11 @@ class TranslateResult:
 class TranslatePlan:
     """一部影片的翻译计划：run 目录、期望身份（进编排器的 `published.json`）、是否需要模型。"""
     work_dir: Path
-    run_dir: Path                  # <work_dir>/translate/srt-<sha12>/<配方名>__s<seed>
-    identity: dict[str, Any]       # {"ja_srt_sha256", "recipe_hash", "seed"}
+    run_dir: Path                  # <work_dir>/translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>
+    identity: dict[str, Any]       # {"ja_srt_sha256", "recipe_hash", "seed", "names_sha256"}
     needs_model: bool              # 零条目或全部批次已完成时为 False
     document: SourceDocument
+    names: list[dict[str, str]]    # 注入行（`recipes.name_rows`）
 
     @property
     def relative(self) -> str:
@@ -92,25 +93,31 @@ class TranslatePlan:
         return self.run_dir.relative_to(self.work_dir).as_posix()
 
 
-def plan(work_dir: Path, document: SourceDocument, config: Config) -> TranslatePlan:
-    """只读：决定 run 目录、身份与 `needs_model`，不写文件。run 目录已存在且配方／seed／来源不符时抛 `ValueError`。"""
+def plan(work_dir: Path, document: SourceDocument, name_table: dict[str, Any], config: Config) -> TranslatePlan:
+    """只读：决定 run 目录、身份与 `needs_model`，不写文件。`name_table` 是该影片 `name-table.json` 的内容，
+    只取其注入行（`recipes.name_rows`），注入行的 SHA 进身份与 run 目录键：表一变即另起 run、重译。
+    run 目录已存在且配方／seed／来源／注入行不符时抛 `ValueError`。"""
     seed = config.translate.seed
-    run_dir = Path(work_dir) / TRANSLATE_DIR / source_key(document.source_sha256) / f"{R.PRODUCT.name}__s{seed}"
-    identity = {"ja_srt_sha256": document.source_sha256, "recipe_hash": R.PRODUCT.recipe_hash, "seed": seed}
+    rows = R.name_rows(name_table)
+    names = R.names_sha256(rows)
+    run_dir = (Path(work_dir) / TRANSLATE_DIR / source_key(document.source_sha256)
+               / f"{R.RECIPE_NAME}__s{seed}__n{names[:12]}")
+    identity = {"ja_srt_sha256": document.source_sha256, "recipe_hash": R.RECIPE_HASH, "seed": seed,
+                "names_sha256": names}
     needs_model = bool(document.cues)
     if needs_model and (run_dir / "run.json").is_file():
-        run = _check_run(run_dir, seed, _source(document, scene_from_document(document)))
+        run = _check_run(run_dir, seed, names, _source(document, scene_from_document(document)))
         needs_model = run["completion"].get("state") != "complete"
-    return TranslatePlan(Path(work_dir), run_dir, identity, needs_model, document)
+    return TranslatePlan(Path(work_dir), run_dir, identity, needs_model, document, rows)
 
 
 # --- session --------------------------------------------------------------------------------
 
 class Session:
-    """整批翻译共用的 server 生命周期：首次需要时才启动 server，`restart` 即新 session。
+    """整批翻译共用的 Strata 生命周期：首次需要时才启动，`stop` 后再 `ensure_started` 即新 session。
 
-    `on_server_pid(pid)` 在 server 启动后以 pid、停止后以 None 回调，供编排器写进 GPU 锁。
-    `server_factory`／`client_factory` 是只供测试的内部接缝。
+    `on_server_pid(pid)` 在服务 ready 后以 pid、停止后以 None 回调，供编排器写进 GPU 锁。
+    `server_factory`／`client_factory` 是只供测试的内部接缝（伪服务须有 `url`、`identity` 与上下文管理器协议）。
     """
 
     def __init__(self, config: Config, *, on_server_pid: Callable[[int | None], None] | None = None,
@@ -128,11 +135,9 @@ class Session:
         # 某部影片因 server 一直起不来（显存被占、加载失败）用尽重启后，本批其余影片不再等待，直接失败。
         self.unavailable: str | None = None
 
-    def _managed_server(self, runtime_dir: Path, on_pid: Callable[[int | None], None]) -> ManagedServer:
-        return ManagedServer(runtime_dir, TRANSLATE_SPEC, engine=self.config.paths.llama_server,
-                             model=self.config.models.translate,
-                             port=self.config.translate.port,
-                             model_cache=artifacts.model_cache_path(self.config.paths.output_dir), on_pid=on_pid)
+    @staticmethod
+    def _managed_server(runtime_dir: Path, on_pid: Callable[[int | None], None]) -> StrataServer:
+        return StrataServer(runtime_dir, on_pid=on_pid)
 
     def __enter__(self) -> "Session":
         return self
@@ -145,17 +150,17 @@ class Session:
             self.ordinal += 1
             self.cache_state = {"checked": False}
             server = self.server_factory(self.runtime_root / f"session-{self.ordinal:02d}", self.on_server_pid)
-            server.__enter__()  # 进程一启动即以 pid 回调；加载失败时自行清理并以 None 回调
+            server.__enter__()  # ready 后以 pid 回调；启动或核对失败时自行停掉并以 None 回调
             self.server = server
         return self.server
 
     def stop(self) -> None:
         server, self.server = self.server, None
         if server is not None:
-            server.__exit__(None, None, None)  # 进程结束后以 None 回调
+            server.__exit__(None, None, None)  # 停止并核实显存释放后以 None 回调
 
 
-# --- 单次请求（v3 run_step） ---------------------------------------------------------------------
+# --- 单次请求（研究侧 strata.run_step） ----------------------------------------------------------
 
 def whitespace_ratio(text: Any) -> float | None:
     if not isinstance(text, str) or not text:
@@ -172,69 +177,63 @@ def _http_body(client: Any) -> str:
     return ""
 
 
-def run_step(client: Any, prompt: str, grammar: str, seed: int, parse: Callable[[str], Any],
-             cache_state: dict[str, Any], record: dict[str, Any]) -> Any:
-    """tokenize、预算守卫、completion、校验；同一请求最多两次。"""
+def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[str], cache_state: dict[str, Any],
+             record: dict[str, Any]) -> dict[str, str]:
+    """一个包的 chat completion 与校验：不用 grammar、不查预算端点；最多两次（seed、seed＋1）。"""
     attempts: list[dict[str, Any]] = record.setdefault("attempts", [])
     last: StepFailed | None = None
     for number in range(1, R.MAX_ATTEMPTS + 1):
         started = time.perf_counter()
-        attempt: dict[str, Any] = {"attempt": number, "prompt_sha256": sha256_bytes(prompt.encode("utf-8")),
-                                   "grammar_sha256": sha256_bytes(grammar.encode("utf-8")), "dispatched": False}
+        used_seed = seed + (number - 1) * R.SEED_STEP
+        body = R.request_body(messages, used_seed)
+        attempt: dict[str, Any] = {"attempt": number, "seed": used_seed,
+                                   "prompt_sha256": sha256_bytes(json.dumps(messages, ensure_ascii=False).encode()),
+                                   "request_sha256": object_hash(body), "dispatched": True}
         attempts.append(attempt)
         try:
-            try:
-                tokens = client.tokenize(prompt)
-            except (URLError, ConnectionError, TimeoutError) as exc:
-                raise StepFailed(f"tokenize transport: {exc}", "server") from exc
-            attempt.update(input_tokens=len(tokens), tokenize_exchange=getattr(client, "last_exchange", None))
-            if len(tokens) > R.MAX_INPUT_TOKENS:
-                raise StepFailed(f"context_budget: {len(tokens)} input tokens + {R.N_PREDICT} + {R.GUARD_TOKENS} "
-                                 f"> {R.CONTEXT_SIZE}; no truncation or auto-shrink", "context")
-            request = R.completion_request(tokens, seed, grammar)
-            attempt["request_sha256"] = object_hash(request)
-            attempt["dispatched"] = True
             completion_start = time.perf_counter()
             try:
-                response = client.complete(request)
+                response = client.chat_completion(body)
             except HTTPError as exc:
-                body = _http_body(client) + str(exc)
-                kind = "oom" if explicit_oom(body) else "context" if CONTEXT_ERROR.search(body) else "server_error"
+                text = _http_body(client) + str(exc)
+                kind = "oom" if explicit_oom(text) else "context" if CONTEXT_ERROR.search(text) else "server_error"
                 # 消息只带状态码、分类与正文长度；正文在 transport 交换目录里。
-                raise StepFailed(f"HTTP {exc.code} ({kind}): response body {len(body)} char(s)", kind) from exc
+                raise StepFailed(f"HTTP {exc.code} ({kind}): response body {len(text)} char(s)", kind) from exc
             except (URLError, ConnectionError, TimeoutError) as exc:
                 raise StepFailed(f"completion transport: {exc}", "server") from exc
             finally:
                 attempt.update(completion_seconds=time.perf_counter() - completion_start,
                                exchange=getattr(client, "last_exchange", None))
             timings = response.get("timings") if isinstance(response.get("timings"), dict) else {}
-            content = response.get("content")
-            attempt.update(output_tokens=response.get("tokens_predicted"), tokens_evaluated=response.get("tokens_evaluated"),
-                           timings=timings, stop_type=response.get("stop_type"),
-                           stopped_limit=bool(response.get("stopped_limit") or response.get("stop_type") == "limit"),
-                           truncated=bool(response.get("truncated")),
-                           content_chars=len(content) if isinstance(content, str) else None)
-            if not cache_state.get("checked"):
-                reuse = timings.get("cache_n")
+            usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+            choice = (response.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            content = message.get("content")
+            reasoning = message.get("reasoning_content")
+            prompt_tokens = usage.get("prompt_tokens")
+            attempt.update(input_tokens=prompt_tokens, output_tokens=usage.get("completion_tokens"),
+                           tokens_evaluated=prompt_tokens, timings=timings, stop_type=choice.get("finish_reason"),
+                           stopped_limit=choice.get("finish_reason") == "length", truncated=False,
+                           content_chars=len(content) if isinstance(content, str) else None,
+                           reasoning_chars=len(reasoning) if isinstance(reasoning, str) else 0,
+                           over_q1_budget=type(prompt_tokens) is int and prompt_tokens > R.Q1_INPUT_BUDGET)
+            if not cache_state.get("checked"):  # 只记录：服务自带前缀缓存，研究侧同样不据此判失败
+                reuse = timings.get("cache_n", (usage.get("prompt_tokens_details") or {}).get("cached_tokens"))
                 cache_state.update(checked=True, first_cache_n=reuse, verified=type(reuse) is int and reuse == 0,
-                                   exchange=attempt.get("exchange"))
+                                   recorded_only=True, exchange=attempt.get("exchange"))
                 attempt["cache_reset_check"] = dict(cache_state)
-                if not cache_state["verified"]:
-                    raise StepFailed(f"First completion lacks timings.cache_n == 0 (got {reuse!r})", "cache")
             if response.get("error") is not None:
                 text = json.dumps(response["error"], ensure_ascii=False)
                 kind = "oom" if explicit_oom(text) else "server_error"
                 raise StepFailed(f"server error ({kind}): {type(response['error']).__name__} of {len(text)} char(s)",
                                  kind)
-            if response.get("tokens_evaluated") is not None and response["tokens_evaluated"] != len(tokens):
-                raise StepFailed("server evaluated a different token count", "server_error")
-            if attempt["stopped_limit"] or attempt["truncated"]:
+            if attempt["stopped_limit"]:
                 attempt["whitespace_ratio"] = whitespace_ratio(content)
-                raise StepFailed("generation reached the output/context limit", "limit")
+                raise StepFailed("generation reached the output/context limit (or non-finite logits)", "limit")
             if not isinstance(content, str) or not content.strip():
                 raise StepFailed("empty generated text", "parse")
             try:
-                result = parse(content)
+                result = R.parse_translation(content, ids)
             except ValueError as exc:
                 attempt["whitespace_ratio"] = whitespace_ratio(content)
                 raise StepFailed(f"validation: {exc}", "parse") from exc
@@ -253,12 +252,14 @@ def run_step(client: Any, prompt: str, grammar: str, seed: int, parse: Callable[
     raise last
 
 
-def translate_batch(client: Any, scene: Scene, batch: Batch, seed: int, cache_state: dict[str, Any]) -> dict[str, Any]:
+def translate_batch(client: Any, scene: Scene, batch: Batch, rows: list[dict[str, str]], seed: int,
+                    cache_state: dict[str, Any]) -> dict[str, Any]:
     ids = list(batch.target_ids)
-    request: dict[str, Any] = {"stage": "translation", "batch_index": batch.index}
+    window = batch.to_window(scene)
+    request: dict[str, Any] = {"stage": "translation", "batch_index": batch.index,
+                               "names_injected": len(R.names_for_window(rows, window))}
     try:
-        result = run_step(client, R.render_translation(batch.to_window(scene)), R.translation_grammar(ids), seed,
-                          lambda text: R.parse_translation(text, ids), cache_state, request)
+        result = run_step(client, R.messages(window, rows), seed, ids, cache_state, request)
     except StepFailed as exc:
         exc.record = {**batch.record(), "request": request}
         raise
@@ -271,22 +272,26 @@ def _source(document: SourceDocument, scene: Scene) -> dict[str, Any]:
     return {"ja_srt_sha256": document.source_sha256, "scene_id": scene.scene_id, "cue_ids": scene.ids}
 
 
-def _check_run(root: Path, seed: int, source: dict[str, Any]) -> dict[str, Any]:
-    """读已存在的 `run.json`，配方 hash／seed／来源必须与本次相同（同名配方内容变化即在此拒绝）。"""
+def _check_run(root: Path, seed: int, names: str, source: dict[str, Any]) -> dict[str, Any]:
+    """读已存在的 `run.json`，配方 hash／seed／注入行／来源必须与本次相同（同名配方内容变化即在此拒绝）。"""
     path = root / "run.json"
     run = read_json(path)
-    if run["recipe_hash"] != R.PRODUCT.recipe_hash or run["seed"] != seed or run["source"] != source:
-        raise ValueError(f"{path} differs in recipe/seed/source; the run directory is keyed by them. "
+    if (run.get("recipe_hash") != R.RECIPE_HASH or run.get("seed") != seed
+            or (run.get("names") or {}).get("sha256") != names or run.get("source") != source):
+        raise ValueError(f"{path} differs in recipe/seed/names/source; the run directory is keyed by them. "
                          f"Delete {root} to translate this ja.srt again with the current recipe")
     return run
 
 
-def _open_run(root: Path, seed: int, document: SourceDocument, scene: Scene) -> dict[str, Any]:
+def _open_run(root: Path, seed: int, names: list[dict[str, str]], document: SourceDocument,
+              scene: Scene) -> dict[str, Any]:
     path = root / "run.json"
     source = _source(document, scene)
+    sha = R.names_sha256(names)
     if path.is_file():
-        return _check_run(root, seed, source)
-    run = {"schema": RUN_SCHEMA, "recipe": R.PRODUCT.to_json(), "recipe_hash": R.PRODUCT.recipe_hash, "seed": seed,
+        return _check_run(root, seed, sha, source)
+    run = {"schema": RUN_SCHEMA, "recipe": {"name": R.RECIPE_NAME, **R.RECIPE}, "recipe_hash": R.RECIPE_HASH,
+           "seed": seed, "names": {"sha256": sha, "rows": len(names)},
            "source": source, "created_at_utc": utc_now(), "sessions": [], "server_start_failures": [],
            "resumed": False, "completion": {"state": "not_started"}, "wall_clock_seconds": None}
     atomic_write_json(path, run)
@@ -413,21 +418,20 @@ def _first_line(exc: BaseException) -> str:
     return (str(exc).splitlines() or [""])[0][:200]
 
 
-SESSION_ENGINE_KEYS = ("candidate", "model_path", "engine_sha256", "engine_identity_sha256", "command", "server_pid",
-                       "cold_load_seconds", "residency", "model_verification", "free_vram_mib_before_start")
+SESSION_ENGINE_KEYS = ("candidate", "strata", "cold_load_seconds", "free_vram_mib_before_start")
 
 
 def translate_document(plan: TranslatePlan, session: Session | None) -> TranslateResult:
     """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文；零条目文档不请求模型。
 
-    已完成的批次（含降级完成的）直接复用；全部完成时不启动 server。`session` 只在 `plan.needs_model` 时使用，
+    已完成的批次（含降级完成的）直接复用；全部完成时不启动 Strata。`session` 只在 `plan.needs_model` 时使用，
     编排器在不需要模型时可传 None；计划说不需要而批次仍未完成（`run.json` 与 `batches.jsonl` 不一致）时抛
-    `TranslateError`，不会在没有 GPU 锁的情况下起 server。批次终态失败按 `degrade` 降级，回退条数进
+    `TranslateError`，不会在没有 GPU 锁的情况下启动 Strata。批次终态失败按 `degrade` 降级，回退条数进
     `fallback_count`，`report` 即写入 `report.json` 的内容。基础设施失败用尽重启抛 `TranslateError`（证据留在 run 目录）。
     """
     document, root, seed = plan.document, plan.run_dir, plan.identity["seed"]
     scene = scene_from_document(document)
-    run = _open_run(root, seed, document, scene)
+    run = _open_run(root, seed, plan.names, document, scene)
     if not scene.cues:
         run["completion"] = {"state": "complete", "batches_total": 0, "batches_complete": 0, "cues_total": 0,
                              "restarts_last_call": 0}
@@ -435,7 +439,7 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
         report = degrade.build_report([], run["completion"])
         atomic_write_json(root / REPORT, report)
         return TranslateResult({}, 0, report)
-    batches = build_batches(scene, R.PRODUCT)
+    batches = build_batches(scene)
     done = _read_batches(root, batches)
     recorded = _read_degrade(root, batches, done)
     if len(done) < len(batches) and (session is None or not plan.needs_model):
@@ -451,7 +455,7 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
         entry: dict[str, Any] | None = None
         started = time.perf_counter()
         if session.unavailable is not None:
-            raise TranslateError(f"llama-server could not start earlier in this batch: {session.unavailable}")
+            raise TranslateError(f"Strata could not start earlier in this batch: {session.unavailable}")
         try:
             server = session.ensure_started()
             entry = {"index": len(run["sessions"]) + 1, "server_session": str(session.runtime_root.name)
@@ -469,7 +473,8 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
 
             def attempt(node: Batch) -> dict[str, Any]:
                 try:
-                    return translate_batch(client, scene, node, seed, session.cache_state) | {"session": number}
+                    return (translate_batch(client, scene, node, plan.names, seed, session.cache_state)
+                            | {"session": number})
                 except StepFailed as exc:
                     if exc.kind in INFRA_KINDS:
                         raise
@@ -479,8 +484,8 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
             for batch in batches:
                 if batch.index in done:
                     continue
-                row = degrade.translate_with_degrade(scene, batch, R.PRODUCT, attempt,
-                                                     recorded.setdefault(batch.index, {}), record)
+                row = degrade.translate_with_degrade(scene, batch, attempt, recorded.setdefault(batch.index, {}),
+                                                     record)
                 row = row | {"session": number}
                 _append_line(root / BATCHES, row)
                 done[batch.index] = row
@@ -503,19 +508,25 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
             restarts += 1
             failure_kinds.append(kind)
             if restarts > MAX_RESTARTS:
-                log.error("[translate] giving up after %d server restart(s): %s: %s", MAX_RESTARTS, kind,
+                log.error("[translate] giving up after %d Strata restart(s): %s: %s", MAX_RESTARTS, kind,
                           _first_line(exc))
                 if set(failure_kinds) == {"server_start"}:
                     session.unavailable = failure["error"]
-                raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} server restarts "
+                raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} Strata restarts "
                                      f"({kind}): {exc}") from exc
-            log.warning("[translate] server restart %d/%d: %s: %s", restarts, MAX_RESTARTS, kind, _first_line(exc))
+            log.warning("[translate] Strata restart %d/%d: %s: %s", restarts, MAX_RESTARTS, kind, _first_line(exc))
+        except StrataRefused as exc:
+            # 身份不符或已有别的 launch 在服务：重启无济于事，本批其余需要模型的影片也不再尝试。
+            session.unavailable = str(exc)
+            session.stop()
+            log.error("[translate] Strata refused: %s", _first_line(exc))
+            raise TranslateError(f"Strata refused: {exc}") from exc
         except Exception as exc:
             # 意外异常（非 JSON 响应、写盘失败等）：记录后停掉可能不健康的 server，原样上抛给编排器。
             if entry is not None:
                 entry["stop_reason"] = f"session_error: {type(exc).__name__}: {exc}"[:2000]
             # traceback 由编排器的 ctx.fail 记一次，这里不再附 exc_info，避免运行日志里出现两份。
-            log.error("[translate] unexpected %s during translation; stopping the server", type(exc).__name__)
+            log.error("[translate] unexpected %s during translation; stopping Strata", type(exc).__name__)
             session.stop()
             raise
         finally:

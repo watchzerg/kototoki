@@ -1,11 +1,9 @@
-"""专名一致性：对编排器只暴露 `Session`、`build_document`、`apply`、`NamesError` 与两个配方 hash
-`BUILD_RECIPE_HASH`／`APPLY_RECIPE_HASH`。
+"""专名一致性：对编排器只暴露 `Session`、`build_document`、`NamesError` 与建表配方 hash `BUILD_RECIPE_HASH`。
 
 - 建表（`table`）：整份 `ja.srt` 一次送入 Qwen llama-server（no-think），取回 `name-table-v2` 表并归一；终态失败
-  （超预算 `too_long`、两次尝试都失败 `failed`）返回空表，由编排器照常写出并发布。
-- 替换（`apply`）：发布时的纯函数，按日文锚定 cue，把译文里专名的各种写法整段换成表里的中文。包属性
-  `kototoki.names.apply` 是这个函数（遮住同名子模块）；子模块里的其他名字用 `from kototoki.names.apply import …` 取。
-- 配方（`recipes`）：两份配方字典与 hash；`NAMES_SPEC` 是本模块用 `recipes.NAMES_SERVER` 与模型资产拼成的
+  （超预算 `too_long`、两次尝试都失败 `failed`）返回空表，由编排器照常写出，翻译照常进行（只是没有注入行）。
+- 表的使用者是翻译子系统（ADR-0019：Q2 规则只注入 `confidence: high` 的写法，没有发布时替换）；本模块不知道注入规则。
+- 配方（`recipes`）：建表配方字典与 hash；`NAMES_SPEC` 是本模块用 `recipes.NAMES_SERVER` 与模型资产拼成的
   llama-server 配置。
 
 `Session` 整批共用一个 server：首次需要时才启动，server 退出后下一部影片再启动，整批最多启动 `MAX_STARTS` 次；
@@ -14,7 +12,7 @@
 `<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`。
 
 依赖方向：只依赖基础层（`artifacts`、`config`、`srt`、`recipes`）与 `kototoki.llama_server`；不导入 torch、
-`experiments.*`。不取 GPU 锁、不写产物（`name-table.json`／`names-apply.json` 由编排器写）、不打含条目文字的日志。
+`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、不打含条目文字的日志。
 见 docs/architecture/modules/name-consistency.md。
 """
 
@@ -31,12 +29,10 @@ from kototoki.config import Config
 from kototoki.llama_server import LlamaClient, ManagedServer, ServerSpec, explicit_oom
 from kototoki.srt import SourceDocument
 
-from .apply import ApplyResult, apply
-from .recipes import APPLY_RECIPE_HASH, BUILD, BUILD_RECIPE_HASH, NAMES_SERVER
+from .recipes import BUILD, BUILD_RECIPE_HASH, NAMES_SERVER
 from .table import BuildResult, build_table
 
-__all__ = ["APPLY_RECIPE_HASH", "BUILD_RECIPE_HASH", "ApplyResult", "BuildResult", "NamesError", "Session", "apply",
-           "build_document"]
+__all__ = ["BUILD_RECIPE_HASH", "BuildResult", "NamesError", "Session", "build_document"]
 
 SESSIONS_DIR = "names-sessions"   # `.work/` 下 server 运行日志的根
 TRANSPORT_DIR = "names/transport"  # 工作目录内原始交换的根

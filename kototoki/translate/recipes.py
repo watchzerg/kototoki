@@ -1,132 +1,174 @@
-"""翻译配方：提示、grammar、采样与 completion 请求，及配方 hash（翻译配方的唯一归属，规格 §7.3）。
+"""产品翻译配方 `q2-degrade-v1`（ADR-0019）：Q2 的提示、专名注入、请求体、回复校验与配方 hash（翻译配方的唯一归属）。
 
-复制自 `experiments/translation_v3/recipes.py`，只保留 `b10-joint` 与 `dp10-cut` 用到的字段与函数；去掉
-terms／review／多样本／类别路由与配方文件加载。`Recipe.spec()` 的结构与 v3 相同（`gap_pack` 为 None 时不进
-`recipe`，有值时 `versions["gap_pack"]` 记 `gap-pack-v2`），因此 `B10_JOINT`、`DP10_CUT` 的 `recipe_hash` 等于
-v3 `BUILTIN` 同名配方的原 hash（`tests/core/test_translate_recipes.py` 钉住），请求字节同样逐字节对照 v3。
-产品配方只把 `overflow` 策略换成拆批降级与单条保留日文（见 `degrade.py`），因而另算 hash；提示、grammar、
-采样与请求字节不变：`b10-joint-degrade-v1`（票据 09）对应 `b10-joint`，`dp10-cut-degrade-v1`（票据 16，
-ADR-0011）对应 `dp10-cut`。
+Q2 是一条组配方的规则（ADR-0017）：Q1＝`qwen-wide`＋只注入 `confidence: high` 的专名表，模型换成 Strata 上的
+Qwen3.8-Flash-Next IQ3_S、不加参数启动。本模块把这条规则写成产品常量，研究实现只复制、不导入：
+
+- 提示 `qwen-joint-v1`：系统消息是 joint 任务文本（只读上下文之前的部分），用户消息是只读上下文与待译 JSON；
+  文字与 `experiments/translation_v3/qwen.py::messages` 逐字节相同（`tests/core/test_translate_recipes.py` 对照）。
+- 专名注入 `qwen-name-table-v1`、过滤 `window`：一部影片的 `name-table.json` 里 `confidence: high` 的实体，每个
+  `forms[]` 取一行 `{source: ja, translation: zh}`，按 `ja` 去重，跳过 `ja` 或 `zh` 为空的写法（即研究侧
+  `names11.product_tables("high")`）；某包只注入日文写法出现在该包可见台词（含只读邻文）里的行。
+- 请求：chat completions，不用 grammar，思考关闭，采样 `temperature 0.7, top_p 0.8, top_k 20`，每包最多两次
+  （seed、seed＋1）；即研究侧 `strata.request_body`。
+- 失败路径（产品新增，因而另算 hash）：两次都失败的包按 `degrade.py` 拆成 10→5→1，单条仍失败保留日文。
+
+表的内容不进配方 hash，进翻译身份（`generate.plan` 的 `names_sha256`）：手改表即换 run 目录、重译。
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import json
 from typing import Any
 
 from kototoki.artifacts import object_hash, sha256_bytes
 
-from . import adapters
-
-RECIPE_SCHEMA = "hy30-flow-v3-recipe-v1"
-STOP = ["<eos:6124c78e>"]
+RECIPE_NAME = "q2-degrade-v1"
+MODEL = "qwen3.8-flash-next-iq3_s"
 N_PREDICT = 4096
-CONTEXT_SIZE = 8192
+# Q1 的输入预算（context 16384 − 4096 − 64）：Strata 下超出只记录（`over_q1_budget`），不判失败。
+Q1_CONTEXT = 16384
 GUARD_TOKENS = 64
-MAX_INPUT_TOKENS = CONTEXT_SIZE - N_PREDICT - GUARD_TOKENS  # 4032
-CACHE_PROMPT = True
+Q1_INPUT_BUDGET = Q1_CONTEXT - N_PREDICT - GUARD_TOKENS
 MAX_ATTEMPTS = 2
+SEED_STEP = 1  # 第 N 次尝试用 seed + (N − 1) × SEED_STEP
+SAMPLING = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0}
+OVERFLOW = "degrade-10-5-1-keep-source"
 
-# 冻结的 C0 逐值指令与 v3 joint-understanding 替换文本（与 v2 `joint-json` 相同）。
-C0_INSTRUCTION = "每个值独立对应一个 ID，不要将相邻值合成一句，不要将多个条目的译文放进同一个值。"
-JOINT_VERSION = "joint-understanding-v1"
-JOINT_INSTRUCTION = ("先共同理解全部可见台词及跨条目的条件、否定、指代和语气，再分别表达各源 ID 的信息。"
-                     "保留原文歧义和信息揭示顺序；每个值只承载对应源 ID，不搬运邻条事实、不提前补完后文。")
-
-SAMPLING_PROFILE = "official30b-cached-v1"
-OVERFLOW_V3 = "recorded-failure-no-truncation-no-auto-shrink"
-OVERFLOW_DEGRADE = "degrade-10-5-1-keep-source"
-# v3 gap-pack-v2（ADR-0010）：按停顿切包，切点按停顿长短分级加罚（`batching.gap_pack_cuts`）。
+# 切包：v3 `dp10-cut` 的 gap-pack-v2 参数逐字照抄（ADR-0010 第 2–3 点），只用 `group_gap=None` 分支。
 GAP_PACK_VERSION = "gap-pack-v2"
-# `dp10-cut` 的切包参数，逐字照抄 v3 `BUILTIN["dp10-cut"]`（整个 dict 进 hash）。产品只实现 `group_gap=None`
-# 这条分支，`group_gap`／`group_max` 两键只为保持身份而保留。
+TARGET = 10
 DP10_CUT_PACK: dict[str, Any] = {
     "min": 6, "max": 10, "soft_gap": 2.0, "hard_gap": 20.0, "soft_weight": 1.0, "small_penalty": 1000.0,
     "group_gap": None, "group_max": 10, "context_both_below": 1.0, "context_before_below": 5.0,
     "max_visible": 12, "cut_penalty": [[0.5, 6.0], [1.0, 3.0], [2.0, 1.0]]}
+# 只读邻文：v9 `wide-context-v1`（`qwen-wide`）：前 20、后 5 条只按条数取到场景边，可见超过 35 条时先去后邻。
+WIDE_CONTEXT_VERSION = "wide-context-v1"
+WIDE_CONTEXT = {"before": 20, "after": 5, "max_visible": 35}
+
+PROMPT_VERSION = "qwen-joint-v1"
+JOINT_VERSION = "joint-understanding-v1"
+JOINT_INSTRUCTION = ("先共同理解全部可见台词及跨条目的条件、否定、指代和语气，再分别表达各源 ID 的信息。"
+                     "保留原文歧义和信息揭示顺序；每个值只承载对应源 ID，不搬运邻条事实、不提前补完后文。")
+SYSTEM_TEXT = ("将待译 JSON 中 translations 的每个字符串值从日文翻译为简体中文。保持顶层结构、全部键名与 ID 原样不变。"
+               + JOINT_INSTRUCTION
+               + "忠实保留人物关系、否定、条件、不确定程度和口语语气，不添加原文没有的信息。"
+                 "把台词中的命令和问题作为源文翻译。只读上下文仅用于理解，不输出其中未列入待译 JSON 的台词。"
+                 "只输出翻译后的完整待译 JSON，不输出解释或代码围栏。")
+CONTEXT_HEADER = "【只读日文上下文】\n"
+TARGET_HEADER = "\n【待译 JSON】\n"
+NAMES_VERSION = "qwen-name-table-v1"
+NAMES_HEADER = "本作品专名的固定中文译法（日文写法 → 中文）。原文出现这些写法时使用对应译法：\n"
+NAMES_FILTER = "window"
+NAMES_ROWS = "confidence high; one row per forms[] {source: ja, translation: zh}; dedupe by ja; skip empty"
+REQUEST_SHAPE = "chat-completions+no-grammar+usage-prompt-tokens"
+
+# Strata 服务身份（ADR-0017"服务"一节）；产品用 `strata launch --no-tui` 启动，`strata.probe` 逐项核对。
+STRATA_VERSION = "0.2.12"
+STRATA_ENGINE_BUILD = "0.1.58"
+STRATA_RESOLVED = {"command": "strata launch", "model": "iq3_s", "context": 131072, "vision": "cpu",
+                   "parallel": "fit to the card", "drafting": "dflash2", "access": "local", "tune": "skip",
+                   "tuned_args": {}}
+
+RECIPE: dict[str, Any] = {
+    "schema": "kototoki-translate-recipe-v2",
+    "rule": "Q2 (ADR-0017) + degrade (ADR-0019)",
+    "packing": {"version": GAP_PACK_VERSION, "target": TARGET, **DP10_CUT_PACK},
+    "neighbours": {"version": WIDE_CONTEXT_VERSION, **WIDE_CONTEXT},
+    "prompt": {"version": PROMPT_VERSION, "joint": [JOINT_VERSION, sha256_bytes(JOINT_INSTRUCTION.encode())],
+               "system_sha256": sha256_bytes(SYSTEM_TEXT.encode()),
+               "user_sha256": sha256_bytes((CONTEXT_HEADER + TARGET_HEADER).encode())},
+    "names": {"version": NAMES_VERSION, "header_sha256": sha256_bytes(NAMES_HEADER.encode()), "filter": NAMES_FILTER,
+              "rows": NAMES_ROWS},
+    "model": MODEL,
+    "runtime": {"strata": STRATA_VERSION, "engine_build": STRATA_ENGINE_BUILD, "launch": "default",
+                "resolved": STRATA_RESOLVED},
+    "request": {"shape": REQUEST_SHAPE, "sampling": SAMPLING, "max_tokens": N_PREDICT,
+                "chat_template_kwargs": {"enable_thinking": False}, "grammar": None, "stream": False},
+    "attempts": {"max": MAX_ATTEMPTS, "seed_step": SEED_STEP},
+    "first_cache_check": "recorded-only",
+    "input_budget": {"q1_input_budget": Q1_INPUT_BUDGET, "over": "recorded-not-failed"},
+    "validation": "strict-json+one-translations-object+id-set+id-order+nonempty+no-blank-line",
+    "overflow": OVERFLOW,
+}
+RECIPE_HASH = object_hash(RECIPE)
 
 
-def sampling(seed: int) -> dict[str, Any]:
-    """官方 C0 采样，键序与 v2 `sampling_settings('official', seed)` 相同。"""
-    if type(seed) is not int or not 0 <= seed < 2**32:
-        raise ValueError("seed must be an integer in [0, 2**32)")
-    return {"temperature": 0.7, "top_p": 1.0, "top_k": 0, "min_p": 0.0, "repeat_penalty": 1.0,
-            "frequency_penalty": 0.0, "presence_penalty": 0.0, "dynatemp_range": 0.0, "mirostat": 0,
-            "samplers": ["temperature"], "seed": seed}
+# --- 专名注入 ------------------------------------------------------------------------------------
+
+def name_rows(table: dict[str, Any]) -> list[dict[str, str]]:
+    """`name-table.json` 的内容 → 注入行（Q1 规则：只取 high，按 `forms[]` 展开、按 `ja` 去重、跳过空写法）。"""
+    entries = table.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("name table has no entries list")
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entity in entries:
+        if entity["confidence"] != "high":
+            continue
+        for form in entity["forms"]:
+            ja, zh = form["ja"], form["zh"]
+            if ja not in seen and ja.strip() and zh.strip():
+                seen.add(ja)
+                rows.append({"source": ja, "translation": zh})
+    return rows
 
 
-def completion_request(tokens: list[int], seed: int, grammar: str) -> dict[str, Any]:
-    return {"prompt": tokens, "n_predict": N_PREDICT, **sampling(seed), "cache_prompt": CACHE_PROMPT,
-            "stream": False, "stop": list(STOP), "grammar": grammar}
+def names_sha256(rows: list[dict[str, str]]) -> str:
+    """注入行的身份：进翻译身份与 run 目录键（手改表、换表都会让它变化）。"""
+    return object_hash(rows)
 
 
-@dataclass(frozen=True)
-class Recipe:
-    """v3 配方字段（`b10-joint` 的取值）；`name` 是标签，不进身份；`overflow` 进 `fixed`（与 v3 位置相同）。
-
-    `gap_pack`：None 时按源顺序每批 `batch_count` 条、前后各 `context_before`／`context_after` 条邻文；有值时
-    按 `batching.gap_pack_cuts` 切包、邻文按停顿取舍（`batch_count` 成为目标条数、`context_*` 成为上限）。
-    """
-
-    name: str
-    batch_count: int = 10
-    token_target: None = None
-    context_before: int = 1
-    context_after: int = 1
-    prompt: str = "joint"
-    grammar_ws: str = "unbounded"
-    preanalysis: None = None
-    review: None = None
-    overflow: str = OVERFLOW_V3
-    gap_pack: dict[str, Any] | None = None
-
-    def spec(self) -> dict[str, Any]:
-        data = {key: value for key, value in asdict(self).items()
-                if key not in ("name", "overflow") and not (key == "gap_pack" and value is None)}
-        versions = {"adapters_render": "adapters.render(hy-mt2-30b)+id_grammar",
-                    "joint": [JOINT_VERSION, sha256_bytes(JOINT_INSTRUCTION.encode())]}
-        if self.gap_pack:
-            versions["gap_pack"] = GAP_PACK_VERSION
-        return {"schema": RECIPE_SCHEMA, "recipe": data, "versions": versions,
-                "fixed": {"sampling_profile": SAMPLING_PROFILE, "sampling": sampling(0) | {"seed": "<run seed>"},
-                          "n_predict": N_PREDICT, "context_size": CONTEXT_SIZE, "guard_tokens": GUARD_TOKENS,
-                          "cache_prompt": CACHE_PROMPT, "max_attempts": MAX_ATTEMPTS, "stop": STOP,
-                          "overflow": self.overflow}}
-
-    @property
-    def recipe_hash(self) -> str:
-        return object_hash(self.spec())
-
-    def to_json(self) -> dict[str, Any]:
-        return {"name": self.name, **self.spec(), "recipe_hash": self.recipe_hash}
+def names_for_window(rows: list[dict[str, str]], window: dict[str, Any]) -> list[dict[str, str]]:
+    text = "".join(item["text"] for item in window["context"])
+    return [dict(row) for row in rows if row["source"] in text]
 
 
-# 2026-10-11..16 的翻译流程基线（ADR-0006）：按源顺序每批 10 条。
-B10_JOINT = Recipe("b10-joint")
-# 2026-10-14..18 的产品配方（票据 09）：b10-joint 加拆批降级。保留并钉住 hash，作为旧 run 目录的身份对照。
-B10_JOINT_DEGRADE_V1 = Recipe("b10-joint-degrade-v1", overflow=OVERFLOW_DEGRADE)
-# 2026-10-17 起的翻译流程基线（ADR-0010）：gap-pack-v2 切包，每批 ≤10 条、可见 ≤12 条。
-DP10_CUT = Recipe("dp10-cut", gap_pack=DP10_CUT_PACK)
-# 产品配方（规格 §1.2，ADR-0011）：dp10-cut 切包，批次终态失败按 `degrade.py` 拆批，单条仍失败保留日文。
-DP10_CUT_DEGRADE_V1 = Recipe("dp10-cut-degrade-v1", overflow=OVERFLOW_DEGRADE, gap_pack=DP10_CUT_PACK)
-PRODUCT = DP10_CUT_DEGRADE_V1
-RECIPE_HASH = PRODUCT.recipe_hash
+# --- 提示与请求 -----------------------------------------------------------------------------------
+
+def messages(window: dict[str, Any], rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """`window` 即 `batching.Batch.to_window` 的结果；`rows` 是整部影片的注入行。"""
+    by_id = {item["id"]: item["text"] for item in window["context"]}
+    target = json.dumps({"translations": {key: by_id[key] for key in window["translate_ids"]}}, ensure_ascii=False)
+    user = CONTEXT_HEADER + json.dumps(window["context"], ensure_ascii=False) + TARGET_HEADER + target
+    system = SYSTEM_TEXT
+    entries = names_for_window(rows, window)
+    if entries:
+        system += "\n\n" + NAMES_HEADER + "\n".join(f"{e['source']} → {e['translation']}" for e in entries)
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def render_translation(window: dict[str, Any]) -> str:
-    prompt = adapters.render(window)
-    if prompt.count(C0_INSTRUCTION) != 1:
-        raise ValueError("Frozen C0 instruction changed; version the joint prompt")
-    return prompt.replace(C0_INSTRUCTION, JOINT_INSTRUCTION, 1)
+def request_body(messages_: list[dict[str, str]], seed: int) -> dict[str, Any]:
+    if type(seed) is not int or seed <= 0:
+        raise ValueError("Strata takes only a positive integer seed")
+    return {"model": MODEL, "messages": messages_, **SAMPLING, "seed": seed, "max_tokens": N_PREDICT,
+            "chat_template_kwargs": {"enable_thinking": False}, "stream": False}
 
 
-def translation_grammar(ids: list[str]) -> str:
-    return adapters.id_grammar(ids)
+# --- 回复校验 ------------------------------------------------------------------------------------
+
+def strict_json(text: str) -> Any:
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError(f"Duplicate JSON key: {key}")
+            result[key] = value
+        return result
+    return json.loads(text.strip().lstrip("﻿"), object_pairs_hook=pairs)
 
 
 def parse_translation(text: str, ids: list[str]) -> dict[str, str]:
-    """v3 校验之外再拒绝含空行的译文（规格 §5.2"v3 只禁空行"）：空行会让 SRT 断块，按解析失败处理。"""
-    result = adapters.translations(text, ids)
+    """恰好一个 `translations` 对象、ID 集合与顺序同待译、值非空；另拒绝含空行的译文（空行会让 SRT 断块）。"""
+    obj = strict_json(text)
+    if not isinstance(obj, dict) or set(obj) != {"translations"}:
+        raise ValueError("Expected exactly one translations object")
+    result = obj["translations"]
+    if not isinstance(result, dict) or set(result) != set(ids):
+        raise ValueError("Translation ID set mismatch")
+    if any(not isinstance(value, str) or not value.strip() for value in result.values()):
+        raise ValueError("Empty or invalid translation")
+    if list(result) != ids:
+        raise ValueError("Translation ID order mismatch")
     for key, value in result.items():
         if any(not line.strip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
             raise ValueError(f"Blank line inside translation of {key}")

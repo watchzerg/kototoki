@@ -1,9 +1,8 @@
-"""专名配方：建表 `BUILD`／`BUILD_RECIPE_HASH`、替换 `APPLY`／`APPLY_RECIPE_HASH`，以及建表 server 的参数 `NAMES_SERVER`。
+"""专名配方：建表 `BUILD`／`BUILD_RECIPE_HASH`，以及建表 server 的参数 `NAMES_SERVER`。
 
-值全部来自 `names.table`（提示、采样、schema、归一常量）、`names.apply`（替换规则与常量）与 ADR-0013 冻结的最佳
-已知配置；改动 `BUILD` 任何一项即得到新的 `BUILD_RECIPE_HASH`，已有 `name-table.json` 按产物契约失效重建；
-改动 `APPLY` 即得到新的 `names_apply` 身份，已发布影片下次运行重做替换与发布。`tests/core/test_names_recipes.py`
-钉住提示、schema 与两份配方的 sha256。
+值全部来自 `names.table`（提示、采样、schema、归一常量）与 ADR-0014 冻结的最佳已知配置；改动 `BUILD` 任何一项即
+得到新的 `BUILD_RECIPE_HASH`，已有 `name-table.json` 按产物契约失效重建。发布时替换已删除（ADR-0019）：表只经翻译
+注入使用，注入规则归翻译子系统。`tests/core/test_names_recipes.py` 钉住提示、schema 与配方的 sha256。
 
 `NAMES_SERVER` 只是普通字典常量，字段对应 llama-server 的 `ServerSpec`；`kototoki.names` 把它与
 `BUILD["model_asset"]` 接成 `NAMES_SPEC`，本模块不导入 `kototoki.llama_server`。
@@ -18,9 +17,6 @@ from kototoki.artifacts import object_hash, sha256_bytes
 from kototoki.recipes import recipe_hash
 
 from . import table
-# 逐名导入：包属性 `kototoki.names.apply` 是替换函数（遮住同名子模块），`from . import apply` 取不到模块。
-from .apply import (BOUNDARY_CHARS, EDGE_STOP, EXTEND_SHARE, MAX_EXTEND, MIN_RATIO, MIN_SHARE, MIN_SUPPORT, NGRAM_MAX,
-                    NGRAM_MIN, SCHEMA as APPLY_SCHEMA, ZH_HONORIFICS)
 
 BUILD: dict[str, Any] = {
     "prompt_version": table.PROMPT_VERSION,
@@ -58,26 +54,6 @@ BUILD: dict[str, Any] = {
     },
 }
 BUILD_RECIPE_HASH = recipe_hash(BUILD)
-
-# 替换的默认路径（ADR-0013 冻结）：规则一（统计层落点扩展到整个名字）与孤立单字开，研究期其余开关关、取默认值。
-APPLY: dict[str, Any] = {
-    "id": "names-apply-v1",
-    "schema": APPLY_SCHEMA,
-    "rules": {"extend_to_full_name": True, "isolated_singles": True, "name_check": False, "weak_name_check": False,
-              "pool_by_target": False, "bigram_isolation": False, "iterate": 1, "min_confidence": "low"},
-    # 译文等于日文原文的 cue（翻译回退）不参与锚定、统计与替换。
-    "skip_fallback_cues": True,
-    "min_support": MIN_SUPPORT,
-    "min_ratio": MIN_RATIO,
-    "min_share": MIN_SHARE,
-    "max_extend": MAX_EXTEND,
-    "extend_share": EXTEND_SHARE,
-    "ngram": [NGRAM_MIN, NGRAM_MAX],
-    "edge_stop": "".join(sorted(EDGE_STOP)),
-    "zh_honorifics": list(ZH_HONORIFICS),
-    "boundary_chars": "".join(sorted(BOUNDARY_CHARS)),
-}
-APPLY_RECIPE_HASH = recipe_hash(APPLY)
 
 NAMES_SERVER: dict[str, Any] = {
     "candidate": "qwen3.8-27b-ud-iq3_s",

@@ -1,6 +1,6 @@
 # 资产清单：除 Python 包外，产品依赖的二进制与模型身份的唯一权威。
 # 格式、布局与 recipe 职责见 docs/development/dependencies.md；执行逻辑在 scripts/assets.py。
-# 代码里的 SHA 常量（kototoki/plan.py、kototoki/translate/server.py）与 kototoki/config.py 默认路径里的版本号
+# 代码里的 SHA 常量（kototoki/plan.py、kototoki/names/recipes.py 的建表模型资产）与 kototoki/config.py 默认路径里的版本号
 # 由 tests/core/test_assets_manifest.py 钉住与本文件一致。
 
 # --- 下载的二进制：安装到 .local/tools/<name>/<version>/ ---------------------------------------
@@ -153,14 +153,6 @@ revision = "3d33597edbdaaba14a8e858e2c8caa76e3cec0cd"
 "special_tokens_map.json" = { sha256 = "9046da57c270c8e74d0f38832b4adce269c9d914ef21d2a0925e7772152dd793", size = 96 }
 "tokenizer_config.json" = { sha256 = "42a65547cf0654d12263ece7c909c4b0c574b660c78658f806c772cc223bc01b", size = 397 }
 "vocab.json" = { sha256 = "0375a07a977a599040a7ff333b6974996965cd93754020619518c15db7691f01", size = 1340148 }
-
-[models.hy-mt2-30b-a3b-apex-i-compact]
-dir = "translation/hy-mt2-30b-a3b-apex-i-compact"
-repo = "alphaZimuth/Hy-MT2-30B-A3B-APEX-GGUF"
-revision = "312cce865e03a0718e36cfd1077e6307957aef72"
-
-[models.hy-mt2-30b-a3b-apex-i-compact.files]
-"Hy-MT2-30B-A3B-APEX-I-Compact.gguf" = { sha256 = "8a51a390b285fb1eb566a1683f8da476be9e87c1fbee5507967d6129872dfa1a", size = 15035838080 }
 
 [models."qwen3.8-27b-ud-iq3_s"]
 dir = "glossary-v1"

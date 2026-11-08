@@ -1,9 +1,9 @@
 """翻译输入与分批：一部影片的 `ja.srt` 即一个场景（`Scene`／`Cue` 复制自 `experiments/translation_v3/data.py`），
-前后带只读邻文。两种切法（复制自 `translation_v3/batching.py`，由 `recipe.gap_pack` 选择）：
+前后带只读邻文（复制自 `translation_v3/batching.py`，只留 Q2 用到的分支）：
 
-- 按条数：从第 0 条起每批 `batch_count` 条、前后各 `context_before`／`context_after` 条邻文（`b10-joint`）；
-- gap-pack-v2（`dp10-cut`，ADR-0010）：整个场景用动态规划取总惩罚最低的切法（`gap_pack_cuts`），邻文按与
-  批次之间的停顿取舍（`neighbours`）。停顿取自 `ja.srt` 自身的时间轴（秒），只用于比较长短，不做任何坐标换算。
+- 切包 gap-pack-v2（`dp10-cut`，ADR-0010）：整个场景用动态规划取总惩罚最低的切法（`gap_pack_cuts`）。停顿取自
+  `ja.srt` 自身的时间轴（秒），只用于比较长短，不做任何坐标换算。
+- 邻文 `wide-context-v1`（`qwen-wide`）：前后按条数取到场景边，与停顿无关（`neighbours`）。
 
 `source_key` 是翻译子系统对一份 `ja.srt` 的唯一键 `srt-<sha12>`：既是场景 ID（与 v3 `translate-srt` 的 delivery
 标签同形），也是 run 目录在 `translate/` 下的分键，只在这里拼一次。
@@ -16,7 +16,7 @@ from typing import Any
 
 from kototoki.srt import SourceDocument
 
-from .recipes import Recipe
+from .recipes import DP10_CUT_PACK, TARGET, WIDE_CONTEXT
 
 
 def source_key(ja_srt_sha256: str) -> str:
@@ -116,47 +116,30 @@ def gap_pack_cuts(scene: Scene, target: int, pack: dict[str, Any]) -> list[int]:
     return cuts[::-1]
 
 
-def neighbours(scene: Scene, start: int, stop: int, recipe: Recipe) -> tuple[int, int]:
-    """待译 [start, stop) 的可见范围 [left, right)。按条数分批时前后各取 `context_before`／`context_after` 条；
-    gap-pack 时前一条只在停顿 < `context_before_below` 时可见、后一条只在停顿 < `context_both_below` 时可见
-    （缺时间戳按无停顿），可见总数超过 `max_visible` 时先去后邻、再去前邻。降级的子批次用同一规则。"""
+def neighbours(scene: Scene, start: int, stop: int) -> tuple[int, int]:
+    """待译 [start, stop) 的可见范围 [left, right)：`wide-context-v1`，前 20、后 5 条只按条数截到场景边，
+    可见总数超过 35 条时先去后邻、再去前邻。降级的子批次用同一规则。"""
     n = len(scene.cues)
-    left, right = max(0, start - recipe.context_before), min(n, stop + recipe.context_after)
-    pack = recipe.gap_pack
-    if pack is None:
-        return left, right
-
-    def below(i: int, limit: float) -> bool:
-        gap = silence(scene, i)
-        return gap is None or gap < limit
-
-    low, high = start, stop
-    while low > left and below(low - 1, pack["context_before_below"]):
-        low -= 1
-    while high < right and below(high - 1, pack["context_both_below"]):
-        high += 1
-    while high - low > pack["max_visible"] and high > stop:
-        high -= 1
-    while high - low > pack["max_visible"] and low < start:
-        low += 1
-    return low, high
+    left, right = max(0, start - WIDE_CONTEXT["before"]), min(n, stop + WIDE_CONTEXT["after"])
+    while right - left > WIDE_CONTEXT["max_visible"] and right > stop:
+        right -= 1
+    while right - left > WIDE_CONTEXT["max_visible"] and left < start:
+        left += 1
+    return left, right
 
 
-def build_batches(scene: Scene, recipe: Recipe) -> list[Batch]:
+def build_batches(scene: Scene) -> list[Batch]:
     ids = scene.ids
     if not ids or len(ids) != len(set(ids)):
         raise ValueError(f"Empty or duplicate cue IDs in scene {scene.scene_id}")
-    cuts = gap_pack_cuts(scene, recipe.batch_count, recipe.gap_pack) + [len(ids)] if recipe.gap_pack else None
+    cuts = gap_pack_cuts(scene, TARGET, DP10_CUT_PACK) + [len(ids)]
     batches: list[Batch] = []
-    start = 0
-    while start < len(ids):
-        stop = cuts[len(batches) + 1] if cuts is not None else min(len(ids), start + recipe.batch_count)
-        left, right = neighbours(scene, start, stop, recipe)
+    for start, stop in zip(cuts, cuts[1:]):
+        left, right = neighbours(scene, start, stop)
         batches.append(Batch(
             index=len(batches), batch_id=f"{scene.scene_id}-b{len(batches) + 1:04d}", scene_id=scene.scene_id,
             target_ids=tuple(ids[start:stop]), before_ids=tuple(ids[left:start]), after_ids=tuple(ids[stop:right]),
             start=start, stop=stop))
-        start = stop
     return batches
 
 

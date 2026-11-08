@@ -1,4 +1,5 @@
-"""代码常量 == 资产清单 `assets.toml`：防止模型 SHA 表、翻译与专名建表的模型身份、默认路径里的版本号漂移。
+"""代码常量 == 资产清单 `assets.toml`：防止模型 SHA 表、专名建表的模型身份、默认路径里的版本号漂移。
+翻译模型由 Strata 管理（ADR-0019），不在清单里。
 
 清单是身份的唯一权威（docs/development/dependencies.md）；代码常量保留用于运行时自校验，这里逐项钉住相等。
 """
@@ -11,7 +12,6 @@ import unittest
 
 from kototoki import config, plan, recipes
 from kototoki.names import recipes as names_recipes
-from kototoki.translate.server import MODEL_ASSET
 
 with (config.REPO_ROOT / "assets.toml").open("rb") as _stream:
     MANIFEST = tomllib.load(_stream)
@@ -31,11 +31,9 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(shas("qwen3-asr-1.7b-hf"), plan.X0_FILES)
         self.assertEqual(shas("mms-1b-all"), plan.MMS_FILES)
 
-    def test_translation_model_asset_equals_manifest(self) -> None:
-        model = MODELS["hy-mt2-30b-a3b-apex-i-compact"]
-        self.assertEqual((model["repo"], model["revision"]), (MODEL_ASSET["repo"], MODEL_ASSET["revision"]))
-        self.assertEqual(model["files"], {MODEL_ASSET["file"]: {"sha256": MODEL_ASSET["sha256"],
-                                                                "size": MODEL_ASSET["size"]}})
+    def test_no_hy_mt2_translation_model_is_listed(self) -> None:
+        self.assertFalse([name for name in MODELS if "hy-mt" in name.lower() or "apex" in name.lower()])
+        self.assertNotIn("model", config.DEFAULTS["translate"])
 
     def test_names_model_asset_equals_manifest(self) -> None:
         model, asset = MODELS["qwen3.8-27b-ud-iq3_s"], names_recipes.BUILD["model_asset"]
@@ -50,8 +48,6 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(defaults["asr.w0"]["mel_assets"], MODELS["w0-assets"]["dir"])
         self.assertEqual(defaults["asr.x0"]["model"], MODELS["qwen3-asr-1.7b-hf"]["dir"])
         self.assertEqual(defaults["align"]["model"], MODELS["mms-1b-all"]["dir"])
-        self.assertEqual(defaults["translate"]["model"],
-                         f"{MODELS['hy-mt2-30b-a3b-apex-i-compact']['dir']}/{MODEL_ASSET['file']}")
         names = MODELS["qwen3.8-27b-ud-iq3_s"]
         self.assertEqual(list(names["files"]), [PurePosixPath(defaults["names"]["model"]).name])
         self.assertEqual(defaults["names"]["model"], f"{names['dir']}/{PurePosixPath(defaults['names']['model']).name}")

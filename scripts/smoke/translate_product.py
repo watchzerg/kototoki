@@ -1,15 +1,16 @@
-"""真实模型验证：产品翻译子系统 `kototoki.translate` 在真实 llama-server 上跑几批（占 GPU、加载翻译模型，
-每次运行前须经用户批准；不属于任何 gate）。
+"""真实模型验证：产品翻译子系统 `kototoki.translate` 在产品自动启停的 Strata 上跑几批（占 GPU、加载
+Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）。这是 ADR-0017／ADR-0019 要求的 Q2 首用 smoke。
 
 入口：`just smoke translate_product`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
-`python scripts/smoke/translate_product.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。
-与 `llama_stock` 不同，本脚本走产品代码：`translate.plan` → `translate.Session`（`ManagedServer`：引擎与模型身份
-核对、空闲显存轮询、驻留校验）→ `translate.translate_document`，配方为产品配方 `dp10-cut-degrade-v1`，
-模型、引擎、端口与 seed 取 `config.load` 的默认值。
+`python scripts/smoke/translate_product.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。走产品代码：
+`translate.plan` → `translate.Session`（`StrataServer`：`--status` 为空才启动、`strata launch --no-tui`、ADR-0017 接入
+检查、结束 `--stop` 并核实显存释放）→ `translate.translate_document`，配方为产品配方 `q2-degrade-v1`，seed 取
+`config.load` 的默认值。开始前若已有 Strata launch 在服务，产品拒绝运行，本脚本照实记为失败。
 
 输入是下面内置的 12 条中性合成日语短句（不含任何真实字幕），第 6 条后留 20 s 停顿，dp10-cut 必在此切包，
-因此至少两批。产物写入 `<out>/translate_product/`（临时配置、工作目录与 server 日志），结果写
-`<out>/translate_product.json`：只含计数、哈希、耗时与引擎元数据，不含原文与译文。
+因此至少两批；专名表只有一行 high 条目（駅 → 车站），用来走一遍注入。产物写入 `<out>/translate_product/`
+（临时配置与工作目录），结果写 `<out>/translate_product.json`：只含计数、哈希、耗时、资源峰值与 Strata 身份，
+不含原文与译文。
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ SENTENCES = (
 PAUSE_AFTER = 6       # 第 6 条后留长停顿
 PAUSE_S = 20.0
 CUE_S, GAP_S = 2.0, 1.0
+NAME_TABLE = {"entries": [{"entity_ja": "駅", "kind": "place", "confidence": "high", "zh": "车站",
+                           "forms": [{"ja": "駅", "zh": "车站"}], "zh_variants": [], "evidence": []}]}
 
 
 def synthetic_srt() -> str:
@@ -67,6 +70,34 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def read(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def batch_stats(run_dir: Path) -> dict[str, Any]:
+    """每包耗时与首次格式失败：取 `batches.jsonl` 每行原批次请求（降级的取 `degrade.nodes[0]`）的尝试记录。"""
+    path = run_dir / "batches.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
+    packs = []
+    for row in rows:
+        request = row.get("request") or ((row.get("degrade") or {}).get("nodes") or [{}])[0].get("request") or {}
+        attempts = request.get("attempts") or []
+        first = attempts[0] if attempts else {}
+        packs.append({"targets": len(row.get("target_ids") or []), "attempts": len(attempts),
+                      "first_status": first.get("status"), "first_error_kind": first.get("error_kind"),
+                      "seconds": sum(a.get("completion_seconds") or 0.0 for a in attempts),
+                      "input_tokens": first.get("input_tokens"), "output_tokens": first.get("output_tokens"),
+                      "reasoning_chars": sum(a.get("reasoning_chars") or 0 for a in attempts),
+                      "names_injected": request.get("names_injected"), "degraded": "degrade" in row})
+    seconds = [p["seconds"] for p in packs]
+    return {"packs": packs,
+            "first_attempt_format_failures": sum(1 for p in packs if p["first_error_kind"] in ("parse", "limit")),
+            "degraded_packs": sum(1 for p in packs if p["degraded"]),
+            "reasoning_chars": sum(p["reasoning_chars"] for p in packs),
+            "seconds_per_pack": {"mean": sum(seconds) / len(seconds) if seconds else None,
+                                 "max": max(seconds) if seconds else None}}
+
+
 def main() -> int:
     args = smokelib.parse_args(__doc__)
     if not GPU_LOCK.is_file():
@@ -77,13 +108,13 @@ def main() -> int:
     root = args.out.resolve() / NAME
     cfg = write_config(root)
     document = srt.parse_srt(synthetic_srt())
-    work_dir = cfg.paths.output_dir / "work"
-    plan = translate.plan(work_dir, document, cfg)
+    work_dir = cfg.paths.output_dir / ".work" / "smoke"
+    plan = translate.plan(work_dir, document, NAME_TABLE, cfg)
     result: dict[str, Any] = {
-        "recipe": R.PRODUCT.name, "recipe_hash": R.PRODUCT.recipe_hash, "seed": cfg.translate.seed,
-        "engine": str(cfg.paths.llama_server), "model": str(cfg.models.translate),
+        "recipe": R.RECIPE_NAME, "recipe_hash": R.RECIPE_HASH, "seed": cfg.translate.seed, "model": R.MODEL,
+        "names_sha256": plan.identity["names_sha256"],
         "input": {"cues": len(document.cues), "source_sha256": document.source_sha256,
-                  "synthetic": True, "pause_after_cue": PAUSE_AFTER}}
+                  "synthetic": True, "pause_after_cue": PAUSE_AFTER, "name_rows": 1}}
     translated = None
     try:
         with translate.Session(cfg) as session:
@@ -92,26 +123,32 @@ def main() -> int:
         failures.append(f"{type(error).__name__}: {str(error)[:500]}")
     timer.mark("translate")
 
-    run_path = plan.run_dir / "run.json"
-    if run_path.is_file():
-        run = json.loads(run_path.read_text(encoding="utf-8"))
+    run = read(plan.run_dir / "run.json")
+    if run is not None:
         result["completion"] = run.get("completion")
+        result["server_start_failures"] = run.get("server_start_failures")
         result["sessions"] = [{"batches_written": s.get("batches_written"), "wall_seconds": s.get("wall_seconds"),
-                               "stop_reason": s.get("stop_reason"),
+                               "stop_reason": s.get("stop_reason"), "cache_reset": s.get("cache_reset"),
                                "cold_load_seconds": (s.get("engine") or {}).get("cold_load_seconds"),
                                "free_vram_mib_before_start": (s.get("engine") or {}).get("free_vram_mib_before_start"),
-                               "residency": (s.get("engine") or {}).get("residency")}
+                               "strata": {k: ((s.get("engine") or {}).get("strata") or {}).get(k)
+                                          for k in ("version", "drafting", "kv", "spec", "models")}}
                               for s in run.get("sessions", [])]
-    finals = sorted((cfg.paths.output_dir / ".work").rglob("engine-final.json"))
-    result["peak_device_memory_mib"] = [json.loads(p.read_text(encoding="utf-8")).get("peak_device_memory_mib")
-                                        for p in finals]
+    sessions_root = cfg.paths.output_dir / ".work" / "translate-sessions"
+    result["resources"] = [read(p) for p in sorted(sessions_root.rglob("resources.json"))]
+    result["strata_final"] = [read(p) for p in sorted(sessions_root.rglob("strata-final.json"))]
+    result["batches"] = batch_stats(plan.run_dir)
+    if not result["strata_final"] or not all(f.get("released") for f in result["strata_final"]):
+        failures.append("Strata stop / GPU memory release not confirmed")
+    if result["batches"]["reasoning_chars"]:
+        failures.append("reasoning_content was not empty (thinking must be off)")
     if translated is not None:
         ids = [cue.id for cue in document.cues]
         texts = [translated.translations.get(cue_id, "") for cue_id in ids]
         result["output"] = {"translations": len(translated.translations),
                             "nonempty": sum(1 for text in texts if text.strip()),
                             "translations_sha256": sha256_text(json.dumps(texts, ensure_ascii=False)),
-                            "counts": translated.report.get("counts")}
+                            "counts": translated.report.get("counts"), "fallback_cues": translated.fallback_count}
         if set(translated.translations) != set(ids):
             failures.append("translations do not cover every cue id")
         if not all(text.strip() for text in texts):
@@ -120,6 +157,8 @@ def main() -> int:
             failures.append(f"{translated.fallback_count} cue(s) fell back to Japanese")
         if (translated.report.get("counts") or {}).get("batches", 0) < 2:
             failures.append("expected at least two batches")
+        if not any(p["names_injected"] for p in result["batches"]["packs"]):
+            failures.append("the high-confidence name row was never injected")
     result.update(passed=not failures, failures=failures, elapsed_s=timer.marks, out=str(root))
     return smokelib.finish(args.out, NAME, result)
 

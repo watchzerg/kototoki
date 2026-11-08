@@ -4,7 +4,8 @@
 
 - 用户写出的相对路径按**配置文件所在目录**解析；省略的键用默认值，默认值里的相对路径按**仓库根**解析
   （配置文件放仓库外时默认模型目录与 llama-server 仍可用）。
-- `[vad]`、`[asr.*]`、`[align]`、`[translate]`、`[names]` 的模型路径为相对路径时相对于 `paths.models_root`。
+- `[vad]`、`[asr.*]`、`[align]`、`[names]` 的模型路径为相对路径时相对于 `paths.models_root`。翻译模型由 Strata
+  自己管理（ADR-0019），`[translate]` 只有 `seed`（Strata 只接受正整数）。
 - `paths.input_dir`、`paths.output_dir` 没有默认值，必须写出。
 
 不进配置文件的两项：GPU 锁路径固定为仓库内 `.local/gpu.lock`；破除死锁只认环境变量
@@ -51,17 +52,14 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "max_chars": 24, "max_duration_s": 6.0, "min_duration_s": 0.8, "max_gap_s": 1.0,
         "sentence_endings": "。！？!?", "soft_breaks": "、，,", "lead_out_s": 0.3,
     },
-    "translate": {
-        "model": "translation/hy-mt2-30b-a3b-apex-i-compact/Hy-MT2-30B-A3B-APEX-I-Compact.gguf",
-        "port": 8080, "seed": 20261008,
-    },
-    "names": {"model": "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf", "port": 8081, "seed": 20261019, "enabled": True},
+    "translate": {"seed": 20261008},
+    "names": {"model": "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf", "port": 8081, "seed": 20261019},
 }
 # 按配置文件目录（用户值）或仓库根（默认值）解析的键。
 PATH_KEYS = {("paths", key) for key in ("input_dir", "output_dir", "models_root", "ffmpeg", "ffprobe", "llama_server")}
 # 相对于 models_root 的模型键。
 MODEL_KEYS = {("vad", "model"), ("asr.w0", "model"), ("asr.w0", "mel_assets"), ("asr.x0", "model"),
-              ("align", "model"), ("translate", "model"), ("names", "model")}
+              ("align", "model"), ("names", "model")}
 
 
 class ConfigError(ValueError):
@@ -98,7 +96,6 @@ class Models:
     w0_mel_assets: Path
     x0: Path
     align: Path
-    translate: Path
     names: Path
 
 
@@ -115,7 +112,6 @@ class CueRules:
 
 @dataclass(frozen=True)
 class TranslateConfig:
-    port: int
     seed: int
 
 
@@ -123,7 +119,6 @@ class TranslateConfig:
 class NamesConfig:
     port: int
     seed: int
-    enabled: bool
 
 
 @dataclass(frozen=True)
@@ -223,6 +218,8 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
         raise ConfigError(f"[stt] engine must be one of {', '.join(ENGINES)}, got {engine!r}")
     if values["run", "extract_workers"] < 1:
         raise ConfigError("[run] extract_workers must be at least 1")
+    if not 0 < values["translate", "seed"] < 2**31:
+        raise ConfigError("[translate] seed must be a positive integer below 2**31")
 
     return Config(
         source=source,
@@ -233,12 +230,10 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
         engine=engine,
         models=Models(vad=values["vad", "model"], w0=values["asr.w0", "model"],
                       w0_mel_assets=values["asr.w0", "mel_assets"], x0=values["asr.x0", "model"],
-                      align=values["align", "model"], translate=values["translate", "model"],
-                      names=values["names", "model"]),
+                      align=values["align", "model"], names=values["names", "model"]),
         cues=CueRules(**{key: values["cues", key] for key in DEFAULTS["cues"]}),
-        translate=TranslateConfig(port=values["translate", "port"], seed=values["translate", "seed"]),
-        names=NamesConfig(port=values["names", "port"], seed=values["names", "seed"],
-                          enabled=values["names", "enabled"]),
+        translate=TranslateConfig(seed=values["translate", "seed"]),
+        names=NamesConfig(port=values["names", "port"], seed=values["names", "seed"]),
         gpu_lock=GPU_LOCK,
         break_stale_lock=environ.get(BREAK_STALE_LOCK_ENV) == "1",
     )

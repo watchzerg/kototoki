@@ -50,7 +50,6 @@ ASR = "asr.json"
 ALIGN = "align.json"
 JA_CUES = "ja-cues.json"
 NAME_TABLE = "name-table.json"  # names 阶段产物（阶段产物，参与 is_current）
-NAMES_APPLY = "names-apply.json"  # 发布时替换的审计产物，不参与 is_current
 PUBLISHED = "published.json"
 FAILURE = "failure.json"
 # cross 引擎的审计产物（两路原始结果与裁决记录）：不在 STAGE_ARTIFACTS，不参与 `is_current` 与阶段计划，

@@ -18,7 +18,6 @@ from kototoki.recipes import recipe_hash
 SYSTEM_PROMPT_SHA256 = "d8e16c0441b611129ba2bcab11a9a41ae7afe53bf1632d56ae9740b7f905dd78"
 RESPONSE_SCHEMA_SHA256 = "3004d26cef032d99f1088fcae1fc0e093b689b373490e633f6c6dcfad23117ff"
 BUILD_HASH = "5b8d1b76da757bb26aa3d3fb894c1963935a308b6ef4eb7c75edeaa2d44c9e50"
-APPLY_HASH = "5c795c35ff811bd867b6f1bedb0fcc4551eb2eb638e0bdbcfc5623350c227442"
 
 
 class FrozenPromptTests(unittest.TestCase):
@@ -65,26 +64,6 @@ class BuildRecipeTests(unittest.TestCase):
         honorific = dict(recipes.BUILD["normalize"]["honorific"], sha256="0" * 64)
         changed = {**recipes.BUILD, "normalize": {**recipes.BUILD["normalize"], "honorific": honorific}}
         self.assertNotEqual(recipe_hash(changed), recipes.BUILD_RECIPE_HASH)
-
-
-class ApplyRecipeTests(unittest.TestCase):
-    def test_hash_pinned(self):
-        self.assertEqual(recipes.APPLY_RECIPE_HASH, APPLY_HASH)
-        self.assertEqual(recipes.APPLY_RECIPE_HASH, recipe_hash(recipes.APPLY))
-
-    def test_frozen_default_path(self):
-        apply = recipes.APPLY
-        self.assertEqual(apply["rules"], {
-            "extend_to_full_name": True, "isolated_singles": True, "name_check": False, "weak_name_check": False,
-            "pool_by_target": False, "bigram_isolation": False, "iterate": 1, "min_confidence": "low"})
-        self.assertEqual((apply["min_support"], apply["min_ratio"], apply["min_share"], apply["max_extend"],
-                          apply["extend_share"], apply["ngram"]), (2, 0.8, 0.04, 6, 0.5, [2, 6]))
-        self.assertTrue(apply["skip_fallback_cues"])
-
-    def test_changing_a_constant_changes_the_hash(self):
-        self.assertNotEqual(recipe_hash({**recipes.APPLY, "min_ratio": 0.7}), recipes.APPLY_RECIPE_HASH)
-        boundary = recipes.APPLY["boundary_chars"] + "啦"
-        self.assertNotEqual(recipe_hash({**recipes.APPLY, "boundary_chars": boundary}), recipes.APPLY_RECIPE_HASH)
 
 
 class NamesServerTests(unittest.TestCase):

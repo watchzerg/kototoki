@@ -7,7 +7,7 @@
 - python：CUDA 12 锚点（`ANCHORS`）保持原钉版；其余直接依赖取 uv 解析出的最新稳定版并重新钉版；
   传递依赖一起升，但跳过主版本升级（日历版本号除外），跳过项列入报告。
 - llama.cpp：GitHub 最新稳定版（`releases/latest`）的 `nightly-tag.txt` 指向的构建，CUDA 主版本与清单现有记录相同、
-  取其中最高的 `win-cuda-*-x64`；默认路径直接切换，真实模型验证（`just smoke translate_product`）另行批准后跑。
+  取其中最高的 `win-cuda-*-x64`；默认路径直接切换，真实模型验证（`just smoke names_product`，llama.cpp 只剩建表使用）另行批准后跑。
 - ffmpeg：BtbN 最新带日期 tag 的 autobuild 中最高维护分支的 win64 gpl 构建；用产品 extract 代码在 `--films`
   的每部 `.mkv` 上与当前默认构建对照派生 WAV，PCM、样本数、补偿记录与告警全部相同才切换默认路径，否则清单还原。
 - `--check` 只报告可升级项，不改任何文件。
@@ -302,7 +302,7 @@ def upgrade_llama(check: bool) -> dict[str, Any]:
                          for a in (main_asset, cudart)]}
     result = install_new_tool("llama.cpp", tool,
                               fetch_files=lambda paths: {k: v for p in paths for k, v in zip_entries(p).items()})
-    result["pending"] = "just smoke translate_product（占 GPU，须用户批准）"
+    result["pending"] = "just smoke names_product（占 GPU，须用户批准）"
     return result
 
 
