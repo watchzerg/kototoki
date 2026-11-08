@@ -112,9 +112,54 @@ class ClientTest(unittest.TestCase):
                 v13.preflight(**ok)
 
 
+class VariantTest(unittest.TestCase):
+    def test_hashes(self):
+        self.assertEqual(v13.s1_hash("v2"), "eb4b1c6d91517683f18fd6e83cda12fc6ea0c6cdbf9b31a43ccfc002d8d5b920")
+        self.assertEqual(len({v13.s1_hash(v) for v in ("v2", "v3", "v4")}), 3)
+        self.assertEqual((v13.s1_recipe("v3")["build"]["attempts"], v13.s1_recipe("v4")["build"]["attempts"]), (5, 5))
+        self.assertIsNone(v13.s1_recipe("v4")["request"]["response_format"])
+        self.assertEqual(v13.s1_recipe("v3")["request"]["response_format"]["type"], "json_schema")
+
+    def test_v3_keeps_response_format_and_502_is_a_failed_attempt(self):
+        from io import BytesIO
+        from kototoki.names.table import _request_body
+        self.assertIn("response_format", v13.strata_body(_request_body([], 1), response_format=True))
+        error = HTTPError("u", 502, "bad", {}, BytesIO(b'{"error": {"code": "structured_output_failed"}}'))
+
+        class Post(FakePost):
+            def __call__(self, url, body, timeout):
+                if url.endswith("/chat/completions") and len([1 for u, _ in self.bodies if u.endswith("/chat/completions")]) == 0:
+                    self.bodies.append((url, body))
+                    raise error
+                return super().__call__(url, body, timeout)
+
+        post = Post([reply(GOOD)])
+        result, record = v13.build_one(doc(), v13.NamesClient(post=post, variant="v3"))
+        self.assertEqual((result.status, record["attempts"], record["failed_attempt_kinds"]),
+                         ("ok", 2, {"structured_output_failed": 1}))
+        self.assertTrue(all("response_format" in b for u, b in post.bodies if u.endswith("/chat/completions")))
+        self.assertTrue(v13.gate({"builds": {"dev/W": record}}, root=Path(tempfile.mkdtemp()))["checks"]
+                        ["sampling_accepted"])
+
+    def test_v4_retries_up_to_five_attempts_on_consecutive_seeds(self):
+        post = FakePost([reply("x", "length")] * 4 + [reply(GOOD)])
+        result, record = v13.build_one(doc(), v13.NamesClient(post=post, variant="v4"))
+        seeds = [b["seed"] for u, b in post.bodies if u.endswith("/chat/completions")]
+        self.assertEqual((result.status, seeds, record["failed_attempt_kinds"]),
+                         ("ok", list(range(20261019, 20261024)), {"length": 4}))
+        self.assertEqual(record["count_tokens"], 100)  # the first call's two segments only
+        post = FakePost([reply("x", "length")] * 5)
+        result, record = v13.build_one(doc(), v13.NamesClient(post=post, variant="v4"))
+        self.assertEqual((result.status, record["attempts"], len(post.replies)), ("failed", 5, 0))
+        post = FakePost([reply("x", "length")] * 2)
+        result, record = v13.build_one(doc(), v13.NamesClient(post=post, variant="v2"))
+        self.assertEqual((result.status, record["attempts"]), ("failed", 2))
+
+
 class GateTest(unittest.TestCase):
     def build(self, status="ok", first=False, **request) -> dict:
         return {"status": status, "first_attempt_failed": first, "reason": None, "count_tokens_ok": True,
+                "attempts": 2 if first else 1,
                 "prompt_tokens_minus_count": 3, "over_budget_by_usage": False,
                 "requests": [{"reasoning_chars": 0, "think_tag": False, "error": None, "extra_response_keys": []}
                              | request]}

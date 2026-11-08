@@ -118,8 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     pr12.add_argument("--arms", nargs="*", default=[])
     pr12.add_argument("--name")
     sub.add_parser("v13-s1", help="v13 offline: the S1 build recipe and its hash")
-    sub.add_parser("v13-build", help="v13 GPU (starts and stops Strata): all S1 tables -> B/, then the gate")
-    sub.add_parser("v13-gate", help="v13 offline: recompute the feasibility gate from B/build-report.json")
+    b13 = sub.add_parser("v13-build", help="v13 GPU (starts and stops Strata once): all tables of each S1 variant -> "
+                                           "its B* directory, then the gate")
+    b13.add_argument("--variants", nargs="+", choices=tuple(v13.VARIANTS), default=[v13.CANDIDATE])
+    g13b = sub.add_parser("v13-gate", help="v13 offline: recompute the feasibility gate from B*/build-report.json")
+    g13b.add_argument("--variant", choices=tuple(v13.VARIANTS), default=v13.CANDIDATE)
     sub.add_parser("v13-quality", help="v13 offline: table quality S1 vs 27B -> C/table-quality.json")
     sub.add_parser("v13-recipes", help="v13 offline: T0/T1 dev and product Q2 recipes")
     sub.add_parser("v13-dev", help="v13 GPU (starts and stops Strata): the 6 dev runs T0/T1 x 3 seeds")
@@ -222,11 +225,12 @@ def main(argv: list[str] | None = None) -> int:
                                                   "name_error_delta_ci90", "critical", "addition")}
                             for b, r in out["buckets"].items()}}
     elif args.command == "v13-s1":
-        out = {"hash": v13.s1_hash(), "recipe": v13.s1_recipe()}
+        out = {v: {"hash": v13.s1_hash(v), "recipe": v13.s1_recipe(v)} for v in v13.VARIANTS}
     elif args.command == "v13-build":
-        out = v13.run_builds()
+        out = v13.run_builds(tuple(args.variants))
     elif args.command == "v13-gate":
-        out = v13.gate(json.loads((v13.B_ROOT / "build-report.json").read_text(encoding="utf-8")))
+        folder = v13.V13_ROOT / v13.VARIANTS[args.variant]["dir"]
+        out = v13.gate(json.loads((folder / "build-report.json").read_text(encoding="utf-8")), root=folder)
     elif args.command == "v13-quality":
         out = v13.table_quality()
         out = {"dev": {k: v for k, v in out["dev"].items() if k != "arms"} | {

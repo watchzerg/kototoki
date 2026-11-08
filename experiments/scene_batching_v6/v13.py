@@ -50,14 +50,23 @@ from .brief10 import dev_lines
 from .names10 import NAMES_SEED, document
 
 V13_ROOT = REPO / ".local/names-on-strata-v13"
-# S1 v1 (max_tokens 4096) failed the ticket 02 gate; its builds stay in ``B/`` as evidence. The user adopted §8
-# item 4 (a) on 2026-11-08: S1 v2 = v1 with max_tokens 8192 and context 24576 (prompt budget unchanged), built into B2/.
-BUILD_DIR = "B2"
+# S1 variants (§7): v1 (max_tokens 4096, ``B/``) and v2 (8192, ``B2/``, user decision §8 item 4 (a)) failed the
+# ticket 02 gate. On 2026-11-08 the user asked to try ``response_format`` and up to five attempts: v3 = v2 + the
+# product ``json_schema`` response_format (Strata: prompt + validate, HTTP 502 on failure = a failed attempt) + 5
+# attempts; v4 = v2 + 5 attempts. Attempts are sequential retries after a failure (seed, seed+1, ...), the first
+# acceptable table is kept: no selection among tables (ADR-0008).
+VARIANTS: dict[str, dict[str, Any]] = {
+    "v2": {"name": "names-strata-v2", "dir": "B2", "response_format": False, "attempts": 2},
+    "v3": {"name": "names-strata-v3", "dir": "B3", "response_format": True, "attempts": 5},
+    "v4": {"name": "names-strata-v4", "dir": "B4", "response_format": False, "attempts": 5},
+}
+CANDIDATE = "v2"  # the variant whose tables feed tickets 03-05
+BUILD_DIR = VARIANTS[CANDIDATE]["dir"]
 B_ROOT = V13_ROOT / BUILD_DIR
 C_ROOT = V13_ROOT / "C"
 E_ROOT = V13_ROOT / "E"
 T0, T1 = "q2-names-27b", "q2-names-s1"
-S1_NAME = "names-strata-v2"
+S1_NAME = VARIANTS[CANDIDATE]["name"]
 S1_MAX_TOKENS = 8192
 S1_CONTEXT = 24576  # context - max_tokens - 512 = 15872, the product prompt budget
 MAIN_SEEDS = v9.MAIN_SEEDS
@@ -77,28 +86,38 @@ KNOWN_RESPONSE_KEYS = {"id", "object", "created", "model", "choices", "usage", "
 
 # --- S1 identity --------------------------------------------------------------------------------
 
-def s1_recipe() -> dict[str, Any]:
+def s1_recipe(variant: str = CANDIDATE) -> dict[str, Any]:
     """The S1 build recipe: product ``BUILD`` without its llama.cpp model asset and with the larger output limit
     (``max_tokens`` 8192, context 24576, so the prompt budget stays 15872), plus the Strata identity and the request
     changes of §4.0."""
     from kototoki.names.recipes import BUILD
     from kototoki.names.table import PROMPT_BUDGET, PROMPT_GUARD_TOKENS
     assert S1_CONTEXT - S1_MAX_TOKENS - PROMPT_GUARD_TOKENS == PROMPT_BUDGET
-    return {"name": S1_NAME,
-            "build": {k: v for k, v in BUILD.items() if k != "model_asset"}
-            | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT},
+    v = VARIANTS[variant]
+    build = {k: x for k, x in BUILD.items() if k != "model_asset"} | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT}
+    if v["attempts"] != BUILD["attempts"]:
+        build["attempts"] = v["attempts"]
+    request: dict[str, Any] = {"response_format": None, "chat_template_kwargs": {"enable_thinking": False},
+                               "model": strata.MODEL}
+    if v["response_format"]:
+        request["response_format"] = {"type": "json_schema", "schema_sha256": BUILD["response_schema_sha256"],
+                                      "strata_method": "prompt_and_validate",
+                                      "http_502_structured_output_failed": "failed attempt"}
+    out = {"name": v["name"], "build": build,
             "model": strata.MODEL,
             "runtime": {"strata": strata.STRATA_VERSION, "engine_build": strata.ENGINE_BUILD,
                         "launch": strata.DEFAULT_LAUNCH, "resolved": dict(strata.DEFAULT_RESOLVED), "kv": EXPECTED_KV},
-            "request": {"response_format": None, "chat_template_kwargs": {"enable_thinking": False},
-                        "model": strata.MODEL},
+            "request": request,
             "prompt_budget_check": {"endpoint": COUNT_TOKENS, "segments": ["system", "user"], "sum": True,
                                     "fallback": "no precheck; usage.prompt_tokens recorded, over budget flagged"}}
+    if v["attempts"] > BUILD["attempts"]:
+        out["retries"] = "build_table again with seed + 2k while it fails; at most attempts requests; first ok kept"
+    return out
 
 
-def s1_hash() -> str:
+def s1_hash(variant: str = CANDIDATE) -> str:
     from kototoki.recipes import recipe_hash
-    return recipe_hash(s1_recipe())
+    return recipe_hash(s1_recipe(variant))
 
 
 # --- Strata client for build_table ----------------------------------------------------------------
@@ -111,30 +130,42 @@ def _post(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def strata_body(body: dict[str, Any]) -> dict[str, Any]:
-    """The product request body (``table._request_body``) as S1 sends it: no ``response_format``, the Strata model,
-    ``max_tokens`` 8192, thinking stated off. (``build_table`` keeps checking the prompt against the product budget,
-    which S1 leaves unchanged.)"""
+def strata_body(body: dict[str, Any], *, response_format: bool = False) -> dict[str, Any]:
+    """The product request body (``table._request_body``) as S1 sends it: the Strata model, ``max_tokens`` 8192,
+    thinking stated off, ``response_format`` dropped (v1, v2, v4) or kept as the product sends it (v3).
+    (``build_table`` keeps checking the prompt against the product budget, which S1 leaves unchanged.)"""
     if (body.get("chat_template_kwargs") or {}).get("enable_thinking") is not False:
         raise ValueError("S1 requests must state enable_thinking: false")
     if type(body.get("seed")) is not int or body["seed"] <= 0:
         raise ValueError("Strata takes only a positive integer seed")
-    return {k: v for k, v in body.items() if k != "response_format"} | {"model": strata.MODEL,
-                                                                        "max_tokens": S1_MAX_TOKENS}
+    return {k: v for k, v in body.items() if response_format or k != "response_format"} | {
+        "model": strata.MODEL, "max_tokens": S1_MAX_TOKENS}
+
+
+def _empty_reply(finish: str) -> dict[str, Any]:
+    """A reply ``build_table`` treats as a failed attempt (empty content does not parse)."""
+    return {"choices": [{"finish_reason": finish, "message": {"content": ""}}], "usage": {}}
 
 
 class NamesClient:
     """``chat`` / ``tokenize`` callbacks of ``build_table`` on Strata, recording counts per request (no text)."""
 
-    def __init__(self, base: str = BASE, *, post: Callable[[str, dict, float], dict] = _post, timeout: float = 900.0):
+    def __init__(self, base: str = BASE, *, post: Callable[[str, dict, float], dict] = _post, timeout: float = 900.0,
+                 variant: str = CANDIDATE):
         self.base, self.post, self.timeout = base, post, timeout
+        self.variant = variant
+        self.response_format = VARIANTS[variant]["response_format"]
+        self.remaining = VARIANTS[variant]["attempts"]  # requests still allowed in the current build
         self.requests: list[dict[str, Any]] = []
         self.counts: list[int] = []
         self.count_tokens_ok: bool | None = None
         self.count_tokens_error: str | None = None
 
     def chat(self, body: dict[str, Any]) -> dict[str, Any]:
-        sent = strata_body(body)
+        if self.remaining <= 0:  # attempt budget of this build used up: not sent, a failed attempt for build_table
+            return _empty_reply("not_dispatched")
+        self.remaining -= 1
+        sent = strata_body(body, response_format=self.response_format)
         from kototoki.names.table import SAMPLING
         record: dict[str, Any] = {"seed": sent["seed"], "keys": sorted(sent),
                                   "sampling": {k: sent.get(k) for k in SAMPLING}, "max_tokens": sent.get("max_tokens")}
@@ -145,6 +176,10 @@ class NamesClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
             record.update(seconds=perf_counter() - started, http_status=exc.code, error=detail[:300])
+            if self.response_format and exc.code == 502 and "structured_output_failed" in detail:
+                record.update(finish_reason="structured_output_failed", structured_output_error=record.pop("error"))
+                del record["http_status"]
+                return _empty_reply("structured_output_failed")
             raise
         record["seconds"] = perf_counter() - started
         choice = (response.get("choices") or [{}])[0]
@@ -185,11 +220,15 @@ def build_record(result: Any, requests: list[dict[str, Any]], counts: list[int],
                  peak: dict[str, Any] | None, client: NamesClient) -> dict[str, Any]:
     """Counts of one build (no table content)."""
     from kototoki.names.table import PROMPT_BUDGET
-    accepted = requests[result.attempts - 1] if result.status == "ok" and result.attempts else None
-    prompt_tokens = (accepted or (requests[-1] if requests else {})).get("prompt_tokens")
-    count = sum(counts) if counts else None
-    return {"status": result.status, "reason": result.payload["build"]["reason"], "attempts": result.attempts,
-            "first_attempt_failed": result.attempts > 1 or result.status == "failed",
+    accepted = requests[-1] if result.status == "ok" and requests else None
+    prompt_tokens = next((q.get("prompt_tokens") for q in ([accepted] if accepted else []) + requests[::-1]
+                          if q.get("prompt_tokens") is not None), None)
+    count = sum(counts[:2]) if counts else None  # system + user of the first build_table call
+    failed = requests[:-1] if accepted else requests
+    return {"status": result.status, "reason": result.payload["build"]["reason"], "attempts": len(requests),
+            "first_attempt_failed": not (result.status == "ok" and len(requests) == 1),
+            "failed_attempt_kinds": dict(Counter("parse" if q.get("finish_reason") == "stop" else
+                                                 str(q.get("finish_reason")) for q in failed)),
             "entries": len(result.payload.get("entries", [])),
             "high_entries": sum(e["confidence"] == "high" for e in result.payload.get("entries", [])),
             "requests": requests, "count_tokens": count, "count_tokens_ok": client.count_tokens_ok,
@@ -209,12 +248,17 @@ def build_one(doc: Any, client: NamesClient, seed: int = NAMES_SEED, *, sampler:
               ) -> tuple[Any, dict[str, Any]]:
     from kototoki.names.table import build_table
     first_request, first_count = len(client.requests), len(client.counts)
+    client.remaining = VARIANTS[client.variant]["attempts"]
     s = sampler() if sampler else None
     if s is not None:
         s.start()
     started = perf_counter()
     try:
         result = build_table(doc, client.chat, client.tokenize, seed)
+        k = 1
+        while result.status == "failed" and client.remaining > 0:  # v3 / v4: retry with the next seeds
+            result = build_table(doc, client.chat, client.tokenize, seed + 2 * k)
+            k += 1
     finally:
         if s is not None:
             s.stop()
@@ -224,22 +268,22 @@ def build_one(doc: Any, client: NamesClient, seed: int = NAMES_SEED, *, sampler:
     return result, record
 
 
-def _product_table(film: str, result: Any) -> dict[str, Any]:
+def _product_table(film: str, result: Any, variant: str = CANDIDATE) -> dict[str, Any]:
     from kototoki.srt import read_srt
     doc = read_srt(FILMS[film]["ja"])
-    return {"identity": {"ja_srt_sha256": doc.source_sha256, "recipe_hash": s1_hash(), "seed": NAMES_SEED,
-                         "recipe": S1_NAME}} | result.payload
+    return {"identity": {"ja_srt_sha256": doc.source_sha256, "recipe_hash": s1_hash(variant), "seed": NAMES_SEED,
+                         "recipe": VARIANTS[variant]["name"]}} | result.payload
 
 
 def build_all(*, root: Path = B_ROOT, client: NamesClient | None = None,
-              sampler: Callable[[], Any] | None = None) -> dict[str, Any]:
+              sampler: Callable[[], Any] | None = None, variant: str = CANDIDATE) -> dict[str, Any]:
     """Ticket 02 builds on the running Strata service: product HF-II / HF-III (first build used), the 15 dev works,
     then the product A/A second builds. Finished builds are kept (resume); the report holds counts only."""
     from kototoki.srt import read_srt
-    client = client or NamesClient()
+    client = client or NamesClient(variant=variant)
     report_path = root / "build-report.json"
     report: dict[str, Any] = read_json(report_path) if report_path.is_file() else {
-        "recipe": S1_NAME, "recipe_hash": s1_hash(), "seed": NAMES_SEED, "builds": {}}
+        "recipe": VARIANTS[variant]["name"], "recipe_hash": s1_hash(variant), "seed": NAMES_SEED, "builds": {}}
 
     def save() -> None:
         atomic_write_json(report_path, report)
@@ -247,7 +291,7 @@ def build_all(*, root: Path = B_ROOT, client: NamesClient | None = None,
     for kind in ("product", "dev", "product-aa"):
         if kind == "dev":
             out = root / "E" / "dev-name-tables.json"
-            tables = read_json(out) if out.is_file() else {"seed": NAMES_SEED, "recipe_hash": s1_hash(),
+            tables = read_json(out) if out.is_file() else {"seed": NAMES_SEED, "recipe_hash": s1_hash(variant),
                                                             "tables": {}, "meta": {}}
             for work, lines in sorted(dev_lines().items()):
                 if work in tables["tables"]:
@@ -264,7 +308,7 @@ def build_all(*, root: Path = B_ROOT, client: NamesClient | None = None,
             if out.is_file():
                 continue
             result, record = build_one(read_srt(FILMS[film]["ja"]), client, sampler=sampler)
-            atomic_write_json(out, _product_table(film, result))
+            atomic_write_json(out, _product_table(film, result, variant))
             report["builds"][f"{kind}/{film}"] = record
             save()
     return gate(report, root=root)
@@ -285,6 +329,10 @@ def gate(report: dict[str, Any], *, root: Path = B_ROOT) -> dict[str, Any]:
            "status": dict(Counter(r["status"] for r in used.values())),
            "first_attempt_failures": sum(r["first_attempt_failed"] for r in used.values()),
            "first_attempt_failure_reasons": [r["reason"] for r in used.values() if r["status"] != "ok"],
+           "attempts": {"total": sum(r["attempts"] for r in used.values()),
+                        "max": max((r["attempts"] for r in used.values()), default=None),
+                        "failed_by_kind": dict(sum((Counter(r.get("failed_attempt_kinds") or {})
+                                                    for r in every), Counter()))},
            "count_tokens_ok": sorted({str(r["count_tokens_ok"]) for r in every}),
            "prompt_minus_count": [r["prompt_tokens_minus_count"] for r in every],
            "over_budget_by_usage": sum(r["over_budget_by_usage"] for r in every),
@@ -336,15 +384,16 @@ def serve(runtime_dir: Path) -> Iterator[Any]:
         yield server
 
 
-def run_builds(*, root: Path = B_ROOT) -> dict[str, Any]:
-    """GPU ticket 02: start Strata, build every table, stop."""
+def run_builds(variants: tuple[str, ...] = (CANDIDATE,), *, root: Path = V13_ROOT) -> dict[str, Any]:
+    """GPU ticket 02: start Strata once, build every table of each variant into its own directory, stop."""
     from kototoki.translate.strata import ResourceSampler, http_get
     from experiments.translation_v3.server import GpuLock
-    with serve(root / "runtime"):
+    with serve(root / VARIANTS[variants[0]]["dir"] / "runtime"):
         lock = GpuLock("v13-names-build")
         lock.acquire()
         try:
-            return build_all(root=root, sampler=lambda: ResourceSampler(BASE, http_get))
+            return {v: build_all(root=root / VARIANTS[v]["dir"], variant=v,
+                                 sampler=lambda: ResourceSampler(BASE, http_get)) for v in variants}
         finally:
             lock.release()
 

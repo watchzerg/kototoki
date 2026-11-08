@@ -14,6 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；本节只摘要并链接。当前有效的决定及其演进链以[决定索引](../adr/INDEX.md)为准，新决定按其"记录新决定"步骤同步。
 
+2026-11-08：用户要求 [v13](2026-11-08-names-on-strata-v13.md) 补试 `response_format: json_schema` 与"失败后最多重试 5 次"（v3＝两者都开、v4＝只重试），在一次 Strata session 里补跑建表与可行性门（门不变），过门的一臂继续 C–E；B 预算加 1 run（合计 15）。
 2026-11-08：[第十三轮（v13）专名建表换成 Strata＋Qwen3.8-Flash-Next](2026-11-08-names-on-strata-v13.md)结题（concluded；停在阶段 B）：**S1 不进**。原因是 Strata 没有约束解码，Flash-Next 写长 JSON 不稳定：按用户裁定把 `max_tokens` 从 4096 放宽到 8192 后，表本身长的情形不再截断，但 25 个请求里 5 个生成失控（写满 8192 不结束）、2 个 JSON 语法错误，W11 两次失控 `failed`，首次失败 6／17，可行性门两条不过（27B 用 `json_schema` 约束解码，全部首次成功）。思考关闭、采样全部被接受、`count_tokens` 可替代 `/tokenize`。表质量与翻译未测。建议产品建表维持 27B（§8 第 7 项）。GPU 2／14、裁判 $0。
 2026-11-08：用户裁定 [v13](2026-11-08-names-on-strata-v13.md) §8 第 4 项 (a)：S1 改为 `names-strata-v2`（`max_tokens` 8192、context 24576，提示预算不变），在本轮内重跑建表与可行性门，之后按原计划继续；B 预算加 1 run（合计 14）。
 2026-11-08：[第十三轮（v13）](2026-11-08-names-on-strata-v13.md)首跑停在阶段 B：**S1 v1 不进**——现行配方的 `max_tokens` 4096 装不下 Flash-Next 写的表（比 27B 长约一倍，被接受回复 completion 中位 3022 对 1536），9／36 个回复截断，HF-III 两次截断 `failed`，首次失败 5／17，可行性门两条不过；JSON 解析失败 0、思考关闭、采样全部被接受、`count_tokens` 可替代 `/tokenize`（偏保守 87 token）。表质量与翻译都未测。建议的修复（§8 第 4 项 (a)：`max_tokens` 8192＋context 24576，提示预算不变，重跑 B）待用户裁定；产品建表维持 27B。GPU 1／13、裁判 $0／$80。
@@ -240,7 +241,7 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 ### 专名建表第十三轮：Strata＋Qwen3.8-Flash-Next 对照 27B 建表（2026-11-08）
 
-- [方案（v13）](2026-11-08-names-on-strata-v13.md)：concluded（2026-11-08 结题；S1 v1（4096）与 v2（8192）都停在可行性门，S1 不进：无约束解码时生成失控与 JSON 语法错误；建议建表维持 27B）。候选 S1 只换建表模型与引擎（Strata Flash-Next，Q2 启动方式），对照现行 27B 表；翻译两臂都用 Q2 规则、只差注入的表。阶段：建表可行性门 → dev 表质量非劣 → dev 翻译 3 seed → 产品 ASR 源 seed 54–56。预算 GPU 13 run／裁判 $80。
+- [方案（v13）](2026-11-08-names-on-strata-v13.md)：in-progress（2026-11-08 用户裁定立项；S1 v1（4096）与 v2（8192）都停在可行性门（无约束解码时生成失控与 JSON 语法错误）；同日用户要求补试 v3（`response_format`＋5 次）与 v4（5 次））。候选 S1 只换建表模型与引擎（Strata Flash-Next，Q2 启动方式），对照现行 27B 表；翻译两臂都用 Q2 规则、只差注入的表。阶段：建表可行性门 → dev 表质量非劣 → dev 翻译 3 seed → 产品 ASR 源 seed 54–56。预算 GPU 13 run／裁判 $80。
 
 ### 字幕翻译流程第十二轮：Strata＋Qwen3.8-Flash-Next 对照 Q1（2026-11-08）
 
