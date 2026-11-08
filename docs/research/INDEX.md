@@ -14,7 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
-2026-11-08：[第十二轮（v12）Strata＋Qwen3.8-Flash-Next 对照 Q1](2026-11-08-strata-flash-next-v12.md)**暂停于票据 02（未结题）**：01 离线实现完成（Strata 附着后端、F1／F2 配方，旧 hash 不变）；固定启动参数的 `strata launch --plan` 显示需下载约 5.2 GB MTP 草稿层（本机只有 DFlash2 草稿器），按授权未启动 Strata，GPU 0、裁判 $0；待用户裁定 §8 第 4 项后从 02 续跑。
+2026-11-08：[第十二轮（v12）Strata＋Qwen3.8-Flash-Next 对照 Q1](2026-11-08-strata-flash-next-v12.md)结题（concluded，待用户裁定 §8 第 5–6 项）：不用 grammar 也能稳定输出（1599 包交付失败 0）；对 Q1 dev 两类 accuracy 显著改善（剧集 −0.186、电影 −0.126），产品 ASR 源全体 −0.269［−0.340, −0.201］、三桶都显著改善、不一致率 0.0175 对 0.0273、墙钟快约 26–29%；但产品门"人名错误差 CI90 上界 ≤0"以 +0.0006 未过，**按字面 F1 不进**，阶段 E 不触发，是否改判交用户。同 seed 不复现（A/A cue 不同约 49%），整机内存几乎占满。GPU 7／10（另 smoke 2）、裁判 $65.63／$115。
 2026-11-08：用户裁定立项[第十二轮（v12）Strata＋Qwen3.8-Flash-Next 对照 Q1](2026-11-08-strata-flash-next-v12.md)（planned，含有界思考阶段）。本轮只把 Q1 翻译步的模型和引擎换成 Strata 上的 Qwen3.8-Flash-Next IQ3_S，其余与 Q1 相同；Strata 没有 GBNF，所以格式失败与交付失败也是主终点。阶段依次为 smoke 可行性门 → dev 3 seed → 产品 ASR 源 seed 54–56 →（C、D 至少非劣时）有界思考。预算 GPU 10 run／裁判 $115。不改产品与基线身份，不开封确认集。用法见 [Strata 调研](2026-11-08-strata-flash-next-usage.md)。
 2026-11-08：用户裁定 v11 §8 第 1 项（[ADR-0016](../adr/0016-q1-translation-baseline.md)）：采用选项 (a) 的变体，Q 线基线改为 **Q1**＝Q0＋N\*（只注入 `confidence: high` 的专名表），**不按 ASR 源与 dev 源区分**；dev 上的护栏未过，用户知情接受。§8 第 2–5 项（确认集、产品是否改用 Q 线、建表质量线、A/A 噪声底）仍未裁定；产品继续用 H0。
 2026-10-23：[第十一轮（v11）Q0 产品路线的成分验证](2026-10-22-q0-product-route-v11.md)结题（concluded，待用户裁定 §8）：dev 反向的主因是产品 `build_table` 的错条目（22／39，且多为 `confidence: high`），修订为"只注入 high"的 N\* 在 dev 3 seed 上仍两类 accuracy 显著变差（护栏未过）；但在产品 ASR 源新 seed 54–56 上，N\* 对 Q0＋替换全体非劣（−0.050［−0.116, +0.020］）、人名错误 120 → 72、不一致率 0.027 对 0.050——**唯一候选成分，适用范围只写产品 ASR 源**。N\*＋ASR 感知提示不进（exact +0.111 显著变差换 heavy −0.140）；跨段截断 `seg10` 不进（产品 +0.104［+0.041, +0.167］，dev 剧集 wrong-referent +0.042）；组合不触发。副产物：同 seed 同 prompt 的 llama-server 输出有 24% 单元不同。GPU 16 run、裁判 $85.45。新基线（Q1＝Q0＋N\*？）、整表对 high、A/A 噪声底与建表质量线交用户裁定。
@@ -234,7 +234,7 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 ### 字幕翻译流程第十二轮：Strata＋Qwen3.8-Flash-Next 对照 Q1（2026-11-08）
 
 - [Strata 用法调研](2026-11-08-strata-flash-next-usage.md)：基于本机 Strata 0.2.12（引擎 build 0.1.58）的随包文档与服务端源码，整理启停命令、HTTP 字段，以及接到 Q1 翻译步的差异。结论：可以通过 OpenAI 兼容的 `/v1/chat/completions` 附着调用；但**没有 GBNF**，也没有 `/apply-template`、`/tokenize`；运行时内存约 51 GB、显存约 15.6 GB，不能与 llama-server 同时驻留。未跑 GPU，未验证项列在文末。
-- [方案（v12）](2026-11-08-strata-flash-next-v12.md)：执行中，暂停于票据 02（2026-11-08；MTP 草稿层需下载，待 §8 第 4 项裁定）；立项为 2026-11-08 用户裁定，含有界思考阶段。候选 F1 只换翻译模型，对照 Q1，复用 v11 已有的 Q1 译文。阶段依次为：smoke 可行性门（格式失败与交付失败）→ dev 3 seed → 产品 ASR 源 seed 54–56 →（条件触发）有界思考。预算 GPU 10 run／裁判 $115。
+- [方案（v12）](2026-11-08-strata-flash-next-v12.md)：concluded（2026-11-08 结题，待用户裁定 §8 第 5–6 项；F1 按字面不进，只差产品门人名错误一条）；立项为 2026-11-08 用户裁定，含有界思考阶段。候选 F1 只换翻译模型，对照 Q1，复用 v11 已有的 Q1 译文。阶段依次为：smoke 可行性门（格式失败与交付失败）→ dev 3 seed → 产品 ASR 源 seed 54–56 →（条件触发）有界思考。预算 GPU 10 run／裁判 $115。
 
 ### 字幕翻译流程第十一轮：Q0 产品路线的成分验证（2026-10-22）
 
