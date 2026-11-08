@@ -49,7 +49,9 @@ THINKING_REQUEST = "enable_thinking+thinking_budget_tokens"
 SAMPLE_SECONDS = 5.0
 # Server log lines counted per session (counts only; the log is not copied): the reasoning-loop recovery that raises
 # temperature / presence penalty, and the non-finite-logits stop that ends a reply as "length".
-LOG_EVENTS = {"reasoning_recoveries": "repeated reasoning detected", "nonfinite_logits": "logits became non-finite"}
+LOG_EVENTS = {"reasoning_recoveries": "repeated reasoning detected", "nonfinite_logits": "logits became non-finite",
+              # found in v12 ticket 03: one token repeated 256 times ends the reply as "length" (repeat_stop_tokens)
+              "repeat_stops": "times in a row: ended as"}
 
 
 def server_log(preset: str = PRESET) -> Path:

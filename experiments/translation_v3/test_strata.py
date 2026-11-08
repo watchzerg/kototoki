@@ -222,7 +222,7 @@ class StrataAttachTest(unittest.TestCase):
             self.assertFalse((tmp / "gpu.lock").exists())
             resources = json.loads((tmp / "run/runtime/session-01/resources.json").read_text(encoding="utf-8"))
             self.assertEqual((resources["gpu_used_mib"], resources["ram_used_gib"]), (15000, 50.5))
-            self.assertEqual(resources["log_events"], {"reasoning_recoveries": 0, "nonfinite_logits": 1})
+            self.assertEqual(resources["log_events"], {"reasoning_recoveries": 0, "nonfinite_logits": 1, "repeat_stops": 0})
             self.assertTrue((tmp / "run/runtime/session-01/strata.json").is_file())
 
 
