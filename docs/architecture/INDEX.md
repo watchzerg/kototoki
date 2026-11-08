@@ -24,7 +24,7 @@
 | [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0／x0／cross 逐窗转写（`asr.json`，窗口级 `failed_windows`，x0 触顶窗口置空；`cross` 为可选引擎，w0 与 x0 共驻、Whisper 交叉打分裁判，另写三个审计产物）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
 | [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／专名建表／翻译）、续跑与按文件重启、输出目录锁与 `.local/gpu.lock`、Job Object、三份 SRT 一起发布；拥有 `<output_dir>/.work/` 的锁、运行日志（目的地与格式）与发布记录 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/logs.py` |
 | [阶段计划](modules/stage-plan.md) | 双语字幕流水线的阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段期望身份，以及按产物身份判定"下一个要跑的阶段"与发布状态（`next_stage`／`advance`）；编排与 worker 壳共用，翻译阶段的身份转问翻译子系统，names 身份延迟导入 `names.recipes` 取配方 hash | `kototoki/plan.py` |
-| [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：整批共用一个由产品自动启停的 Strata session（`strata launch --no-tui`／`--stop`、身份核对、不与 llama-server 同时驻留）、产品配方 `q2-degrade-v1`（`dp10-cut` 切包、`wide-context-v1` 邻文、`qwen-joint-v1` chat 请求、`confidence: high` 的专名注入，终态失败按 10→5→1 降级）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
+| [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：整批共用一个由产品自动启停的 Strata session（`strata launch --no-tui --model iq3_s`／`--stop`、身份核对、不与 llama-server 同时驻留）、产品配方 `q2-degrade-v1`（`dp10-cut` 切包、`wide-context-v1` 邻文、`qwen-joint-v1` chat 请求、`confidence: high` 的专名注入，终态失败按 10→5→1 降级）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
 | [专名一致性](modules/name-consistency.md) | 双语字幕流水线的 names 阶段：整批共用一个 Qwen3.8 llama-server session（最多启动 3 次、启动失败即 unavailable）、整份 `ja.srt` 一次建 `name-table-v2` 表并归一（终态失败写空表照常翻译，不注入）；建表必开；表由翻译注入使用，没有发布时替换；`BUILD` 配方与 hash | `kototoki/names/` |
 | 历史实验代码（冻结或只作回归参考） | 不建模块页；复现历史时按各自 README 使用冻结配置与旧身份，见下方列表 | 见下 |
 
@@ -94,7 +94,7 @@ flowchart TB
 
 | 入口 | 解释器 | 模块 |
 | --- | --- | --- |
-| `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；专名建表（Qwen3.8-27B）起一个本机 llama-server，建完停掉后翻译再启动本机 Strata（`strata launch --no-tui`，Qwen3.8-Flash-Next，两者不同时驻留），Strata 须预先安装并备好模型 | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
+| `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；专名建表（Qwen3.8-27B）起一个本机 llama-server，建完停掉后翻译再启动本机 Strata（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next，两者不同时驻留），Strata 须预先安装并备好模型 | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
 | `python -m experiments.vad_comparison.vad_stage` | `.local/envs/vad-pyannote-gpu-v1` | 外部 VAD 阶段 |
 | `python -m experiments.w0_demo.run` | `.local/envs/whisper-latest` | W0 pipeline |
 | `python -m experiments.x0_demo.run`／`just x0-demo` | 根 `.venv`，子进程用 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |

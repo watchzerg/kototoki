@@ -474,7 +474,7 @@ class TranslateDocumentTests(unittest.TestCase):
 
     def test_mixed_failures_do_not_mark_strata_unavailable(self) -> None:
         def crash() -> None:
-            raise InfraFailure("strata launch --no-tui exited with 1")
+            raise InfraFailure("strata launch exited with 1")
 
         a, b = document(5), document(5, "別")
         self.h.start_failures = [crash, None, None]
@@ -486,7 +486,7 @@ class TranslateDocumentTests(unittest.TestCase):
 
     def test_start_failure_then_success(self) -> None:
         def crash() -> None:
-            raise InfraFailure("strata launch --no-tui exited with 1")
+            raise InfraFailure("strata launch exited with 1")
 
         self.h.start_failures = [crash]
         self.assertEqual(len(self.h.translate(document(5)).translations), 5)

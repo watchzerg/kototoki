@@ -38,7 +38,7 @@
 
 **Strata 生命周期**（`strata.StrataServer`，一个 session 一次进入／退出）：
 
-1. 进入：`strata launch --status --output json` 必须没有正在服务的 launch，否则 `StrataRefused`（不抢占、不替别人停）；`nvidia-smi` 轮询到空闲显存 ≥ 14000 MiB（names 的 llama-server 已释放；120 s 超时按 `server_start` 失败处理）；执行 `strata launch --no-tui`（`--no-tui` 只关掉监视画面，不改 launch 的选择：2026-11-08 本机 `--plan` 与 `--plan --no-tui` 输出逐字相同，等价于不带参数的 `strata launch`，即 ADR-0017 的 Q2 启动配置，DFlash2）；轮询到唯一一个 `ready` 的 launch（300 s）。
+1. 进入：`strata launch --status --output json` 必须没有正在服务的 launch，否则 `StrataRefused`（不抢占、不替别人停）；`nvidia-smi` 轮询到空闲显存 ≥ 14000 MiB（names 的 llama-server 已释放；120 s 超时按 `server_start` 失败处理）；执行 `strata launch --no-tui --model iq3_s`（不带参数的 `strata launch` 只能在终端里走向导，子进程里不点名模型时以退出码 2 拒绝；`--model iq3_s` 就是默认选择：2026-11-08 本机两者的 `--plan` 逐行相同，只差前者多一行"未点名模型"的提示，即 ADR-0017 的 Q2 启动配置，DFlash2）；轮询到唯一一个 `ready` 的 launch（300 s）。
 2. 身份核对（`strata.probe`）：`strata --version` 为 0.2.12／build 0.1.58，launch 在 `127.0.0.1:8080`，run config 的 `model_name` 为 `qwen3.8-flash-next-iq3_s`、`--max-context 131072`、DFlash2 起草，`/v1/models` 含该模型，`/v1/status` 的原生 context 为 131072。不符即 `StrataRefused`，并停掉刚启动的服务。
 3. 运行中：`ResourceSampler` 每 5 s 从 `/v1/status` 取整机显存与内存峰值；服务日志只计事件数（推理循环自救、logits 非有限、单 token 重复截停），不复制日志。
 4. 退出：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 14000 MiB；核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不盖住原异常）。产品进程被强杀时 Strata 可能留在后台，下次运行因 status 非空而拒绝，须手动 `strata launch --stop`。
@@ -68,7 +68,7 @@
 | 文件 | 来源 | 取舍 |
 | --- | --- | --- |
 | `recipes.py` | `experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables`、v9 `wide-context-v1` | Q2 规则写成常量：提示、注入行与过滤、请求体、校验、配方字典与 hash；与研究侧逐字节对照由测试钉住；新增的校验（拒绝空行）与降级字段使它另算 hash（`q2-degrade-v1`） |
-| `strata.py` | `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支 | 产品新增启停：`strata launch --status`／`--no-tui`／`--stop`、空闲显存与 status 核实、资源采样；只有这一个实现，不抽后端协议 |
+| `strata.py` | `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支 | 产品新增启停：`strata launch --status`／`--no-tui --model iq3_s`／`--stop`、空闲显存与 status 核实、资源采样；只有这一个实现，不抽后端协议 |
 | `degrade.py` | 新增（研究侧 Q2 只空出失败的包） | 拆分规则、降级树与回退、`report.json` 内容；不导入 `generate`，由其传入请求函数与降级日志；邻文经 `batching.neighbours` |
 | `batching.py` | `translation_v3/batching.py`、`data.py` | gap-pack-v2 切包（`silence`、`gap_pack_cuts` 只留 `group_gap=None` 分支）、`wide-context-v1` 邻文；`Scene`／`Cue`（带秒）由 `ja.srt` 构造，`source_key` 是 `srt-<sha12>` 的唯一出处 |
 | `generate.py` | `translation_v3/strata.py::run_step`、`generate.py` | `run_step` 判定不变（去掉思考分支）；`Session` 取代研究侧"执行者先启动服务"；按批次追加落盘；同调用内重启 Strata |

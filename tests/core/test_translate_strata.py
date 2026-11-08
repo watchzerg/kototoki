@@ -1,5 +1,5 @@
-"""Strata 启停的伪 CLI 测试（ADR-0019 第 2 点）：已有 launch 时拒绝且不替别人停、等 names 释放显存、`--no-tui`
-启动、等唯一一个 ready、按 ADR-0017 核对身份（版本／run config／`/v1/models`／`/v1/status`），不符即停并拒绝；未就绪、
+"""Strata 启停的伪 CLI 测试（ADR-0019 第 2 点）：已有 launch 时拒绝且不替别人停、等 names 释放显存、
+`--no-tui --model iq3_s` 启动、等唯一一个 ready、按 ADR-0017 核对身份（版本／run config／`/v1/models`／`/v1/status`），不符即停并拒绝；未就绪、
 启动失败、被中断都执行 `--stop`；退出核实 `--status` 为空与显存释放，核实失败只记 ERROR、不抛出。不调用真实 `strata`。"""
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ class StrataServerTests(unittest.TestCase):
                 self.assertEqual(server.identity["free_vram_mib_before_start"], 15000)
                 self.assertEqual(server.url, "http://127.0.0.1:8080")
         self.assertIsNone(self.fake.state)
-        self.assertEqual(self.verbs(), ["launch --no-tui", "launch --stop"])
+        self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
         self.assertEqual(self.fake.commands[0], S.STATUS_ARGS)  # 先确认没人在服务
         self.assertEqual(self.pids, [4242, None])
         observed = read_json(self.root / "strata.json")
@@ -159,7 +159,7 @@ class StrataServerTests(unittest.TestCase):
                 with self.assertRaisesRegex(StrataRefused, message):
                     with self.server():
                         self.fail("must not enter")
-                self.assertEqual(self.verbs(), ["launch --no-tui", "launch --stop"])
+                self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
                 self.assertIsNone(self.fake.state)
                 self.assertTrue(read_json(self.root / "strata-final.json")["released"])
                 self.assertEqual(self.pids, [None])
@@ -169,7 +169,7 @@ class StrataServerTests(unittest.TestCase):
         with self.assertRaisesRegex(InfraFailure, "did not become ready within 300 s"):
             with self.server():
                 self.fail("must not enter")
-        self.assertEqual(self.verbs(), ["launch --no-tui", "launch --stop"])
+        self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
         self.assertIsNone(self.fake.state)
 
     def test_two_launches_are_refused(self) -> None:
@@ -177,14 +177,15 @@ class StrataServerTests(unittest.TestCase):
         with self.assertRaisesRegex(StrataRefused, "expected one Strata launch, got 2"):
             with self.server():
                 self.fail("must not enter")
-        self.assertEqual(self.verbs(), ["launch --no-tui", "launch --stop"])
+        self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
 
     def test_launch_command_failure_still_stops(self) -> None:
-        self.fake.launch_error = subprocess.CalledProcessError(1, ["strata", "launch"])
-        with self.assertRaisesRegex(InfraFailure, "exited with 1"):
+        self.fake.launch_error = subprocess.CalledProcessError(
+            2, ["strata", "launch"], stderr="strata: `strata launch` with no choices opens screens.\n")
+        with self.assertRaisesRegex(InfraFailure, "exited with 2: strata: `strata launch` with no choices"):
             with self.server():
                 self.fail("must not enter")
-        self.assertEqual(self.verbs(), ["launch --no-tui", "launch --stop"])
+        self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
 
     def test_interrupt_while_loading_still_stops(self) -> None:
         self.fake.ready_after = None
@@ -197,7 +198,7 @@ class StrataServerTests(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             with server:
                 self.fail("must not enter")
-        self.assertEqual(self.verbs(), ["launch --no-tui", "launch --stop"])
+        self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
 
     def test_interrupt_inside_the_session_stops_strata(self) -> None:
         with self.assertRaises(KeyboardInterrupt):

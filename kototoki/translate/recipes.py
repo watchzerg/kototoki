@@ -62,7 +62,7 @@ NAMES_FILTER = "window"
 NAMES_ROWS = "confidence high; one row per forms[] {source: ja, translation: zh}; dedupe by ja; skip empty"
 REQUEST_SHAPE = "chat-completions+no-grammar+usage-prompt-tokens"
 
-# Strata 服务身份（ADR-0017"服务"一节）；产品用 `strata launch --no-tui` 启动，`strata.probe` 逐项核对。
+# Strata 服务身份（ADR-0017"服务"一节）；产品用 `strata launch --no-tui --model iq3_s` 启动，`strata.probe` 逐项核对。
 STRATA_VERSION = "0.2.12"
 STRATA_ENGINE_BUILD = "0.1.58"
 STRATA_RESOLVED = {"command": "strata launch", "model": "iq3_s", "context": 131072, "vision": "cpu",

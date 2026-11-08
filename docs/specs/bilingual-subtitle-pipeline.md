@@ -128,7 +128,7 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 ### 3.1 结论
 
 - **CPU 阶段（probe、extract、ja-cues、merge）与 GPU 阶段分开**。extract 用一个小进程池（默认 `min(4, cpu_count)`）先跑完整批，GPU 阶段再开始：worker 启动时拿到的是固定的 `batch.json`，整批 extract 只需 1–2 分钟，不做流式投喂。
-- **GPU 阶段按"阶段 × 整批"推进，而不是"文件 × 全流程"**：加载 VAD → 跑完本批全部文件 → 卸载；加载 ASR → 跑完本批 → 卸载；加载 MMS → …；然后启动 llama-server（Qwen3.8）→ 为本批全部 `ja.srt` 建专名表 → 关闭；最后（ADR-0019）启动 Strata（`strata launch --no-tui`）→ 翻译本批全部 SRT → `strata launch --stop`。Strata 与 llama-server 不同时驻留。第一版没有批次切分参数。
+- **GPU 阶段按"阶段 × 整批"推进，而不是"文件 × 全流程"**：加载 VAD → 跑完本批全部文件 → 卸载；加载 ASR → 跑完本批 → 卸载；加载 MMS → …；然后启动 llama-server（Qwen3.8）→ 为本批全部 `ja.srt` 建专名表 → 关闭；最后（ADR-0019）启动 Strata（`strata launch --no-tui --model iq3_s`）→ 翻译本批全部 SRT → `strata launch --stop`。Strata 与 llama-server 不同时驻留。第一版没有批次切分参数。
 - 每个 GPU 阶段在**独立子进程**中执行（一个阶段一个子进程，而不是一个文件一个子进程）：进程退出即彻底释放显存与 CUDA 上下文，崩溃不拖垮编排器，OOM 的影响范围只有一个阶段。worker 逐文件增量写结果；worker 进程异常退出时，编排器按增量结果判定"正在处理的文件"，把它记为该阶段失败，再为其后的文件重启 worker；重启次数按文件计，而不是整阶段只重启一次，避免一个文件的 OOM 把其后所有文件连带标失败。worker 遇到单文件异常（非 CUDA 粘性错误）记失败并继续下一文件，退出码 1；检测到 CUDA 粘性错误（后续文件必然失败）时退出码 2 让编排器重启。编排器本身不加载任何模型，也不 import torch（有测试保证，范围见 §7.1）。
 
 ### 3.2 为什么这样选
@@ -149,7 +149,7 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 - 启动 llama-server 前用 `nvidia-smi` 轮询空闲显存：上一 worker 退出后 WDDM 释放显存有延迟，直接启动可能分配失败并白白消耗重启额度；空闲量低于阈值超时则按基础设施失败处理，错误信息写明当时的空闲量。
 - 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立；并发只会争抢算力与显存，没有吞吐收益。
 - names 阶段：排在 translate 之前，names 的 llama-server（约 12 GB）与翻译的 Strata（几乎占满整卡）串行，前一个 `Session` 退出后后一个启动前照常轮询空闲显存（Strata 要求 ≥14000 MiB），translate 仍是最后一个 GPU 阶段。整批共用一个 Qwen server：首次有文件需要建表时才启动（表已当前、零条目时不起，也不取锁），server 进程退出时下一部影片重启，整批最多启动 3 次；任何一次启动失败即置 `unavailable`，本批其余需要建表的影片直接失败。每部影片一个请求，不做同调用内重启；端口默认 8081（Strata 固定 8080）。GPU 锁里记录当前服务的 pid（见[专名一致性](../architecture/modules/name-consistency.md)）。
-- 翻译阶段（ADR-0019）：整批共用一个 Strata session，沿用 v3 `generate.py` 的批次与续跑语义，一次 session 顺序翻完本批所有需要模型的 SRT（每个 SRT 是一个 scene）。Strata 在第一次真正需要请求模型时才启动：`strata launch --status` 必须为空（别人的 launch 在服务则拒绝，不替别人停）→ 等空闲显存 ≥14000 MiB → `strata launch --no-tui`（`--no-tui` 只关监视画面，选择与不带参数的 `strata launch` 相同）→ 等唯一一个 ready 的 launch → 按 ADR-0017 核对身份（版本 0.2.12／build 0.1.58、本机 8080、run config 的模型与 `--max-context 131072`、DFlash2、`/v1/models`、原生上下文 131072），不符即拒绝；整批结束、出错或被中断时 `strata launch --stop` 并核实 status 为空、显存回到 14000 MiB，核实失败只记 ERROR 与 `strata-final.json`。不需要模型的文件（零条目、run 已完成）只读回译文，且全部不需要时不启动 Strata；锁或 session 建不起来只让需要模型的文件失败，Strata 一直起不来或被拒绝时本批其余需要模型的文件直接失败（票据 15；见[翻译子系统](../architecture/modules/translation-subsystem.md)）。
+- 翻译阶段（ADR-0019）：整批共用一个 Strata session，沿用 v3 `generate.py` 的批次与续跑语义，一次 session 顺序翻完本批所有需要模型的 SRT（每个 SRT 是一个 scene）。Strata 在第一次真正需要请求模型时才启动：`strata launch --status` 必须为空（别人的 launch 在服务则拒绝，不替别人停）→ 等空闲显存 ≥14000 MiB → `strata launch --no-tui --model iq3_s`（子进程里必须点名模型；`--model iq3_s` 即默认选择，计划与不带参数的 `strata launch` 逐行相同）→ 等唯一一个 ready 的 launch → 按 ADR-0017 核对身份（版本 0.2.12／build 0.1.58、本机 8080、run config 的模型与 `--max-context 131072`、DFlash2、`/v1/models`、原生上下文 131072），不符即拒绝；整批结束、出错或被中断时 `strata launch --stop` 并核实 status 为空、显存回到 14000 MiB，核实失败只记 ERROR 与 `strata-final.json`。不需要模型的文件（零条目、run 已完成）只读回译文，且全部不需要时不启动 Strata；锁或 session 建不起来只让需要模型的文件失败，Strata 一直起不来或被拒绝时本批其余需要模型的文件直接失败（票据 15；见[翻译子系统](../architecture/modules/translation-subsystem.md)）。
 
 ### 3.4 时间线示意（4 部电影、w0）
 
@@ -244,7 +244,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
  ├─ python -m kototoki.workers.asr    --jobs batch.json   (引擎取 jobs 的 config.engine：w0|x0|cross)
  ├─ python -m kototoki.workers.align  --jobs batch.json
  ├─ llama-server（Qwen3.8）+ 进程内 HTTP 客户端建专名表（一个 server session 服务整批，先于翻译）
- ├─ Strata（`strata launch --no-tui`，Qwen3.8-Flash-Next，建表的 llama-server 停掉之后才启动）+ 进程内 HTTP 客户端循环翻译（一个 Strata session 服务整批，结束时 `strata launch --stop`）
+ ├─ Strata（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next，建表的 llama-server 停掉之后才启动）+ 进程内 HTTP 客户端循环翻译（一个 Strata session 服务整批，结束时 `strata launch --stop`）
  └─ 进程内 ja-cues / merge
 ```
 

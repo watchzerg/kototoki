@@ -3,7 +3,7 @@
 `run_step` 复制自 `experiments/translation_v3/strata.py`（判定逻辑不变，去掉思考分支）。与研究侧的差别：
 
 - 研究侧只连接执行者启动好的服务；这里由 `Session` 持有 `strata.StrataServer`：第一次真正需要请求模型时才
-  `strata launch --no-tui`、核对身份，整批影片顺序共用，退出时 `strata launch --stop` 并核实显存释放。
+  `strata launch --no-tui --model iq3_s`、核对身份，整批影片顺序共用，退出时 `strata launch --stop` 并核实显存释放。
 - 研究侧按整场景落盘；这里每完成一批就向 `batches.jsonl` 追加一行，续跑从未完成的批次继续，
   末尾不完整的一行视为未写入并截掉；`scene.json` 只在全部批次完成后写出。
 - 基础设施失败（OOM、传输／连接断开、server 错误、服务起不来）在同一次调用内停掉服务、重新启动新 session 重做，

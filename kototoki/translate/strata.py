@@ -3,14 +3,16 @@
 一次 `StrataServer` 即一个 session：
 
 - 进入：`strata launch --status` 必须没有任何正在服务的 launch（不抢占别人的 Strata，也不替别人停）；空闲显存
-  达到 `MIN_FREE_MIB`（names 的 llama-server 已停、显存已释放）；执行 `strata launch --no-tui`；轮询到唯一一个
+  达到 `MIN_FREE_MIB`（names 的 llama-server 已停、显存已释放）；执行 `strata launch --no-tui --model iq3_s`；轮询到唯一一个
   ready 的 launch 后按 ADR-0017 的接入检查核对身份（版本、端口 8080 本机、run config 的模型／`--max-context 131072`
   ／DFlash2、`/v1/models`、`/v1/status` 原生上下文 131072），不符即停掉并拒绝（`StrataRefused`）。
 - 退出：只停自己启动的 launch：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 `MIN_FREE_MIB`；
   核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不能盖住原异常）。
 
-`--no-tui` 只关掉监视画面，不改 launch 的选择：2026-11-08 本机 `strata launch --plan` 与 `--plan --no-tui`
-输出逐字相同（ADR-0019）。服务的进程不由本模块持有：`launch --no-tui` 返回后它在后台运行，`--stop` 才卸载。
+不加参数的 `strata launch` 只能在终端里走交互向导；子进程里（或带 `--no-tui`）必须点名 `--preset` 或 `--model`，
+否则以退出码 2 拒绝。`--model iq3_s` 就是默认选择本身：2026-11-08 本机 `strata launch --plan` 与
+`strata launch --no-tui --model iq3_s --plan` 的计划逐行相同，只差前者多一行"未点名模型，按本机选了 IQ3_S"的提示
+（ADR-0019）。服务的进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
 
 运行证据写在 session 目录：`strata.json`（接入时观察到的身份）、`resources.json`（`/v1/status` 采样的整机显存与内存
 峰值、服务日志的事件计数）、`strata-final.json`（停止与显存释放的核实结果）。
@@ -36,7 +38,7 @@ from . import recipes as R
 
 PORT = 8080
 HOST = "127.0.0.1"
-LAUNCH_ARGS = ("launch", "--no-tui")
+LAUNCH_ARGS = ("launch", "--no-tui", "--model", R.STRATA_RESOLVED["model"])
 STOP_ARGS = ("launch", "--stop")
 STATUS_ARGS = ("launch", "--status", "--output", "json")
 # Strata 运行时几乎占满整卡（调优实测显存 15.6 GB）；names 的 llama-server 停掉后桌面只占 0.6–1.2 GB。
@@ -206,9 +208,11 @@ class StrataServer:
             try:
                 self.cli(*LAUNCH_ARGS, timeout=LAUNCH_TIMEOUT_S)
             except subprocess.CalledProcessError as exc:
-                raise InfraFailure(f"strata launch --no-tui exited with {exc.returncode}") from exc
+                # Strata 的 stderr 是它自己的说明文字（不含字幕内容），截尾写进消息便于诊断。
+                tail = " ".join((exc.stderr or "").split())[-300:]
+                raise InfraFailure(f"strata launch exited with {exc.returncode}" + (f": {tail}" if tail else "")) from exc
             except (OSError, subprocess.SubprocessError) as exc:
-                raise InfraFailure(f"strata launch --no-tui failed: {type(exc).__name__}: {exc}") from exc
+                raise InfraFailure(f"strata launch failed: {type(exc).__name__}: {exc}") from exc
             launch = self._wait_ready()
             observed = probe(launch, cli=self.cli, get=self.get)
             self.identity.update(strata=observed, cold_load_seconds=self.clock() - started)
