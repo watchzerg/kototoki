@@ -1,6 +1,6 @@
 # ADR-0010：H0 翻译流程与产品配方（dp10-cut）
 
-状态：已接受。合并整理于 2026-11-08（并入 ADR-0006、ADR-0009、ADR-0010、ADR-0011 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。自 2026-11-08 起 H0 不再是基线（[ADR-0018](0018-q2-sole-translation-baseline.md)），本篇只作产品当前翻译实现与历史对照的身份；切包仍是 Q2 的切包。  
+状态：已接受。合并整理于 2026-11-08（并入 ADR-0006、ADR-0009、ADR-0010、ADR-0011 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。自 2026-11-08 起 H0 不再是基线（[ADR-0018](0018-q2-sole-translation-baseline.md)），本篇只作产品当前翻译实现与历史对照的身份；切包仍是 Q2 的切包。第 6、7 点（产品配方与产品 run 目录）自 2026-11-08 起由 [ADR-0019](0019-product-translation-q2.md) 替代：产品改跑 `q2-degrade-v1`。  
 范围：H0 线完整 SRT 流程的切包、邻文、提示与交付规则，研究侧配方 `dp10-cut` 与产品配方 `dp10-cut-degrade-v1`。模型、采样、引擎见 [ADR-0005](0005-apex-i-compact-translation-baseline.md)。
 
 ## 决定

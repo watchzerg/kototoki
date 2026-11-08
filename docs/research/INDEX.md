@@ -14,6 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；本节只摘要并链接。当前有效的决定及其演进链以[决定索引](../adr/INDEX.md)为准，新决定按其"记录新决定"步骤同步。
 
+2026-11-08：用户决定产品翻译切到 Q2（[ADR-0019](../adr/0019-product-translation-q2.md)）：产品配方 `q2-degrade-v1`＝Q2 规则＋10→5→1 降级；Strata 由产品自动启停（`strata launch --no-tui`＋ADR-0017 接入检查，结束或出错都 `--stop`），不与建表的 llama-server 同时驻留；删除发布时专名替换与 `[names] enabled`，注入行进翻译身份。H0 从产品移除。
 2026-11-08：用户决定翻译只保留一条基线（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)）：**Q2** 为唯一基线，新翻译测试都以 Q2 为对照；H0 退出基线，只作历史对照与产品当前实现（产品仍跑 `dp10-cut-degrade-v1`，切到 Q2 未裁定）。
 2026-11-08：用户决定换基线（[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)）：Q 线基线改为 **Q2**＝Q1 配方规则＋Strata Flash-Next IQ3_S，不加参数 `strata launch`（DFlash2，不用 v12 的 MTP；本机 quick tune 确认默认即最优）。质量证据来自 v12 F1，Q2 的启动配置（128K、图片读取器在 CPU、并发自动）未跑过翻译，建议首用前 smoke；v12 §8 第 5 项不再单独立项。
 2026-11-08：[第十二轮（v12）Strata＋Qwen3.8-Flash-Next 对照 Q1](2026-11-08-strata-flash-next-v12.md)结题（concluded；用户同日裁定 §8 第 6 项 (b)，F1 为 Q 线新基线候选，基线仍是 Q1）：不用 grammar 也能稳定输出（1599 包交付失败 0）；对 Q1 dev 两类 accuracy 显著改善（剧集 −0.186、电影 −0.126），产品 ASR 源全体 −0.269［−0.340, −0.201］、三桶都显著改善、不一致率 0.0175 对 0.0273、墙钟快约 26–29%；产品门"人名错误差 CI90 上界 ≤0"以 +0.0006 未过，用户认定为边界噪声，**F1 改判为"优于 Q1，作为 Q 线新基线候选"**；阶段 E 未触发、不补跑。同 seed 不复现（A/A cue 不同约 49%），整机内存几乎占满。GPU 7／10（另 smoke 2）、裁判 $65.63／$115。

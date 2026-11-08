@@ -37,11 +37,12 @@ is the control of round v8. `gap_pack` is the recipe field for silence-aware pac
 `dp6-grp`, `gap-pack-v2` adds the tiered cut penalty of `dp10-cut`). `grp1` (v8: R2+ sentence groups
 injected into `dp10-cut` packs with the `joint-understanding-v2` prompt, `group-reorder-v1`) produced no
 reordering and the line was closed on 2026-10-18; it is kept as a recipe, not a baseline. The product
-recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carries the same packing into `kototoki/`.
+recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carried the same packing into `kototoki/` until
+2026-11-08; the product recipe `q2-degrade-v1` (ADR-0019) keeps the packing with the Q2 request.
 Since 2026-10-21 this line is named **H0**, with **Q0** beside it (ADR-0015).
 
 **H0**：
-专用翻译模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Hy-MT2 30B-A3B APEX-I-Compact＋采样 `official30b-cached-v1`（ADR-0005），研究侧配方 `dp10-cut`（ADR-0010），产品配方 `dp10-cut-degrade-v1`（ADR-0011）。即上条 Translation baseline 的现名，产品当前使用。2026-11-08 起不再是基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)），只作产品当前翻译实现与历史对照。
+专用翻译模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Hy-MT2 30B-A3B APEX-I-Compact＋采样 `official30b-cached-v1`（ADR-0005），研究侧配方 `dp10-cut`（ADR-0010），产品配方 `dp10-cut-degrade-v1`（ADR-0011）。即上条 Translation baseline 的现名。2026-11-08 起不再是基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)），同日产品也切走（[ADR-0019](docs/adr/0019-product-translation-q2.md)），只作历史对照。
 _Avoid_: Hy 基线、旧基线
 
 **Q0**：
@@ -54,7 +55,7 @@ _Avoid_: qwen-wide（指基线时）、通用模型基线、X0（那是 Qwen-ASR
 _Avoid_: N\*（指基线时）、q0-names-high（指基线时）、Q0＋注入
 
 **Q2**：
-唯一的翻译基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)；身份见 [ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08）：Q1 的配方规则不变，模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（本机解析为 128K、DFlash2、并发自动适配，quick tune 确认无需额外参数）；配方带 `qwen_options.strata_launch: "default"`，不用 grammar。质量证据来自同配方、MTP 启动的 v12 F1（dev 与产品都显著优于 Q1），Q2 的启动配置本身未跑过翻译。未进产品。
+唯一的翻译基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)；身份见 [ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08）：Q1 的配方规则不变，模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（本机解析为 128K、DFlash2、并发自动适配，quick tune 确认无需额外参数）；配方带 `qwen_options.strata_launch: "default"`，不用 grammar。质量证据来自同配方、MTP 启动的 v12 F1（dev 与产品都显著优于 Q1）。2026-11-08 起进产品：产品配方 `q2-degrade-v1`＝Q2 规则＋10→5→1 降级（[ADR-0019](docs/adr/0019-product-translation-q2.md)）。
 _Avoid_: F1（指基线时；F1 是 v12 的 MTP／32K 启动）、Flash-Next 基线
 
 ### 双语字幕流水线
@@ -84,13 +85,13 @@ _Avoid_: dp10-cut、b10-joint（指产品配方时）
 _Avoid_: 计划器, 调度计划
 
 **产物身份**：
-写在每个中间产物里的身份（上游 SHA256、配方 hash、模型 SHA256、相关配置），续跑时与期望身份相同即跳过、不同即原地替换；不含绝对路径。翻译阶段没有单一产物文件，其身份（`ja.srt` SHA256、配方 hash、seed）与 run 目录键由翻译子系统的 `translate.plan` 给出。
+写在每个中间产物里的身份（上游 SHA256、配方 hash、模型 SHA256、相关配置），续跑时与期望身份相同即跳过、不同即原地替换；不含绝对路径。翻译阶段没有单一产物文件，其身份（`ja.srt` SHA256、配方 hash、seed、注入行 SHA256）与 run 目录键由翻译子系统的 `translate.plan` 给出。
 
 **发布**：
 三份最终 SRT 先写入工作目录暂存、记入 `published.json` 再一起移到输出目录；用户改动过的最终文件在 `force = false` 时不被覆盖。
 
 **专名表（name table）**：
-`names` 阶段为每部影片的 `ja.srt` 建的专名清单（`name-table.json`，schema `name-table-v2`）：若干实体，各带种类（person／class／org／place／other）、规范中文译名、写法、`zh_variants` 与 evidence；`build.status` 为 `ok`／`failed`／`too_long`，后两者是空表。表在工作目录里，可人工校对（改 `entries` 后重跑只重做替换）；条目是转写内容，不进日志（`kototoki/names/table.py`，[ADR-0014](docs/adr/0014-name-consistency-in-product.md)）。
+`names` 阶段为每部影片的 `ja.srt` 建的专名清单（`name-table.json`，schema `name-table-v2`）：若干实体，各带种类（person／class／org／place／other）、规范中文译名、写法、`zh_variants` 与 evidence；`build.status` 为 `ok`／`failed`／`too_long`，后两者是空表。表在工作目录里，可人工校对；产品只把其中 `confidence: high` 的写法作为**注入行**交给翻译（[ADR-0019](docs/adr/0019-product-translation-q2.md)），改到注入行后重跑即重译该片。条目是转写内容，不进日志（`kototoki/names/table.py`，[ADR-0014](docs/adr/0014-name-consistency-in-product.md)）。
 _Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是历史命名）
 
 **实体（entity）**：
@@ -99,10 +100,13 @@ _Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是�
 **写法（form）**：
 实体在 `ja.srt` 里实际出现的一个日文写法（含 ASR 误写）及它对应的中文 `{ja, zh}`，如 シンジ → 真嗣、碇 → 碇；同一实体的各写法按日文去重，`entity_ja` 本身也是其中之一。不是翻译配方里的"提示变体"，也与 `zh_variants`（模型列出的译文里可能出现的别的中文写法）不同。
 
+**注入行**：
+专名表里 `confidence: high` 实体的每个写法展开成的一行 `{ja → zh}`（按 `ja` 去重，跳过空写法）；某个包只注入日文写法出现在该包可见台词里的行，表头 `qwen-name-table-v1`（Q1／Q2 规则，`kototoki/translate/recipes.py::name_rows`）。注入行的 SHA256 是产品翻译身份的一部分。
+
 **锚定 cue**：
-替换时，日文里出现某个实体最长 `form.ja` 的 cue 就由该写法锚定（短写法不再重复处理同一 cue），该 cue 的译文以这个写法的 `zh` 为替换目标；替换只发生在锚定 cue 内（`kototoki/names/apply.py`）。
+（研究线与 2026-11-08 前的产品替换，ADR-0019 起产品不再替换）替换时，日文里出现某个实体最长 `form.ja` 的 cue 就由该写法锚定（短写法不再重复处理同一 cue），该 cue 的译文以这个写法的 `zh` 为替换目标；替换只发生在锚定 cue 内（研究实现 `experiments/name_consistency/`）。
 
 **落点**：
-在锚定 cue 的译文里找到的、应被换成目标中文的那一段：先找同实体其他写法的中文与过特异性检验的 `zh_variants`（变体层），找不到再用跨 cue 统计（统计层）；统计层落点按规则一扩展到整个名字。落点重叠、紧邻复合名连接符或不在词边界上时不替换，记入 `names-apply.json` 的 `unresolved`。
+在锚定 cue 的译文里找到的、应被换成目标中文的那一段：先找同实体其他写法的中文与过特异性检验的 `zh_variants`（变体层），找不到再用跨 cue 统计（统计层）；统计层落点按规则一扩展到整个名字。落点重叠、紧邻复合名连接符或不在词边界上时不替换，记为 `unresolved`。
 
 Legacy CLI defaults (old PyanNet / fixed30) are **not** the adopted baselines; see [ADR-0003](docs/adr/0003-new-pyannote-baselines.md).
