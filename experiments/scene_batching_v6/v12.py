@@ -52,13 +52,17 @@ FEASIBILITY_MAX_FIRST_FAIL = 0.05
 
 # --- recipes ---------------------------------------------------------------------------------
 
-def strata_recipe_data(q1: dict[str, Any], name: str, comment: str, thinking: dict[str, int] | None = None) -> dict[str, Any]:
-    """A v11 Q1 recipe file with the model switched to Strata (and, for F2, bounded thinking added)."""
+def strata_recipe_data(q1: dict[str, Any], name: str, comment: str, thinking: dict[str, int] | None = None,
+                       launch: str | None = None) -> dict[str, Any]:
+    """A v11 Q1 recipe file with the model switched to Strata (and, for F2, bounded thinking added; for Q2 / ADR-0017,
+    ``launch="default"`` = attach to a plain ``strata launch``)."""
     if q1.get("base") != "qwen-wide" or set(q1) - {"name", "base", "comment", "qwen_options"}:
         raise ValueError("expected a v11 Q1 recipe file: base qwen-wide plus qwen_options only")
     options = dict(q1["qwen_options"])
     if thinking is not None:
         options["thinking"] = dict(thinking)
+    if launch is not None:
+        options["strata_launch"] = launch
     return {"name": name, "base": "qwen-wide", "comment": comment, "model": R.STRATA_MODEL, "qwen_options": options}
 
 

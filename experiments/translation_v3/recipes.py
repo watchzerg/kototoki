@@ -223,6 +223,8 @@ def _check_model(recipe: "Recipe") -> None:
     if recipe.qwen_options is not None:
         from . import qwen
         qwen.check_options(recipe.qwen_options)
+        if "strata_launch" in recipe.qwen_options and recipe.model != STRATA_MODEL:
+            raise ValueError("qwen_options.strata_launch needs the Strata model")
 
 
 @dataclass(frozen=True)

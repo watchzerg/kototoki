@@ -98,7 +98,8 @@ BRIEF_HEADER = "本作品的翻译简报（仅供理解，不要输出）：\n"
 # The ID grammar applies from the first generated token, so a thinking pack gets it behind a free thought prefix
 # (the template opens ``<think>``; the budget sampler forces ``</think>``); a thought may not contain "<".
 THOUGHT_GRAMMAR_VERSION = "thought-prefix-v1"
-OPTION_KEYS = ("system", "asr", "names", "brief", "context", "thinking")
+# "strata_launch" (ADR-0017): the Strata launch profile, only with the Strata model (strata.LAUNCHES).
+OPTION_KEYS = ("system", "asr", "names", "brief", "context", "thinking", "strata_launch")
 
 
 def check_options(options: Any) -> None:
@@ -122,6 +123,8 @@ def check_options(options: Any) -> None:
         raise ValueError("qwen_options.brief must map work ids to non-empty texts")
     if "context" in options and (type(options["context"]) is not int or options["context"] < WIDE_CONTEXT):
         raise ValueError(f"qwen_options.context must be an integer >= {WIDE_CONTEXT}")
+    if "strata_launch" in options and options["strata_launch"] != "default":
+        raise ValueError("qwen_options.strata_launch must be 'default'")
     thinking = options.get("thinking")
     if thinking is not None and (not isinstance(thinking, dict) or set(thinking) != {"budget", "min_visible"}
                                  or not all(type(v) is int and v > 0 for v in thinking.values())):

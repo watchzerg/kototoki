@@ -52,7 +52,8 @@
 
 调研条目已登记在[调研索引](research/INDEX.md)，此处只列其他既有文档，按原登记顺序保留。
 
-- ADR: [Q 线基线改为 Q1](adr/0016-q1-translation-baseline.md) — 已接受（2026-11-08）；Q1＝Q0＋产品 `names` 建表中只注入 `confidence: high` 的专名表（每输入一个实例，注入后不替换），不分 ASR 源与 dev 源；dev 护栏未过，用户已接受；未进产品，新输入生成 Q1 配方尚无通用入口。只替代 ADR-0015 的"Q 线当前基线是 Q0"。
+- ADR: [Q 线基线改为 Q2](adr/0017-q2-strata-default-launch-baseline.md) — 已接受（2026-11-08）；Q2＝Q1 配方规则＋Strata 上的 Qwen3.8-Flash-Next IQ3_S，不加参数 `strata launch`（DFlash2、128K、并发自动），配方 `strata_launch: default`；质量证据来自 v12 F1（MTP 启动），Q2 启动配置未验证，建议首用前 smoke；未进产品。只替代 ADR-0016 的"Q 线当前基线是 Q1"。
+- ADR: [Q 线基线改为 Q1](adr/0016-q1-translation-baseline.md) — 已接受（2026-11-08；Q 线当前基线已由 ADR-0017 改为 Q2）；Q1＝Q0＋产品 `names` 建表中只注入 `confidence: high` 的专名表（每输入一个实例，注入后不替换），不分 ASR 源与 dev 源；dev 护栏未过，用户已接受；未进产品，新输入生成 Q1 配方尚无通用入口。只替代 ADR-0015 的"Q 线当前基线是 Q0"。
 - ADR: [翻译两条基线 H0／Q0](adr/0015-two-translation-baselines.md) — 已接受（2026-10-21；Q 线当前基线已由 ADR-0016 改为 Q1）；H0＝Hy-MT2＋`dp10-cut`（产品 `dp10-cut-degrade-v1`，ADR-0005／0010／0011 不变），Q0＝Qwen3.8-27B＋`qwen-wide`（v9，只到 dev 筛选，未进产品，`translate-srt` 暂不支持）；新测试须写明对照。不替代任何 ADR。
 - ADR: [专名一致性进产品](adr/0014-name-consistency-in-product.md) — 已接受（2026-10-19）；冻结配置（no-think、提示 v5、规则一＋孤立单字）原样移植：`names` 阶段在 ja-cues 与 translate 之间用 Qwen3.8 建表，发布时替换；建表失败写空表照常发布，`[names] enabled` 默认 true，已交付影片重新发布不重译，表可手改后重跑；验收只看总体正向。证据无 MQM 抽样，用户接受。只替代 ADR-0013 第 3 条。
 - ADR: [专名一致性研究线结题](adr/0013-name-consistency-closed.md) — 已接受（2026-10-19）；"通用模型建专名表＋生成后替换"研究线关闭，最佳已知配置冻结（no-think、提示 v5、程序兜底全开；替换默认规则一＋孤立单字，89%／2.5%）、不再开新轮次（第 3 条"不进产品"已被 [ADR-0014](adr/0014-name-consistency-in-product.md) 替代）；重开只限模糊匹配或"表可人工校对"形态。不替代任何 ADR。

@@ -69,6 +69,21 @@ class StrataRecipeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             R.compose("bad", "qwen-wide", model="qwen3.8-flash-next-iq3_xxs")
 
+    def test_launch_profiles(self):
+        """The v12 F1 hashes stay pinned; ``strata_launch: default`` (ADR-0017) is a separate identity."""
+        self.assertEqual(f1().recipe_hash, "06c655147f293987dd46c33141cece6bbdfcf3eebc3e7a1dc61f410370d401c7")
+        self.assertEqual(f1(thinking={"budget": 1024, "min_visible": 1}).recipe_hash,
+                         "909dda6cf66225662023d98bc6dfe4e52898deee6412d89589aa7aa0edff0880")
+        q2 = f1(strata_launch="default")
+        runtime = qwen.versions(q2)["runtime"]
+        self.assertEqual((runtime["launch"], runtime["resolved"]["drafting"], runtime["resolved"]["context"]),
+                         ("default", "dflash2", 131072))
+        self.assertEqual(qwen.fixed(q2)["server_context"], 131072)
+        with self.assertRaises(ValueError):
+            f1(strata_launch="mtp")
+        with self.assertRaises(ValueError):
+            R.compose("q", "qwen-wide", qwen_options={"strata_launch": "default"})
+
     def test_request_body(self):
         body = strata.request_body(qwen.messages(WINDOW), 20261011)
         self.assertEqual(body, {"model": strata.MODEL, "messages": qwen.messages(WINDOW), "temperature": 0.7,
@@ -165,7 +180,7 @@ class StrataGenerationTest(unittest.TestCase):
 
 
 class StrataAttachTest(unittest.TestCase):
-    def fakes(self, tmp: Path, *, host="127.0.0.1", context=32768, args=None):
+    def fakes(self, tmp: Path, *, host="127.0.0.1", context=32768, args=None, name=strata.PRESET, serving=1):
         config = tmp / "run.json"
         config.write_text(json.dumps({"model_name": strata.MODEL, "api_key": "secret", "args": args or [
             "--max-context", "32768", "--kv", "int8", "--spec", "4", "--mtp", "x"]}), encoding="utf-8")
@@ -173,14 +188,14 @@ class StrataAttachTest(unittest.TestCase):
         def cli(*a):
             if a == ("--version",):
                 return "strata 0.2.12 (build 0.1.58; python 3.12.15 at x)\n"
-            return json.dumps({"running": [{"name": strata.PRESET, "profile": "launch-" + strata.PRESET,
+            return json.dumps({"running": [{"name": name, "profile": "launch-" + name,
                                             "state": "ready", "port": 8080, "host": host, "config": str(config)}]}
-                              ) + "\n" + strata.PRESET + ": ready at http://127.0.0.1:8080\n"
+                              ) + "\n" + name + ": ready at http://127.0.0.1:8080\n"
 
         def get(url):
             if url.endswith("/v1/models"):
                 return {"data": [{"id": strata.MODEL}]}
-            return {"context": {"native": context}, "concurrency": {"serving": 1},
+            return {"context": {"native": context}, "concurrency": {"serving": serving},
                     "machine": {"gpu": {"used_mib": 15000}, "ram": {"used_gib": 50.5}}}
         return cli, get
 
@@ -194,6 +209,21 @@ class StrataAttachTest(unittest.TestCase):
                 cli, get = self.fakes(Path(tmp), **bad)
                 with self.assertRaises(RuntimeError, msg=bad):
                     strata.probe(8080, cli=cli, get=get)
+
+    def test_probe_default_launch(self):
+        """ADR-0017: a plain ``strata launch`` (any name, 128K, picture reader on, parallel fitted, DFlash2)."""
+        dflash = ["--max-context", "131072", "--vision", "cpu", "--spec-draft", "dflash2-x"]
+        with tempfile.TemporaryDirectory() as tmp:
+            cli, get = self.fakes(Path(tmp), name="iq3_s-128k", context=131072, serving=4, args=dflash)
+            observed = strata.probe(8080, "default", cli=cli, get=get)
+            self.assertEqual((observed["drafting"], observed["profile"]), ("dflash2", "default"))
+            for bad in ({"context": 32768, "args": dflash}, {"context": 131072, "args": ["--max-context", "131072", "--mtp", "x"]},
+                        {"context": 131072, "args": dflash, "host": "0.0.0.0"}):
+                cli, get = self.fakes(Path(tmp), name="iq3_s-128k", serving=4, **bad)
+                with self.assertRaises(RuntimeError, msg=bad):
+                    strata.probe(8080, "default", cli=cli, get=get)
+            with self.assertRaises(RuntimeError):  # the v12 profile still rejects it
+                strata.probe(8080, cli=cli, get=get)
 
     def test_session_records_identity_resources_and_log_events(self):
         from experiments.translation_v3 import server
@@ -212,7 +242,7 @@ class StrataAttachTest(unittest.TestCase):
                     self.url = url
 
             with mock.patch.object(server, "GpuLock", Lock):
-                factory = strata.session_factory(tmp, "r", f1(), probe_fn=lambda port: strata.probe(port, cli=cli, get=get),
+                factory = strata.session_factory(tmp, "r", f1(), probe_fn=lambda port, profile: strata.probe(port, profile, cli=cli, get=get),
                                                  get=get, client_factory=Client, log_path=log)
                 with factory(tmp / "run", 1) as handle:
                     self.assertEqual(handle.identity["candidate"], strata.MODEL)

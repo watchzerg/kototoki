@@ -44,6 +44,15 @@ PRESET = "kototoki-translate"
 LAUNCH_FLAGS = ("--family", "qwen", "--model", "iq3_s", "--context", "32k", "--parallel", "1", "--vision", "off",
                 "--drafting", "mtp", "--access", "local", "--no-api-key", "--tune", "skip")
 CONTEXT = 32768
+# ADR-0017 (Q2): ``qwen_options.strata_launch = "default"`` attaches to a plain ``strata launch`` (no arguments): Strata
+# picks IQ3_S for this PC, 128K context, the picture reader on the CPU, parallel fitted to the card, DFlash2 drafting,
+# this computer only; the machine's quick tune (2026-11-07) confirmed the defaults (no tuned arguments). Recipes without
+# the option keep the v12 kototoki-translate launch above and their hash.
+DEFAULT_LAUNCH = "default"
+DEFAULT_RESOLVED = {"command": "strata launch", "model": "iq3_s", "context": 131072, "vision": "cpu",
+                    "parallel": "fit to the card", "drafting": "dflash2", "access": "local", "tune": "skip",
+                    "tuned_args": {}}
+LAUNCHES = (DEFAULT_LAUNCH,)
 REQUEST_SHAPE = "chat-completions+no-grammar+usage-prompt-tokens"
 THINKING_REQUEST = "enable_thinking+thinking_budget_tokens"
 SAMPLE_SECONDS = 5.0
@@ -72,9 +81,25 @@ def log_events(path: Path, offset: int) -> dict[str, int] | None:
     return {key: text.count(pattern) for key, pattern in LOG_EVENTS.items()}
 
 
+def launch(recipe: R.Recipe | None) -> str | None:
+    """The launch profile of a Strata recipe: None = the v12 kototoki-translate launch, "default" = ADR-0017."""
+    return ((recipe.qwen_options or {}) if recipe is not None else {}).get("strata_launch")
+
+
+def context(recipe: R.Recipe | None) -> int:
+    return DEFAULT_RESOLVED["context"] if launch(recipe) == DEFAULT_LAUNCH else CONTEXT
+
+
+def runtime(recipe: R.Recipe) -> dict[str, Any]:
+    if launch(recipe) == DEFAULT_LAUNCH:
+        return {"strata": STRATA_VERSION, "engine_build": ENGINE_BUILD, "launch": DEFAULT_LAUNCH,
+                "resolved": dict(DEFAULT_RESOLVED)}
+    return {"strata": STRATA_VERSION, "engine_build": ENGINE_BUILD, "preset": PRESET, "launch": list(LAUNCH_FLAGS),
+            "context": CONTEXT}
+
+
 def versions(recipe: R.Recipe) -> dict[str, Any]:
-    out = {"model": MODEL, "runtime": {"strata": STRATA_VERSION, "engine_build": ENGINE_BUILD, "preset": PRESET,
-                                       "launch": list(LAUNCH_FLAGS), "context": CONTEXT},
+    out = {"model": MODEL, "runtime": runtime(recipe),
            "prompt": [qwen.PROMPT_VERSION, sha256_bytes(qwen.system_template().encode())],
            "request": REQUEST_SHAPE, "seed_step": qwen.SEED_STEP}
     extra = qwen.option_versions(recipe, thinking_extra={"request": THINKING_REQUEST})
@@ -86,7 +111,7 @@ def versions(recipe: R.Recipe) -> dict[str, Any]:
 def fixed(recipe: R.Recipe) -> dict[str, Any]:
     options = recipe.qwen_options or {}
     return {"sampling": qwen.SAMPLING | {"seed": "<run seed>"}, "n_predict": R.N_PREDICT,
-            "q1_input_budget": qwen.max_input_tokens(recipe), "server_context": CONTEXT,
+            "q1_input_budget": qwen.max_input_tokens(recipe), "server_context": context(recipe),
             "max_attempts": R.MAX_ATTEMPTS, "chat_template_kwargs": {"enable_thinking": False},
             **({"thinking": dict(options["thinking"], packs="target cues >= min_visible",
                                  max_tokens="n_predict + budget", request=THINKING_REQUEST)}
@@ -207,8 +232,12 @@ def _arg(args: list[str], flag: str) -> str | None:
     return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
 
 
-def probe(port: int = 8080, *, cli: Callable[..., str] = _cli, get: Callable[[str], dict] = _get) -> dict[str, Any]:
-    """Check the attached service against the fixed identity; return the observed values (no API key)."""
+def probe(port: int = 8080, profile: str | None = None, *, cli: Callable[..., str] = _cli,
+          get: Callable[[str], dict] = _get) -> dict[str, Any]:
+    """Check the attached service against the fixed identity of the launch profile (None = v12 kototoki-translate,
+    "default" = ADR-0017 plain launch); return the observed values (no API key)."""
+    default = profile == DEFAULT_LAUNCH
+    want_context = DEFAULT_RESOLVED["context"] if default else CONTEXT
     version = cli("--version").strip()
     if f"strata {STRATA_VERSION} " not in version + " " or f"build {ENGINE_BUILD}" not in version:
         raise RuntimeError(f"Strata version differs from {STRATA_VERSION} / build {ENGINE_BUILD}: {version!r}")
@@ -218,27 +247,30 @@ def probe(port: int = 8080, *, cli: Callable[..., str] = _cli, get: Callable[[st
     if len(running) != 1 or running[0].get("port") != port:
         raise RuntimeError(f"Expected exactly one ready Strata launch on port {port}, got {status.get('running')!r}")
     launch = running[0]
-    if launch.get("host") != "127.0.0.1" or launch.get("name") != PRESET:
-        raise RuntimeError(f"Strata launch must be the local '{PRESET}' preset, got {launch.get('name')!r} "
-                           f"on {launch.get('host')!r}")
+    if launch.get("host") != "127.0.0.1" or (not default and launch.get("name") != PRESET):
+        raise RuntimeError(f"Strata launch must be local{'' if default else f' and the {PRESET!r} preset'}, got "
+                           f"{launch.get('name')!r} on {launch.get('host')!r}")
     config = json.loads(Path(launch["config"]).read_text(encoding="utf-8-sig")) if launch.get("config") else {}
     args = [str(a) for a in config.get("args") or []]
-    if config.get("model_name") != MODEL or _arg(args, "--max-context") != str(CONTEXT) or "--vision" in args:
+    drafting = "mtp" if "--mtp" in args else "dflash2" if any("dflash" in a.lower() for a in args) else None
+    if (config.get("model_name") != MODEL or _arg(args, "--max-context") != str(want_context)
+            or (not default and "--vision" in args) or drafting != ("dflash2" if default else "mtp")):
         raise RuntimeError(f"Strata run config differs: model {config.get('model_name')!r}, "
-                           f"--max-context {_arg(args, '--max-context')!r}, vision {'--vision' in args}")
+                           f"--max-context {_arg(args, '--max-context')!r}, vision {'--vision' in args}, "
+                           f"drafting {drafting!r}")
     base = f"http://127.0.0.1:{port}"
     models = [m.get("id") for m in get(base + "/v1/models").get("data", [])]
     if MODEL not in models:
         raise RuntimeError(f"/v1/models does not serve {MODEL}: {models!r}")
     v1 = get(base + "/v1/status")
     serving = (v1.get("concurrency") or {}).get("serving")
-    if (v1.get("context") or {}).get("native") != CONTEXT or serving != 1:
+    if (v1.get("context") or {}).get("native") != want_context or (not default and serving != 1):
         raise RuntimeError(f"/v1/status differs: context {v1.get('context')!r}, concurrency {v1.get('concurrency')!r}")
     return {"version": version, "launch": {k: launch.get(k) for k in ("name", "profile", "state", "port", "host")},
             "config": {"model_name": config.get("model_name"), "exe": config.get("exe"), "args": args,
                        "host": config.get("host"), "log": config.get("log")},
             "kv": _arg(args, "--kv"), "kv_resident": _arg(args, "--kv-resident"), "spec": _arg(args, "--spec"),
-            "drafting": "mtp" if "--mtp" in args else "dflash" if any("dflash" in a.lower() for a in args) else None,
+            "drafting": drafting, "profile": profile or "kototoki-translate-v12",
             "models": models, "status": {k: v1.get(k) for k in ("model", "engine", "context", "concurrency",
                                                                  "structured_output", "vram", "machine")}}
 
@@ -280,11 +312,12 @@ class ResourceSampler:
 
 
 def session_factory(root: Path, run_id: str, recipe: R.Recipe, *, port: int = 8080, break_stale_lock: bool = False,
-                    timeout: float = 600.0, probe_fn: Callable[[int], dict] = probe,
+                    timeout: float = 600.0, probe_fn: Callable[..., dict] = probe,
                     get: Callable[[str], dict] = _get, client_factory: Callable[..., Any] | None = None,
                     log_path: Path | None = None):
     """Attach to the running Strata service: v3 gpu.lock + identity checks + loopback client with raw traces."""
-    del root, recipe  # same signature as qwen.session_factory; nothing is started or verified on disk here
+    del root  # same signature as qwen.session_factory; nothing is started or verified on disk here
+    profile = launch(recipe)
 
     @contextmanager
     def factory(run_dir: Path, index: int) -> Iterator[Any]:
@@ -296,9 +329,9 @@ def session_factory(root: Path, run_id: str, recipe: R.Recipe, *, port: int = 80
         session_dir = run_dir / "runtime" / f"session-{index:02d}"
         try:
             started = time.perf_counter()
-            log = log_path or server_log()
+            observed = probe_fn(port, profile)
+            log = log_path or server_log(observed["launch"]["name"])
             offset = log_offset(log)
-            observed = probe_fn(port)
             atomic_write_json(session_dir / "strata.json", dict(observed, attached_at_utc=utc_now()))
             url = f"http://127.0.0.1:{port}"
             make = client_factory or LlamaClient

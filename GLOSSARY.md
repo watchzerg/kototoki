@@ -46,12 +46,16 @@ _Avoid_: Hy 基线、旧基线
 
 **Q0**：
 通用模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Qwen3.8-27B UD-IQ3_S（与产品 `names` 同一模型），`translation_v3` 配方 `qwen-wide`——切包与 H0 相同，只读邻文前 20／后 5（`wide-context-v1`），提示 `qwen-joint-v1`。证据只到 v9 dev 筛选（accuracy 两类显著优于 H0，unnatural 变差、墙钟约 3.3 倍）；未进产品；`translate-srt` 自 v10 起可跑 Qwen 配方。
-2026-11-08 起 Q 线的当前基线由 **Q1** 接替，Q0 保留为历史身份。
+2026-11-08 起 Q 线的当前基线先由 **Q1**、同日再由 **Q2** 接替，Q0 保留为历史身份。
 _Avoid_: qwen-wide（指基线时）、通用模型基线、X0（那是 Qwen-ASR 的 STT 基线）
 
 **Q1**：
-通用模型线的当前翻译基线（[ADR-0016](docs/adr/0016-q1-translation-baseline.md)，2026-11-08）：Q0 加上专名表注入 N\*。表由产品 `names` 阶段对同一输入建出，只注入 `confidence: high` 实体的全部写法（`filter: window`，表头 `qwen-name-table-v1`），注入后不再替换。不分产品 ASR 源与 dev 干净源。表内容进 hash，所以每个输入一个实例（v11 产品为 `q0-names-high` `c10e143a…`）。证据：产品上非劣、人名错误 120 → 72；dev 上 accuracy 显著变差，用户已接受。未进产品。
+通用模型线的前任翻译基线（[ADR-0016](docs/adr/0016-q1-translation-baseline.md)，2026-11-08）：Q0 加上专名表注入 N\*。表由产品 `names` 阶段对同一输入建出，只注入 `confidence: high` 实体的全部写法（`filter: window`，表头 `qwen-name-table-v1`），注入后不再替换。不分产品 ASR 源与 dev 干净源。表内容进 hash，所以每个输入一个实例（v11 产品为 `q0-names-high` `c10e143a…`）。证据：产品上非劣、人名错误 120 → 72；dev 上 accuracy 显著变差，用户已接受。未进产品。
 _Avoid_: N\*（指基线时）、q0-names-high（指基线时）、Q0＋注入
+
+**Q2**：
+通用模型线的当前翻译基线（[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08）：Q1 的配方规则不变，模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（本机解析为 128K、DFlash2、并发自动适配，quick tune 确认无需额外参数）；配方带 `qwen_options.strata_launch: "default"`，不用 grammar。质量证据来自同配方、MTP 启动的 v12 F1（dev 与产品都显著优于 Q1），Q2 的启动配置本身未跑过翻译。未进产品。
+_Avoid_: F1（指基线时；F1 是 v12 的 MTP／32K 启动）、Flash-Next 基线
 
 ### 双语字幕流水线
 

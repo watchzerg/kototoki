@@ -1,6 +1,6 @@
 # ADR-0016：Q 线基线改为 Q1（Q0＋只注入 high 的专名表）
 
-状态：已接受（2026-11-08）。  
+状态：已接受（2026-11-08）；"Q 线当前基线是 Q1"一点同日起由 [ADR-0017：Q2](0017-q2-strata-default-launch-baseline.md) 替代，Q1 的身份定义不变（Q2 沿用）。  
 日期：2026-11-08。  
 部分替代：[ADR-0015](0015-two-translation-baselines.md) 中"Q 线当前基线是 Q0"这一点。ADR-0015 的 H0 部分、Q0 的身份定义（`qwen-wide`，hash `719237b9…`）以及"新测试须写明对照"的规则**全部保持不变**；Q0 保留为可引用的历史身份。[ADR-0008](0008-no-multi-translation-selection.md) 对 Q1 同样适用。  
 范围：只给 Q 线换基线并固定 Q1 的身份。不改产品 `kototoki/`（产品继续用 H0），不决定产品是否改用 Q 线，不开封确认集。

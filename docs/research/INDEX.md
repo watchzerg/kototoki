@@ -14,6 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；决定本身以 ADR 为准，本节只摘要并链接。
 
+2026-11-08：用户决定换基线（[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)）：Q 线基线改为 **Q2**＝Q1 配方规则＋Strata Flash-Next IQ3_S，不加参数 `strata launch`（DFlash2，不用 v12 的 MTP；本机 quick tune 确认默认即最优）。质量证据来自 v12 F1，Q2 的启动配置（128K、图片读取器在 CPU、并发自动）未跑过翻译，建议首用前 smoke；v12 §8 第 5 项不再单独立项。
 2026-11-08：[第十二轮（v12）Strata＋Qwen3.8-Flash-Next 对照 Q1](2026-11-08-strata-flash-next-v12.md)结题（concluded；用户同日裁定 §8 第 6 项 (b)，F1 为 Q 线新基线候选，基线仍是 Q1）：不用 grammar 也能稳定输出（1599 包交付失败 0）；对 Q1 dev 两类 accuracy 显著改善（剧集 −0.186、电影 −0.126），产品 ASR 源全体 −0.269［−0.340, −0.201］、三桶都显著改善、不一致率 0.0175 对 0.0273、墙钟快约 26–29%；产品门"人名错误差 CI90 上界 ≤0"以 +0.0006 未过，用户认定为边界噪声，**F1 改判为"优于 Q1，作为 Q 线新基线候选"**；阶段 E 未触发、不补跑。同 seed 不复现（A/A cue 不同约 49%），整机内存几乎占满。GPU 7／10（另 smoke 2）、裁判 $65.63／$115。
 2026-11-08：用户裁定立项[第十二轮（v12）Strata＋Qwen3.8-Flash-Next 对照 Q1](2026-11-08-strata-flash-next-v12.md)（planned，含有界思考阶段）。本轮只把 Q1 翻译步的模型和引擎换成 Strata 上的 Qwen3.8-Flash-Next IQ3_S，其余与 Q1 相同；Strata 没有 GBNF，所以格式失败与交付失败也是主终点。阶段依次为 smoke 可行性门 → dev 3 seed → 产品 ASR 源 seed 54–56 →（C、D 至少非劣时）有界思考。预算 GPU 10 run／裁判 $115。不改产品与基线身份，不开封确认集。用法见 [Strata 调研](2026-11-08-strata-flash-next-usage.md)。
 2026-11-08：用户裁定 v11 §8 第 1 项（[ADR-0016](../adr/0016-q1-translation-baseline.md)）：采用选项 (a) 的变体，Q 线基线改为 **Q1**＝Q0＋N\*（只注入 `confidence: high` 的专名表），**不按 ASR 源与 dev 源区分**；dev 上的护栏未过，用户知情接受。§8 第 2–5 项（确认集、产品是否改用 Q 线、建表质量线、A/A 噪声底）仍未裁定；产品继续用 H0。
