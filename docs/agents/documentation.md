@@ -19,7 +19,7 @@
 | 结论类型 | 落点 |
 | --- | --- |
 | 术语的定义或取舍 | `GLOSSARY.md` |
-| 难以逆转、事后看不出原因、有真实取舍的决定 | `docs/adr/` 新增一条 |
+| 难以逆转、事后看不出原因、有真实取舍的决定 | `docs/adr/` 新增一条，并按[决定索引·记录新决定](../adr/INDEX.md#记录新决定)同步 `docs/adr/INDEX.md` |
 | 已实现行为或结构的澄清 | 所属模块页或模块边界 |
 | 尚未实现的需求、范围或计划 | tracker 票据 |
 | 评审时反复出现的判断类问题 | `CODING_STANDARDS.md` |
@@ -120,7 +120,9 @@ grep -rnE '<待填 (初始化|阶段3|首个模块|按需)：' --exclude-dir=.gi
 - ADRs use `NNNN-short-title.md`, starting at `0001`. Status is one of
   proposed/accepted/rejected/superseded. Mark acceptance only when the decision has actually been
   adopted; record the basis. Supersede accepted decisions with a linked new ADR
-  rather than rewriting their history.
+  rather than rewriting their history; on the old ADR only append to the status line.
+  `docs/adr/INDEX.md` is the one living page: update its current-decisions table,
+  evolution chain and ADR list in the same commit as the new ADR.
 - Plans and research do not supersede requirements by themselves. For conflicts,
   identify the applicable scope and linked superseding decision rather than assuming
   the newest file overrides every older document.

@@ -29,7 +29,7 @@
 
 - **冻结的历史证据只读**：结果报告、`docs/context/*`、ADR 历史，以及 Codex 时代的翻译裁判链（`experiments/translation_judge/`、`experiments/translation_flow/v2_*`、`experiments/translation_eval/`、参考 prompt）带 sha256 自检和记录在案的 `gpt-6.1-sol`／`codex-cli` 身份。需要改动时新增带版本的文件；原文件不重命名、不重排版、不"现代化"。
 - 翻译代码中的 `reasoning_effort:no_think` 是 Hy-MT2 chat-template token，不是 agent 设置；`reasoning_effort` 不做批量替换。
-- 翻译有两条基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21 起），直到用户另行决定：**H0**＝Hy-MT2＋`dp10-cut`（[ADR-0010](docs/adr/0010-dp10-cut-translation-flow-baseline.md)；之前为 `dp6-grp`、`b10-joint`），产品配方 `dp10-cut-degrade-v1`（[ADR-0011](docs/adr/0011-dp10-cut-product-recipe.md)），切包与邻文同 dp10-cut；**Q2**＝Q1 的配方规则（`qwen-wide`＋只注入 `confidence: high` 的专名表，[ADR-0016](docs/adr/0016-q1-translation-baseline.md)）＋模型换为 Strata 上的 Qwen3.8-Flash-Next IQ3_S、不加参数 `strata launch`（DFlash2，[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08 起；前任 Q1＝Qwen3.8-27B、Q0＝`qwen-wide`；未进产品）。新测试须写明对照是 H0 还是 Q2（引用 Q1、Q0 时也写明）。
+- 当前有效决定以[决定索引](docs/adr/INDEX.md)为准。翻译有两条基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21 起），直到用户另行决定：**H0**＝Hy-MT2＋`dp10-cut`（[ADR-0010](docs/adr/0010-dp10-cut-translation-flow-baseline.md)；之前为 `dp6-grp`、`b10-joint`），产品配方 `dp10-cut-degrade-v1`（[ADR-0011](docs/adr/0011-dp10-cut-product-recipe.md)），切包与邻文同 dp10-cut；**Q2**＝Q1 的配方规则（`qwen-wide`＋只注入 `confidence: high` 的专名表，[ADR-0016](docs/adr/0016-q1-translation-baseline.md)）＋模型换为 Strata 上的 Qwen3.8-Flash-Next IQ3_S、不加参数 `strata launch`（DFlash2，[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08 起；前任 Q1＝Qwen3.8-27B、Q0＝`qwen-wide`；未进产品）。新测试须写明对照是 H0 还是 Q2（引用 Q1、Q0 时也写明）。
 - **不自动选用"翻译多次再挑选"的方法**（多样本／多 seed＋MBR 或 reranking、best-of-N、多次全量翻译投票及其更省变体）：不提议、不列候选、不在无人值守时执行，除非用户明确要求；v4 `mbr8c`、v5 `mbr8s` 已放弃，边界情况先问（[ADR-0008](docs/adr/0008-no-multi-translation-selection.md)）。
 - 专名一致性研究线（`experiments/name_consistency/`，建表＋生成后替换）已结题：最佳已知配置冻结在 [ADR-0013](docs/adr/0013-name-consistency-closed.md)，不再提议或开启新轮次；已按 [ADR-0014](docs/adr/0014-name-consistency-in-product.md) 进产品（`kototoki/names/`），`experiments/name_consistency/` 仍冻结、产品不导入；重开只由用户明确要求。
 - v3、v4、v5（剧集）确认集已开封，新的确认须用全新隔离的集合。第二轮（v2）已停止并冻结：其台账 1300+ 行，只按节读取，其作业不再恢复；先验只取[v1/v2 教训](docs/research/2026-10-10-hy30-flow-v1-v2-lessons.md)。
@@ -54,7 +54,7 @@
 
 | 触发条件 | 必读入口 |
 | --- | --- |
-| 设计、修改、实现或 review 代码 | [架构总览](docs/architecture/INDEX.md) → 受影响的模块页（尚不存在时按[随交付同步](docs/agents/documentation.md#随交付同步)建页）；行为依据查 `docs/specs/`、`docs/plans/`，取舍查 `docs/adr/` |
+| 设计、修改、实现或 review 代码 | [架构总览](docs/architecture/INDEX.md) → 受影响的模块页（尚不存在时按[随交付同步](docs/agents/documentation.md#随交付同步)建页）；行为依据查 `docs/specs/`、`docs/plans/`，取舍查[决定索引](docs/adr/INDEX.md) |
 | 实现、修改或 review 产品包 `kototoki/`（双语字幕流水线） | [模块边界](docs/architecture/module-boundaries.md)：依赖方向、产品包的责任边界与接缝 → 受影响模块页的"接口与依赖" → [技术设计](docs/specs/bilingual-subtitle-pipeline.md)。接口形状要变时先改模块页与模块边界，再动手 |
 | review diff 的代码质量 | [CODING_STANDARDS.md](CODING_STANDARDS.md) |
 | 编写、修改、移动或 review 测试，制定测试计划或整理验收证据，执行 `implement-spec` | [测试设计与验收](docs/agents/testing.md)、[验证边界](docs/testing/validation.md) |
@@ -64,7 +64,9 @@
 | 读取、创建或更新票据 | [tracker 约定](docs/agents/issue-tracker.md) |
 | 分类票据或调整分诊标签 | [标签映射](docs/agents/triage-labels.md) |
 | 调研、实验或复用已有结论 | [调研索引](docs/research/INDEX.md)；新产出放 `docs/research/` 并在索引登记 |
-| 查最新采纳决定与探索状态 | [决定与探索时间线](docs/research/INDEX.md#决定与探索时间线) |
+| 查当前有效决定及其演进 | [决定索引](docs/adr/INDEX.md)（现行规则按主题，标权威 ADR 条款） |
+| 用户采纳或变更决定（换基线、裁定研究结论、改产品行为） | [决定索引·记录新决定](docs/adr/INDEX.md#记录新决定)：新 ADR＋旧 ADR 只追加状态行＋同一提交改决定索引与摘要入口 |
+| 查研究轮次与探索状态 | [决定与探索时间线](docs/research/INDEX.md#决定与探索时间线) |
 | 接续旧任务 | `docs/context/` 台账（冻结证据），**先对照仓库核实状态** |
 | 测试、benchmark 或对比 W0／X0 | [基线测试指南](docs/guides/baseline-testing.md) → demo README → 契约 → 验证记录 |
 | 运行或修改 W0（VAD、ASR、对齐）或 X0（分段、Qwen 输入、MMS） | W0：[demo](experiments/w0_demo/README.md) → [契约](docs/specs/w0-reusable-demo.md)；X0：[demo](experiments/x0_demo/README.md) → [契约](docs/specs/x0-reusable-demo.md)。复用并更新 `experiments/w0_demo/`、`experiments/x0_demo/`，`x0_flow` 与 `qwen` 只作回归参照；配方变更先出新版本并记录验证，再更新基线文档。CLI 省略参数会落到旧默认（旧 PyanNet／fixed30），须显式选择新 Pyannote（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)） |
