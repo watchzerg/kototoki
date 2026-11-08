@@ -131,8 +131,10 @@ def main() -> int:
                                "stop_reason": s.get("stop_reason"), "cache_reset": s.get("cache_reset"),
                                "cold_load_seconds": (s.get("engine") or {}).get("cold_load_seconds"),
                                "free_vram_mib_before_start": (s.get("engine") or {}).get("free_vram_mib_before_start"),
+                               "available_ram_gib_before_start": (s.get("engine") or {}).get(
+                                   "available_ram_gib_before_start"),
                                "strata": {k: ((s.get("engine") or {}).get("strata") or {}).get(k)
-                                          for k in ("version", "drafting", "kv", "spec", "models")}}
+                                          for k in ("version", "drafting", "expert_arena", "kv", "spec", "models")}}
                               for s in run.get("sessions", [])]
     sessions_root = cfg.paths.output_dir / ".work" / "translate-sessions"
     result["resources"] = [read(p) for p in sorted(sessions_root.rglob("resources.json"))]
@@ -140,6 +142,9 @@ def main() -> int:
     result["batches"] = batch_stats(plan.run_dir)
     if not result["strata_final"] or not all(f.get("released") for f in result["strata_final"]):
         failures.append("Strata stop / GPU memory release not confirmed")
+    arenas = [(s.get("strata") or {}).get("expert_arena") for s in result.get("sessions", [])]
+    if any(arena != "ram" for arena in arenas):
+        failures.append(f"Strata experts not held in RAM: {arenas!r} (mmap fallback is several times slower)")
     if result["batches"]["reasoning_chars"]:
         failures.append("reasoning_content was not empty (thinking must be off)")
     if translated is not None:

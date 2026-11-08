@@ -3,7 +3,8 @@
 一次 `StrataServer` 即一个 session：
 
 - 进入：`strata launch --status` 必须没有任何正在服务的 launch（不抢占别人的 Strata，也不替别人停）；空闲显存
-  达到 `MIN_FREE_MIB`（names 的 llama-server 已停、显存已释放）；执行 `strata launch --no-tui --model iq3_s`；轮询到唯一一个
+  达到 `MIN_FREE_MIB`（names 的 llama-server 已停、显存已释放）；可用内存达到 `MIN_AVAILABLE_RAM_GIB`（等满
+  `RAM_WAIT_S` 仍不够只记 WARNING 照常启动）；执行 `strata launch --no-tui --model iq3_s`；轮询到唯一一个
   ready 的 launch 后按 ADR-0017 的接入检查核对身份（版本、端口 8080 本机、run config 的模型／`--max-context 131072`、
   本次启动在服务日志里写下的起草方式为 DFlash2、`/v1/models`、`/v1/status` 原生上下文 131072），不符即停掉并拒绝
   （`StrataRefused`）。
@@ -11,6 +12,10 @@
 起草方式不从 run config 的参数判断：Strata 总会给引擎传 `--mtp <权重目录>`，DFlash2 由宿主另行加上，研究侧
 `probe` 按参数判断会把默认启动认成 MTP（2026-11-08 首次 smoke 实测）。产品改读本次启动写进
 `launch-<name>.server.log` 的 `[strata] drafting:` 一行（启动前记下日志长度，只看之后新写的部分）。
+
+专家区：Qwen3.8-Flash-Next IQ3_S 要把 46.84 GiB 专家常驻内存；内存不够时引擎退到 mmap、从 SSD 读专家，答案不变但
+读提示与生成都慢约 5 倍（2026-11-08 整片实测）。因此启动前先等可用内存，ready 后从本次启动写进
+`<name>.engine.log` 的新内容判断专家区在内存还是退到 mmap，记进 `strata.json`；退到 mmap 只记 WARNING、不拒绝。
 - 退出：只停自己启动的 launch：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 `MIN_FREE_MIB`；
   核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不能盖住原异常）。
 
@@ -48,6 +53,10 @@ STOP_ARGS = ("launch", "--stop")
 STATUS_ARGS = ("launch", "--status", "--output", "json")
 # Strata 运行时几乎占满整卡（调优实测显存 15.6 GB）；names 的 llama-server 停掉后桌面只占 0.6–1.2 GB。
 MIN_FREE_MIB = 14000
+# 专家区 46.84 GiB＋引擎其余主机内存；2026-11-07 调优（启动前可用 53.6 GiB）放得下，整片那次 41.2 GiB 放不下。
+MIN_AVAILABLE_RAM_GIB = 50.0
+RAM_WAIT_S = 180.0
+MMAP_MARKERS = ("not enough RAM for the expert arena", "experts via mmap")
 LAUNCH_TIMEOUT_S = 900.0   # 加载约 73 s（调优记录）；首次还可能编译／预热
 READY_TIMEOUT_S = 300.0
 STOP_TIMEOUT_S = 180.0
@@ -136,11 +145,39 @@ def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str
 
 
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Strata" / "runtime"
+ENGINE_LOG_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Strata" / "launch"
 
 
-def log_sizes(log_dir: Path) -> dict[str, int]:
-    """启动前各 `launch-*.server.log` 的长度：启动后只读新写的部分（日志跨次追加）。"""
-    return {p.name: p.stat().st_size for p in log_dir.glob("launch-*.server.log")} if log_dir.is_dir() else {}
+def log_sizes(log_dir: Path, pattern: str = "launch-*.server.log") -> dict[str, int]:
+    """启动前各日志的长度：启动后只读新写的部分（日志跨次追加）。"""
+    return {p.name: p.stat().st_size for p in log_dir.glob(pattern)} if log_dir.is_dir() else {}
+
+
+def available_ram_gib() -> float | None:
+    """Windows 的可用物理内存（`GlobalMemoryStatusEx.ullAvailPhys`）；取不到为 None。"""
+    import ctypes
+
+    class Status(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+    status = Status()
+    status.dwLength = ctypes.sizeof(Status)
+    try:
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+    except (AttributeError, OSError):
+        return None
+    return round(status.ullAvailPhys / 2**30, 1)
+
+
+def expert_arena(engine_text: str) -> str | None:
+    """本次启动的引擎日志 → 专家区所在："mmap"（退到从文件读）、"ram"（有引擎日志且没有退化记录）、None（没有日志）。"""
+    if not engine_text.strip():
+        return None
+    return "mmap" if any(marker in engine_text for marker in MMAP_MARKERS) else "ram"
 
 
 def read_from(path: Path, offset: int) -> str:
@@ -197,18 +234,20 @@ class ResourceSampler:
 class StrataServer:
     """一个 Strata session：`__enter__` 启动并核对，`__exit__` 停止并核实显存释放。
 
-    `cli`、`get`、`free_vram`、`sleep`、`clock`、`log_dir` 是只供测试替换的内部接缝。`on_pid(pid)` 在服务 ready 后以
+    `cli`、`get`、`free_vram`、`available_ram`、`sleep`、`clock`、`log_dir`、`engine_log_dir` 是只供测试替换的内部接缝。`on_pid(pid)` 在服务 ready 后以
     `--status` 报告的 pid 回调（报告里没有 pid 时不回调），停止后以 None 回调，供编排器写进 GPU 锁。
     """
 
     def __init__(self, runtime_dir: Path, *, on_pid: Callable[[int | None], None] = lambda pid: None,
                  cli: Callable[..., str] = run_cli, get: Callable[[str], dict] = http_get,
                  free_vram: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
+                 available_ram: Callable[[], float | None] = available_ram_gib,
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
-                 log_dir: Path = LOG_DIR):
+                 log_dir: Path = LOG_DIR, engine_log_dir: Path = ENGINE_LOG_DIR):
         self.runtime_dir = Path(runtime_dir)
         self.on_pid, self.cli, self.get, self.free_vram = on_pid, cli, get, free_vram
         self.sleep, self.clock, self.log_dir = sleep, clock, Path(log_dir)
+        self.available_ram, self.engine_log_dir = available_ram, Path(engine_log_dir)
         self.url = f"http://{HOST}:{PORT}"
         self.identity: dict[str, Any] = {"candidate": R.MODEL}
         self.launched = False
@@ -220,6 +259,20 @@ class StrataServer:
         return wait_for_free_vram(MIN_FREE_MIB, timeout, stage="translate", query=self.free_vram, sleep=self.sleep,
                                   clock=self.clock)
 
+    def _wait_ram(self) -> float | None:
+        """等可用内存达到 `MIN_AVAILABLE_RAM_GIB`（建表进程的内存可能还在释放）；等满仍不够记 WARNING 照常启动。"""
+        deadline = self.clock() + RAM_WAIT_S
+        while True:
+            free = self.available_ram()
+            if free is None or free >= MIN_AVAILABLE_RAM_GIB:
+                return free
+            if self.clock() >= deadline:
+                log.warning("[translate] only %.1f GiB RAM available after %.0f s (want %.0f GiB): Strata may read its "
+                            "experts from the SSD and translate several times slower; close other programs",
+                            free, RAM_WAIT_S, MIN_AVAILABLE_RAM_GIB)
+                return free
+            self.sleep(POLL_S)
+
     def __enter__(self) -> "StrataServer":
         started = self.clock()
         try:
@@ -230,9 +283,11 @@ class StrataServer:
             raise StrataRefused(f"another Strata launch is serving ({[r.get('name') for r in busy]!r}); this run does "
                                 "not stop it. Stop it with `strata launch --stop` and run again")
         self.identity["free_vram_mib_before_start"] = self._wait_free(120.0)
+        self.identity["available_ram_gib_before_start"] = self._wait_ram()
         self.launched = True
         try:
             sizes = log_sizes(self.log_dir)
+            engine_sizes = log_sizes(self.engine_log_dir, "*.engine.log")
             try:
                 self.cli(*LAUNCH_ARGS, timeout=LAUNCH_TIMEOUT_S)
             except subprocess.CalledProcessError as exc:
@@ -245,12 +300,17 @@ class StrataServer:
             self.log_path = self.log_dir / f"launch-{launch.get('name')}.server.log"
             self.log_offset = sizes.get(self.log_path.name, 0)
             observed = probe(launch, cli=self.cli, get=self.get, log_text=read_from(self.log_path, self.log_offset))
+            engine_log = self.engine_log_dir / f"{launch.get('name')}.engine.log"
+            observed["expert_arena"] = expert_arena(read_from(engine_log, engine_sizes.get(engine_log.name, 0)))
+            if observed["expert_arena"] == "mmap":
+                log.warning("[translate] Strata did not fit its experts in RAM and reads them from the SSD "
+                            "(see %s); translation will be several times slower. Free RAM and run again", engine_log)
             self.identity.update(strata=observed, cold_load_seconds=self.clock() - started)
             atomic_write_json(self.runtime_dir / "strata.json", dict(observed, attached_at_utc=utc_now()))
             self.sampler = ResourceSampler(self.url, self.get)
             self.sampler.start()
-            log.info("[translate] Strata ready in %.1f s (%s, %s)", self.identity["cold_load_seconds"],
-                     observed["launch"].get("name"), observed["drafting"])
+            log.info("[translate] Strata ready in %.1f s (%s, %s, experts in %s)", self.identity["cold_load_seconds"],
+                     observed["launch"].get("name"), observed["drafting"], observed["expert_arena"])
             if type(launch.get("pid")) is int:
                 self.on_pid(launch["pid"])
         except BaseException:

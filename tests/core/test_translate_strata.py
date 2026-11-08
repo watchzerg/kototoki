@@ -47,6 +47,11 @@ class FakeStrata:
         self.vram_stays_low = False
         self.extra_launch = False               # ready 时同时冒出第二个 launch
         self.free_before = 15000
+        self.ram = [55.0]                       # 依次返回的可用内存（GiB），用完后保持最后一个值
+        self.engine_lines = "strata generate: expert arena: locked 1302 MiB\n"
+        self.engine_log = root / "launch-logs" / "k1.engine.log"
+        self.engine_log.parent.mkdir(exist_ok=True)
+        self.engine_log.write_text("strata generate: experts via mmap (older launch)\n", encoding="utf-8")
 
     def launch_row(self) -> dict[str, Any]:
         config = self.root / "launch.json"
@@ -73,6 +78,8 @@ class FakeStrata:
             if self.launch_error is not None:
                 raise self.launch_error
             self.state = "loading"
+            with self.engine_log.open("a", encoding="utf-8") as handle:
+                handle.write(self.engine_lines)
             if self.drafting_line is not None:
                 with self.log.open("a", encoding="utf-8") as handle:
                     handle.write("[strata] loading the model ...\n" + self.drafting_line)
@@ -90,6 +97,9 @@ class FakeStrata:
             return {"model": self.model_name, "context": {"native": self.native}, "concurrency": 1,
                     "machine": {"gpu": {"used_mib": 15600}, "ram": {"used_gib": 21.5}}}
         raise AssertionError(url)
+
+    def available_ram(self) -> float:
+        return self.ram.pop(0) if len(self.ram) > 1 else self.ram[0]
 
     def free_vram(self) -> int:
         if self.state is None and not self.vram_stays_low:
@@ -111,8 +121,9 @@ class StrataServerTests(unittest.TestCase):
             self.now[0] += seconds
 
         return StrataServer(self.root, on_pid=self.pids.append, cli=self.fake.cli, get=self.fake.get,
-                            free_vram=self.fake.free_vram, sleep=sleep, clock=lambda: self.now[0],
-                            log_dir=self.root / "logs")
+                            free_vram=self.fake.free_vram, available_ram=self.fake.available_ram, sleep=sleep,
+                            clock=lambda: self.now[0], log_dir=self.root / "logs",
+                            engine_log_dir=self.root / "launch-logs")
 
     def verbs(self) -> list[str]:
         return [" ".join(c) for c in self.fake.commands if c not in (S.STATUS_ARGS, ("--version",))]
@@ -130,6 +141,8 @@ class StrataServerTests(unittest.TestCase):
         self.assertEqual(self.fake.commands[0], S.STATUS_ARGS)  # 先确认没人在服务
         self.assertEqual(self.pids, [4242, None])
         observed = read_json(self.root / "strata.json")
+        self.assertEqual(observed["expert_arena"], "ram")  # 上一次启动留下的 mmap 记录不算
+        self.assertEqual(server.identity["available_ram_gib_before_start"], 55.0)
         self.assertEqual(observed["drafting_line"], DFLASH_LINE.strip())
         self.assertEqual((observed["config"]["model_name"], observed["status"]["context"]["native"]), (R.MODEL, 131072))
         resources = read_json(self.root / "resources.json")
@@ -238,6 +251,35 @@ class StrataServerTests(unittest.TestCase):
         final = read_json(self.root / "strata-final.json")
         self.assertEqual((final["status_empty"], final["released"], final["free_vram_mib"]), (True, False, None))
         self.assertIn("1000 MiB", final["error"])
+
+    def test_waits_for_ram_before_launching(self) -> None:
+        self.fake.ram = [41.2, 44.0, 51.0]  # 建表进程的内存还在释放
+        with self.server() as server:
+            self.assertEqual(server.identity["available_ram_gib_before_start"], 51.0)
+        self.assertGreaterEqual(self.now[0], 2 * S.POLL_S)  # 轮询了两次才启动
+        self.assertIn(S.LAUNCH_ARGS, self.fake.commands)
+
+    def test_low_ram_after_waiting_warns_and_launches_anyway(self) -> None:
+        self.fake.ram = [30.0]
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            with self.server() as server:
+                self.assertEqual(server.identity["available_ram_gib_before_start"], 30.0)
+        self.assertIn("only 30.0 GiB RAM available", logs.output[0])
+        self.assertIn("launch --no-tui --model iq3_s", self.verbs())
+
+    def test_mmap_fallback_is_recorded_and_warned_not_refused(self) -> None:
+        self.fake.engine_lines = ("strata generate: not enough RAM for the expert arena (2.21 GiB short)\n"
+                                  "strata generate: experts via mmap\n")
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            with self.server():
+                pass
+        self.assertEqual(read_json(self.root / "strata.json")["expert_arena"], "mmap")
+        self.assertTrue(any("reads them from the SSD" in line for line in logs.output))
+
+    def test_expert_arena_parsing(self) -> None:
+        self.assertIsNone(S.expert_arena(""))
+        self.assertEqual(S.expert_arena("strata generate: expert arena: locked\n"), "ram")
+        self.assertEqual(S.expert_arena("strata generate: experts via mmap (not enough RAM)\n"), "mmap")
 
     def test_status_parses_only_the_json_line(self) -> None:
         self.assertEqual(S.running(lambda *a: '{"running": []}\nNo launches running.\n'), [])

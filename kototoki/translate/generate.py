@@ -418,7 +418,8 @@ def _first_line(exc: BaseException) -> str:
     return (str(exc).splitlines() or [""])[0][:200]
 
 
-SESSION_ENGINE_KEYS = ("candidate", "strata", "cold_load_seconds", "free_vram_mib_before_start")
+SESSION_ENGINE_KEYS = ("candidate", "strata", "cold_load_seconds", "free_vram_mib_before_start",
+                       "available_ram_gib_before_start")
 
 
 def translate_document(plan: TranslatePlan, session: Session | None) -> TranslateResult:
