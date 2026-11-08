@@ -39,7 +39,7 @@
 **Strata 生命周期**（`strata.StrataServer`，一个 session 一次进入／退出）：
 
 1. 进入：`strata launch --status --output json` 必须没有正在服务的 launch，否则 `StrataRefused`（不抢占、不替别人停）；`nvidia-smi` 轮询到空闲显存 ≥ 14000 MiB（names 的 llama-server 已释放；120 s 超时按 `server_start` 失败处理）；执行 `strata launch --no-tui --model iq3_s`（不带参数的 `strata launch` 只能在终端里走向导，子进程里不点名模型时以退出码 2 拒绝；`--model iq3_s` 就是默认选择：2026-11-08 本机两者的 `--plan` 逐行相同，只差前者多一行"未点名模型"的提示，即 ADR-0017 的 Q2 启动配置，DFlash2）；轮询到唯一一个 `ready` 的 launch（300 s）。
-2. 身份核对（`strata.probe`）：`strata --version` 为 0.2.12／build 0.1.58，launch 在 `127.0.0.1:8080`，run config 的 `model_name` 为 `qwen3.8-flash-next-iq3_s`、`--max-context 131072`、DFlash2 起草，`/v1/models` 含该模型，`/v1/status` 的原生 context 为 131072。不符即 `StrataRefused`，并停掉刚启动的服务。
+2. 身份核对（`strata.probe`）：`strata --version` 为 0.2.12／build 0.1.58，launch 在 `127.0.0.1:8080`，run config 的 `model_name` 为 `qwen3.8-flash-next-iq3_s`、`--max-context 131072`，起草方式取自本次启动写进服务日志的 `[strata] drafting:` 一行（须为 DFlash2；Strata 总会给引擎传 `--mtp <权重目录>`，按 run config 参数判断会把默认启动误认成 MTP，2026-11-08 首次 smoke 实测），`/v1/models` 含该模型，`/v1/status` 的原生 context 为 131072。不符即 `StrataRefused`，并停掉刚启动的服务。
 3. 运行中：`ResourceSampler` 每 5 s 从 `/v1/status` 取整机显存与内存峰值；服务日志只计事件数（推理循环自救、logits 非有限、单 token 重复截停），不复制日志。
 4. 退出：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 14000 MiB；核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不盖住原异常）。产品进程被强杀时 Strata 可能留在后台，下次运行因 status 非空而拒绝，须手动 `strata launch --stop`。
 5. 证据：`<output_dir>/.work/translate-sessions/<UTC戳>-<pid>/session-NN/` 下 `strata.json`（接入时观察到的身份，不含 API key）、`resources.json`（显存／内存峰值、日志事件计数）、`strata-final.json`（停止与显存释放核实）。

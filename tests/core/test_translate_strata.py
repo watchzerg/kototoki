@@ -17,7 +17,10 @@ from kototoki.translate import recipes as R
 from kototoki.translate import strata as S
 from kototoki.translate.strata import StrataRefused, StrataServer
 
-DFLASH_ARGS = ["--model", "x.gguf", "--max-context", "131072", "--spec", "dflash2", "--kv", "q8_0"]
+# 0.2.12 的默认启动真实写下的参数形状：总带 `--mtp <权重目录>`，DFlash2 不在 run config 里（2026-11-08 smoke）。
+DEFAULT_ARGS = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--mtp", "D:/mtp/rt", "--max-context", "131072",
+                "--kv", "int8", "--kv-resident", "32768", "--vision"]
+DFLASH_LINE = "[strata] drafting: DFlash2 alone (--draft dflash2, --draft-conf 0.7)\n"
 
 
 class FakeStrata:
@@ -27,7 +30,11 @@ class FakeStrata:
         self.root = root
         self.commands: list[tuple[str, ...]] = []
         self.version = "strata 0.2.12 (build 0.1.58)"
-        self.args = list(DFLASH_ARGS)
+        self.args = list(DEFAULT_ARGS)
+        self.drafting_line: str | None = DFLASH_LINE
+        self.log = root / "logs" / "launch-k1.server.log"
+        self.log.parent.mkdir(exist_ok=True)
+        self.log.write_text("[strata] drafting: MTP (older launch)\n", encoding="utf-8")  # 上一次启动留下的
         self.model_name = R.MODEL
         self.models = [R.MODEL]
         self.native = 131072
@@ -66,6 +73,9 @@ class FakeStrata:
             if self.launch_error is not None:
                 raise self.launch_error
             self.state = "loading"
+            if self.drafting_line is not None:
+                with self.log.open("a", encoding="utf-8") as handle:
+                    handle.write("[strata] loading the model ...\n" + self.drafting_line)
             return ""
         if args == S.STOP_ARGS:
             if not self.stop_ignored:
@@ -101,7 +111,8 @@ class StrataServerTests(unittest.TestCase):
             self.now[0] += seconds
 
         return StrataServer(self.root, on_pid=self.pids.append, cli=self.fake.cli, get=self.fake.get,
-                            free_vram=self.fake.free_vram, sleep=sleep, clock=lambda: self.now[0])
+                            free_vram=self.fake.free_vram, sleep=sleep, clock=lambda: self.now[0],
+                            log_dir=self.root / "logs")
 
     def verbs(self) -> list[str]:
         return [" ".join(c) for c in self.fake.commands if c not in (S.STATUS_ARGS, ("--version",))]
@@ -119,6 +130,7 @@ class StrataServerTests(unittest.TestCase):
         self.assertEqual(self.fake.commands[0], S.STATUS_ARGS)  # 先确认没人在服务
         self.assertEqual(self.pids, [4242, None])
         observed = read_json(self.root / "strata.json")
+        self.assertEqual(observed["drafting_line"], DFLASH_LINE.strip())
         self.assertEqual((observed["config"]["model_name"], observed["status"]["context"]["native"]), (R.MODEL, 131072))
         resources = read_json(self.root / "resources.json")
         self.assertEqual((resources["gpu_used_mib"], resources["ram_used_gib"]), (15600, 21.5))
@@ -145,8 +157,9 @@ class StrataServerTests(unittest.TestCase):
         self.assertEqual(self.verbs(), [])  # 显存不够就不启动（llama-server 与 Strata 不同时驻留）
 
     def test_probe_mismatch_stops_the_launch_and_refuses(self) -> None:
-        cases = [("args", ["--model", "x.gguf", "--max-context", "131072", "--mtp"], "drafting 'mtp'"),
-                 ("args", ["--max-context", "65536", "--spec", "dflash2"], "--max-context '65536'"),
+        cases = [("drafting_line", "[strata] drafting: MTP alone (--spec 4)\n", "drafting 'mtp'"),
+                 ("drafting_line", None, "drafting None"),  # 本次启动没写起草行：不拿上一次的行充数
+                 ("args", ["--mtp", "D:/mtp/rt", "--max-context", "65536"], "--max-context '65536'"),
                  ("model_name", "qwen3.8-27b", "model 'qwen3.8-27b'"),
                  ("version", "strata 0.2.13 (build 0.1.60)", "version differs"),
                  ("models", ["other"], "/v1/models"),

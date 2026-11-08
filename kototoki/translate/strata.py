@@ -4,8 +4,13 @@
 
 - 进入：`strata launch --status` 必须没有任何正在服务的 launch（不抢占别人的 Strata，也不替别人停）；空闲显存
   达到 `MIN_FREE_MIB`（names 的 llama-server 已停、显存已释放）；执行 `strata launch --no-tui --model iq3_s`；轮询到唯一一个
-  ready 的 launch 后按 ADR-0017 的接入检查核对身份（版本、端口 8080 本机、run config 的模型／`--max-context 131072`
-  ／DFlash2、`/v1/models`、`/v1/status` 原生上下文 131072），不符即停掉并拒绝（`StrataRefused`）。
+  ready 的 launch 后按 ADR-0017 的接入检查核对身份（版本、端口 8080 本机、run config 的模型／`--max-context 131072`、
+  本次启动在服务日志里写下的起草方式为 DFlash2、`/v1/models`、`/v1/status` 原生上下文 131072），不符即停掉并拒绝
+  （`StrataRefused`）。
+
+起草方式不从 run config 的参数判断：Strata 总会给引擎传 `--mtp <权重目录>`，DFlash2 由宿主另行加上，研究侧
+`probe` 按参数判断会把默认启动认成 MTP（2026-11-08 首次 smoke 实测）。产品改读本次启动写进
+`launch-<name>.server.log` 的 `[strata] drafting:` 一行（启动前记下日志长度，只看之后新写的部分）。
 - 退出：只停自己启动的 launch：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 `MIN_FREE_MIB`；
   核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不能盖住原异常）。
 
@@ -85,10 +90,21 @@ def _arg(args: list[str], flag: str) -> str | None:
     return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
 
 
-def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str], dict]) -> dict[str, Any]:
+def drafting_from_log(text: str) -> tuple[str | None, str | None]:
+    """本次启动的服务日志里最后一行 `[strata] drafting: …` → (起草方式, 原行)；没有这一行为 (None, None)。"""
+    lines = [line.strip() for line in text.splitlines() if line.strip().startswith("[strata] drafting:")]
+    if not lines:
+        return None, None
+    lower = lines[-1].lower()
+    return ("dflash2" if "dflash2" in lower else "mtp" if "mtp" in lower else "off" if "off" in lower else None), lines[-1]
+
+
+def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str], dict],
+          log_text: str) -> dict[str, Any]:
     """按 ADR-0017 核对已 ready 的 launch，返回观察到的值（不含 API key）；不符抛 `StrataRefused`。
 
-    复制自 `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数。
+    改编自 `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数；
+    起草方式取自本次启动的服务日志 `log_text`（见模块说明）。
     """
     want = R.STRATA_RESOLVED["context"]
     version = cli("--version").strip()
@@ -99,7 +115,7 @@ def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str
         raise StrataRefused(f"Strata launch must serve {HOST}:{PORT}, got {launch.get('host')!r}:{launch.get('port')!r}")
     config = json.loads(Path(launch["config"]).read_text(encoding="utf-8-sig")) if launch.get("config") else {}
     args = [str(a) for a in config.get("args") or []]
-    drafting = "mtp" if "--mtp" in args else "dflash2" if any("dflash" in a.lower() for a in args) else None
+    drafting, drafting_line = drafting_from_log(log_text)
     if config.get("model_name") != R.MODEL or _arg(args, "--max-context") != str(want) or drafting != "dflash2":
         raise StrataRefused(f"Strata run config differs from ADR-0017: model {config.get('model_name')!r}, "
                             f"--max-context {_arg(args, '--max-context')!r}, drafting {drafting!r}")
@@ -114,22 +130,32 @@ def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str
             "config": {"model_name": config.get("model_name"), "exe": config.get("exe"), "args": args,
                        "host": config.get("host"), "log": config.get("log")},
             "kv": _arg(args, "--kv"), "kv_resident": _arg(args, "--kv-resident"), "spec": _arg(args, "--spec"),
-            "drafting": drafting, "models": models,
+            "drafting": drafting, "drafting_line": drafting_line, "models": models,
             "status": {k: status.get(k) for k in ("model", "engine", "context", "concurrency", "structured_output",
                                                   "vram", "machine")}}
 
 
-def server_log(name: str | None) -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", "")) / "Strata" / "runtime" / f"launch-{name}.server.log"
+LOG_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Strata" / "runtime"
+
+
+def log_sizes(log_dir: Path) -> dict[str, int]:
+    """启动前各 `launch-*.server.log` 的长度：启动后只读新写的部分（日志跨次追加）。"""
+    return {p.name: p.stat().st_size for p in log_dir.glob("launch-*.server.log")} if log_dir.is_dir() else {}
+
+
+def read_from(path: Path, offset: int) -> str:
+    if not path.is_file():
+        return ""
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        return handle.read().decode("utf-8", errors="replace")
 
 
 def log_events(path: Path, offset: int) -> dict[str, int] | None:
     """服务日志在 `offset` 之后那部分里各事件的出现次数（没有日志为 None）。"""
     if not path.is_file():
         return None
-    with path.open("rb") as handle:
-        handle.seek(offset)
-        text = handle.read().decode("utf-8", errors="replace")
+    text = read_from(path, offset)
     return {key: text.count(pattern) for key, pattern in LOG_EVENTS.items()}
 
 
@@ -171,17 +197,18 @@ class ResourceSampler:
 class StrataServer:
     """一个 Strata session：`__enter__` 启动并核对，`__exit__` 停止并核实显存释放。
 
-    `cli`、`get`、`free_vram`、`sleep`、`clock` 是只供测试替换的内部接缝。`on_pid(pid)` 在服务 ready 后以
+    `cli`、`get`、`free_vram`、`sleep`、`clock`、`log_dir` 是只供测试替换的内部接缝。`on_pid(pid)` 在服务 ready 后以
     `--status` 报告的 pid 回调（报告里没有 pid 时不回调），停止后以 None 回调，供编排器写进 GPU 锁。
     """
 
     def __init__(self, runtime_dir: Path, *, on_pid: Callable[[int | None], None] = lambda pid: None,
                  cli: Callable[..., str] = run_cli, get: Callable[[str], dict] = http_get,
                  free_vram: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
-                 sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic):
+                 sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+                 log_dir: Path = LOG_DIR):
         self.runtime_dir = Path(runtime_dir)
         self.on_pid, self.cli, self.get, self.free_vram = on_pid, cli, get, free_vram
-        self.sleep, self.clock = sleep, clock
+        self.sleep, self.clock, self.log_dir = sleep, clock, Path(log_dir)
         self.url = f"http://{HOST}:{PORT}"
         self.identity: dict[str, Any] = {"candidate": R.MODEL}
         self.launched = False
@@ -205,6 +232,7 @@ class StrataServer:
         self.identity["free_vram_mib_before_start"] = self._wait_free(120.0)
         self.launched = True
         try:
+            sizes = log_sizes(self.log_dir)
             try:
                 self.cli(*LAUNCH_ARGS, timeout=LAUNCH_TIMEOUT_S)
             except subprocess.CalledProcessError as exc:
@@ -214,11 +242,11 @@ class StrataServer:
             except (OSError, subprocess.SubprocessError) as exc:
                 raise InfraFailure(f"strata launch failed: {type(exc).__name__}: {exc}") from exc
             launch = self._wait_ready()
-            observed = probe(launch, cli=self.cli, get=self.get)
+            self.log_path = self.log_dir / f"launch-{launch.get('name')}.server.log"
+            self.log_offset = sizes.get(self.log_path.name, 0)
+            observed = probe(launch, cli=self.cli, get=self.get, log_text=read_from(self.log_path, self.log_offset))
             self.identity.update(strata=observed, cold_load_seconds=self.clock() - started)
             atomic_write_json(self.runtime_dir / "strata.json", dict(observed, attached_at_utc=utc_now()))
-            self.log_path = server_log(launch.get("name"))
-            self.log_offset = self.log_path.stat().st_size if self.log_path.is_file() else 0
             self.sampler = ResourceSampler(self.url, self.get)
             self.sampler.start()
             log.info("[translate] Strata ready in %.1f s (%s, %s)", self.identity["cold_load_seconds"],
