@@ -1,6 +1,6 @@
 # ADR-0005：H0 翻译模型、采样与引擎（APEX-I-Compact）
 
-状态：已接受。合并整理于 2026-11-08（并入 ADR-0004、ADR-0005 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。  
+状态：已接受。合并整理于 2026-11-08（并入 ADR-0004、ADR-0005 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。自 2026-11-08 起 H0 不再是基线（[ADR-0018](0018-q2-sole-translation-baseline.md)），本篇只作产品当前翻译实现与历史对照的身份。  
 范围：H0 翻译线的模型、采样、context、运行时参数与引擎。切包、提示与产品配方见 [ADR-0010](0010-dp10-cut-translation-flow-baseline.md)；H0 与 Q 线的关系见 [ADR-0015](0015-two-translation-baselines.md)。STT 仍保留原语言。
 
 ## 决定

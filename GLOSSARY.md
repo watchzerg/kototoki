@@ -41,7 +41,7 @@ recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carries the same packing int
 Since 2026-10-21 this line is named **H0**, with **Q0** beside it (ADR-0015).
 
 **H0**：
-专用翻译模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Hy-MT2 30B-A3B APEX-I-Compact＋采样 `official30b-cached-v1`（ADR-0005），研究侧配方 `dp10-cut`（ADR-0010），产品配方 `dp10-cut-degrade-v1`（ADR-0011）。即上条 Translation baseline 的现名，产品当前使用。
+专用翻译模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Hy-MT2 30B-A3B APEX-I-Compact＋采样 `official30b-cached-v1`（ADR-0005），研究侧配方 `dp10-cut`（ADR-0010），产品配方 `dp10-cut-degrade-v1`（ADR-0011）。即上条 Translation baseline 的现名，产品当前使用。2026-11-08 起不再是基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)），只作产品当前翻译实现与历史对照。
 _Avoid_: Hy 基线、旧基线
 
 **Q0**：
@@ -54,7 +54,7 @@ _Avoid_: qwen-wide（指基线时）、通用模型基线、X0（那是 Qwen-ASR
 _Avoid_: N\*（指基线时）、q0-names-high（指基线时）、Q0＋注入
 
 **Q2**：
-通用模型线的当前翻译基线（[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08）：Q1 的配方规则不变，模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（本机解析为 128K、DFlash2、并发自动适配，quick tune 确认无需额外参数）；配方带 `qwen_options.strata_launch: "default"`，不用 grammar。质量证据来自同配方、MTP 启动的 v12 F1（dev 与产品都显著优于 Q1），Q2 的启动配置本身未跑过翻译。未进产品。
+唯一的翻译基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)；身份见 [ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08）：Q1 的配方规则不变，模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（本机解析为 128K、DFlash2、并发自动适配，quick tune 确认无需额外参数）；配方带 `qwen_options.strata_launch: "default"`，不用 grammar。质量证据来自同配方、MTP 启动的 v12 F1（dev 与产品都显著优于 Q1），Q2 的启动配置本身未跑过翻译。未进产品。
 _Avoid_: F1（指基线时；F1 是 v12 的 MTP／32K 启动）、Flash-Next 基线
 
 ### 双语字幕流水线

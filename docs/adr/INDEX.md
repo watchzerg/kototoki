@@ -11,7 +11,7 @@
 
 ## 当前有效决定
 
-更新于 2026-11-08（合并精简后）。
+更新于 2026-11-08（合并精简后；同日 ADR-0018 改为唯一基线 Q2）。
 
 | 主题 | 现行规则 | 权威出处 |
 | --- | --- | --- |
@@ -19,11 +19,11 @@
 | 设备 | ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU（产品固定 `cuda:0`） | [0003](0003-new-pyannote-baselines.md)、[0007](0007-bilingual-subtitle-pipeline-architecture.md) |
 | 产品 STT 引擎 | `[stt] engine` = `w0`（默认）｜`x0`｜`cross`（`cross-w0-x0-whisper-judge-v1`，Whisper 交叉打分，d > −1.0 取 x0）。改默认须新 ADR，并在全新隔离素材上确认 | [0012](0012-cross-asr-judge.md) |
 | 产品架构 | GPU 阶段按"阶段 × 整批"推进，每阶段一个子进程。阶段链为 `vad` → `asr` → `align`（MMS）→ `cues` → **`names`** → `translate` → publish。单一 CUDA 12.8 Python 3.13 环境，翻译用独立进程的官方 llama.cpp。`kototoki.toml` 驱动，无 CLI。每片一个工作目录，按身份与配方 hash 续跑 | [0007](0007-bilingual-subtitle-pipeline-architecture.md)；names 阶段见 [0014](0014-name-consistency-in-product.md) |
-| 翻译基线（两条） | **H0**（专用模型线，已在产品）与 **Q 线**（通用模型线，未进产品）。新测试须写明对照是 H0 还是 Q2（引用 Q1、Q0、F1 时也写明）。新增后缀命名须用户裁定 | [0015](0015-two-translation-baselines.md) |
-| H0 模型与采样 | Hy-MT2 30B-A3B APEX-I-Compact（rev `312cce86…`）。采样 `official30b-cached-v1`：temperature 0.7、无 top_k、`n_predict` 4096，context 8192，超长拒绝不截断 | [0005](0005-apex-i-compact-translation-baseline.md)（含研究侧与产品的引擎版本） |
-| H0 流程 | `dp10-cut`（`ee72ce66…`）：每包 ≤10 条目标、可见 ≤12 条；DP 拼包，分级切点偏向停顿，不跨 ≥20 s 的停顿。邻文规则：前一条停顿 <5 s 才带、后一条 <1 s 才带。提示 `joint-understanding-v1` | [0010](0010-dp10-cut-translation-flow-baseline.md) |
-| H0 产品配方 | `dp10-cut-degrade-v1`（`086754ca…`），失败按 10→5→1 降级，单条仍失败时保留日文 | [0010](0010-dp10-cut-translation-flow-baseline.md) |
-| **Q 线基线：Q2** | Q1 的配方规则不变：`qwen-wide`，加产品 `names` 建表中 `confidence: high` 的专名注入，不做事后替换。模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（DFlash2）。配方带 `strata_launch: "default"`，不用 grammar。每个输入一个实例。质量证据来自 v12 F1；Q2 的启动配置本身未跑过翻译 | [0017](0017-q2-strata-default-launch-baseline.md)（含 Q1 规则）；Q0 身份见 [0015](0015-two-translation-baselines.md) |
+| 翻译基线（唯一） | **Q2** 是唯一翻译基线，新的翻译测试都以 Q2 为对照；引用 Q1、Q0、F1、H0 时须写明并说明理由。H0 不再是基线，只作产品当前翻译实现与历史对照的身份。新增后缀命名须用户裁定 | [0018](0018-q2-sole-translation-baseline.md)；H0／Q0 身份见 [0015](0015-two-translation-baselines.md) |
+| 产品当前翻译（H0）：模型与采样 | Hy-MT2 30B-A3B APEX-I-Compact（rev `312cce86…`）。采样 `official30b-cached-v1`：temperature 0.7、无 top_k、`n_predict` 4096，context 8192，超长拒绝不截断 | [0005](0005-apex-i-compact-translation-baseline.md)（含研究侧与产品的引擎版本） |
+| 产品当前翻译（H0）：流程 | `dp10-cut`（`ee72ce66…`）：每包 ≤10 条目标、可见 ≤12 条；DP 拼包，分级切点偏向停顿，不跨 ≥20 s 的停顿。邻文规则：前一条停顿 <5 s 才带、后一条 <1 s 才带。提示 `joint-understanding-v1` | [0010](0010-dp10-cut-translation-flow-baseline.md) |
+| 产品当前翻译（H0）：配方 | `dp10-cut-degrade-v1`（`086754ca…`），失败按 10→5→1 降级，单条仍失败时保留日文 | [0010](0010-dp10-cut-translation-flow-baseline.md) |
+| **翻译基线 Q2：身份** | Q1 的配方规则不变：`qwen-wide`，加产品 `names` 建表中 `confidence: high` 的专名注入，不做事后替换。模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（DFlash2）。配方带 `strata_launch: "default"`，不用 grammar。每个输入一个实例。质量证据来自 v12 F1；Q2 的启动配置本身未跑过翻译 | [0017](0017-q2-strata-default-launch-baseline.md)（含 Q1 规则）；Q0 身份见 [0015](0015-two-translation-baselines.md) |
 | 方法禁区 | 不自动选用"翻译多次再挑选"（MBR、best-of-N、多次投票及更省的变体）：不提议、不列候选、不在无人值守时执行。两次可靠性重试与 10→5→1 降级不算在内。边界情况先问 | [0008](0008-no-multi-translation-selection.md) |
 | 专名一致性 | 研究线已结题，不开新轮次，最佳配置冻结（no-think、提示 v5、规则一＋孤立单字）。已原样移植进产品 `names` 阶段：用 Qwen3.8-27B 建表，发布时替换，默认开启，表可手改 | [0014](0014-name-consistency-in-product.md) |
 
@@ -34,8 +34,7 @@
 - **引擎并存**：H0 研究侧仍用 compat loader b11429，产品用官方 llama.cpp（现行 b11669，以[技术选型](../development/technology-stack.md)为准）。研究侧是否同步升级，未裁定（[0005](0005-apex-i-compact-translation-baseline.md)）。
 - **W0／X0 demo 的 CLI 旧默认**：省略参数时仍落到旧 PyanNet／fixed30，须显式选择新 Pyannote（[0003](0003-new-pyannote-baselines.md)）。
 - **未裁定或未验证**：
-  - 产品是否改用 Q 线；
-  - Q 线进产品还需要外部服务后端，以及不用 grammar 时的失败路径；
+  - 产品与基线暂不一致：基线已是 Q2，产品仍跑 H0；产品何时、如何切到 Q2 未裁定，切换需要外部服务后端、不用 grammar 时的失败路径，并处理 Q 链没有替换阶段（[0018](0018-q2-sole-translation-baseline.md)）；
   - Q2 启动配置的 smoke 尚未运行；
   - 给新 SRT 生成 Q1／Q2 配方还没有通用入口（[0017](0017-q2-strata-default-launch-baseline.md)）；
   - [0014](0014-name-consistency-in-product.md) 验收第 4 条（用户抽查 `changes`）未做；
@@ -56,6 +55,7 @@
   2. → [0005](0005-apex-i-compact-translation-baseline.md)（10-07）：APEX-I-Compact；10-08 改为 `official30b-cached-v1`。
   3. → [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-14）：产品引擎换成官方 llama.cpp。
   4. → [0015](0015-two-translation-baselines.md)（10-21）：命名为 H0。
+  5. → [0018](0018-q2-sole-translation-baseline.md)（11-08）：不再是基线，只作产品当前实现与历史对照。
 - **翻译流程（切包与提示）**：
   1. [0005](0005-apex-i-compact-translation-baseline.md) 的 C0（每包 5 条目标，前后各 1 条邻文）。
   2. → [0006](0006-b10-joint-translation-flow-baseline.md)（已合并）（10-11）：`b10-joint`，即 10 条目标＋joint 提示。
@@ -73,6 +73,7 @@
   1. [0015](0015-two-translation-baselines.md)（10-21）：**Q0**＝Qwen3.8-27B＋`qwen-wide`（`719237b9…`），来自 v9。
   2. → [0016](0016-q1-translation-baseline.md)（已合并）（11-08）：**Q1**＝Q0＋只注入 high 条目的专名表，来自 v11。
   3. → [0017](0017-q2-strata-default-launch-baseline.md)（11-08 同日）：**Q2**＝Q1 规则＋Strata Flash-Next，不加参数启动、DFlash2。v12 的 F1 是同一规则下 MTP 启动的候选。
+  4. → [0018](0018-q2-sole-translation-baseline.md)（11-08 同日）：Q2 成为唯一翻译基线，H0 退出基线。
 
 ## 全部 ADR
 
@@ -85,10 +86,11 @@
 | [0010](0010-dp10-cut-translation-flow-baseline.md) | H0 翻译流程与产品配方（`dp10-cut`／`dp10-cut-degrade-v1`） | 有效（并入 0006、0009、0011） |
 | [0012](0012-cross-asr-judge.md) | 产品 STT 可选引擎 `cross` | 有效 |
 | [0014](0014-name-consistency-in-product.md) | 专名一致性（研究线结题＋进产品） | 有效（并入 0013） |
-| [0015](0015-two-translation-baselines.md) | 翻译两条基线：H0 与 Q 线 | 有效 |
+| [0015](0015-two-translation-baselines.md) | 翻译两条基线：H0 与 Q 线 | 部分有效：两条基线安排由 0018 替代，H0／Q0 身份与测试规则仍有效 |
 | [0017](0017-q2-strata-default-launch-baseline.md) | Q 线基线 Q2（含 Q1 规则） | 有效（并入 0016） |
+| [0018](0018-q2-sole-translation-baseline.md) | 唯一翻译基线 Q2 | 有效 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0018 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0019 起。
 
 ## 记录新决定
 
