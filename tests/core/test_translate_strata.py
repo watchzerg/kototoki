@@ -253,9 +253,9 @@ class StrataServerTests(unittest.TestCase):
         self.assertIn("1000 MiB", final["error"])
 
     def test_waits_for_ram_before_launching(self) -> None:
-        self.fake.ram = [41.2, 44.0, 51.0]  # 建表进程的内存还在释放
+        self.fake.ram = [41.2, 44.0, 53.0]  # 建表进程的内存还在释放
         with self.server() as server:
-            self.assertEqual(server.identity["available_ram_gib_before_start"], 51.0)
+            self.assertEqual(server.identity["available_ram_gib_before_start"], 53.0)
         self.assertGreaterEqual(self.now[0], 2 * S.POLL_S)  # 轮询了两次才启动
         self.assertIn(S.LAUNCH_ARGS, self.fake.commands)
 
