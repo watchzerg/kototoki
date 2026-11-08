@@ -53,8 +53,9 @@ STOP_ARGS = ("launch", "--stop")
 STATUS_ARGS = ("launch", "--status", "--output", "json")
 # Strata 运行时几乎占满整卡（调优实测显存 15.6 GB）；names 的 llama-server 停掉后桌面只占 0.6–1.2 GB。
 MIN_FREE_MIB = 14000
-# 专家区 46.84 GiB＋引擎其余主机内存；2026-11-07 调优（启动前可用 53.6 GiB）放得下，整片那次 41.2 GiB 放不下。
-MIN_AVAILABLE_RAM_GIB = 50.0
+# 专家区 46.84 GiB＋分配专家区之前引擎已占的约 4.8 GiB（CPU 上的图片读取器等）＋余量。2026-11-08 实测：启动前可用
+# 50.4 GiB，到分配专家区时只剩 45.6 GiB，仍差 1.26 GiB 退到 mmap；2026-11-07 调优时可用 53.6 GiB 放得下。
+MIN_AVAILABLE_RAM_GIB = 52.0
 RAM_WAIT_S = 180.0
 MMAP_MARKERS = ("not enough RAM for the expert arena", "experts via mmap")
 LAUNCH_TIMEOUT_S = 900.0   # 加载约 73 s（调优记录）；首次还可能编译／预热
