@@ -124,9 +124,14 @@ class DegradeTests(unittest.TestCase):
             self.h.translate(doc)
         b = self.lines(doc, "batches.jsonl")[0]["batch_id"]
         warnings = [r.getMessage() for r in logs.records if r.levelname == "WARNING"]
-        self.assertEqual(warnings, [f"[translate] batch {b} failed (parse) at level 0; splitting into 2 sub-batch(es)",
-                                    f"[translate] batch {b}.a failed (parse) at level 1; splitting into 5 sub-batch(es)",
-                                    f"[translate] batch {b}: 1 cue(s) kept in Japanese (fallback)"])
+        degrade = [w for w in warnings if " attempt " not in w]
+        self.assertEqual(degrade, [f"[translate] batch {b} failed (parse) at level 0; splitting into 2 sub-batch(es)",
+                                   f"[translate] batch {b}.a failed (parse) at level 1; splitting into 5 sub-batch(es)",
+                                   f"[translate] batch {b}: 1 cue(s) kept in Japanese (fallback): {ids[3]} (parse)"])
+        # 每次格式不合格的尝试各一行：原批次、.a、.a.4 各 2 次。
+        attempts = [w.split(" failed ")[0] for w in warnings if " attempt " in w]
+        self.assertEqual(attempts, [f"[translate] batch {node} attempt {n}/2"
+                                    for node in (b, b + ".a", b + ".a.4") for n in (1, 2)])
         self.assertIn("[translate] batch 1/2: 10 cue(s), 12 tok, cache 5, degraded (8 request(s), 1 fallback)",
                       [r.getMessage() for r in logs.records])
 
@@ -149,6 +154,17 @@ class DegradeTests(unittest.TestCase):
         self.assertEqual([len(t) for t in self.targets()], [10, 5, 5])  # 原批次不换 seed 重试，两个半批各一次
         node = self.lines(doc, "batches.jsonl")[0]["degrade"]["nodes"][0]
         self.assertEqual((node["error_kind"], node["attempts"]), ("context", 1))
+
+    def test_refused_request_logs_the_attempt(self) -> None:
+        doc = document(10)
+        self.h.max_targets = 9
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            self.h.translate(doc)
+        b = self.lines(doc, "batches.jsonl")[0]["batch_id"]
+        (line,) = [r.getMessage() for r in logs.records if " attempt " in r.getMessage()]
+        self.assertTrue(line.startswith(f"[translate] batch {b} attempt 1/2 failed (context): HTTP 400 (context)"),
+                        line)
+        self.assertIn("seed ", line)
 
     def test_resume_reuses_recorded_degrade_nodes(self) -> None:
         doc = document(10)

@@ -99,7 +99,8 @@ def translate_with_degrade(scene: Scene, batch: Batch, attempt: Callable[[Batch]
 
     solve(batch, 0)
     if fallback:
-        log.warning("[translate] batch %s: %d cue(s) kept in Japanese (fallback)", batch.batch_id, len(fallback))
+        log.warning("[translate] batch %s: %d cue(s) kept in Japanese (fallback): %s", batch.batch_id, len(fallback),
+                    ", ".join(f"{item['id']} ({item['reason']})" for item in fallback))
     for item in fallback:
         item["attempts"] = sum(node["attempts"] for node in nodes if item["id"] in node["target_ids"])
     # 原批次的请求记录在 `nodes[0]`，不在行顶层重复。

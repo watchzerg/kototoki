@@ -252,6 +252,28 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
     raise last
 
 
+def _log_failed_attempts(batch_id: str, request: dict[str, Any]) -> None:
+    """每次被拒绝（HTTP 错误、超出 context、server 报错）或格式不合格（非 JSON、ID 不符、空译文、触顶）的尝试记一行
+    WARNING：分类、seed、错误首行、停止原因、输出 token、回复字符数与交换目录。回复正文不进日志，在交换目录的
+    `response.raw` 里。"""
+    attempts = request.get("attempts") or []
+    for attempt in attempts:
+        if attempt.get("status") != "failed":
+            continue
+        parts = [f"seed {attempt.get('seed')}"]
+        if attempt.get("stop_type") is not None:
+            parts.append(f"finish {attempt['stop_type']}")
+        if attempt.get("output_tokens") is not None:
+            parts.append(f"{attempt['output_tokens']} tok")
+        if attempt.get("content_chars") is not None:
+            parts.append(f"reply {attempt['content_chars']} char(s)")
+        if attempt.get("exchange"):
+            parts.append(f"exchange {attempt['exchange']}")
+        error = (str(attempt.get("error") or "").splitlines() or [""])[0][:200]
+        log.warning("[translate] batch %s attempt %d/%d failed (%s): %s; %s", batch_id, attempt.get("attempt"),
+                    R.MAX_ATTEMPTS, attempt.get("error_kind"), error, ", ".join(parts))
+
+
 def translate_batch(client: Any, scene: Scene, batch: Batch, rows: list[dict[str, str]], seed: int,
                     cache_state: dict[str, Any]) -> dict[str, Any]:
     ids = list(batch.target_ids)
@@ -263,6 +285,8 @@ def translate_batch(client: Any, scene: Scene, batch: Batch, rows: list[dict[str
     except StepFailed as exc:
         exc.record = {**batch.record(), "request": request}
         raise
+    finally:
+        _log_failed_attempts(batch.batch_id, request)
     return {**batch.record(), "translations": result, "request": request}
 
 

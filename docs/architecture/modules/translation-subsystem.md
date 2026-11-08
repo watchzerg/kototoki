@@ -57,7 +57,7 @@
 
 零条目 `ja.srt`：写 `run.json`（完成），返回空译文，不启动 Strata、不请求模型。
 
-**日志**：经 `kototoki.translate.*` logger 发事件，写进编排的运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）：session 起止、Strata ready／停止与每批一行（cue 数、输出 token、tok/s、cache，取不到的字段省略）为 INFO；Strata 重启、降级拆批与单条回退为 WARNING；用尽重启放弃、`StrataRefused`、停止未核实为 ERROR。`StepFailed` 的 HTTP 错误与 server error 消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）。提示、译文与响应正文不进日志。
+**日志**：经 `kototoki.translate.*` logger 发事件，写进编排的运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）：session 起止、Strata ready／停止与每批一行（cue 数、输出 token、tok/s、cache，取不到的字段省略）为 INFO；Strata 重启、降级拆批与单条回退（列出回退的 cue ID 与原因）为 WARNING；每次失败的尝试（请求被拒绝：HTTP 错误、超出 context、server error、OOM；格式错误：非 JSON、ID 集合／顺序不符、空译文或含空行、生成触顶）各记一行 WARNING `[translate] batch <ID> attempt n/2 failed (<kind>): <错误首行>; seed, finish, tok, reply 字符数, exchange <交换目录>`，第二次尝试接受时也留下第一次的失败（由 `translate_batch` 依请求记录写出，`run_step` 与研究侧保持一致）；用尽重启放弃、`StrataRefused`、停止未核实为 ERROR。`StepFailed` 的 HTTP 错误与 server error 消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）。提示、译文与响应正文不进日志。
 
 **合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格，保证每条恰好两行；回退为日文的条目两行相同，照常输出。译文须精确覆盖全部 cue（缺失、多余、空串抛 `IncompleteTranslationError`）；零条目文档得到空串。
 

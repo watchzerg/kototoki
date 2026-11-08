@@ -504,6 +504,16 @@ class BuildTableTests(unittest.TestCase):
         self.assertNotIn("第二行", payload["build"]["reason"])
         self.assertEqual((payload["meta"]["seed"], payload["meta"]["attempt"]), (101, 2))
 
+    def test_failed_attempts_log_warnings_without_reply_text(self):
+        server = FakeServer(response(reply_text(), "length"), response("不是 JSON\n第二行"))
+        with self.assertLogs("kototoki.names", level="WARNING") as logs:
+            bt.build_table(document(), server.chat, server.tokenize, 100)
+        lines = [r.getMessage() for r in logs.records]
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("[names] attempt 1/2 failed (seed 100): reply truncated"), lines[0])
+        self.assertTrue(lines[1].startswith("[names] attempt 2/2 failed (seed 101): "), lines[1])
+        self.assertFalse(any("不是 JSON" in line or "第二行" in line for line in lines))
+
     def test_two_length_failures_reason(self):
         server = FakeServer(response(reply_text(), "length"), response(reply_text(), "length"))
         result = bt.build_table(document(), server.chat, server.tokenize, 1)

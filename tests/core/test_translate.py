@@ -290,6 +290,19 @@ class TranslateDocumentTests(unittest.TestCase):
         (row,) = self.batch_lines(doc)
         self.assertEqual(row["degrade"]["nodes"][0]["error_kind"], "parse")
 
+    def test_format_error_then_success_logs_the_failed_attempt(self) -> None:
+        doc = document(5)
+        self.h.plans = [{1: "bad_json"}]
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            result = self.h.translate(doc)
+        self.assertEqual(result.fallback_count, 0)
+        (row,) = self.batch_lines(doc)
+        (line,) = [r.getMessage() for r in logs.records]
+        self.assertEqual(line, f"[translate] batch {row['batch_id']} attempt 1/2 failed (parse): validation: "
+                               f"Expecting property name enclosed in double quotes: line 1 column 2 (char 1); "
+                               f"seed {SEED}, finish stop, 12 tok, reply 9 char(s)")
+        self.assertNotIn("{not json", line)  # 回复正文不进日志
+
     def test_length_stop_is_a_limit_failure(self) -> None:
         doc = document(5)
         self.h.plans = [{1: "length", 2: "length"}]
@@ -508,12 +521,15 @@ class TranslateDocumentTests(unittest.TestCase):
         with self.assertLogs("kototoki.translate", level="INFO") as logs:
             self.h.translate(doc)
         warnings = [r.getMessage() for r in logs.records if r.levelname == "WARNING"]
-        self.assertEqual(len(warnings), 1)
-        self.assertTrue(warnings[0].startswith("[translate] Strata restart 1/2: oom: HTTP 500 (oom)"), warnings[0])
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(warnings[0].startswith("[translate] batch ") and " attempt 1/2 failed (oom): HTTP 500" in warnings[0],
+                        warnings[0])
+        self.assertTrue(warnings[1].startswith("[translate] Strata restart 1/2: oom: HTTP 500 (oom)"), warnings[1])
         self.h.plans = [{1: "oom"}, {1: "oom"}, {1: "oom"}]
         with self.assertLogs("kototoki.translate", level="INFO") as logs, self.assertRaises(TranslateError):
             self.h.translate(document(5, "別"))
-        self.assertEqual([r.levelname for r in logs.records if r.levelname != "INFO"], ["WARNING", "WARNING", "ERROR"])
+        self.assertEqual([r.levelname for r in logs.records if r.levelname != "INFO" and " attempt " not in r.getMessage()],
+                         ["WARNING", "WARNING", "ERROR"])
 
     def test_logs_never_contain_cue_text(self) -> None:
         doc = document(23)

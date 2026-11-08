@@ -14,6 +14,7 @@ sha256 钉子守护。
 from __future__ import annotations
 
 import json
+import logging
 import re
 import unicodedata
 from collections.abc import Callable
@@ -22,6 +23,8 @@ from time import perf_counter
 from typing import Any
 
 from kototoki.srt import SourceDocument
+
+log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "build-table-prompt-v5"
 SCHEMA = "name-table-v2"
@@ -423,6 +426,12 @@ def build_table(document: SourceDocument, chat: Chat, tokenize: Tokenize, seed: 
             guess, entries = parse_reply((choice.get("message") or {}).get("content") or "", cue_count, *dropped)
         except ValueError as exc:  # json.JSONDecodeError 是其子类
             last_error = exc
+            # 只记错误首行、停止原因与计数，回复正文不进日志。
+            content = (choice.get("message") or {}).get("content")
+            log.warning("[names] attempt %d/%d failed (seed %d): %s; finish %s, %s completion tok, reply %s char(s)",
+                        attempt, ATTEMPTS, used_seed, (str(exc).splitlines() or [type(exc).__name__])[0][:200],
+                        choice.get("finish_reason"), usage.get("completion_tokens"),
+                        len(content) if isinstance(content, str) else 0)
             continue
         payload = _payload(used_seed, attempt, guess, entries, dropped, usage, total_seconds, "ok", None)
         return BuildResult(payload, attempt, total_seconds, "ok")

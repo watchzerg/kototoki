@@ -27,7 +27,7 @@
 
 **表可人工校对，也是译法的唯一入口**：翻译按 Q2 规则注入表里 `confidence: high` 的实体，每个 `forms[]` 一行（[翻译子系统](translation-subsystem.md#当前行为规格)）。`name-table.json` 的跳过只比 `identity` 块（`ja_srt_sha256`、`BUILD` 配方 hash、`[names] seed`），用户改 `entries`（改错名、删条目、调 `confidence`）不触发重建。**改到会被注入的条目（`high` 的实体或其写法）会改变注入行的哈希 `names_sha256`，翻译身份随之变化，下次运行重译该片并重新发布；只改 medium／low 条目不触发任何重做。** `ja.srt`、建表配方或 seed 变化会重建并覆盖手改，不做保护。
 
-**日志**（经编排写进运行日志，[批次编排：运行日志](batch-orchestration.md#运行日志)）：`[names] start: N file(s)`；server 加载、加载失败与等显存三条来自共享的 `kototoki.llama_server` logger，前缀 `[names]`（`NAMES_SPEC.stage`）；每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T s`（零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`）；`[names] end: … s`。条目文字、`work_guess`、提示与回复正文不进日志，只在工作目录。
+**日志**（经编排写进运行日志，[批次编排：运行日志](batch-orchestration.md#运行日志)）：`[names] start: N file(s)`；server 加载、加载失败与等显存三条来自共享的 `kototoki.llama_server` logger，前缀 `[names]`（`NAMES_SPEC.stage`）；每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T s`（零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`）；每次不合格的尝试（回复被截断、非 JSON、无有效条目）在该行之前各记一行 WARNING `[names] attempt n/2 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）；`[names] end: … s`。条目文字、`work_guess`、提示与回复正文不进日志，只在工作目录。
 
 ## 实现设计
 
