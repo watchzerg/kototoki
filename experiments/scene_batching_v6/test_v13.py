@@ -53,7 +53,9 @@ class IdentityTest(unittest.TestCase):
         from kototoki.names.recipes import BUILD, BUILD_RECIPE_HASH
         self.assertEqual(BUILD_RECIPE_HASH, PRODUCT_BUILD_HASH)
         s1 = v13.s1_recipe()
-        self.assertEqual(s1["build"], {k: v for k, v in BUILD.items() if k != "model_asset"})
+        self.assertEqual(s1["build"], {k: v for k, v in BUILD.items() if k != "model_asset"}
+                         | {"max_tokens": 8192, "context": 24576})
+        self.assertEqual(s1["build"]["prompt_budget"], BUILD["prompt_budget"])  # 24576 - 8192 - 512 = 15872
         self.assertEqual((s1["model"], s1["runtime"]["launch"], s1["request"]["response_format"]),
                          (strata.MODEL, "default", None))
         self.assertNotEqual(v13.s1_hash(), BUILD_RECIPE_HASH)
@@ -67,7 +69,8 @@ class ClientTest(unittest.TestCase):
         self.assertIn("response_format", product)
         body = v13.strata_body(product)
         self.assertNotIn("response_format", body)
-        self.assertEqual((body["model"], body["chat_template_kwargs"]), (strata.MODEL, {"enable_thinking": False}))
+        self.assertEqual((body["model"], body["chat_template_kwargs"], body["max_tokens"]),
+                         (strata.MODEL, {"enable_thinking": False}, 8192))
         self.assertEqual({k: body[k] for k in ("temperature", "top_p", "top_k", "min_p", "presence_penalty")},
                          {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5})
         with self.assertRaises(ValueError):

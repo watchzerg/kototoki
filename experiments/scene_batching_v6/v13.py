@@ -1,6 +1,8 @@
 """v13: the names table built on Strata + Qwen3.8-Flash-Next (docs/research/2026-11-08-names-on-strata-v13.md).
 
-S1 (``names-strata-v1``) is the product ``BUILD`` recipe unchanged except for what the engine forces (§4.0): the model
+S1 (``names-strata-v2``; v1 with ``max_tokens`` 4096 failed the gate) is the product ``BUILD`` recipe with the output
+limit raised to 8192 (context 24576, prompt budget unchanged; user decision of 2026-11-08, §8 item 4 (a)) and
+otherwise unchanged except for what the engine forces (§4.0): the model
 is Strata's ``qwen3.8-flash-next-iq3_s`` (plain ``strata launch``, Q2 start), the request carries no
 ``response_format`` (Strata would rewrite the prompt) and states ``enable_thinking: false``, and the prompt-budget
 check counts the system and user texts with ``/v1/messages/count_tokens`` (no ``/tokenize`` on Strata). The table is
@@ -9,9 +11,10 @@ built by the product ``kototoki.names.table.build_table`` itself (imported, not 
 
 Layout under ``.local/names-on-strata-v13``:
 
-* ``B/`` builds (ticket 02): ``B/product/<film>/name-table.json`` (first build, used), ``B/product-aa/<film>/...``
-  (second build, A/A only), ``B/E/dev-name-tables.json`` (the v10 layout, so ``names11`` readers apply),
-  ``B/build-report.json`` (counts only), ``B/gate.json``, ``B/runtime/`` (Strata session evidence);
+* ``B2/`` builds of S1 v2 (ticket 02, rerun): ``B2/product/<film>/name-table.json`` (first build, used),
+  ``B2/product-aa/<film>/...`` (second build, A/A only), ``B2/E/dev-name-tables.json`` (the v10 layout, so ``names11``
+  readers apply), ``B2/build-report.json`` (counts only), ``B2/gate.json``, ``B2/runtime/`` (Strata session evidence);
+  ``B/`` holds the same files of S1 v1 (``max_tokens`` 4096, gate failed), read only;
 * ``C/`` table quality (ticket 03): ``C/{27b,s1}/02-table-agreement.json`` (``names11.table_reference_agreement``),
   ``C/table-quality.json``;
 * dev translation (ticket 04, v9/v11 layout): ``recipes/``, ``runs/<arm>__s<seed>__dev``, ``checks/``, ``summaries/``;
@@ -47,11 +50,16 @@ from .brief10 import dev_lines
 from .names10 import NAMES_SEED, document
 
 V13_ROOT = REPO / ".local/names-on-strata-v13"
-B_ROOT = V13_ROOT / "B"
+# S1 v1 (max_tokens 4096) failed the ticket 02 gate; its builds stay in ``B/`` as evidence. The user adopted §8
+# item 4 (a) on 2026-11-08: S1 v2 = v1 with max_tokens 8192 and context 24576 (prompt budget unchanged), built into B2/.
+BUILD_DIR = "B2"
+B_ROOT = V13_ROOT / BUILD_DIR
 C_ROOT = V13_ROOT / "C"
 E_ROOT = V13_ROOT / "E"
 T0, T1 = "q2-names-27b", "q2-names-s1"
-S1_NAME = "names-strata-v1"
+S1_NAME = "names-strata-v2"
+S1_MAX_TOKENS = 8192
+S1_CONTEXT = 24576  # context - max_tokens - 512 = 15872, the product prompt budget
 MAIN_SEEDS = v9.MAIN_SEEDS
 PRODUCT_SEEDS = v11.PRODUCT_SEEDS
 FILMS = asr10.FILMS
@@ -70,11 +78,15 @@ KNOWN_RESPONSE_KEYS = {"id", "object", "created", "model", "choices", "usage", "
 # --- S1 identity --------------------------------------------------------------------------------
 
 def s1_recipe() -> dict[str, Any]:
-    """The S1 build recipe: product ``BUILD`` without its llama.cpp model asset, plus the Strata identity and the
-    request changes of §4.0."""
+    """The S1 build recipe: product ``BUILD`` without its llama.cpp model asset and with the larger output limit
+    (``max_tokens`` 8192, context 24576, so the prompt budget stays 15872), plus the Strata identity and the request
+    changes of §4.0."""
     from kototoki.names.recipes import BUILD
+    from kototoki.names.table import PROMPT_BUDGET, PROMPT_GUARD_TOKENS
+    assert S1_CONTEXT - S1_MAX_TOKENS - PROMPT_GUARD_TOKENS == PROMPT_BUDGET
     return {"name": S1_NAME,
-            "build": {k: v for k, v in BUILD.items() if k != "model_asset"},
+            "build": {k: v for k, v in BUILD.items() if k != "model_asset"}
+            | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT},
             "model": strata.MODEL,
             "runtime": {"strata": strata.STRATA_VERSION, "engine_build": strata.ENGINE_BUILD,
                         "launch": strata.DEFAULT_LAUNCH, "resolved": dict(strata.DEFAULT_RESOLVED), "kv": EXPECTED_KV},
@@ -101,12 +113,14 @@ def _post(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
 
 def strata_body(body: dict[str, Any]) -> dict[str, Any]:
     """The product request body (``table._request_body``) as S1 sends it: no ``response_format``, the Strata model,
-    thinking stated off."""
+    ``max_tokens`` 8192, thinking stated off. (``build_table`` keeps checking the prompt against the product budget,
+    which S1 leaves unchanged.)"""
     if (body.get("chat_template_kwargs") or {}).get("enable_thinking") is not False:
         raise ValueError("S1 requests must state enable_thinking: false")
     if type(body.get("seed")) is not int or body["seed"] <= 0:
         raise ValueError("Strata takes only a positive integer seed")
-    return {k: v for k, v in body.items() if k != "response_format"} | {"model": strata.MODEL}
+    return {k: v for k, v in body.items() if k != "response_format"} | {"model": strata.MODEL,
+                                                                        "max_tokens": S1_MAX_TOKENS}
 
 
 class NamesClient:
@@ -400,7 +414,7 @@ def overlap(a: list[dict[str, Any]], b: list[dict[str, Any]], high_only: bool = 
 def table_quality(*, root: Path = V13_ROOT) -> dict[str, Any]:
     """Ticket 03: dev S1 vs 27B against the reference Chinese (bootstrap by work) and the gate; product description."""
     reports = {}
-    for arm, source in (("27b", v10.V10_ROOT), ("s1", root / "B")):
+    for arm, source in (("27b", v10.V10_ROOT), ("s1", root / BUILD_DIR)):
         names11.table_reference_agreement(source=source, out=root / "C" / arm)
         reports[arm] = read_json(root / "C" / arm / "02-table-agreement.json")
     works = sorted(reports["27b"]["works"])
@@ -417,7 +431,7 @@ def table_quality(*, root: Path = V13_ROOT) -> dict[str, Any]:
     agree_ci = _boot_ci(works, diff("agreement"), "v13-C-agreement")
     high_ci = _boot_ci(works, diff("high_disagree"), "v13-C-high")
     noninferior = agree_ci[0] >= -0.05 and high_ci[1] <= 0.05
-    dev_tables = {"27b": names11.dev_tables(v10.V10_ROOT), "s1": names11.dev_tables(root / "B")}
+    dev_tables = {"27b": names11.dev_tables(v10.V10_ROOT), "s1": names11.dev_tables(root / BUILD_DIR)}
     arms = {}
     for arm, r in reports.items():
         flat = [dict(e, work=w) for w, es in dev_tables[arm].items() for e in es]
@@ -433,8 +447,8 @@ def table_quality(*, root: Path = V13_ROOT) -> dict[str, Any]:
     product = {}
     for film in FILMS:
         t27 = read_json(FILMS[film]["table"])["entries"]
-        s1 = read_json(root / "B" / "product" / film / "name-table.json")["entries"]
-        aa = root / "B" / "product-aa" / film / "name-table.json"
+        s1 = read_json(root / BUILD_DIR / "product" / film / "name-table.json")["entries"]
+        aa = root / BUILD_DIR / "product-aa" / film / "name-table.json"
         product[film] = {
             "27b": {"entries": len(t27), "high_entries": sum(e["confidence"] == "high" for e in t27),
                     "high_forms": len(_pairs(t27, True)), "zh_collision_entries": zh_collisions(t27)},
@@ -489,13 +503,13 @@ def dev_entries(source: Path) -> dict[str, list[dict[str, Any]]]:
 def product_entries(kind: str, *, root: Path = V13_ROOT) -> dict[str, list[dict[str, Any]]]:
     if kind == "27b":
         return {f: read_json(p["table"])["entries"] for f, p in FILMS.items()}
-    return {f: read_json(root / "B" / "product" / f / "name-table.json")["entries"] for f in FILMS}
+    return {f: read_json(root / BUILD_DIR / "product" / f / "name-table.json")["entries"] for f in FILMS}
 
 
 def write_recipes(*, root: Path = V13_ROOT) -> dict[str, str]:
     """T0 / T1 dev recipes (``recipes/``) and product recipes (``E/root/recipes/``); returns their hashes."""
     for arm, dev_src, prod_kind, what in ((T0, v10.V10_ROOT, "27b", "27B tables (control)"),
-                                          (T1, root / "B", "s1", "S1 Strata tables (candidate)")):
+                                          (T1, root / BUILD_DIR, "s1", "S1 Strata tables (candidate)")):
         v12._write_once(root / "recipes" / f"{arm}.json", q2_data(
             dev_entries(dev_src), arm, f"v13 {arm}: Q2 + {what}, dev", keep_empty=False))
         v12._write_once(root / "E/root/recipes" / f"{arm}.json", q2_data(

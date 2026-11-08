@@ -1,6 +1,6 @@
 # 专名建表第十三轮（v13）：建表模型换成 Strata＋Qwen3.8-Flash-Next，对照现行 27B 建表
 
-状态：planned（2026-11-08 起草；同日用户裁定立项，预算按 §5）。本轮重开已结题的专名研究线（[ADR-0014](../adr/0014-name-consistency-in-product.md)），由用户明确要求。
+状态：in-progress（2026-11-08 起草并由用户裁定立项；首跑在阶段 B 不过门（`max_tokens` 4096 截断），同日用户裁定 §8 第 4 项 (a)：S1 改为 `max_tokens` 8192，重跑 B 后按原计划继续）。本轮重开已结题的专名研究线（[ADR-0014](../adr/0014-name-consistency-in-product.md)），由用户明确要求。
 范围：只换产品 `names` 阶段建表所用的模型和推理引擎，其余不变：提示 v5、程序兜底、采样、预算、两次尝试规则都与现行 `BUILD` 配方相同。候选为 Strata 0.2.12（引擎 build 0.1.58）上的 Qwen3.8-Flash-Next IQ3_S，启动方式与 Q2 相同（不加参数的 `strata launch`，子进程里写作 `strata launch --no-tui --model iq3_s`，DFlash2）。对照一律是现行建表（Qwen3.8-27B UD-IQ3_S，llama-server）。翻译一律用 **Q2** 规则（[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)），两臂只差注入的专名表。不改产品 `kototoki/`，不改任何 ADR 或基线身份（§8 由用户裁定后另写 ADR），不开封确认集。
 执行载体：tracker 目录 `.scratch/names-on-strata-v13/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**
 先读：[ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0019](../adr/0019-product-translation-q2.md)；[专名一致性模块页](../architecture/modules/name-consistency.md)；[Strata 用法调研](2026-11-08-strata-flash-next-usage.md)；[v12 研究文档](2026-11-08-strata-flash-next-v12.md)的 §2、§4.0、§5、§6、§7；[v11 研究文档](2026-10-22-q0-product-route-v11.md)的 §7 票据 02 与 §8 第 4 项；代码 `kototoki/names/table.py`（`build_table`）、`kototoki/names/recipes.py`、`experiments/translation_v3/strata.py`、`experiments/scene_batching_v6/{names10,names11,asr10,v12}.py`。
@@ -54,9 +54,10 @@
 
 - **候选臂 S1**（建表配方名 `names-strata-v1`）：现行 `BUILD` 配方原样，只做以下必要改动：
   - 模型换为 Strata 上的 `qwen3.8-flash-next-iq3_s`，启动方式同 Q2；
+  - **输出上限 `max_tokens` 8192**（现行 4096），context 记为 24576，使提示预算仍为 20480−4096−512＝24576−8192−512＝15872（2026-11-08 用户裁定 §8 第 4 项 (a)；首跑 4096 时 Flash-Next 的表被截断、可行性门不过，见 §7）。配方名 `names-strata-v2`（首跑的 `names-strata-v1` 只作证据）；
   - **不发 `response_format`**：与 v12 同理，它会改提示；格式完全靠提示 v5 本身的说明加 `parse_reply` 事后校验，失败按现行规则换 seed＋1 重试一次；
   - 每个请求带 `enable_thinking: false`；
-  - 预算检查：`tokenize` 回调改用 `/v1/messages/count_tokens`，对 system、user 两段各数一次再相加，预算数值不变（20480−4096−512）。该端点不可用或口径对不上时，退回"不预检、只用 `usage.prompt_tokens` 事后记录、超预算标记"，并在票据写明；不得因此放宽预算。
+  - 预算检查：`tokenize` 回调改用 `/v1/messages/count_tokens`，对 system、user 两段各数一次再相加，预算数值不变（15872）。该端点不可用或口径对不上时，退回"不预检、只用 `usage.prompt_tokens` 事后记录、超预算标记"，并在票据写明；不得因此放宽预算。
 - **建表入口**：直接调用产品 `kototoki.names.table.build_table(document, chat, tokenize, seed)`（导入、不改），`chat`／`tokenize` 两个回调接到 Strata。dev 表的场景拼接方式与 v10 `names10.py` 完全相同。
 - **S1 的身份**：Strata 身份（`strata --version`、引擎 build、launch 状态中的 context／drafting／kv）与"不发 `response_format`"一起写进 S1 配方并参与 hash；现行 `BUILD_RECIPE_HASH` 必须不变，要有测试保证。
 - **翻译**：两臂都用 Q2 规则（`qwen-wide`＋只注入 `confidence: high` 的专名表，`qwen-name-table-v1`，`filter: window`；模型同 Q2，启动同 Q2），只换注入的表。Q2 配方用现成的 `scene_batching_v6/v12.py` `strata_recipe_data(q1, …, launch="default")` 组出（`qwen_options.strata_launch: "default"`，附着与身份核对已在 `translation_v3/strata.py` 实现；ADR-0017 指出的缺口"给定 `name-table.json` → 写出 Q1 配方"本轮在 01 补上）。对照臂 T0＝Q2＋27B 表，候选臂 T1＝Q2＋S1 表，**两臂都在本轮新生成**（Strata 不可复现，且 v12 F1 是 MTP 启动，不是 Q2 身份）。
@@ -118,16 +119,16 @@
   | 阶段 | GPU run | 裁判标价 |
   | --- | --- | --- |
   | A | 0 | $0 |
-  | B | 1（建表 19 次，预计 <30 分钟） | $0 |
+  | B | 2（建表 19 次，预计 <30 分钟；首跑 v1 1 次＋裁定后重跑 v2 1 次） | $0 |
   | C | 0 | $0 |
   | D | 6（两臂各 3 seed） | $65（6 套，含余量） |
   | E | 6（两臂各 3 seed） | $15 |
-  | **合计** | **13** | **$80** |
+  | **合计** | **14** | **$80** |
 
   某阶段超限，就用已有数据给出该阶段的结论。裁判配额耗尽（退出码 75）时转做离线票据，没有可做的就停下，写明停在哪里。
 - **全轮停止条件**：B 可行性门不过即停；C 显著变差即停（不跑 D、E）。
 - **不做的事**：
-  - 改提示 v5、程序兜底、采样、`max_tokens`、预算、两次尝试规则；开 `response_format` 或自写约束解码；开思考；
+  - 改提示 v5、程序兜底、采样、预算、两次尝试规则；`max_tokens` 除用户已裁定的 8192 外不再改；开 `response_format` 或自写约束解码；开思考；
   - 改翻译（Q2 规则）或注入规则（只注入 high）；
   - 多次建表再挑选、多样本翻译再挑选（ADR-0008）；A/A 的第二次建表只用于稳定性比较，不得替换正式表；
   - 换量化档、换模型、调 Strata 引擎参数或重新调优；
@@ -166,10 +167,25 @@
 | 日期 | 票据 | 结果 |
 | --- | --- | --- |
 | 2026-11-08 | 01 离线实现 | 完成。`scene_batching_v6/v13.py`＋`--round v13`：S1 配方 `names-strata-v1`（产品 `BUILD` 去掉 GGUF 资产，加 Strata 身份 0.2.12／build 0.1.58／默认启动／kv int8、`response_format: null`、`enable_thinking: false`、`count_tokens` 预算检查），hash `91671bd9…`，产品 `BUILD_RECIPE_HASH` `5b8d1b76…` 不变（测试钉住）。建表直接调用产品 `build_table`，`chat` 回调去掉 `response_format`、加 `model`，`tokenize` 回调走 `/v1/messages/count_tokens`（不可用时退回不预检、只记 `usage.prompt_tokens`）。任意表→Q2 配方 `write_q2`：用 27B 表组出的 dev／产品 Q2 配方 hash 与 ADR-0017 记录的实例逐一相同（`4c3d0f70…`／`86b61ec9…`）。Strata 启停复用产品 `StrataServer`（身份核对、专家区未锁进内存即拒绝、`--stop` 与显存释放核实），外加开跑前核对（无 `gpu.lock`／llama-server／Strata、可用内存 ≥52 GiB）。**修了研究侧的一个缺陷**：`translation_v3/strata.probe` 的默认启动分支按参数判断起草方式，会把 DFlash2 认成 MTP（Strata 总传 `--mtp`），改为读服务日志的 `[strata] drafting:` 行（同产品），v12 分支与各配方 hash 不变。测试 `scene_batching_v6` 78 项、`translation_v3` 90 项、core names／strata 26 项通过；未做 mock 端到端（理由见票据）。GPU 0。 |
+| 2026-11-08 | 02 建表与可行性门（GPU） | **不过门，全轮停在 B。** 开跑前核对通过（无 llama-server／Strata／`gpu.lock`；首次核对可用内存 48.8 GiB 不够，未启动，用户重启机器后 52.5 GiB）；`--plan` 下载量 0。`StrataServer` 启动核对通过（0.2.12／build 0.1.58、DFlash2、kv int8、spec 4），**专家区全部锁进内存**；19 次建表约 9 分钟，结束 `--stop`、显存释放（空闲 15074 MiB）。17 个正式建表 `ok` 16、**`failed` 1（HF-III 两次都在 4096 token 处 `length` 截断）**；首次失败 **5／17**（HF-II、HF-III、W02、W03、W08），**全部是输出顶到 `max_tokens` 4096 的截断，没有一次 JSON 解析失败**；A/A 第二次结果相同（HF-II 截断后重试 ok，HF-III 两次截断）。原因：Flash-Next 写的表约长一倍——被接受回复的 completion 中位 3022 token（27B dev 15 部全部首次 ok，中位 1536）、dev 条目 290 对 201；不是重复循环（server log 重复截停、推理自救、非有限 logits 都是 0）。思考输出 0（36 个请求 `reasoning_content` 全空）；采样全部被接受（HTTP 错误 0；Strata 源码核实 `top_p`／`top_k 20`／`presence_penalty 1.5`（窗口 64）／正整数 `seed` 原样进引擎，`min_p 0` 即引擎的"关"）；`count_tokens` 可用，两段之和比 `usage.prompt_tokens` 恒多 87（模板各算一份，预检偏保守），prompt token 与 27B 逐部相同。门：全 ok ✗、首次失败 ≤2 ✗、思考为空 ✓、采样接受 ✓。代价：dev 15 部 339 s（27B 468 s），产品单次 48–53 s（27B 49／40 s），显存峰值 16.1 GB，整机内存峰值 62.4 GiB（共 63.9）。GPU 1（B 1／1）。 |
+| 2026-11-08 | 03–06（首跑） | 首跑在 B 停止：03–05 未跑，06 按 v1 写了一版结论（下方 §7.1 的"首跑结论"）。 |
+| 2026-11-08 | 用户裁定 §8 第 4 项 (a) | **S1 改为 `names-strata-v2`**：`max_tokens` 8192、context 24576（提示预算 15872 不变），其余同 v1；hash `eb4b1c6d…`（v1 `91671bd9…`，产品 `BUILD_RECIPE_HASH` `5b8d1b76…` 不变）。建表产物改写到 `B2/`，v1 的 `B/` 保留为证据。B 的预算加 1 run（合计 14）。票据 02–06 重新打开，从 02 重跑。 |
 
 ### 7.1 结论
 
-（结题时填写：S1 的结论按 §3 Q6 的三种写法之一，并逐问回答 Q1–Q5。）
+（结题时按 S1 v2 重写本节。以下是首跑 v1 的结论，保留作记录。）
+
+**首跑结论（S1 v1，`max_tokens` 4096）：不进，原因：现行配方的输出上限 `max_tokens` 4096 装不下 Flash-Next 写出的表**——它比 27B 长约一倍，9／36 个回复被截断，HF-III 两次都截断（`failed`），首次失败 5／17，可行性门两条不过。格式、思考关闭、采样与预算预检本身都可行。按 §4.2 本轮不修；改输出上限属于改配方，修复候选见 §8 第 4 项。
+
+| 问题 | 答案（对照为现行 27B 建表） |
+| --- | --- |
+| Q1 可行性 | **按现行配方不可行**。`ok` 16／`failed` 1／`too_long` 0（17 部，27B 全部 ok）；首次失败 5／17，**全是 4096 token 截断，JSON 解析失败 0**——不发 `response_format` 时，提示 v5 加事后校验已足以得到合法 JSON；思考完全关闭（`reasoning_content` 全空、无 `<think>`）；采样参数全部被接受（`min_p 0` 在 Strata 与 llama.cpp 里都是关闭）；`/v1/messages/count_tokens` 能替代 `/tokenize`，两段相加比 `usage.prompt_tokens` 恒多 87（偏保守、预算不会被放宽）。 |
+| Q2 表质量 | **未测**（阶段 C 被 B 阻断）。只有描述性计数：dev 条目 290 对 201，HF-II 23 对 20；HF-II 同 seed 两次建表都是首次截断、重试后 23 对 20 条。与参考的一致率没有算。 |
+| Q3 dev 翻译 | 未测。 |
+| Q4 产品翻译 | 未测。 |
+| Q5 代价 | 建表墙钟：dev 15 部 339 s 对 27B 468 s（含 3 次截断重试；不计重试约快一半）；产品单次 48–53 s 对 27B 49／40 s（HF-II 含一次截断重试，HF-III 两次截断仍失败）；全部 19 次 545 s，加载约 1–2 分钟。资源：显存峰值 16.1 GB，**整机内存峰值 62.4 GiB（共 63.9）**，启动前须可用 ≥52 GiB（本次首次核对只有 48.8，重启后才够）。27B 的显存／内存峰值本轮没有重测（对照表已存在）。 |
+| Q6 结论写法 | 不进，原因：输出上限截断（见上）。 |
+
 
 ## 8. 待用户裁定
 
@@ -184,7 +200,14 @@
 
 执行中产生的裁定项由执行者追加在下面（第 0 项留给提交签名问题）。
 
-0. **提交签名**：
+0. **提交签名**：票据 01 的提交（`cc9cfb3`）签名正常。首跑 02–06 的记录当时签名失败（`1Password: failed to fill whole buffer`，重试一次仍失败，未绕过），S1 v2 改动的第一次提交同样失败；用户解锁 1Password 后两者合并为一次提交。
+4. **S1 不过门的修复**：**已裁定（2026-11-08）为 (a)**，S1 改为 `max_tokens` 8192＋context 24576，在本轮内重跑 B（见 §7）。原选项：截断的根因是输出长度，不是格式。可选：
+   - (a) **只放宽输出上限**：`max_tokens` 4096 → 8192，同时把 context 提到 24576，使提示预算仍为 15872（=context−max_tokens−512，与现行相同；Strata 原生上下文 128K，放得下）。S1 被接受回复最长 3981、截断回复都在 4096 处，8192 应覆盖。其余（提示、采样、两次尝试）不变，重跑 B（GPU 1）再按原计划走 C–E。**建议选这一项**：改动最小，且只改 S1，不动 27B 的 `BUILD`。
+   - (b) 在提示里收紧表的长度（条目或 forms 上限）：会改提示 v5，影响表的内容，等于换配方，要从 C 重新证明质量。
+   - (c) 开 `response_format`：对截断无效（问题不在格式），不建议。
+   - (d) 不切换，产品建表继续用 27B（现状）。
+5. 产品切换与 Q2 基线：仍按第 2、3 项，在 S1 v2 结题后裁定。
+6. **开跑前内存**：可用内存 ≥52 GiB 是 Strata 专家区放进内存的前提，本次第一次核对只有 48.8 GiB（进程里没有大户，重启后 52.5）；整机峰值 62.4／63.9 GiB 几乎占满。后续 GPU 轮次开跑前可能需要用户先重启或关闭程序，无人值守执行时会因此停下。
 
 ## 附：执行提示词（粘贴到新 session）
 
