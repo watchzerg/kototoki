@@ -196,10 +196,20 @@ def translate_scene(client: Any, scene: Scene, recipe: Recipe, seed: int, cache_
                 from . import qwen
                 record = {"stage": stage, "batch_index": batch.index}
                 row["requests"].append(record)
-                result = qwen.run_step(client, qwen.messages(window, recipe, scene.work_id),
-                                       R.translation_grammar(recipe, ids), seed, ids, cache_state, record, recipe)
                 if (recipe.qwen_options or {}).get("names"):
                     info["names_injected"] = len(qwen.names_for_window(recipe, scene.work_id, window))
+                try:
+                    result = qwen.run_step(client, qwen.messages(window, recipe, scene.work_id),
+                                           R.translation_grammar(recipe, ids), seed, ids, cache_state, record, recipe)
+                except StepFailed as exc:
+                    # v12 Strata (no grammar): a pack that fails both attempts leaves only its own cues undelivered
+                    # (v12 §4.0); the scene goes on and ends "failed" with every failed pack listed.
+                    if recipe.model != R.STRATA_MODEL or exc.kind not in TERMINAL_KINDS:
+                        raise
+                    info["failed"] = exc.kind
+                    row.setdefault("failed_batches", []).append(
+                        {"batch_index": batch.index, "kind": exc.kind, "error": str(exc)[:2000], "target_ids": ids})
+                    continue
                 row["translations"].update(result)
                 continue
             prompt = R.render_translation(recipe, window, terms, history, scene.work_id, batch.pauses,
@@ -227,7 +237,13 @@ def translate_scene(client: Any, scene: Scene, recipe: Recipe, seed: int, cache_
                                       lambda text: R.parse_translation(text, ids), cache_state, record)
                     info["review_changed_ids"] = sorted(key for key in ids if result[key] != info["before_review"][key])
             row["translations"].update(result)
-        row["status"] = "complete"
+        if row.get("failed_batches"):
+            first = row["failed_batches"][0]
+            row.update(status="failed", failure={"stage": "translation", "batch_index": first["batch_index"],
+                                                 "kind": first["kind"], "error": first["error"], "fatal": False,
+                                                 "infra": False, "failed_batches": len(row["failed_batches"])})
+        else:
+            row["status"] = "complete"
     except StepFailed as exc:
         row.update(status="failed", failure={"stage": stage, "batch_index": batch_index, "kind": exc.kind,
                                              "error": str(exc)[:2000], "fatal": exc.kind in FATAL_KINDS,
@@ -308,7 +324,7 @@ def _next_session_index(run_dir: Path, run: dict[str, Any]) -> int:
 
 SESSION_ENGINE_KEYS = ("candidate", "model_path", "engine_sha256", "engine_identity_sha256", "command", "server_pid",
                        "server_created", "kill_on_job_close", "owner_pid", "owner_created", "cold_load_seconds",
-                       "residency", "model_verification", "gpu_lock_replaced_stale")
+                       "residency", "model_verification", "gpu_lock_replaced_stale", "strata")
 
 
 def run_generation(run_dir: Path, recipe: Recipe, seed: int, scenes: list[Scene], *, scope: str,

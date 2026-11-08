@@ -48,6 +48,8 @@ v11 选项（[研究文档](../../docs/research/2026-10-22-q0-product-route-v11.
 
 C0 等价性：`test_recipes` 证明 v3 的 C0 prompt、grammar 和完整 completion 请求（序列化字节）与 v2 `v2_recipes.render_window("c0")`／`completion_request` 一致，批次划分与 `v2_prepare.pack_scene` 一致。
 
+v12 后端（[研究文档](../../docs/research/2026-11-08-strata-flash-next-v12.md)、[Strata 用法调研](../../docs/research/2026-11-08-strata-flash-next-usage.md)）：`model` 可取 `qwen3.8-flash-next-iq3_s`（`recipes.STRATA_MODEL`），走同一条 Qwen 路径（同一 `qwen.messages`、专名注入与采样），请求、身份与会话在 `strata.py`，`qwen.versions`／`fixed`／`run_step`／`session_factory` 按模型分派，已有配方 hash 不变。差异：请求体不带 `grammar`／`cache_prompt`、带 `model` 与 `chat_template_kwargs.enable_thinking`（`qwen_options.thinking` 时另带 `thinking_budget_tokens`，`max_tokens` 加预算，无思考前缀 grammar）；不调 `/apply-template`／`/tokenize`，输入长度取 `usage.prompt_tokens`，超过 Q1 输入预算只标 `over_q1_budget`；首请求 `cache_n` 只记录；格式失败按原规则换 seed＋1 重试一次。**不启动服务**：执行者按调研 §3 启动 `kototoki-translate` launch，`session_factory` 持 v3 `gpu.lock` 附着，核对 `strata --version`（0.2.12／build 0.1.58）、`strata launch --status --output json` 及其 run config（本机、模型名、`--max-context 32768`、无 `--vision`）、`/v1/models`、`/v1/status`（context 32768、单并发），把观测值（kv、drafting、args，不含 key）写进 `runtime/session-NN/strata.json` 与 session 记录的 `strata` 键；会话期间每 5 s 采样 `/v1/status` 的整机显存／内存峰值，并统计 server log 中推理循环自救与非有限 logits 的行数 → `resources.json`。Strata 配方上两次都失败的包只让它自己的 cue 未交付：场景继续，最终 `status: failed` 并列出 `failed_batches`（Hy-MT2／Qwen 配方仍在首个失败包处停止）。
+
 ## 目录布局（根目录下）
 
 ```
@@ -85,6 +87,6 @@ MQM 惩罚 minor 1／major 5／critical 10；accuracy 类为主终点（每条�
 
 ## 验证范围
 
-已验证（离线）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`（78 项，含类别路由与基线 hash 固定、v9 的 `test_qwen`，约 3–4 秒；含 PYTHONHASHSEED 子进程、Job Object 子进程）覆盖 C0 等价、配方哈希与组合、批次与位置、伪客户端下的生成／续跑／OOM／缓存校验／重试／上下文超限／术语与审校、包盲化与校验、基础设施失败不落终态并自动重做、锁／端口失败不记 session、伪 subprocess 下的 CLI 成功／配额 75／未登录／暂时错误／modelUsage 检查／`--setting-sources` 回退、并发裁判锁、确认集门禁与分开的导出目录、export／ingest、prompt-v2 与相邻 cue、合成扰动、不可交付窗口记 critical、split 覆盖与 seed 不齐、风险窗／critical／LOO／交付门槛、跨哈希种子的 bootstrap 确定性、判定尺度上的 MDE、状态推导与孤儿服务器、PID 复用、原子写重试、Job Object 杀子进程、GPU 锁与模型校验缓存。另用真实冻结数据离线核对：34 场景／4297 cue／96 窗、确认集 20 场景／48 窗、reference-v3 计数（144 窗、720 cue、修改 6、high 585／medium 135、带歧义 185）、裁判上下文日文与模型输入一致、34 个场景的 C0 批次与 v2 完全相同。
+已验证（离线）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`（88 项，含类别路由与基线 hash 固定、v9 的 `test_qwen`、v12 的 `test_strata`，约 3–4 秒；含 PYTHONHASHSEED 子进程、Job Object 子进程）覆盖 C0 等价、配方哈希与组合、批次与位置、伪客户端下的生成／续跑／OOM／缓存校验／重试／上下文超限／术语与审校、包盲化与校验、基础设施失败不落终态并自动重做、锁／端口失败不记 session、伪 subprocess 下的 CLI 成功／配额 75／未登录／暂时错误／modelUsage 检查／`--setting-sources` 回退、并发裁判锁、确认集门禁与分开的导出目录、export／ingest、prompt-v2 与相邻 cue、合成扰动、不可交付窗口记 critical、split 覆盖与 seed 不齐、风险窗／critical／LOO／交付门槛、跨哈希种子的 bootstrap 确定性、判定尺度上的 MDE、状态推导与孤儿服务器、PID 复用、原子写重试、Job Object 杀子进程、GPU 锁与模型校验缓存。另用真实冻结数据离线核对：34 场景／4297 cue／96 窗、确认集 20 场景／48 窗、reference-v3 计数（144 窗、720 cue、修改 6、high 585／medium 135、带歧义 185）、裁判上下文日文与模型输入一致、34 个场景的 C0 批次与 v2 完全相同。
 
 未验证：新的 Job Object／锁逻辑下的真实 llama-server 启动（首个真实 C0 run 用的是加这些改动之前的代码）、真实 `claude` 调用（`--strict-mcp-config`、空 `--setting-sources` 是否被接受、错误文本与限额字段以探针观察为准，正则可能需补充）、`translate-srt` 端到端、`terms`／`review` 提示的实际效果与 token 预算（筛选集最长场景的术语提示约 3200 字符，预计低于 4032 token，但未实测；超限会记为场景失败）。

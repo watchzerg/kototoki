@@ -106,6 +106,10 @@ WIDE_CONTEXT_VERSION = "wide-context-v1"
 WIDE_CONTEXT_V2_VERSION = "wide-context-v2"
 WIDE_CONTEXT_KEYS = {"max_visible", "silence_gap"}
 QWEN_MODEL = "qwen3.8-27b-ud-iq3_s"
+# v12 (docs/research/2026-11-08-strata-flash-next-v12.md): the same Qwen path on Strata + Qwen3.8-Flash-Next IQ3_S
+# (request, identity and attached session in strata.py); existing recipes keep their hash.
+STRATA_MODEL = "qwen3.8-flash-next-iq3_s"
+QWEN_PATH_MODELS = (QWEN_MODEL, STRATA_MODEL)
 SAMPLE_SEED_STRIDE = 1_000_003
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "samplers")
 SAMPLER_NAMES = ("top_k", "top_p", "min_p", "temperature")
@@ -210,8 +214,8 @@ def _check_pause_marks(marks: Any) -> None:
 
 
 def _check_model(recipe: "Recipe") -> None:
-    if recipe.model != QWEN_MODEL or recipe.prompt != "qwen-joint":
-        raise ValueError(f"model {QWEN_MODEL!r} and prompt 'qwen-joint' go together")
+    if recipe.model not in QWEN_PATH_MODELS or recipe.prompt != "qwen-joint":
+        raise ValueError(f"a model from {QWEN_PATH_MODELS} and prompt 'qwen-joint' go together")
     if (recipe.preanalysis or recipe.review or recipe.sampling or recipe.target_context or recipe.candidates != 1
             or recipe.glossary or recipe.pause_marks or recipe.groups or recipe.category_overrides
             or recipe.grammar_ws != "unbounded"):

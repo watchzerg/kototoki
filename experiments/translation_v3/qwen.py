@@ -200,26 +200,45 @@ def system_template() -> str:
                      "context": [{"id": "x", "text": "x"}], "translate_ids": ["x"]})[0]["content"]
 
 
+def _strata(recipe: R.Recipe | None) -> bool:
+    return recipe is not None and recipe.model == R.STRATA_MODEL
+
+
+def option_versions(recipe: R.Recipe, thinking_extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Identity of ``qwen_options`` (None without options); ``thinking_extra`` replaces the thought grammar entry
+    (v12 Strata has no grammar)."""
+    options = _options(recipe)
+    if not options:
+        return None
+    extra: dict[str, Any] = {"system_text_sha256": sha256_bytes(system_text(recipe).encode())}
+    if "names" in options:
+        version, header = names_header(recipe)
+        extra["names"] = [version, sha256_bytes(header.encode())]
+    if "brief" in options:
+        extra["brief"] = [BRIEF_VERSION, sha256_bytes(BRIEF_HEADER.encode())]
+    if "thinking" in options:
+        extra["thinking"] = dict(options["thinking"], **(thinking_extra if thinking_extra is not None else {
+            "grammar": [THOUGHT_GRAMMAR_VERSION, sha256_bytes(think_grammar("root ::= x").encode())]}))
+    return extra
+
+
 def versions(recipe: R.Recipe) -> dict[str, Any]:
+    if _strata(recipe):  # v12: Strata + Qwen3.8-Flash-Next (strata.py)
+        from . import strata
+        return strata.versions(recipe)
     out = {"model": MODEL, "asset_sha256": MODEL_ASSET["sha256"], "engine": ENGINE_VERSION,
            "server_args": [LAYERS, *extra_args(recipe)], "prompt": [PROMPT_VERSION, sha256_bytes(system_template().encode())],
            "request": REQUEST_SHAPE, "seed_step": SEED_STEP}
-    options = _options(recipe)
-    if options:
-        extra: dict[str, Any] = {"system_text_sha256": sha256_bytes(system_text(recipe).encode())}
-        if "names" in options:
-            version, header = names_header(recipe)
-            extra["names"] = [version, sha256_bytes(header.encode())]
-        if "brief" in options:
-            extra["brief"] = [BRIEF_VERSION, sha256_bytes(BRIEF_HEADER.encode())]
-        if "thinking" in options:
-            extra["thinking"] = dict(options["thinking"], grammar=[THOUGHT_GRAMMAR_VERSION,
-                                                                   sha256_bytes(think_grammar("root ::= x").encode())])
+    extra = option_versions(recipe)
+    if extra:
         out["options"] = extra
     return out
 
 
 def fixed(recipe: R.Recipe) -> dict[str, Any]:
+    if _strata(recipe):
+        from . import strata
+        return strata.fixed(recipe)
     return {"sampling": SAMPLING | {"seed": "<run seed>"}, "n_predict": R.N_PREDICT, "context_size": context_size(recipe),
             "guard_tokens": R.GUARD_TOKENS, "cache_prompt": R.CACHE_PROMPT, "max_attempts": R.MAX_ATTEMPTS,
             "chat_template_kwargs": {"enable_thinking": False},
@@ -275,7 +294,11 @@ def parse(text: str, ids: list[str]) -> dict[str, str]:
 def run_step(client: Any, messages_: list[dict[str, str]], grammar: str, seed: int, ids: list[str],
              cache_state: dict[str, Any], record: dict[str, Any], recipe: R.Recipe) -> dict[str, str]:
     """``generate.run_step`` for chat completions: budget on the rendered prompt, at most two attempts
-    (the second with seed + 1); attempt records use the same keys as the Hy-MT2 path."""
+    (the second with seed + 1); attempt records use the same keys as the Hy-MT2 path. Strata recipes (v12) go to
+    ``strata.run_step`` (no grammar, no budget endpoints)."""
+    if _strata(recipe):
+        from . import strata
+        return strata.run_step(client, messages_, seed, ids, cache_state, record, recipe)
     from experiments.translation_demo.run import explicit_oom
     from .generate import CONTEXT_ERROR, FATAL_KINDS, StepFailed, _http_body, whitespace_ratio
     attempts: list[dict[str, Any]] = record.setdefault("attempts", [])
@@ -375,7 +398,13 @@ def server_spec(recipe: R.Recipe):
 
 def session_factory(root: Path, run_id: str, recipe: R.Recipe, *, port: int = 8080, break_stale_lock: bool = False,
                     timeout: float = 600.0):
-    """Real GPU session: v3 gpu.lock + product ManagedServer (Qwen spec) in a kill-on-close job + loopback client."""
+    """Real GPU session: v3 gpu.lock + product ManagedServer (Qwen spec) in a kill-on-close job + loopback client.
+    Strata recipes (v12) attach to the running Strata service instead (``strata.session_factory``)."""
+    if _strata(recipe):
+        from . import strata
+        return strata.session_factory(root, run_id, recipe, port=port, break_stale_lock=break_stale_lock,
+                                      timeout=timeout)
+
     @contextmanager
     def factory(run_dir: Path, index: int) -> Iterator[Any]:
         from kototoki.llama_server import LlamaClient, ManagedServer

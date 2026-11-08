@@ -155,7 +155,11 @@
 
 ## 7. 进度与结论
 
-（执行者填写。）
+票据在 `.scratch/strata-flash-next-v12/issues/`（Git 忽略）。数字都能回溯到 `.local/strata-flash-next-v12/` 下的 JSON。每行写明对照。
+
+| 日期 | 票据 | 结果 |
+| --- | --- | --- |
+| 2026-11-08 | 01 离线实现 | 完成。`translation_v3/strata.py`：F1 请求体不带 `grammar`／`cache_prompt`、每个请求带 `enable_thinking`（思考时加 `thinking_budget_tokens`，`max_tokens`＋预算）；无 `/apply-template`／`/tokenize`，输入长度取 `usage.prompt_tokens`，超 Q1 预算只标记；首请求缓存只记录；格式失败按原规则换 seed＋1 重试一次。附着式 session：持 v3 `gpu.lock`，核对 `strata --version`、`launch --status` 与 run config（本机、模型名、32k、无 vision）、`/v1/models`、`/v1/status`（32k、单并发），固定身份进配方 hash，kv／drafting 等观测值记在 session；会话中采样整机显存／内存峰值。Strata 的 chat 响应**不回** `reasoning_tokens`／`reasoning_recoveries`，改记 `reasoning_content` 字符数，并统计 server log 中"推理循环自救"与"非有限 logits"的行数。Strata 配方上两次都失败的包只让它自己的 cue 未交付（§4.0），场景继续；Hy-MT2／Qwen 配方行为不变。配方：F1 dev `60bd457f…`、F1 产品 `a2075b25…`、F2 `903d1cad…`；Q1 hash 复算不变（`9c444d3c…`、`c10e143a…`），`qwen-wide` 不变。`--round v12`（recipes、copy-q1、smoke、smoke-report、stats、generate-aa、aa、product12）。smoke 取 v11 smoke 5 个场景中的 2 个剧集＋1 个电影整场。测试 `translation_v3` 88 项、`scene_batching_v6` v6–v12 66 项通过；`strata serve --engine mock` 客户端端到端（不占 GPU）走通重试与交付失败路径。GPU 0。 |
 
 ### 7.1 结论
 
