@@ -4,7 +4,7 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线中专名译法的统一：GPU 阶段 `names` 用 Qwen3.8-27B（no-think）为每部影片的 `ja.srt` 建一张专名表（`name-table.json`），发布前用一个纯函数按表替换译文里同一专名的各种写法（审计文件 `names-apply.json`）。配置照抄 [ADR-0013](../../adr/0013-name-consistency-closed.md) 冻结的最佳已知配置（提示 v5、程序兜底全开；替换规则一＋孤立单字），不调参。不负责：阶段链与身份（[阶段计划](stage-plan.md)的 `names_identity`／`names_apply_identity`）、产物写出、GPU 锁与日志落地（[批次编排](batch-orchestration.md)）、llama-server 的进程与身份核对（共享的 `kototoki/llama_server.py`，来源与命令行拼装见[翻译子系统](translation-subsystem.md)）、翻译本身。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)；设计与验收依据见 [ADR-0014](../../adr/0014-name-consistency-in-product.md) 与[验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)。
+负责双语字幕流水线中专名译法的统一：GPU 阶段 `names` 用 Qwen3.8-27B（no-think）为每部影片的 `ja.srt` 建一张专名表（`name-table.json`），发布前用一个纯函数按表替换译文里同一专名的各种写法（审计文件 `names-apply.json`）。配置照抄 [ADR-0014](../../adr/0014-name-consistency-in-product.md) 冻结的最佳已知配置（提示 v5、程序兜底全开；替换规则一＋孤立单字），不调参。不负责：阶段链与身份（[阶段计划](stage-plan.md)的 `names_identity`／`names_apply_identity`）、产物写出、GPU 锁与日志落地（[批次编排](batch-orchestration.md)）、llama-server 的进程与身份核对（共享的 `kototoki/llama_server.py`，来源与命令行拼装见[翻译子系统](translation-subsystem.md)）、翻译本身。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)；设计与验收依据见 [ADR-0014](../../adr/0014-name-consistency-in-product.md) 与[验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)。
 
 ## 当前行为规格
 
@@ -56,6 +56,6 @@
 
 ## 变更与决策来源
 
-[ADR-0013](../../adr/0013-name-consistency-closed.md)（研究线结题与冻结配置）、[ADR-0014](../../adr/0014-name-consistency-in-product.md)（进产品）；票据 `.scratch/name-consistency-product/`（01–09）：02（共享 llama-server）、03（建表与配方）、04（替换）、05（配置、阶段计划与产物常量）、06（编排接入与本页）、07（smoke）、08（产品路径验收，[验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)）、09（收口）。
+[ADR-0014](../../adr/0014-name-consistency-in-product.md)（研究线结题与冻结配置）、[ADR-0014](../../adr/0014-name-consistency-in-product.md)（进产品）；票据 `.scratch/name-consistency-product/`（01–09）：02（共享 llama-server）、03（建表与配方）、04（替换）、05（配置、阶段计划与产物常量）、06（编排接入与本页）、07（smoke）、08（产品路径验收，[验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)）、09（收口）。
 
 2026-10-20 吸收增量说明《专名一致性进产品》（`docs/changes/name-consistency-product.md`，已删除）：设计与取舍写入上文与 [ADR-0014](../../adr/0014-name-consistency-in-product.md)，用户裁定（6 条）在 ADR-0014“决定”一节；增量说明 §3.2 的 `names/transport/attempt-N.*` 未按其实现，实际为 `names/transport/<UTC戳>-<pid>/session-NN/`，以本页“实现设计”为准。

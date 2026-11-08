@@ -1,40 +1,28 @@
-# ADR-0003：W0／X0 统一采用新 Pyannote VAD
+# ADR-0003：W0／X0 两条 STT 基线（新 Pyannote VAD＋MMS）
 
-状态：已接受；基线定义已更新，CLI省略参数时的旧默认尚未迁移  
-日期：2026-10-05  
-范围：用户在两部完整电影对照后明确确认的最新基线；替代ADR-0001／0002中旧VAD与默认分段选择。
+状态：已接受。合并整理于 2026-11-08（并入 ADR-0001、ADR-0002 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。  
+范围：本地 GPU 日语转写的两条基线身份与组件；操作入口与逐项组件定义见[当前基线](../architecture/stt-candidate-pipelines.md)。
 
 ## 决定
 
-- **W0**：faster-whisper，无降噪、无人声分离，新Pyannote VAD，MMS日语CTC。WhisperX的切分合并、独立无时间戳解码和特征处理等已核验逻辑仍是必要组成，由自有适配层承接。
-- **X0**：Qwen-ASR，无降噪、无人声分离，新Pyannote VAD，同一MMS日语CTC；吸收适用于Qwen的WhisperX流程思想，保留Qwen原生processor、特征和独立纯文字解码。
+1. **W0**：faster-whisper，无降噪、无人声分离，新 Pyannote VAD，MMS 日语 CTC 对齐。WhisperX 已核验的切分合并、独立无时间戳解码和特征处理是必要组成，须由自有适配层承接；只组合三个模型或直接调用标准 API 不算 W0。
+2. **X0**：Qwen-ASR，无降噪、无人声分离，同一新 Pyannote VAD，同一 MMS 日语 CTC。只吸收适用于 Qwen 的 WhisperX 流程思想：保留 Qwen 原生 processor、特征与独立纯文字解码，不复制 Whisper 专属 Mel、token 或 CT2 参数。
+3. **新 Pyannote** 指 `pyannote.audio 4.0.7` 与 `pyannote/segmentation-3.0`，权重 revision `e66f3d3b9eb0873085418a7b813d3b369bf160bb`，用原生 powerset 语音检测及源跨度切分合并；不是旧 PyanNet 配方，也不是完整 diarization。
+4. **分段**：两路均先检测语音，再按原音频源跨度组织最多 30 秒的识别窗口，保留整数采样坐标、块内间隙与完整识别文字，MMS 对应同源窗口对齐。MMS 使用已核验的日语 `jpn` adapter，复用 W0 实现并带可选整数样本窗契约，不另建第二套对齐器。
+5. **设备**：ASR 与 CTC 对齐只跑 GPU；VAD 可用 CPU 或 GPU，不以 GPU 支持作为资格条件。现有整片证据采用 CUDA FP32，换设备须独立记录。
+6. **保留语言与本地**：保留日语原文，本地 GPU 推理，不上传音频。
+7. **历史身份**：旧 PyanNet W0、X0 无 VAD fixed30、X0 `cut-merge`（低能量切点＋按源跨度有界合并，方法适配，不声称与 WhisperX 神经 VAD 后处理等价）只作历史／对照身份；省略策略参数的旧命令不得称为最新基线。历史 manifest、route 值、目录和分数不改写，新运行另建身份并固定完整配置，不得跨身份归分。
+8. **复用入口**：W0 持续迭代入口为 `experiments/w0_demo/`，X0 为 `experiments/x0_demo/`；分段、模型或解码变化须更新 recipe 与验证记录。基线测试从[标准基线测试指南](../guides/baseline-testing.md)开始，契约见 [W0](../specs/w0-reusable-demo.md)、[X0](../specs/x0-reusable-demo.md)。
+9. **产品**：产品包 `kototoki/` 的 STT 阶段承接这两条基线，VAD 固定 `cuda:0`，可选引擎见 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](0012-cross-asr-judge.md)。
 
-“新Pyannote”明确指本轮`pyannote.audio 4.0.7`与`pyannote/segmentation-3.0`，权重revision
-`e66f3d3b9eb0873085418a7b813d3b369bf160bb`，不是旧PyanNet配方或完整diarization。
-现有整片证据采用CUDA FP32；通用设备原则仍为ASR／CTC GPU-only、VAD可CPU或GPU，换设备须独立记录。
-不新增权重、精度、翻译、降噪或人声分离能力。
+## 依据
 
-两条路线均先检测语音，再按原音频源跨度组织最多30秒的识别窗口，保留整数采样坐标、块内间隙和完整识别文字，
-以对应同源窗口进行MMS对齐。新模型采用原生powerset语音检测及已实现的源跨度切分合并；
-不能把旧PyanNet的迟滞／min-cut配方直接宣称为新模型的逐项等价实现。
-W0保留已验证的Whisper特征、提示和解码契约；X0不复制Whisper专属Mel、token或CT2参数。
+- 用户在两部完整电影对照后明确采纳。[两片整片对照](../research/2026-10-05-fullfilm-segmentation-comparison.md)：W0 新 Pyannote 的文字与时间指标优于 cut-merge；X0 配对排除失败后文字几乎持平，选择新 Pyannote 主要由零 ASR 触顶及运行成本支持。
+- [Whisper 框架研究](../research/2026-10-04-whisper-framework-architecture.md)支持在 faster-whisper 上以明确适配层保留关键行为；[MMS 补充实测](../research/2026-10-04-japanese-ctc-results.md)支持其作为对齐方向。
+- X0 不要求照搬 Whisper 的特征或 VAD 切分；[X0 流程研究](../research/2026-10-05-x0-whisperx-flow.md)与 [demo 契约](../specs/x0-reusable-demo.md)定义样本守恒、30 秒边界、完整文字、实际 GPU 与错误记账验收项。
 
-旧W0 Pyannote、X0无VAD fixed30及cut-merge保留历史／对照身份，不能再把省略策略参数的旧命令称为最新基线。
+## 约束与未关闭项
 
-## 依据与取舍
-
-决策依据是用户明确采纳。[两片整片对照](../research/2026-10-05-fullfilm-segmentation-comparison.md)
-提供当前证据：W0新Pyannote的文字与时间指标优于cut-merge；X0配对排除失败后文字几乎持平，
-选择新Pyannote主要由本轮零ASR触顶及运行成本支持。X0时间质量未显示普遍优势，极短窗MMS失败仍存在。
-本轮未比较fixed30整片表现；用户选择不等于已经证明新Pyannote优于所有历史候选或满足严格字幕时间目标。
-
-## 实现与文档边界
-
-本次按用户要求更新文档，不修改Python实现、CLI默认参数、依赖或历史产物。
-当前W0／X0已有显式外部VAD manifest入口及新Pyannote适配器；整片实验已新跑八组ASR／MMS并独立审计。
-新基线执行需按[测试指南](../guides/baseline-testing.md)显式选择新Pyannote输入，核对模型、设备、源窗口与运行身份。
-原W0 CLI省略VAD参数仍走旧配方，原X0 CLI省略分段参数仍走fixed30；这些是待迁移的代码默认，不是当前选型定义。
-正式后端迁移、默认参数切换和极短窗改良须另行实现并回归，不能用本文替代实现验收。
-
-历史报告的数值、配方和当时建议不回写；仅增加后续采纳指引。权威组件定义见
-[当前基线](../architecture/stt-candidate-pipelines.md)，操作入口继续复用两套canonical demo。
+- **CLI 默认值未迁移（已核对代码）**：`experiments/w0_demo/run.py` 不给 `--vad-manifest`／`--frozen-vad` 时走旧 PyanNet 检查点（`--vad-checkpoint` 默认 `w0-assets/pytorch_model.bin`）；`experiments/x0_demo/run.py` 的 `--segmentation` 默认 `fixed30`。运行最新基线须显式提供新 Pyannote 的 VAD manifest（X0 同时 `--segmentation vad`）。
+- 未证明新 Pyannote 优于所有历史候选，也未证明满足严格字幕时间目标；X0 时间质量无普遍优势，极短窗 MMS 失败仍存在。
+- 本轮未比较 fixed30 整片表现；对质量或性能提升的宣称须有可复现证据。

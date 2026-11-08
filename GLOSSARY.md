@@ -50,7 +50,7 @@ _Avoid_: Hy 基线、旧基线
 _Avoid_: qwen-wide（指基线时）、通用模型基线、X0（那是 Qwen-ASR 的 STT 基线）
 
 **Q1**：
-通用模型线的前任翻译基线（[ADR-0016](docs/adr/0016-q1-translation-baseline.md)，2026-11-08）：Q0 加上专名表注入 N\*。表由产品 `names` 阶段对同一输入建出，只注入 `confidence: high` 实体的全部写法（`filter: window`，表头 `qwen-name-table-v1`），注入后不再替换。不分产品 ASR 源与 dev 干净源。表内容进 hash，所以每个输入一个实例（v11 产品为 `q0-names-high` `c10e143a…`）。证据：产品上非劣、人名错误 120 → 72；dev 上 accuracy 显著变差，用户已接受。未进产品。
+通用模型线的前任翻译基线（[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08）：Q0 加上专名表注入 N\*。表由产品 `names` 阶段对同一输入建出，只注入 `confidence: high` 实体的全部写法（`filter: window`，表头 `qwen-name-table-v1`），注入后不再替换。不分产品 ASR 源与 dev 干净源。表内容进 hash，所以每个输入一个实例（v11 产品为 `q0-names-high` `c10e143a…`）。证据：产品上非劣、人名错误 120 → 72；dev 上 accuracy 显著变差，用户已接受。未进产品。
 _Avoid_: N\*（指基线时）、q0-names-high（指基线时）、Q0＋注入
 
 **Q2**：

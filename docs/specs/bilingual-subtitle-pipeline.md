@@ -1,6 +1,6 @@
 # 中日双语字幕批量生产流水线：技术设计
 
-状态：implemented（2026-10-14，票据 00–09 交付，两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)；2026-10-15 最终验收后票据 10–15 完成，票据 13 裁定不实现；2026-10-18 票据 16 把产品配方换成 `dp10-cut-degrade-v1`（[ADR-0011](../adr/0011-dp10-cut-product-recipe.md)）；2026-10-20 新增专名一致性（`names` 阶段与发布时替换，[ADR-0014](../adr/0014-name-consistency-in-product.md)）；见 §13）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
+状态：implemented（2026-10-14，票据 00–09 交付，两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)；2026-10-15 最终验收后票据 10–15 完成，票据 13 裁定不实现；2026-10-18 票据 16 把产品配方换成 `dp10-cut-degrade-v1`（[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)）；2026-10-20 新增专名一致性（`names` 阶段与发布时替换，[ADR-0014](../adr/0014-name-consistency-in-product.md)）；见 §13）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
 日期：2026-10-13  
 范围：第一个正式产品形态，命令行工具，输入一批日语视频，输出日文 SRT、中文 SRT 与中日双语 SRT。不含 UI、流式、打包、非日语输入。
 
@@ -22,8 +22,8 @@
 | ASR `cross`（可选，默认仍为 `w0`） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0 转写、再 x0 转写，然后由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变。HF II／III 实测两部合计 CER 15.25% → 14.30%（−0.95 pp，低于预设 1.0 pp 验收线，用户裁定仍采用），asr 阶段墙钟 3.75 倍；译文层收益与新材料确认未测 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[交叉打分研究](../research/2026-10-19-asr-pair-cross-score.md) |
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
 | 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2 给出初值） | [显示契约](../testing/demo-display-contract.md)为起点 |
-| 翻译 | Hy-MT2 30B-A3B APEX-I-Compact，`official30b-cached-v1` 采样，joint 提示；切包 `dp10-cut`（每批待译 ≤10 条、可见 ≤12 条，按停顿动态规划切点、≥20 s 必切，前邻 <5 s／后邻 <1 s 可见；2026-10-18 起，之前为 `b10-joint` 的 1-10-1） | [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0011](../adr/0011-dp10-cut-product-recipe.md) |
-| 专名一致性（2026-10-20 起，`[names] enabled` 默认开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：Qwen3.8-27B-UD-IQ3_S 经 llama-server（no-think、提示 v5、`-c 20480`）把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一；发布时按表对译文做 CPU 替换（规则一＋孤立单字，纯函数，只写审计文件）。照抄 ADR-0013 冻结配置，不调参 | [ADR-0013](../adr/0013-name-consistency-closed.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)、[专名一致性模块页](../architecture/modules/name-consistency.md) |
+| 翻译 | Hy-MT2 30B-A3B APEX-I-Compact，`official30b-cached-v1` 采样，joint 提示；切包 `dp10-cut`（每批待译 ≤10 条、可见 ≤12 条，按停顿动态规划切点、≥20 s 必切，前邻 <5 s／后邻 <1 s 可见；2026-10-18 起，之前为 `b10-joint` 的 1-10-1） | [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md) |
+| 专名一致性（2026-10-20 起，`[names] enabled` 默认开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：Qwen3.8-27B-UD-IQ3_S 经 llama-server（no-think、提示 v5、`-c 20480`）把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一；发布时按表对译文做 CPU 替换（规则一＋孤立单字，纯函数，只写审计文件）。照抄 ADR-0013 冻结配置，不调参 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[专名一致性模块页](../architecture/modules/name-consistency.md) |
 | 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文是替换后的译文（`names` 关闭时即翻译原文） | 用户裁定 |
 
 ### 1.2 已裁定（2026-10-13）
@@ -482,7 +482,7 @@ enabled = true                          # false 时跳过建表与替换，行�
 
 2026-10-15（票据 15 实施）：翻译 run 目录键、翻译身份与"是否需要模型"归翻译子系统 `translate.plan`（§1.2 已记）；`translate/data.py` 并入 `batching.py`。review 修订：GPU 锁的翻译阶段获取移进 `translate_batch` 并只在有文件 `needs_model` 时发生，session 失败只影响需要模型的文件，`TranslatePlan` 类型化（§3.3 随改）。配方内容变了而名字未变时 `plan` 拒绝并提示删目录，不自动另开目录（零迁移，与 v3 一致）。
 
-2026-10-18（票据 16 实施，[ADR-0011](../adr/0011-dp10-cut-product-recipe.md)）：用户裁定把研究基线 `dp10-cut` 合并到产品，产品配方改为 `dp10-cut-degrade-v1`（§1.2 两处、§6 已改）：`Cue` 带 `ja.srt` 的起止秒，切包与邻文按 ADR-0010，降级子批次用同一条邻文规则；不迁移旧 run、不加开关，已交付影片的翻译身份过期、下次整批重译（用户接受）。`tests/test_translate.py` 的合成 SRT 每 10 条之间留 20 s 停顿，使批次机制用例仍是 10 条一批。
+2026-10-18（票据 16 实施，[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)）：用户裁定把研究基线 `dp10-cut` 合并到产品，产品配方改为 `dp10-cut-degrade-v1`（§1.2 两处、§6 已改）：`Cue` 带 `ja.srt` 的起止秒，切包与邻文按 ADR-0010，降级子批次用同一条邻文规则；不迁移旧 run、不加开关，已交付影片的翻译身份过期、下次整批重译（用户接受）。`tests/test_translate.py` 的合成 SRT 每 10 条之间留 20 s 停顿，使批次机制用例仍是 10 条一批。
 
 2026-10-19（`cross` 引擎，[ADR-0012](../adr/0012-cross-asr-judge.md)，已接受）：用户裁定在 asr 阶段内新增可选引擎 `cross`（w0 与 x0 共驻、逐文件两路转写、Whisper 交叉打分合并），默认仍为 `w0`，阶段链与下游接口不变；本文 §1.1、§2、§3.2、§4、§7.1、§10 已按交付行为改写。同日产品路径验收（[验收记录](../research/acceptance/2026-10-19-cross-asr-acceptance.md)）：HF II／III 官方整片口径两部合计 CER 15.25% → 14.30%，降 0.95 pp，**低于预设的 1.0 pp 验收线**，用户裁定仍采用并保持默认 `w0`；asr 阶段墙钟为 w0 的 3.75 倍，整卡峰值 10030 MiB，翻译阶段照常启动。译文层收益与新材料确认未测，改默认须新 ADR。
 

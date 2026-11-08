@@ -60,7 +60,7 @@
 - `.local/gpu.lock` 是所有 GPU 作业共用的互斥文件，存在两种实现：`experiments/w0_demo/run.py::gpu_lock`（O_EXCL 创建，写 `pid`＋`recipe`，退出时删除；W0、X0 父进程、CUDA 设备的外部 VAD 阶段使用）与 `experiments/translation_v3/procs.py::ProcessLock`／`server.py::GpuLock`（写 `pid`＋`pid_created`＋`run_id`；存活持有者在时退出码 3，死锁只在 `--break-stale-lock` 时替换）。两者都不抢占、不杀进程。
 - 逐窗翻译运行时（`translation_demo_runtime.py`）不获取 `.local/gpu.lock`，只检查端口是否被占用；与其他 GPU 作业的互斥由操作者保证。
 - 模型生命周期按阶段串行：W0 通过工厂在 VAD 关闭后加载 ASR，ASR `close()` 后再加载 MMS；X0 每阶段一个独立子进程，进程退出即释放；父进程持锁直到全部子进程退出。
-- 例外：`cross` 引擎的 asr 阶段在同一 worker 进程内让 Whisper（CT2）与 Qwen（torch）同时常驻，直到进程退出（整卡共驻峰值有阈值，超出回退为三段式整批转写，细节见 [STT worker](modules/stt-workers.md)）；阶段之间仍然串行，translate、align 不与之共驻；共驻峰值实测 10688 MiB（探针）／10030 MiB（产品路径验收），见 [ADR-0012](../adr/0012-cross-asr-judge.md#验收与裁定)。
+- 例外：`cross` 引擎的 asr 阶段在同一 worker 进程内让 Whisper（CT2）与 Qwen（torch）同时常驻，直到进程退出（整卡共驻峰值有阈值，超出回退为三段式整批转写，细节见 [STT worker](modules/stt-workers.md)）；阶段之间仍然串行，translate、align 不与之共驻；共驻峰值实测 10688 MiB（探针）／10030 MiB（产品路径验收），见 [ADR-0012](../adr/0012-cross-asr-judge.md#依据)。
 - 取消：X0 父进程在中断时 `terminate`→10 秒后 `kill` 当前子进程，记录被中断阶段成本并清理 `tmp/`；v3 把 llama-server 放入 KILL_ON_JOB_CLOSE Job Object，Python 被强杀时服务器随之退出。发出取消不等于 GPU 已释放；完整 Windows 取消／OOM 恢复仍未验证（见 [X0 pipeline](modules/x0-pipeline.md#代码与验证入口)）。
 
 ## 产品包的责任边界

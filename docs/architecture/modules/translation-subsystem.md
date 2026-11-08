@@ -1,6 +1,6 @@
 # 翻译子系统与双语合并
 
-状态：current（票据 05 交付，2026-10-14；票据 09 加入三级降级与回退报告，2026-10-14；票据 16 把产品配方换成 `dp10-cut-degrade-v1`，按停顿切包，2026-10-18，[ADR-0011](../../adr/0011-dp10-cut-product-recipe.md)）。降级只经伪 server／伪客户端离线验证；旧配方与编排器的真实联调见[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（四个文件 468 批，降级与回退均为 0）；新配方的真实运行见票据 16。
+状态：current（票据 05 交付，2026-10-14；票据 09 加入三级降级与回退报告，2026-10-14；票据 16 把产品配方换成 `dp10-cut-degrade-v1`，按停顿切包，2026-10-18，[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)）。降级只经伪 server／伪客户端离线验证；旧配方与编排器的真实联调见[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（四个文件 468 批，降级与回退均为 0）；新配方的真实运行见票据 16。
 
 ## 定位与阅读
 
@@ -76,13 +76,13 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 - 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：`just smoke translate_product`（`scripts/smoke/translate_product.py`）在真实 llama-server 与 APEX 模型上走 `plan` → `Session` → `translate_document`（产品配方 `dp10-cut-degrade-v1`、默认 seed），输入是脚本内置的 12 条中性合成日语短句、第 6 条后 20 s 停顿，切成 6/6 两批；通过条件是全部 cue 有非空译文、无回退、至少两批；结果只记计数、哈希、耗时、冷加载、驻留与显存峰值。**未运行、待用户批准**。整片的产品翻译运行证据见 2026-10-14 至 10-16 的整片验收与 ADR-0011 的 2026-10-18 运行。
 - 真实运行（2026-10-14，票据 05 完成标准第二项）：HF II 的 W0 对齐结果按默认 `[cues]` 切出 1112 条 `ja.srt`，stock b11583 单 session 112 批全部一次通过（无重试、无触顶），`zh.srt` 覆盖 1112/1112，`ja-zh.srt` 1112 条且每条恰好两行。墙钟 176 s（含模型 SHA 首次全量核对 16.7 s、冷加载 7.1 s）；输入 75408、输出 19272 token；首个请求 `cache_n == 0`；启动前空闲 15112 MiB，会话峰值 15687 MiB（桌面基线约 880 MiB，即 server 自身约 14800 MiB）。输出只写在仓库外的会话临时目录。
 - 真实运行：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)——经编排器整批翻译四个文件，降级批次 0、回退 cue 0、无重启。
-- 离线切包（2026-10-18，票据 16）：四个整片 `ja.srt` 上 `dp10-cut-degrade-v1` 平均每批 7.4–8.3 条、请求数比 `b10-joint-degrade-v1` 多 20–35%、无批次跨 ≥20 s 停顿、92–97% 的切点落在 ≥1 s 停顿、<6 条的批 9–24%，见 [ADR-0011](../../adr/0011-dp10-cut-product-recipe.md)。
+- 离线切包（2026-10-18，票据 16）：四个整片 `ja.srt` 上 `dp10-cut-degrade-v1` 平均每批 7.4–8.3 条、请求数比 `b10-joint-degrade-v1` 多 20–35%、无批次跨 ≥20 s 停顿、92–97% 的切点落在 ≥1 s 停顿、<6 条的批 9–24%，见 [ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)。
 - 真实运行（2026-10-18，票据 16）：`dp10-cut-degrade-v1` 经编排器整批翻译 HF II／III（w0）：147＋149 批全部一次接受，降级 0、回退 0、无重启；HF III 翻译 200 s，HF II 第 96 批起生成速度跌到约 4 tok/s、共 2906 s，server 峰值显存 15955 MiB，疑为下面"已知限制"的显存漂移触顶，未验证。
 - 未验证：真实数据上的降级路径（两个配方整片都未触发）；`dp10-cut-degrade-v1` 的质量（没有裁判证据，与 ADR-0010 相同）；HF II 慢化的原因。已知限制：桌面程序占用较多显存（空闲低于 14700 MiB）时翻译会等满 3×120 s 后失败，需先释放显存；整片验收时桌面占用 0.6–1.2 GB 漂移，首轮即因此失败。
 
 ## 变更与决策来源
 
-票据 `.scratch/bilingual-subtitle-pipeline/issues/05-translate-and-merge.md`、`09-translate-degrade.md`、`15-translate-run-key.md`（run 键、身份与 `needs_model` 归本子系统的 `plan`；`data.py` 并入 `batching.py`）、`16-translate-dp10-cut.md`（产品配方合并 dp10-cut 切包）；规格 §1.2（含第三轮裁定表）、§3.3、§4、§5.2、§6、§7.3；[ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0011](../../adr/0011-dp10-cut-product-recipe.md)；stock 引擎的 `run_step` 假设与驻留日志由票据 01 smoke #4 验证。
+票据 `.scratch/bilingual-subtitle-pipeline/issues/05-translate-and-merge.md`、`09-translate-degrade.md`、`15-translate-run-key.md`（run 键、身份与 `needs_model` 归本子系统的 `plan`；`data.py` 并入 `batching.py`）、`16-translate-dp10-cut.md`（产品配方合并 dp10-cut 切包）；规格 §1.2（含第三轮裁定表）、§3.3、§4、§5.2、§6、§7.3；[ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)；stock 引擎的 `run_step` 假设与驻留日志由票据 01 smoke #4 验证。
 
 2026-10-18 吸收增量说明《依赖入项目与测试分层调整》（`docs/changes/local-dependencies-and-test-layers.md`，已删除）：新增真实模型验证 `just smoke translate_product`（未运行）；`MODEL_ASSET` 由 core 测试钉住等于 `assets.toml`。
 

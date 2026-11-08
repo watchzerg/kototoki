@@ -4,7 +4,7 @@
 
 负责把一份日文 SRT 按固定流程配方翻译为中文 SRT：配方定义批次、只读邻文、提示与 grammar，生成器在每个 session 新启动的托管 llama-server 上逐场景生成并可续跑，`translate-srt` 校验完整覆盖后保留原 cue 编号与时间写出。当前采纳的流程基线是 v3 内置配方 `dp10-cut`（2026-10-17 起；之前为 `dp6-grp`、`b10-joint`）。同一包内还有 v3 探索用的裁判、统计与校准命令，探索已完成，只作历史工具。不负责模型与采样身份（见[逐窗翻译运行时](translation-runtime.md)与 ADR-0005）。
 
-上级总览见[架构总览](../INDEX.md)；采纳决定见 [ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)（joint 提示见 [ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)）；命令、配方列表、目录布局、恢复语义与统计规则见 [translation_v3 README](../../../experiments/translation_v3/README.md)；探索结果见 [v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)。
+上级总览见[架构总览](../INDEX.md)；采纳决定见 [ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)（joint 提示见 [ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)）；命令、配方列表、目录布局、恢复语义与统计规则见 [translation_v3 README](../../../experiments/translation_v3/README.md)；探索结果见 [v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)。
 
 ## 当前行为规格
 
@@ -38,9 +38,9 @@
 - 源码：`experiments/translation_v3/cli.py::cmd_translate_srt`、`recipes.py`（`Recipe`、`BUILTIN`、`load_recipe`）、`batching.py`、`generate.py`（`run_generation`、`run_id_for`、`managed_session_factory`）、`server.py`（`ManagedServer`、`GpuLock`、`verify_model`）、`procs.py`、`common.py`。
 - 测试（离线，62 项，约 3–5 秒）：`uv run --locked --offline python -m unittest discover -s experiments/translation_v3 -t . -p "test_*.py" -v`。`test_recipes.py::AdoptedBaselineTest` 固定 `dp10-cut`（hash `ee72ce66…`）、`dp6-grp`（`ae473cdc…`）与 `b10-joint`（`2ba68054…`），`GroupReorderTest` 固定加 `groups` 字段前全部 17 个内置配方的 hash；`gap_pack` 的切法与 hash 不变测试在 `experiments/scene_batching_v6/test_v7.py`；`C0EquivalenceTest`、`RecipeIdentityTest`、`BatchingTest`、`CategoryRoutingTest` 覆盖配方；`test_generate.py::GenerationTest` 用伪客户端覆盖续跑、OOM、缓存校验、重试、上下文超限；`test_status.py` 覆盖锁、Job Object、原子写。
 - 已知限制：上述 v3 测试不在任何 just recipe 中（`just experiments-test`、`just translation-test` 都不包含 `experiments/translation_v3`），只能按 README 命令单独运行。
-- 已知差异：[translation_v3 README](../../../experiments/translation_v3/README.md#验证范围)「未验证」列出 "`translate-srt` 端到端"，而 [ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md#证据与已知代价如实记录) 记录了两份整片交付（1993 条电影、387 条剧集）完整完成。两者不一致，需确认 README 的未验证清单是否应更新（文档修正，不涉及代码）。
+- 已知差异：[translation_v3 README](../../../experiments/translation_v3/README.md#验证范围)「未验证」列出 "`translate-srt` 端到端"，而 `b10-joint` 采纳时的 ADR-0006（已合并，原文见 Git 历史 f139e17）记录了两份整片交付（1993 条电影、387 条剧集）完整完成。两者不一致，需确认 README 的未验证清单是否应更新（文档修正，不涉及代码）。
 - 未验证：新 Job Object／锁逻辑下的真实 llama-server 启动（README 明示）。
 
 ## 变更与决策来源
 
-[ADR-0006](../../adr/0006-b10-joint-translation-flow-baseline.md)；[v3 计划](../../plans/hy-mt2-translation-flow-exploration-v3.md)、[v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)；后续探索 [v4 报告](../../research/2026-10-11-hy30-flow-v4-report.md)（`mbr8c` 已确认但放弃，见 [ADR-0008](../../adr/0008-no-multi-translation-selection.md)）。
+[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)；[v3 计划](../../plans/hy-mt2-translation-flow-exploration-v3.md)、[v3 报告](../../research/2026-10-10-hy30-flow-v3-report.md)；后续探索 [v4 报告](../../research/2026-10-11-hy30-flow-v4-report.md)（`mbr8c` 已确认但放弃，见 [ADR-0008](../../adr/0008-no-multi-translation-selection.md)）。

@@ -34,5 +34,5 @@
 
   传递依赖以 `uv.lock` 为准；2026-10-19 用 `uv lock --upgrade-package` 只升了 pyannote-core 6.1.0、pyannote-metrics 4.2.0、pyannote-pipeline 4.1.0 与 certifi、filelock、fonttools、httpx2／httpcore2、sqlalchemy，其余保持原解析（mpmath 受 sympy `<1.4`、setuptools 受 torch `<82` 约束）。测试只用标准库 `unittest`，没有开发依赖组。
 - 评分、编排与翻译客户端仍只用标准库。
-- 推理组件按 [推理选型原则](inference-selection.md) 选择，当前采纳：faster-whisper（W0）、Qwen-ASR（X0）、新 Pyannote segmentation-3.0（VAD）、MMS-1b-all CTC 对齐，见 [ADR-0001](../adr/0001-two-stt-baselines.md)、[ADR-0003](../adr/0003-new-pyannote-baselines.md)；翻译模型 Hy-MT2 30B-A3B APEX-I-Compact 见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)、流程见 [ADR-0006](../adr/0006-b10-joint-translation-flow-baseline.md)。
+- 推理组件按 [推理选型原则](inference-selection.md) 选择，当前采纳：faster-whisper（W0）、Qwen-ASR（X0）、新 Pyannote segmentation-3.0（VAD）、MMS-1b-all CTC 对齐，见 [ADR-0003](../adr/0003-new-pyannote-baselines.md)；翻译模型 Hy-MT2 30B-A3B APEX-I-Compact 见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)、流程见 [ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)。
 - 隔离环境的实际版本清单见 [环境清单](../research/2026-10-04-runtime-inventory.md)。
