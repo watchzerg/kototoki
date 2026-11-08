@@ -22,7 +22,7 @@
 **失败与发布**：
 
 - `write_failure(work_dir, stage, error)` 写 `failure.json`：阶段、异常类型与消息、当时已存在的阶段产物，不含音频与转写内容。
-- `record_published(work_dir, final_paths, sha256, sources, translate_dir)` 在 `publish_blockers` 放行后、移动三份最终 SRT **之前**写 `published.json`（三份 SHA256、来源产物身份、当前翻译 run 目录 `translate/srt-<sha12>/<配方名>__s<seed>`，相对工作目录），并把此刻最终位置上已有文件的 SHA 记为 `previous_sha256`。
+- `record_published(work_dir, final_paths, sha256, sources, translate_dir)` 在 `publish_blockers` 放行后、移动三份最终 SRT **之前**写 `published.json`（三份 SHA256、来源产物身份、当前翻译 run 目录 `translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录），并把此刻最终位置上已有文件的 SHA 记为 `previous_sha256`。
 - `publish_blockers(final_paths, work_dir, force=...)`：现有最终文件不存在、或 SHA256 等于当前或上一份记录，视为未改动；否则（含没有记录时已存在的文件）视为用户改动并列为阻止项。`force=True` 时恒为空。编排器在扫描阶段调用它（票据 06）。记录磁盘上的旧 SHA 是为了"写记录后、移动完成前崩溃"（包括连续多次）时，最终位置上残留的旧文件不被误判为用户改动（规格 §4，2026-10-14 用户采纳）。
 
 **原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；Windows `PermissionError`（播放器或扫描器占用）重试 20 次、间隔递增至 0.5 s；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
@@ -33,7 +33,7 @@
 
 **cross 审计产物**：`engine = "cross"` 时 asr 阶段在 `.work/<id>/` 额外写三个审计文件，名称是 `artifacts.py` 的模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`，身份按单引擎计算）与 `asr-judge.json`（`offset_s`、每窗口两路原文、分歧区间、逐区间分数与决定，以及文件级计数汇总，身份同 cross 的 `asr.json`；字段见 [STT worker](stt-workers.md#cross-引擎)）。三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。它们**不是阶段产物**：不在 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游；asr 阶段的产物契约只认 `asr.json`。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。`asr.json` 本身的结构、`offset_s` 强制检查与失败窗口约定不变。
 
-**专名产物**（[专名一致性](name-consistency.md)）：`NAME_TABLE = "name-table.json"` 是 names 阶段的阶段产物（在 `STAGE_ARTIFACTS`，参与 `is_current`，由编排经 `write_artifact` 写出，payload 为 `name-table-v2` 表与 `meta`／`build`）；`NAMES_APPLY = "names-apply.json"` 是发布时替换的审计产物（`summary`、`changes`、`unresolved`，由编排写出），与 cross 的三个审计文件同一地位：不在 `STAGE_ARTIFACTS`／`STAGE_OUTPUT`，不参与 `is_current`。两者的身份由[阶段计划](stage-plan.md)给出，并以 `names`／`names_apply` 键进 `published.json` 的 `sources`，`[names] enabled = false` 时两键都不出现。两者都含转写内容，只写在工作目录。
+**专名产物**（[专名一致性](name-consistency.md)）：`NAME_TABLE = "name-table.json"` 是 names 阶段的阶段产物（在 `STAGE_ARTIFACTS`，参与 `is_current`，由编排经 `write_artifact` 写出，payload 为 `name-table-v2` 表与 `meta`／`build`）。身份由[阶段计划](stage-plan.md)给出，以 `names` 键进 `published.json` 的 `sources`；表含转写内容，只写在工作目录。ADR-0019 删除了发布时替换的审计产物 `NAMES_APPLY = "names-apply.json"` 与 `names_apply` 身份键：旧版本发布的记录里若有该键，`sources` 比较时视为不匹配，影片下次运行重新翻译并发布；工作目录里遗留的 `names-apply.json` 不再读取。
 
 **SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。`write_srt` 原子写出、拒绝覆盖源文件；是否允许覆盖最终文件由 `publish_blockers` 判定。
 
@@ -55,3 +55,5 @@
 2026-10-19 `cross` 引擎交付，依据 [ADR-0012](../../adr/0012-cross-asr-judge.md) 与[产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)，票据 `.scratch/cross-asr-judge/`；增量说明已吸收进本页（审计产物）并删除。
 
 2026-10-19 专名一致性进产品（[ADR-0014](../../adr/0014-name-consistency-in-product.md)）：票据 `.scratch/name-consistency-product/issues/05-config-assets-plan.md` 加 `NAME_TABLE`／`NAMES_APPLY` 两个常量，06 同步本页。
+
+2026-11-08 产品翻译切到 Q2（[ADR-0019](../../adr/0019-product-translation-q2.md)）：删除 `NAMES_APPLY` 常量与 `names_apply` 身份键；翻译 run 目录加 `__n<表sha12>`。

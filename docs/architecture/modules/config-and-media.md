@@ -4,16 +4,17 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）的三件事：读取 `kototoki.toml` 得到 `Config`；STT／cue／媒体的配方常量与 `recipe_hash`；从视频选音轨、流复制原始音轨、派生模型输入 WAV。不负责：翻译配方（`kototoki/translate/recipes.py`，票据 05／09）、`probe.json` 等 JSON 产物的身份包装、写入与跳过判定（编排经[产物契约](artifact-contract.md)完成，票据 06）、VAD／ASR／对齐推理（票据 03／07）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）的三件事：读取 `kototoki.toml` 得到 `Config`；STT／cue／媒体的配方常量与 `recipe_hash`；从视频选音轨、流复制原始音轨、派生模型输入 WAV。不负责：翻译配方（`kototoki/translate/recipes.py`，Q2 `q2-degrade-v1`）、`probe.json` 等 JSON 产物的身份包装、写入与跳过判定（编排经[产物契约](artifact-contract.md)完成，票据 06）、VAD／ASR／对齐推理（票据 03／07）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
 **配置**（`kototoki/config.py`，`load(path, environ=os.environ) -> Config`）：`tomllib` 读取规格 §10.1 的结构，返回全部路径已解析为绝对路径的冻结数据类。
 
 - 缺省键取默认值（与规格 §10.1 相同，`kototoki.toml.example` 列出全部键）；`paths.input_dir`、`paths.output_dir` 没有默认值，必须写出。`load` 只解析路径，不看文件系统；`input_dir` 必须是已存在的目录与 `output_dir` 的位置限制由 `__main__` 的 `check_input_dir`／`check_output_dir` 检查（[批次编排](batch-orchestration.md)）。
+- `[translate]`（[翻译子系统](translation-subsystem.md)）只有 `seed`（默认 20261008，须为小于 2**31 的正整数，Strata 不接受 0；改 seed 即另起翻译 run）。翻译模型由 Strata 自己管理、端口固定 8080，没有 `model`／`port` 键，写了按未知键报错（[ADR-0019](../../adr/0019-product-translation-q2.md)）。
 - 未知节、未知键、类型不符（整数键给字符串、布尔键给 1 等）、`stt.engine` 不是 `w0`／`x0`／`cross`、`run.extract_workers < 1` 均抛 `ConfigError`，消息给出键名；浮点键接受整数。
-- 路径：用户写出的相对路径按配置文件所在目录解析，省略键的默认相对路径按仓库根解析；`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]`、`[translate]`、`[names]` 的模型路径为相对路径时相对于 `paths.models_root`（绝对路径原样）。
-- `[names]`（专名建表，[专名一致性](name-consistency.md)）：`model`（默认 `glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf`，进 `Config.models.names`）、`port`（默认 8081，与翻译的 8080 分开）、`seed`（默认 20261019，进表的身份，改 seed 即重建表）、`enabled`（默认 true；false 时阶段链跳过 names、发布不替换）。提示、采样、schema、上下文、归一与替换规则不是配置项，在 `kototoki/names/recipes.py` 的两份配方里。
+- 路径：用户写出的相对路径按配置文件所在目录解析，省略键的默认相对路径按仓库根解析；`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]`、`[names]` 的模型路径为相对路径时相对于 `paths.models_root`（绝对路径原样）。
+- `[names]`（专名建表，[专名一致性](name-consistency.md)）：`model`（默认 `glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf`，进 `Config.models.names`）、`port`（默认 8081，与 Strata 的 8080 分开）、`seed`（默认 20261019，进表的身份，改 seed 即重建表）。建表必开，没有 `enabled` 键（写了按未知键报错）。提示、采样、schema、上下文与归一规则不是配置项，在 `kototoki/names/recipes.py` 的建表配方里。
 - 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`（`Config.gpu_lock`）；`Config.break_stale_lock` 只在环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1` 时为真。没有 `break_stale_lock` 与 `[vad] device` 键（写了即为未知键）。
 
 **配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES` 七个字典，`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）：VAD 固定设备 `cuda:0`、Pyannote revision `e66f3d3b…`、`source-span-merge-v1`；w0 beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链；x0 BF16、SDPA、greedy、4096；MMS FP32、`jpn` adapter、字典按模型类数过滤；cue 的切分顺序、回填方式、整窗回退每字符时长上限 0.25 s（与 `cues.FALLBACK_MAX_CHAR_S` 相等，有测试钉住）与毫秒取整（数值规则在配置 `[cues]`，`max_gap_s` 默认 1.0（票据 04），作为影响输出的配置键另入身份）。

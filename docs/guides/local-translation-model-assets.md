@@ -6,7 +6,7 @@
 
 ## 后续 session 从这里开始
 
-当前字幕翻译基线已采纳 **Hy-MT2 30B-A3B APEX-I-Compact**（`hy-mt2-30b-a3b-apex-i-compact`），见[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)；运行须使用[demo 中的显式兼容引擎命令](../../experiments/translation_demo/README.md)，APEX 的资产记录位于下方新增三款清单。此前 Q3_K_M 与其他资产继续保留为对照，历史决定见[ADR-0004](../adr/0004-hy-mt2-translation-baseline.md)。
+**2026-11-08 起 Hy-MT2 不再是基线，也不再是产品翻译模型**：翻译只有一条基线 Q2（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)），模型是 Strata 上的 Qwen3.8-Flash-Next，由用户安装在仓库外（[依赖布局](../development/dependencies.md)），产品已不使用本页的 GGUF（[ADR-0019](../adr/0019-product-translation-q2.md)）；`assets.toml` 里 APEX 的条目已删除。本页其余内容是研究侧 H0 与历史对照的资产记录。此前的状态：当前字幕翻译基线已采纳 **Hy-MT2 30B-A3B APEX-I-Compact**（`hy-mt2-30b-a3b-apex-i-compact`），见[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)；运行须使用[demo 中的显式兼容引擎命令](../../experiments/translation_demo/README.md)，APEX 的资产记录位于下方新增三款清单。此前 Q3_K_M 与其他资产继续保留为对照，历史决定见[ADR-0004](../adr/0004-hy-mt2-translation-baseline.md)。
 
 模型目录：`D:/AI_Projects/kototoki/.local/models/translation/`。运行前读取
 原六个资产的 `D:/AI_Projects/kototoki/.local/manifests/translation-download-plan.json`；新增三个量化候选读取
@@ -40,7 +40,7 @@
 | Hy-MT2-30B-A3B 社区 Q3_K_M | `4ae7787177f6d4f2d54ec2d543d9fe5f9114d1c9` | `9398dedb6f783963f0e9b7fc6ecb16a0158a92aa9a4c0a25eab29ba9704c19d5` |
 | TranslateGemma-27B | `648ab470301440606384471ef4edb1ffc2a4b88c` | `70fa50c334202a2b6f4ad2994f00808a04c3e8cf283f286b09c62bd6f222f486` |
 | Hy-MT2-30B-A3B 官方 Q4_K_M | `fd3dcbb6b31e9e03923ef4f9f42500f74c3851c3` | `bb44b11bb0f7cd3d1321645b41e911cd3de2e473731227fc6bf37aa18b543f88` |
-| Hy-MT2-30B-A3B APEX-I-Compact | 产品资产，见资产清单 [`assets.toml`](../../assets.toml) | 同左 |
+| Hy-MT2-30B-A3B APEX-I-Compact | `312cce865e03a0718e36cfd1077e6307957aef72`（repo `alphaZimuth/Hy-MT2-30B-A3B-APEX-GGUF`，原 `assets.toml` 条目，已删除） | `8a51a390b285fb1eb566a1683f8da476be9e87c1fbee5507967d6129872dfa1a`（15035838080 字节） |
 | Hy-MT2-30B-A3B i1-Q3_K_L | `c36beb0d9a93b2790313f6beff90482b492ce820` | `e63046e3379cc2cd43116146c42c2b433e8a6a7d86e85b13924f4a479c94395b` |
 | Hy-MT2-30B-A3B i1-Q3_K_M | `c36beb0d9a93b2790313f6beff90482b492ce820` | `a70d7755b52cc96999c9d5645f881647c598967a5142b0177d7a6c018a4a3a46` |
 

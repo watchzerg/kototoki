@@ -1,49 +1,63 @@
 # 翻译子系统与双语合并
 
-状态：current（票据 05 交付，2026-10-14；票据 09 加入三级降级与回退报告，2026-10-14；票据 16 把产品配方换成 `dp10-cut-degrade-v1`，按停顿切包，2026-10-18，[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)）。降级只经伪 server／伪客户端离线验证；旧配方与编排器的真实联调见[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（四个文件 468 批，降级与回退均为 0）；新配方的真实运行见票据 16。
+状态：current（票据 05 交付，2026-10-14；票据 09 加入三级降级与回退报告，2026-10-14；票据 16 产品配方 `dp10-cut-degrade-v1`，2026-10-18；**2026-11-08 起产品翻译即 Q2**，配方 `q2-degrade-v1`，Strata 自动启停，[ADR-0019](../../adr/0019-product-translation-q2.md)）。Q2 路径只经伪服务／伪客户端离线验证，**真实运行未做**（见"代码与验证入口"）。
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[模块边界](../module-boundaries.md#产品包的责任边界)）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：受管 llama-server 的生命周期、`dp10-cut` 切包与 joint 批次请求、按批次落盘与续跑、基础设施失败的重启、批次终态失败的三级降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`zh.srt`／`ja-zh.srt` 的写出与发布（编排器）、工作目录 `.work/<id>/` 本身的位置（[产物契约](artifact-contract.md)）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。v3 实验侧的同名流程见[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是其产品移植，不导入它。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[模块边界](../module-boundaries.md#产品包的责任边界)）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：Strata 服务的启停与身份核对、`dp10-cut` 切包与 Q2 请求、专名注入、按批次落盘与续跑、基础设施失败的重启、批次终态失败的 10→5→1 降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`zh.srt`／`ja-zh.srt` 的写出与发布（编排器）、专名表的建表（[专名一致性](name-consistency.md)）、工作目录 `.work/<id>/` 本身的位置（[产物契约](artifact-contract.md)）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。研究侧同名规则见 `experiments/translation_v3/{qwen,strata}.py` 与[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是 Q2 的产品移植，不导入它们。
 
 ## 当前行为规格
 
 **对编排器的接口**（`kototoki.translate`）：
 
-- `Session(config, on_server_pid=None)`：上下文管理器，整批影片共用。第一次真正需要请求模型时才启动 llama-server（已全部完成的影片不启动）；`on_server_pid(pid)` 在 server 进程一启动（加载之前）、`on_server_pid(None)` 在进程结束后回调，供编排器写进 GPU 锁；退出时总是停掉 server。
-- `plan(work_dir, document, config) -> TranslatePlan`：`document` 是 `srt.read_srt` 读出的 `ja.srt`。只读、不写文件，返回 `run_dir`（`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>/`，`relative` 为相对工作目录的 posix 串，发布记录的 `translate_dir` 即它）、`identity`（`{ja_srt_sha256, recipe_hash, seed}`，[阶段计划](stage-plan.md)的 translate 身份由此取得，不再自算）、`needs_model`（零条目文档或 `run.json` 已记 `complete` 时为 False；编排器据此决定要不要取 GPU 锁、建 `Session`）与 `document`。`run.json` 已存在但配方 hash／seed／来源不符时抛 `ValueError`，消息含"删除该目录可重译"。
-- `translate_document(plan, session) -> TranslateResult`：`plan` 来自上一条；`needs_model` 为 False 时 `session` 可为 `None`，只读回已完成的 run（run 记为完成而批次文件缺失即抛 `TranslateError`，不起 server）。返回 `translations`（cue id → 译文，精确覆盖全部 cue；回退的 cue 为日文原文）、`fallback_count`（回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues` 并在控制台汇总）与 `report`（即 `report.json` 的内容）。基础设施失败用尽重启时抛 `TranslateError`（编排器记为该文件翻译失败）；模型或引擎缺失等配置问题按原异常抛出。
-- `RECIPE_HASH`：产品翻译配方 `dp10-cut-degrade-v1` 的 hash `086754ca…158e`，进编排器的翻译身份。该配方字段与 v3 `dp10-cut` 相同（`gap_pack` 即 ADR-0010 的全部参数），只把 `fixed.overflow` 由 `recorded-failure-no-truncation-no-auto-shrink` 换成 `degrade-10-5-1-keep-source`，因而另算 hash。`dp10-cut`（v3 原 hash `ee72ce66…c500b70`）、`b10-joint`（`2ba68054…0969a`）与 2026-10-14..18 的产品配方 `b10-joint-degrade-v1`（`994c0d03…95fe`）保留并钉住，后者是旧 run 目录的身份对照。
+- `Session(config, on_server_pid=None)`：上下文管理器，整批影片共用一个 Strata session。第一次真正需要请求模型时才启动 Strata（已全部完成的影片不启动）；`on_server_pid(pid)` 在服务 ready 后以 `strata launch --status` 报告的 pid 回调（报告里没有 pid 时不回调）、`on_server_pid(None)` 在停止后回调，供编排器写进 GPU 锁；退出（含异常与被中断）时总是 `stop`。`unavailable` 非空表示 Strata 本批不可用，其余需要模型的影片直接失败。
+- `plan(work_dir, document, name_table, config) -> TranslatePlan`：`document` 是 `srt.read_srt` 读出的 `ja.srt`，`name_table` 是该影片 `name-table.json` 的内容（[阶段计划](stage-plan.md)的 `translate_plan` 读出传入）。只读、不写文件，返回 `run_dir`（`<work_dir>/translate/srt-<sha12>/q2-degrade-v1__s<seed>__n<names_sha12>/`，`relative` 为相对工作目录的 posix 串，发布记录的 `translate_dir` 即它）、`identity`（`{ja_srt_sha256, recipe_hash, seed, names_sha256}`，阶段计划的 translate 身份由此取得）、`needs_model`（零条目文档或 `run.json` 已记 `complete` 时为 False；编排器据此决定要不要取 GPU 锁、建 `Session`）、`document` 与 `names`（注入行）。`run.json` 已存在但配方 hash／seed／注入行／来源不符时抛 `ValueError`，消息含"删除该目录可重译"。
+- `translate_document(plan, session) -> TranslateResult`：`plan` 来自上一条；`needs_model` 为 False 时 `session` 可为 `None`，只读回已完成的 run（run 记为完成而批次文件缺失即抛 `TranslateError`，不起 Strata）。返回 `translations`（cue id → 译文，精确覆盖全部 cue；回退的 cue 为日文原文）、`fallback_count`（回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues`、发布日志行与控制台汇总）与 `report`（即 `report.json` 的内容）。基础设施失败用尽重启或 Strata 被拒绝时抛 `TranslateError`（编排器记为该文件翻译失败）。
+- `RECIPE_HASH`：产品翻译配方 `q2-degrade-v1` 的 hash `332649cf…310d`，进翻译身份，由 `tests/core/test_translate_recipes.py` 钉住。配方字典 `RECIPE`（`recipes.py`）含：切包 `gap-pack-v2`（`dp10-cut` 参数）、邻文 `wide-context-v1`、提示 `qwen-joint-v1`（system／user 文本的 sha256）、专名注入 `qwen-name-table-v1`（header sha256、过滤 `window`、取行规则）、模型 `qwen3.8-flash-next-iq3_s`、Strata 版本与解析后的启动配置（ADR-0017）、请求形状与采样、两次尝试的 seed 步长、首次 `cache_n` 只记录、输入预算只记录、校验规则、溢出策略 `degrade-10-5-1-keep-source`。注入行的**内容**不进配方 hash，进翻译身份的 `names_sha256`。
 
-**请求**：每部影片是一个场景，cue ID 用 `srt.py` 的 `<sha8>-cue-<n>` 别名，cue 带 `ja.srt` 的起止秒。切包按 `dp10-cut`（[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)，`batching.gap_pack_cuts`）：整个场景用动态规划取总惩罚最低的切法，每批待译 ≤10 条；每批代价 = (条数 − 10)² ＋ 批内每个 ≥2 s 停顿按秒数计 1 分，<6 条加 1000 分，批内有 ≥20 s 停顿不可行；内部切点按停顿分级加罚（<0.5 s 加 6、<1 s 加 3、<2 s 加 1，缺时间戳按无停顿）。只读邻文（`batching.neighbours`）：前一条在停顿 <5 s 时可见，后一条只在停顿 <1 s 时可见，可见总数不超过 12 条。停顿只取自 `ja.srt` 自身的时间轴、只比较长短，不是时间换算。提示、grammar、采样（`official30b-cached-v1`、seed 取 `[translate] seed`）与 completion 请求与 v3 `dp10-cut`／`b10-joint` 逐字节相同。每个请求先 `/tokenize`，输入超过 4032 token 即判 `context`，不截断；同一请求最多 2 次。批次级的缩小只经下面的降级发生。
+**请求**（Q2 规则，[ADR-0017](../../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)）：每部影片是一个场景，cue ID 用 `srt.py` 的 `<sha8>-cue-<n>` 别名，cue 带 `ja.srt` 的起止秒。
 
-**失败分类**（沿用 v3 `run_step`）：
+- **切包**按 `dp10-cut`（[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)，`batching.gap_pack_cuts`，参数同前）：整个场景用动态规划取总惩罚最低的切法，每批待译 ≤10 条；每批代价 = (条数 − 10)² ＋ 批内每个 ≥2 s 停顿按秒数计 1 分，<6 条加 1000 分，批内有 ≥20 s 停顿不可行；内部切点按停顿分级加罚（<0.5 s 加 6、<1 s 加 3、<2 s 加 1，缺时间戳按无停顿）。停顿只取自 `ja.srt` 自身的时间轴、只比较长短，不是时间换算。
+- **只读邻文**（`batching.neighbours`，`wide-context-v1`）：前 20 条、后 5 条，只按条数取到场景边（不再看停顿）；可见总数（含待译）超过 35 条时先去后邻、再去前邻。降级的子批次用同一规则。
+- **提示**（`recipes.messages`，`qwen-joint-v1`）：chat messages 两条。system 是 joint 任务文本，该批有专名注入行时末尾追加 `qwen-name-table-v1` 的 header 与 `日文 → 中文` 逐行（见下）；user 是只读日文上下文（JSON）加待译 JSON `{"translations": {id: 日文}}`。文字与研究侧 `experiments/translation_v3/qwen.py::messages` 逐字节相同。
+- **专名注入**：`recipes.name_rows(table)` 取该影片 `name-table.json` 里 `confidence: high` 的实体，每个 `forms[]` 一行 `{ja → zh}`，按 `ja` 去重，跳过空写法；某批只注入日文写法出现在该批可见台词（含只读邻文）里的行。表为空（建表终态失败）时不注入，翻译照常。只改 medium／low 条目不改变注入行。
+- **请求体**（`recipes.request_body`）：chat completions，不用 grammar，思考关闭（`chat_template_kwargs.enable_thinking = false`），`temperature 0.7、top_p 0.8、top_k 20`，`max_tokens` 4096，非流式，`seed` 取 `[translate] seed`（须为正整数）。同一批最多两次：seed、seed＋1。正常批的请求体与研究侧 `strata.request_body(qwen.messages(…))` 逐字节相同（测试对照）。
+- **校验**（`recipes.parse_translation`）：严格 JSON（重复键拒绝）、恰好一个 `translations` 对象、ID 集合与顺序同待译、值非空；产品另拒绝含空行的译文（会让 SRT 断块，按解析失败处理）。
+- 首个请求的 `cache_n` 只记录，不据此判失败；输入 token 超过 Q1 预算（12224）只记 `over_q1_budget`，不判失败（Strata 的 context 是 131072）。
+
+**失败分类**（沿用 `run_step`，去掉 grammar 与预算端点分支）：
 
 | 种类 | 来源 | 处理 |
 | --- | --- | --- |
-| `oom`、`server`（传输）、`server_error`、`cache`、`server_start` | HTTP 500／OOM 文本、连接失败、`tokens_evaluated` 不符、server session 首个 completion 的 `timings.cache_n != 0`、server 加载期退出／超时／空闲显存不足 | 停掉 server，同一次调用内启动新 session 重做；最多重启 2 次，仍失败抛 `TranslateError` |
-| `context`、`limit`、`parse` | 输入超预算、`stop_type == "limit"` 或 `truncated`、JSON／ID 校验失败、译文含空行（会让 SRT 断块；v3 校验之外新增） | 批次终态：按下节降级，不重启 server、不使该影片失败 |
-| 其他异常 | 非 JSON 响应、写盘失败等 | 该 session 记 `stop_reason = session_error: …`，停掉 server，原样上抛 |
+| `oom`、`server`（传输／连接断开）、`server_error`、`server_start` | HTTP 报 OOM 文本／5xx、连接失败或超时、响应 `error`、Strata 起不来（`strata launch` 失败、等 ready 超时、空闲显存不足） | 停掉 Strata，同一次调用内启动新 session 重做；最多重启 2 次，仍失败抛 `TranslateError` |
+| `context`、`limit`、`parse` | HTTP 报超出 context、`finish_reason == "length"`、空回复、JSON／ID／空行校验失败 | 批次终态（`context` 不再重试第二次）：按下节降级，不重启、不使该影片失败 |
+| `StrataRefused` | 已有别的 launch 在服务；版本、端口、run config、`/v1/models`、原生 context 与 ADR-0017 不符 | 不重试：`Session.unavailable` 置位，本批其余需要模型的影片直接失败，已启动的 Strata 随即停掉 |
+| 其他异常 | 非 JSON 响应、写盘失败等 | 该 session 记 `stop_reason = session_error: …`，停掉 Strata，原样上抛 |
 
-**降级**（`degrade.py`，规格 §6）：批次终态失败后拆成前后两半 `父ID.a`／`父ID.b`（奇数条前半多 1 条），仍失败的半批拆成单条 `父ID.a.1`…，单条仍失败则该 cue 的译文 = 日文原文（回退，原因取该单条的失败种类）；只有 1 条的批次失败即回退。子批次与原批次用同一条邻文规则（`batching.neighbours`）、同一 seed，提示、grammar、采样与请求由同一组函数构造（测试逐字节对照）。降级中每个节点（含失败的原批次）的结果一出来就追加到 `degrade.jsonl`；降级途中的基础设施失败照常重启 server，新 session 从未记录的节点继续，已记录的节点不再请求。整个批次完成后写成 `batches.jsonl` 的一行（带 `degrade.nodes` 与 `degrade.fallback`），回退由此对该配方 hash 与 seed 是终态：重跑同一命令不再尝试，要重试须改 `[translate] seed`（另起 run）；`force` 不触发重译。
+**降级**（`degrade.py`，规格 §6）：批次终态失败（两次尝试都失败）后拆成前后两半 `父ID.a`／`父ID.b`（奇数条前半多 1 条），仍失败的半批拆成单条 `父ID.a.1`…，单条仍失败则该 cue 的译文 = 日文原文（回退，原因取该单条的失败种类）；只有 1 条的批次失败即回退。子批次与原批次用同一条邻文规则、同一 seed、同一专名注入规则。降级中每个节点（含失败的原批次）的结果一出来就追加到 `degrade.jsonl`；降级途中的基础设施失败照常重启 Strata，新 session 从未记录的节点继续，已记录的节点不再请求。整个批次完成后写成 `batches.jsonl` 的一行（带 `degrade.nodes` 与 `degrade.fallback`），回退由此对该配方 hash、seed 与注入行是终态：重跑同一命令不再尝试，要重试须改 `[translate] seed`（另起 run）；`force` 不触发重译。研究侧 Q2 对失败的包只空出该包，产品的 10→5→1 是唯一差别（[ADR-0019](../../adr/0019-product-translation-q2.md) 第 4 点）；它与两次可靠性尝试都不是"翻译多次再挑选"（[ADR-0008](../../adr/0008-no-multi-translation-selection.md)）。
 
-**session**：一个 server 进程即一个 session。`cache_n == 0` 校验在每个 session 的首个 completion 做一次（之后的影片复用 KV 前缀属正常）。每次重启都是新 session：影片 `run.json` 的 `sessions[]` 新增一项、`cache_state` 重置、写过批次或遇到基础设施失败的 session 超过一个时 `resumed = true`。server 启动失败（`server_start`）不新增 `sessions[]` 项，记入 `server_start_failures[]`；端口被占、模型核对失败、驻留校验失败等按原异常抛出，不重试。server 启动前用 `nvidia-smi memory.free` 轮询，达到 14700 MiB 才启动（整片实测 server 自身约 14800 MiB，整片验收中 server 加载后桌面占用由约 1236 降到约 597 MiB、翻译正常；2026-10-15 用户裁定由 14900 下调），120 s 超时按 `server_start` 失败处理并写明最后读数。某部影片的重启额度全部耗在 `server_start` 上（GPU 被占或 server 起不来）时，`Session` 记为不可用，本批其余影片直接抛 `TranslateError`，不再逐片等待；混有其他种类的失败不触发这一点。
+**Strata 生命周期**（`strata.StrataServer`，一个 session 一次进入／退出）：
 
-**run 目录与续跑**：`translate/srt-<sha12>/<配方名>__s<seed>/`，键由本子系统的 `plan` 唯一决定（`batching.source_key` 给出 `srt-<sha12>`，同时是场景 ID）：`ja.srt` 变化换 `srt-<sha12>`，配方名或 seed 变化换子目录，旧目录都保留。配方**内容**变了而名字未变（hash 不符）不自动另开目录，`plan` 拒绝并提示删除该目录（票据 15 裁定维持此规则：零迁移、与 v3 "同名配方内容不同拒绝续跑"一致；候选方案"目录名含 hash 自动另开"会让现有整片 run 全部失效，未采纳）：
+1. 进入：`strata launch --status --output json` 必须没有正在服务的 launch，否则 `StrataRefused`（不抢占、不替别人停）；`nvidia-smi` 轮询到空闲显存 ≥ 14000 MiB（names 的 llama-server 已释放；120 s 超时按 `server_start` 失败处理）；执行 `strata launch --no-tui`（`--no-tui` 只关掉监视画面，不改 launch 的选择：2026-11-08 本机 `--plan` 与 `--plan --no-tui` 输出逐字相同，等价于不带参数的 `strata launch`，即 ADR-0017 的 Q2 启动配置，DFlash2）；轮询到唯一一个 `ready` 的 launch（300 s）。
+2. 身份核对（`strata.probe`）：`strata --version` 为 0.2.12／build 0.1.58，launch 在 `127.0.0.1:8080`，run config 的 `model_name` 为 `qwen3.8-flash-next-iq3_s`、`--max-context 131072`、DFlash2 起草，`/v1/models` 含该模型，`/v1/status` 的原生 context 为 131072。不符即 `StrataRefused`，并停掉刚启动的服务。
+3. 运行中：`ResourceSampler` 每 5 s 从 `/v1/status` 取整机显存与内存峰值；服务日志只计事件数（推理循环自救、logits 非有限、单 token 重复截停），不复制日志。
+4. 退出：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 14000 MiB；核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不盖住原异常）。产品进程被强杀时 Strata 可能留在后台，下次运行因 status 非空而拒绝，须手动 `strata launch --stop`。
+5. 证据：`<output_dir>/.work/translate-sessions/<UTC戳>-<pid>/session-NN/` 下 `strata.json`（接入时观察到的身份，不含 API key）、`resources.json`（显存／内存峰值、日志事件计数）、`strata-final.json`（停止与显存释放核实）。
 
-- `run.json`：只含该影片；配方、hash、seed、来源（`ja.srt` SHA256、场景 ID、cue ID 列表）、`sessions[]`（引擎身份摘要、`server_session` 指向的运行日志目录、写入批次数、停止原因、基础设施失败与证据、缓存校验结果、墙钟）、`server_start_failures[]`、`resumed`、`completion`。已存在且配方／seed／来源不符时报错（同名配方改了 hash 属此情形；票据 09 用新配方名因而另起目录）。
+**session**：一次 Strata 进入／退出即一个 session。首个 completion 的 `cache_n` 只在每个 session 记录一次（`run.json` 的 `cache_reset`）。每次重启都是新 session：影片 `run.json` 的 `sessions[]` 新增一项、`cache_state` 重置、写过批次或遇到基础设施失败的 session 超过一个时 `resumed = true`。Strata 启动失败（`server_start`）不新增 `sessions[]` 项，记入 `server_start_failures[]`。某部影片的重启额度全部耗在 `server_start` 上时，`Session` 记为不可用，本批其余影片直接抛 `TranslateError`，不再逐片等待；混有其他种类的失败不触发这一点。Strata 与 names 的 llama-server 不同时驻留（[模块边界：并发与生命周期](../module-boundaries.md#并发与生命周期)）；没有影片需要模型时不启动。
+
+**run 目录与续跑**：`translate/srt-<sha12>/q2-degrade-v1__s<seed>__n<names_sha12>/`，键由本子系统的 `plan` 唯一决定（`batching.source_key` 给出 `srt-<sha12>`，同时是场景 ID）：`ja.srt` 变化换 `srt-<sha12>`，配方名、seed 或注入行变化换子目录，旧目录都保留。**手改 `name-table.json` 里会被注入的条目（`confidence: high` 的实体或其 `forms`）即换 `names_sha12`，下次运行重译该片；只改 medium／low 条目不会。** 配方**内容**变了而名字未变（hash 不符）不自动另开目录，`plan` 拒绝并提示删除该目录（零迁移）。旧 `dp10-cut-degrade-v1` 的 run 目录原样留在工作目录、不再读取：已发布影片因 `sources` 不再匹配，下次整批运行重新翻译并发布。
+
+- `run.json`：只含该影片；配方、hash、seed、`names`（注入行 SHA256 与行数）、来源（`ja.srt` SHA256、场景 ID、cue ID 列表）、`sessions[]`（Strata 身份摘要 `candidate`／`strata`／`cold_load_seconds`／`free_vram_mib_before_start`、`server_session` 指向的运行日志目录、写入批次数、停止原因、基础设施失败与证据、缓存记录、墙钟）、`server_start_failures[]`、`resumed`、`completion`。已存在且配方／seed／注入行／来源不符时报错。
 - `batches.jsonl`：每完成一批追加一行并 fsync，随即重写 `run.json`（进程被强杀时 `sessions[]` 仍反映已写批次）（批次计划字段、译文、请求与逐次尝试记录、所属 session；降级完成的批次不带顶层请求，改为 `degrade`：各节点（`nodes[0]` 是原批次）的 ID、层级、状态、失败种类、尝试次数与完整请求记录，以及回退 cue 的 ID、原因、错误与累计尝试次数）。续跑时末尾不完整的一行截掉，其余行须与批次计划一致，从第一个未写入的批次继续。
-- `degrade.jsonl`：降级中各节点的结果（`parent_index`、`level`、译文或失败种类与错误），每个节点完成即追加；续跑时同样截掉不完整的末行，只取未完成批次的节点，行须属于批次计划且不重复。
-- `scene.json`：全部批次完成后才写出（cue 位置、批次、全部译文、降级树 `degradation`、`fallback_ids`、按节点计的请求／尝试与 token 统计）；部分完成的影片没有该文件。
-- `report.json`：完成时写出（零条目也写）：`completion`、计数（批次、降级批次、回退 cue、降级请求数）、每个降级批次的节点摘要与回退 ID、回退 cue 清单（ID、原因、错误、尝试次数）。
+- `degrade.jsonl`：降级中各节点的结果，每个节点完成即追加；续跑时同样截掉不完整的末行，只取未完成批次的节点，行须属于批次计划且不重复。
+- `scene.json`：全部批次完成后才写出（cue 位置、批次、全部译文、降级树、`fallback_ids`、按节点计的请求／尝试与 token 统计）；部分完成的影片没有该文件。
+- `report.json`：完成时写出（零条目也写）：`completion`、计数（批次、降级批次、回退 cue、降级请求数）、每个降级批次的节点摘要与回退 ID、回退 cue 清单。
 - `transport/session-NN/`：逐请求原始交换（请求 JSON、原始响应、传输记录）；`infra-failures/`：基础设施失败时该批次（或降级节点）的尝试记录。
-- server 运行日志（`server.log`、`stdout.log`、`engine.json`、`engine-final.json`）在 `<output_dir>/.work/translate-sessions/<UTC戳>-<pid>/session-NN/`（时间戳与运行日志 `run-<UTC戳>.log` 同一基准，带 `Z` 后缀），被整批影片共用。llama-server 的 stderr 送 `DEVNULL`，不另存：`-lv 4` 下它与 `--log-file` 的 `server.log` 逐字节相同（2026-10-19 审计 B-14，此前每 session 多存一份 6 MB 的 `stderr.log`）；驻留证据与 OOM 文本从 `server.log`／`stdout.log` 解析（`loader_logs`）。`engine-final.json` 记峰值显存、`server_exit_code` 与 `server_stop`：`terminated`（退出时由编排正常终止，Windows 上 `terminate()` 让退出码固定为 1，不是故障）、`killed`（15 s 内未退出而强杀）、`exited`（进程已自行退出，退出码才是它自己的）、`None`（未启动）（审计 C-6）。
 
-零条目 `ja.srt`：写 `run.json`（完成），返回空译文，不启动 server、不请求模型。
+零条目 `ja.srt`：写 `run.json`（完成），返回空译文，不启动 Strata、不请求模型。
 
-**日志**：经 `kototoki.translate.*` logger 发事件（server 加载、加载失败与等显存三条来自共享的 `kototoki.llama_server` logger，前缀仍是 `[translate]`，取自 `TRANSLATE_SPEC.stage`），写进编排的运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）：session 起止、llama-server 加载完成与每批一行（cue 数、输出 token、tok/s、cache，取不到的字段省略）为 INFO；等空闲显存超过 30 s、server 重启、降级拆批与单条回退为 WARNING；加载失败与用尽重启放弃为 ERROR。`StepFailed` 的 HTTP 错误与 server error 消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）；这两条消息也是 `run.json`、`batches.jsonl`、`degrade.jsonl`、`report.json` 中对应 `error` 字段的取值，在这两条路径上随之变短（字段与配方 hash 不变）。
-
-**server**：stock llama.cpp（`[paths] llama_server`，同目录必须有 `identity.json`，且 `llama-server.exe` 与同目录全部 DLL 的 SHA256 等于其 `runtime_file_sha256`，经 size+mtime 缓存，目录里出现未登记的 DLL 也拒绝），命令行与 v3 冻结 C0 相同（ctx 8192、单槽、99 层、f16 KV、`--cache-ram 8192`、`--fit off`、`-lv 4`）。启动前检查端口空闲（被占时列出正在运行的 llama-server pid）、模型文件名与大小等于冻结资产 APEX-I-Compact、SHA256 经 `artifacts.verify_model`（size+mtime 缓存在 `.work/cache/model-verification.json`）。加载后从日志解析驻留证据，必须全部层在 GPU、有 CUDA model buffer，否则拒绝。
+**日志**：经 `kototoki.translate.*` logger 发事件，写进编排的运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）：session 起止、Strata ready／停止与每批一行（cue 数、输出 token、tok/s、cache，取不到的字段省略）为 INFO；Strata 重启、降级拆批与单条回退为 WARNING；用尽重启放弃、`StrataRefused`、停止未核实为 ERROR。`StepFailed` 的 HTTP 错误与 server error 消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）。提示、译文与响应正文不进日志。
 
 **合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格，保证每条恰好两行；回退为日文的条目两行相同，照常输出。译文须精确覆盖全部 cue（缺失、多余、空串抛 `IncompleteTranslationError`）；零条目文档得到空串。
 
@@ -53,32 +67,25 @@
 
 | 文件 | 来源 | 取舍 |
 | --- | --- | --- |
-| `recipes.py` | `translation_v3/recipes.py` | 只留 `b10-joint`／`dp10-cut` 字段与 joint 提示；`Recipe.spec()` 结构不变以保持原 hash（`gap_pack` 为 None 时不进 `recipe`）；去掉 terms／review／多样本／类别路由／配方文件与 `gap_pack` 校验（配方是常量）；新增 `overflow` 字段（进 `fixed`，与 v3 位置相同）与产品配方 |
-| `degrade.py` | 新增（v3 实验不缩批） | 拆分规则、降级树与回退、`report.json` 内容；不导入 `generate`，由其传入请求函数与降级日志；邻文经 `batching.neighbours` |
-| `adapters.py` | `translation_demo/adapters.py` | 只留 `hy-mt2-30b` 用到的 `render`、`id_grammar`、`translations`、`strict_json` |
-| `batching.py` | `translation_v3/batching.py`、`data.py` | 按条数分批与 gap-pack-v2 切包（`silence`、`gap_pack_cuts` 只留 `group_gap=None` 分支、邻文规则并为 `neighbours`）；不搬 `gap_split`、`pause_marks`、`groups`、token 分批；`Scene`／`Cue`（带秒）由 `ja.srt` 构造，`source_key` 是 `srt-<sha12>` 的唯一出处（原 `data.py` 并入，票据 15） |
-| `generate.py` | `translation_v3/generate.py` | `run_step` 判定不变；`Session` 取代 v3 每次运行新开 server 的 session factory；按批次追加落盘；同调用内重启 |
-| `server.py` | 本模块只留翻译 spec，通用部分在 `kototoki/llama_server.py`（票据 02 抽出，2026-10-19） | 只有 `MODEL_ASSET`（APEX-I-Compact 冻结资产身份，core 测试钉住等于 `assets.toml`）、`MIN_FREE_MIB` 14700 与 `TRANSLATE_SPEC`（`ServerSpec`：99 层、`CONTEXT_SIZE` 8192、冻结额外参数、加载超时 180 s、日志前缀 `[translate]`）；再导出 `InfraFailure`、`wait_for_free_vram` 供测试沿用原导入路径 |
-| `client.py`、`procs.py`（已删除） | 本模块只留翻译 spec，通用部分在 `kototoki/llama_server.py` | `LlamaClient`（原样，另加 `chat_completion` 供专名建表）与 `list_llama_servers` 移入共享模块 |
+| `recipes.py` | `experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables`、v9 `wide-context-v1` | Q2 规则写成常量：提示、注入行与过滤、请求体、校验、配方字典与 hash；与研究侧逐字节对照由测试钉住；新增的校验（拒绝空行）与降级字段使它另算 hash（`q2-degrade-v1`） |
+| `strata.py` | `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支 | 产品新增启停：`strata launch --status`／`--no-tui`／`--stop`、空闲显存与 status 核实、资源采样；只有这一个实现，不抽后端协议 |
+| `degrade.py` | 新增（研究侧 Q2 只空出失败的包） | 拆分规则、降级树与回退、`report.json` 内容；不导入 `generate`，由其传入请求函数与降级日志；邻文经 `batching.neighbours` |
+| `batching.py` | `translation_v3/batching.py`、`data.py` | gap-pack-v2 切包（`silence`、`gap_pack_cuts` 只留 `group_gap=None` 分支）、`wide-context-v1` 邻文；`Scene`／`Cue`（带秒）由 `ja.srt` 构造，`source_key` 是 `srt-<sha12>` 的唯一出处 |
+| `generate.py` | `translation_v3/strata.py::run_step`、`generate.py` | `run_step` 判定不变（去掉思考分支）；`Session` 取代研究侧"执行者先启动服务"；按批次追加落盘；同调用内重启 Strata |
 
-共享的 `kototoki/llama_server.py`（中间层，使用者：翻译与专名建表）的来源：`ManagedServer`、`server_command`、`check_model`、`check_engine`、`port_free` 来自 `translation_v3/server.py`（去掉 `GpuLock`；模型路径来自配置，资产清单文件改为 spec 里的冻结资产常量；新增空闲显存轮询，阈值取 `spec.min_free_mib`）；驻留解析来自 `translation_demo_runtime.py`（`validate_residency` 去掉"允许 CPU 卸载"开关）；`explicit_oom` 来自 `translation_demo/run.py`；`LlamaClient` 来自 `translation_demo/client.py`；`list_llama_servers` 来自 `translation_v3/procs.py`（锁归编排器，Job Object 已由编排器 `contain_children` 覆盖 llama-server）。命令行 = 固定头（engine、`-m`、`--host`、`--port`、`-c`、`-np 1`、`-ngl`）＋ `spec.extra_args` ＋ 固定尾（`--no-webui`、`--log-file`、`-lv 4`），翻译的完整命令行由 `test_translate_server.py` 逐元素钉住，与抽出前逐字节相同；`engine.json`／`engine-final.json` 的键、键序与值不变（抽出时以旧代码对照核过）。唯一的文字差异：模型文件名／大小不符时的报错由 "Translation model …" 改为 "Model for hy-mt2-30b-a3b-apex-i-compact …"。
-
-v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kototoki.artifacts`，路径来自 `kototoki.config`。
+`kototoki/llama_server.py` 不再是翻译的服务层：翻译只用其中的 `LlamaClient`（本机回环 HTTP，含 `chat_completion` 与逐请求 trace）、`wait_for_free_vram`／`nvidia_smi`、`InfraFailure` 与 `explicit_oom`。已删除：`adapters.py`（Hy30 原生模板与 ID grammar）、`server.py`（`TRANSLATE_SPEC`、`MODEL_ASSET`、`MIN_FREE_MIB` 14700）、H0 配方 `dp10-cut-degrade-v1` 及其 `/tokenize` 预算、`[translate] model`／`port`。
 
 ## 接口与依赖
 
-依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `paths.output_dir`、`paths.llama_server`、`models.translate`、`translate.port`／`seed`）、`kototoki.srt` 与共享的 `kototoki.llama_server`（`ManagedServer(runtime_dir, TRANSLATE_SPEC, …)`、`LlamaClient`、`InfraFailure`、`explicit_oom`）。编排器只导入包顶层的 `Session`、`translate_document` 与 `kototoki.merge`，[阶段计划](stage-plan.md)延迟导入包顶层的 `plan` 取 `TranslatePlan`（翻译身份与 `needs_model`）；`RECIPE_HASH` 也在包顶层导出，当前只有测试使用；`server`（翻译 spec）、`batching`、`generate` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换 server 与 HTTP 客户端。
+依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `paths.output_dir`、`translate.seed`）、`kototoki.srt` 与中间层 `kototoki.llama_server`（`LlamaClient`、`InfraFailure`、`nvidia_smi`、`wait_for_free_vram`、`explicit_oom`）；外部依赖是 Strata CLI 与本机 8080 服务（安装与模型由用户维护，见[依赖布局](../../development/dependencies.md)）。不导入 `names`（只读它写出的表内容，由 `plan` 传入）、`experiments.*`。编排器只导入包顶层的 `Session`、`translate_document` 与 `kototoki.merge`，[阶段计划](stage-plan.md)延迟导入包顶层的 `plan` 取 `TranslatePlan`；`RECIPE_HASH` 也在包顶层导出；`recipes`、`strata`、`batching`、`degrade`、`generate` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换服务（须有 `url`、`identity` 与上下文管理器协议）与 HTTP 客户端。
 
 ## 代码与验证入口
 
-- 代码：`kototoki/translate/`、`kototoki/merge.py`；共享的 `kototoki/llama_server.py`。
-- 测试（core，`just test`）：`tests/core/test_translate_degrade.py`（拆分与邻文、三级降级与单条回退及子批次请求字节、单条批次直接回退、超出 context 进入降级、续跑复用已记录节点并截掉写了一半的行、已记录的单条失败续跑时直接回退、降级中途 OOM 重启、原批次 OOM 不进降级、回退终态与改 seed 重试、空场景报告、计划外的降级行报错、经编排器写进 `published.json` 的回退计数）；`tests/core/test_translate.py`（伪 server／伪客户端：正常（首个请求与按冻结配方构造的请求逐字节相同）、损坏的中间行报错、每批后 `run.json` 已记批次数、意外异常记 `session_error` 并停 server、译文空行按解析失败、整批共用一个 session、按批次续跑与截掉写了一半的行、全部完成不启动 server、OOM 重启即新 session、两次重启后放弃、缓存校验失败、空场景、`ja.srt` 变化换目录、seed 变化另起 run、显存轮询超时、server 起不来时本批其余影片直接失败、混合失败不标记不可用、启动失败后成功）；`tests/core/test_translate_recipes.py`（v3 `b10-joint`、`dp10-cut` hash 钉子、两个产品配方的 hash 钉子与“只差 `overflow`”、提示／grammar／请求 SHA256 钉子、`b10-joint` 与 `dp10-cut`（不均匀停顿与随机场景）与冻结 v3 函数逐字节对照、gap-pack-v2 规则（暴力枚举等价、切点挪向长停顿、≥20 s 必切、短包只在被硬切夹出的短段、邻文门槛与可见上限、缺时间戳、均匀场景 8/8/7 而非 10/10/3））；`tests/core/test_translate_server.py`（翻译冻结命令行：关键参数与完整数组逐元素、模型核对、stderr 送 `DEVNULL` 且 `loader_logs` 不读残留的 `stderr.log`）；`tests/core/test_llama_server.py`（共享模块：stock 加载日志驻留解析、显存轮询与日志前缀、OOM 识别、命令行拼装顺序、引擎文件 SHA 核对、`engine-final.json` 的 `server_stop` 标注、`chat_completion` 的端点与 `chat-NN` trace）；`test_translate.py` 另断言 session 目录名为 UTC 戳带 `Z` 加 pid；`tests/core/test_merge.py`。
-- 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：`just smoke translate_product`（`scripts/smoke/translate_product.py`）在真实 llama-server 与 APEX 模型上走 `plan` → `Session` → `translate_document`（产品配方 `dp10-cut-degrade-v1`、默认 seed），输入是脚本内置的 12 条中性合成日语短句、第 6 条后 20 s 停顿，切成 6/6 两批；通过条件是全部 cue 有非空译文、无回退、至少两批；结果只记计数、哈希、耗时、冷加载、驻留与显存峰值。**未运行、待用户批准**。整片的产品翻译运行证据见 2026-10-14 至 10-16 的整片验收与 ADR-0011 的 2026-10-18 运行。
-- 真实运行（2026-10-14，票据 05 完成标准第二项）：HF II 的 W0 对齐结果按默认 `[cues]` 切出 1112 条 `ja.srt`，stock b11583 单 session 112 批全部一次通过（无重试、无触顶），`zh.srt` 覆盖 1112/1112，`ja-zh.srt` 1112 条且每条恰好两行。墙钟 176 s（含模型 SHA 首次全量核对 16.7 s、冷加载 7.1 s）；输入 75408、输出 19272 token；首个请求 `cache_n == 0`；启动前空闲 15112 MiB，会话峰值 15687 MiB（桌面基线约 880 MiB，即 server 自身约 14800 MiB）。输出只写在仓库外的会话临时目录。
-- 真实运行：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)——经编排器整批翻译四个文件，降级批次 0、回退 cue 0、无重启。
-- 离线切包（2026-10-18，票据 16）：四个整片 `ja.srt` 上 `dp10-cut-degrade-v1` 平均每批 7.4–8.3 条、请求数比 `b10-joint-degrade-v1` 多 20–35%、无批次跨 ≥20 s 停顿、92–97% 的切点落在 ≥1 s 停顿、<6 条的批 9–24%，见 [ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)。
-- 真实运行（2026-10-18，票据 16）：`dp10-cut-degrade-v1` 经编排器整批翻译 HF II／III（w0）：147＋149 批全部一次接受，降级 0、回退 0、无重启；HF III 翻译 200 s，HF II 第 96 批起生成速度跌到约 4 tok/s、共 2906 s，server 峰值显存 15955 MiB，疑为下面"已知限制"的显存漂移触顶，未验证。
-- 未验证：真实数据上的降级路径（两个配方整片都未触发）；`dp10-cut-degrade-v1` 的质量（没有裁判证据，与 ADR-0010 相同）；HF II 慢化的原因。已知限制：桌面程序占用较多显存（空闲低于 14700 MiB）时翻译会等满 3×120 s 后失败，需先释放显存；整片验收时桌面占用 0.6–1.2 GB 漂移，首轮即因此失败。
+- 代码：`kototoki/translate/`（`recipes.py`、`strata.py`、`generate.py`、`batching.py`、`degrade.py`）、`kototoki/merge.py`；共享的 `kototoki/llama_server.py`（客户端部分）。
+- 测试（core，`just test`）：`tests/core/test_translate.py`（伪服务／伪客户端走完整流程：正常、续跑与截掉写了一半的行、全部完成不启动 Strata、基础设施失败重启即新 session 与放弃、`StrataRefused` 不重试且置 unavailable、注入行变化另起 run、空场景等）；`tests/core/test_translate_degrade.py`（拆分与邻文、10→5→1 降级与单条回退、超出 context 进入降级、续跑复用已记录节点、回退终态、经编排器写进 `published.json` 的回退计数）；`tests/core/test_translate_recipes.py`（`RECIPE_HASH` 钉子、提示／注入／请求体与研究侧逐字节对照、gap-pack-v2 规则）；`tests/core/test_llama_server.py`（共享模块：客户端、显存轮询、OOM 识别、names 用的命令行拼装）；`tests/core/test_merge.py`。`tests/core/test_translate_strata.py`（伪 CLI：已有 launch 时拒绝且不替别人停、等 names 释放显存、`probe` 各项不符即停并拒绝、未就绪／启动失败／被中断都 `--stop`、停止未确认或显存未释放只记 ERROR）。已删除：`test_translate_server.py`（H0 命令行）。
+- 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：Q2 首用 smoke（`just smoke translate_product`，`scripts/smoke/translate_product.py`，改为走 Strata）。**未运行。**
+- Q2 启动配置首用与整片端到端：ADR-0017 建议的 smoke（整机内存与显存峰值、首次格式失败、交付失败、每包耗时）与一部整片的端到端运行。**未运行，结果待用户补记。**
+- 未验证：Strata 自动启停与身份核对的真实运行（含停止后显存回到 14000 MiB、强杀残留的拒绝路径）；降级路径只经伪客户端；Strata 的请求不复现（同 seed 约半数 cue 不同，ADR-0017），重跑不保证同一译文；`q2-degrade-v1` 在产品里的质量没有独立裁判证据（沿用 ADR-0017 的 v12 F1 证据）。已知限制：空闲显存低于 14000 MiB（桌面程序占用较多）时翻译等满 120 s 后按 `server_start` 失败。
 
 ## 变更与决策来源
 
@@ -89,3 +96,5 @@ v3 的 `common.py` 不单独移植：哈希、原子写与模型核对用 `kotot
 2026-10-19 架构审计小修集合：票据 `.scratch/architecture-review/issues/01-small-fixes.md`（B-14 stderr 去重与 UTC 目录名、C-6 `server_stop`）；旧 session 目录（本地时间戳、含 `stderr.log`）原样保留，不迁移。
 
 2026-10-19 专名一致性进产品（[ADR-0014](../../adr/0014-name-consistency-in-product.md)）：票据 `.scratch/name-consistency-product/issues/02-shared-llama-server.md`：`server.py` 的通用部分与 `client.py`、`procs.py` 抽到 `kototoki/llama_server.py`（第二个使用者是专名建表），翻译行为不变；`Session` 不动，只把 `_managed_server` 改为传 `TRANSLATE_SPEC`。
+
+2026-11-08 产品翻译切到 Q2（[ADR-0019](../../adr/0019-product-translation-q2.md)）：配方 `dp10-cut-degrade-v1` 换成 `q2-degrade-v1`（Strata 上的 `qwen3.8-flash-next-iq3_s`、chat completions、`wide-context-v1`、`qwen-joint-v1`、专名注入），Strata 由 `strata.py` 自动启停，翻译身份加 `names_sha256`；删除 `adapters.py`、`server.py`（`TRANSLATE_SPEC`、`MODEL_ASSET`）、H0 的 grammar 与 `/tokenize` 预算、`[translate] model`／`port`；上文各章已按 Q2 改写，旧描述不再保留。
