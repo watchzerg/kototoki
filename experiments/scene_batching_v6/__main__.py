@@ -7,18 +7,19 @@ import argparse
 import json
 import sys
 
-from . import q1, q2, sim7, status, v7, v9, v10, v11, v12
+from . import q1, q2, sim7, status, v7, v9, v10, v11, v12, v13
 from .common import V6_ROOT, V7_ROOT
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scene_batching_v6")
-    parser.add_argument("--round", choices=("v6", "v7", "v9", "v10", "v11", "v12"), default="v6",
+    parser.add_argument("--round", choices=("v6", "v7", "v9", "v10", "v11", "v12", "v13"), default="v6",
                         help="v7: root .local/gap-aware-batching-v7, full-set subsets and comparisons; "
                              "v9: root .local/general-model-translation-v9 (general-model arms); "
                              "v10: root .local/q0-exploration-v10 (v9 commands + v10 ones); "
                              "v11: root .local/q0-product-route-v11 (v9/v10 commands + v11 ones); "
-                             "v12: root .local/strata-flash-next-v12 (Strata F1/F2; v9/v11 commands + v12 ones)")
+                             "v12: root .local/strata-flash-next-v12 (Strata F1/F2; v9/v11 commands + v12 ones); "
+                             "v13: root .local/names-on-strata-v13 (S1 names tables on Strata; v9/v11 commands + v13 ones)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("simulate", help="v7 offline: batch-size distributions on dev and product timing -> sim/sim.json")
     sub.add_parser("status", help="offline: runs, subsets, judge progress, GPU lock")
@@ -116,22 +117,40 @@ def main(argv: list[str] | None = None) -> int:
     pr12.add_argument("--y")
     pr12.add_argument("--arms", nargs="*", default=[])
     pr12.add_argument("--name")
+    sub.add_parser("v13-s1", help="v13 offline: the S1 build recipe and its hash")
+    sub.add_parser("v13-build", help="v13 GPU (starts and stops Strata): all S1 tables -> B/, then the gate")
+    sub.add_parser("v13-gate", help="v13 offline: recompute the feasibility gate from B/build-report.json")
+    sub.add_parser("v13-quality", help="v13 offline: table quality S1 vs 27B -> C/table-quality.json")
+    sub.add_parser("v13-recipes", help="v13 offline: T0/T1 dev and product Q2 recipes")
+    sub.add_parser("v13-dev", help="v13 GPU (starts and stops Strata): the 6 dev runs T0/T1 x 3 seeds")
+    sub.add_parser("v13-product", help="v13 GPU (starts and stops Strata): translate-srt T0/T1 x 2 films x 3 seeds")
+    st13 = sub.add_parser("v13-stats", help="v13 offline: format/delivery/latency/resource counts of dev runs")
+    st13.add_argument("--recipe", required=True)
+    st13.add_argument("--seeds", type=int, nargs="+", default=list(v13.MAIN_SEEDS))
+    g13 = sub.add_parser("v13-dev-gate", help="v13 offline: compare11 T1 vs T0 on 3 seeds and the §4.4 gate")
+    g13.add_argument("--seeds", type=int, nargs="+", default=list(v13.MAIN_SEEDS))
+    pr13 = sub.add_parser("product13", help="v13 stage E (asr10 on E/, seeds 20261054-56, T1 vs T0)")
+    pr13.add_argument("what", choices=("plan", "judge", "estimate", "inconsistency", "failures", "stats", "gate"))
     args = parser.parse_args(argv)
     root = {"v7": V7_ROOT, "v9": v9.V9_ROOT, "v10": v10.V10_ROOT, "v11": v11.V11_ROOT,
-            "v12": v12.V12_ROOT}.get(args.round, V6_ROOT)
+            "v12": v12.V12_ROOT, "v13": v13.V13_ROOT}.get(args.round, V6_ROOT)
     v12_only = ("v12-recipes", "v12-copy-q1", "v12-smoke", "v12-smoke-report", "v12-stats", "v12-generate-aa",
                 "v12-aa", "product12")
+    v13_only = ("v13-s1", "v13-build", "v13-gate", "v13-quality", "v13-recipes", "v13-dev", "v13-product",
+                "v13-stats", "v13-dev-gate", "product13")
     v9_only = ("smoke", "check-batches", "judge-run", "compare9", "analyze9", "compare10", "copy-q0", "a2",
-               "copy-run", "copy-identical", "compare11", "product", *v12_only)
+               "copy-run", "copy-identical", "compare11", "product", *v12_only, *v13_only)
     if args.command in ("compare10", "copy-q0", "a2") and args.round not in ("v10", "v11"):
         parser.error(f"{args.command} is a --round v10 command")
-    if args.command in ("copy-run", "copy-identical", "compare11") and args.round not in ("v11", "v12"):
+    if args.command in ("copy-run", "copy-identical", "compare11") and args.round not in ("v11", "v12", "v13"):
         parser.error(f"{args.command} is a --round v11 command")
     if args.command == "product" and args.round != "v11":
         parser.error("product is a --round v11 command (v12: product12)")
     if args.command in v12_only and args.round != "v12":
         parser.error(f"{args.command} is a --round v12 command")
-    v9_like = args.round in ("v9", "v10", "v11", "v12")
+    if args.command in v13_only and args.round != "v13":
+        parser.error(f"{args.command} is a --round v13 command")
+    v9_like = args.round in ("v9", "v10", "v11", "v12", "v13")
     if v9_like != (args.command in v9_only) and args.command not in ("status", "generate"):
         parser.error(f"{args.command} is not a --round {args.round} command")
     if args.command == "simulate":
@@ -202,6 +221,47 @@ def main(argv: list[str] | None = None) -> int:
                 "buckets": {b: {k: r[k] for k in ("n", "n_identical", "delta", "ci90", "name_errors",
                                                   "name_error_delta_ci90", "critical", "addition")}
                             for b, r in out["buckets"].items()}}
+    elif args.command == "v13-s1":
+        out = {"hash": v13.s1_hash(), "recipe": v13.s1_recipe()}
+    elif args.command == "v13-build":
+        out = v13.run_builds()
+    elif args.command == "v13-gate":
+        out = v13.gate(json.loads((v13.B_ROOT / "build-report.json").read_text(encoding="utf-8")))
+    elif args.command == "v13-quality":
+        out = v13.table_quality()
+        out = {"dev": {k: v for k, v in out["dev"].items() if k != "arms"} | {
+            "arms": {a: {k: r[k] for k in ("entries", "high_entries", "majority_disagree",
+                                           "occurrence_weighted_agreement", "high_disagree_rate",
+                                           "zh_collision_entries")} for a, r in out["dev"]["arms"].items()}},
+               "product": out["product"]}
+    elif args.command == "v13-recipes":
+        out = v13.write_recipes()
+    elif args.command == "v13-dev":
+        out = v13.run_dev()
+    elif args.command == "v13-product":
+        out = v13.run_product()
+    elif args.command == "v13-stats":
+        out = v12.dev_stats(args.recipe, args.seeds, root=v13.V13_ROOT)
+    elif args.command == "v13-dev-gate":
+        summary = v11.summary11(v11.compare11(v13.T1, args.seeds, against=v13.T0, root=v13.V13_ROOT, label="v13"))
+        out = summary | {"gate": v13.dev_gate(summary)}
+        (v13.V13_ROOT / "summaries" / "v13-dev-gate.json").write_text(v13.dumps(out), encoding="utf-8")
+    elif args.command == "product13":
+        if args.what == "gate":
+            name = f"{v13.T1}-vs-{v13.T0}"
+            out = v13.product_gate(v13.product("estimate", name=name), v13.product("inconsistency"),
+                                   v13.product("failures"))
+            (v13.E_ROOT / "gate.json").write_text(v13.dumps(out), encoding="utf-8")
+        else:
+            out = v13.product(args.what)
+            if args.what == "judge":
+                print(json.dumps({"exit_code": out}))
+                return out
+            if args.what == "estimate":
+                out = {k: v for k, v in out.items() if k != "buckets"} | {
+                    "buckets": {b: {k: r[k] for k in ("n", "n_identical", "delta", "ci90", "name_errors",
+                                                      "name_error_delta_ci90", "critical", "addition")}
+                                for b, r in out["buckets"].items()}}
     elif args.command == "a2":
         from . import a2
         out = a2.blind_sheet() if args.what == "blind" else {k: v for k, v in a2.similarity().items() if k != "sets"}

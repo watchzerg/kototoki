@@ -232,10 +232,20 @@ def _arg(args: list[str], flag: str) -> str | None:
     return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
 
 
+def log_drafting(name: str) -> str | None:
+    """Drafting of the latest start of launch ``name``: its last ``[strata] drafting:`` server-log line (v13 ticket 01).
+    Strata always passes ``--mtp <dir>`` to the engine and adds DFlash2 on top, so the run-config arguments cannot
+    tell the two apart (ADR-0019; the product reads the same line, ``kototoki.translate.strata.drafting_from_log``)."""
+    from kototoki.translate.strata import drafting_from_log
+    path = server_log(name)
+    return drafting_from_log(path.read_text(encoding="utf-8", errors="replace"))[0] if path.is_file() else None
+
+
 def probe(port: int = 8080, profile: str | None = None, *, cli: Callable[..., str] = _cli,
-          get: Callable[[str], dict] = _get) -> dict[str, Any]:
+          get: Callable[[str], dict] = _get, drafting_of: Callable[[str], str | None] = log_drafting) -> dict[str, Any]:
     """Check the attached service against the fixed identity of the launch profile (None = v12 kototoki-translate,
-    "default" = ADR-0017 plain launch); return the observed values (no API key)."""
+    "default" = ADR-0017 plain launch); return the observed values (no API key). The default profile takes the
+    drafting from the server log (``drafting_of``), the v12 profile from the run-config arguments."""
     default = profile == DEFAULT_LAUNCH
     want_context = DEFAULT_RESOLVED["context"] if default else CONTEXT
     version = cli("--version").strip()
@@ -252,7 +262,8 @@ def probe(port: int = 8080, profile: str | None = None, *, cli: Callable[..., st
                            f"{launch.get('name')!r} on {launch.get('host')!r}")
     config = json.loads(Path(launch["config"]).read_text(encoding="utf-8-sig")) if launch.get("config") else {}
     args = [str(a) for a in config.get("args") or []]
-    drafting = "mtp" if "--mtp" in args else "dflash2" if any("dflash" in a.lower() for a in args) else None
+    drafting = (drafting_of(str(launch.get("name"))) if default
+                else "mtp" if "--mtp" in args else "dflash2" if any("dflash" in a.lower() for a in args) else None)
     if (config.get("model_name") != MODEL or _arg(args, "--max-context") != str(want_context)
             or (not default and "--vision" in args) or drafting != ("dflash2" if default else "mtp")):
         raise RuntimeError(f"Strata run config differs: model {config.get('model_name')!r}, "

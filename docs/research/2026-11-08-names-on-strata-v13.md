@@ -165,6 +165,7 @@
 
 | 日期 | 票据 | 结果 |
 | --- | --- | --- |
+| 2026-11-08 | 01 离线实现 | 完成。`scene_batching_v6/v13.py`＋`--round v13`：S1 配方 `names-strata-v1`（产品 `BUILD` 去掉 GGUF 资产，加 Strata 身份 0.2.12／build 0.1.58／默认启动／kv int8、`response_format: null`、`enable_thinking: false`、`count_tokens` 预算检查），hash `91671bd9…`，产品 `BUILD_RECIPE_HASH` `5b8d1b76…` 不变（测试钉住）。建表直接调用产品 `build_table`，`chat` 回调去掉 `response_format`、加 `model`，`tokenize` 回调走 `/v1/messages/count_tokens`（不可用时退回不预检、只记 `usage.prompt_tokens`）。任意表→Q2 配方 `write_q2`：用 27B 表组出的 dev／产品 Q2 配方 hash 与 ADR-0017 记录的实例逐一相同（`4c3d0f70…`／`86b61ec9…`）。Strata 启停复用产品 `StrataServer`（身份核对、专家区未锁进内存即拒绝、`--stop` 与显存释放核实），外加开跑前核对（无 `gpu.lock`／llama-server／Strata、可用内存 ≥52 GiB）。**修了研究侧的一个缺陷**：`translation_v3/strata.probe` 的默认启动分支按参数判断起草方式，会把 DFlash2 认成 MTP（Strata 总传 `--mtp`），改为读服务日志的 `[strata] drafting:` 行（同产品），v12 分支与各配方 hash 不变。测试 `scene_batching_v6` 78 项、`translation_v3` 90 项、core names／strata 26 项通过；未做 mock 端到端（理由见票据）。GPU 0。 |
 
 ### 7.1 结论
 

@@ -212,16 +212,21 @@ class StrataAttachTest(unittest.TestCase):
 
     def test_probe_default_launch(self):
         """ADR-0017: a plain ``strata launch`` (any name, 128K, picture reader on, parallel fitted, DFlash2)."""
-        dflash = ["--max-context", "131072", "--vision", "cpu", "--spec-draft", "dflash2-x"]
+        # Strata passes --mtp even when DFlash2 drafts (ADR-0019): the drafting comes from the server log only
+        args = ["--max-context", "131072", "--vision", "cpu", "--mtp", "x"]
+        seen: list[str] = []
+        dflash = lambda name: seen.append(name) or "dflash2"  # noqa: E731
         with tempfile.TemporaryDirectory() as tmp:
-            cli, get = self.fakes(Path(tmp), name="iq3_s-128k", context=131072, serving=4, args=dflash)
-            observed = strata.probe(8080, "default", cli=cli, get=get)
-            self.assertEqual((observed["drafting"], observed["profile"]), ("dflash2", "default"))
-            for bad in ({"context": 32768, "args": dflash}, {"context": 131072, "args": ["--max-context", "131072", "--mtp", "x"]},
-                        {"context": 131072, "args": dflash, "host": "0.0.0.0"}):
+            cli, get = self.fakes(Path(tmp), name="iq3_s-128k", context=131072, serving=4, args=args)
+            observed = strata.probe(8080, "default", cli=cli, get=get, drafting_of=dflash)
+            self.assertEqual((observed["drafting"], observed["profile"], seen), ("dflash2", "default", ["iq3_s-128k"]))
+            for bad, drafting in (({"context": 32768, "args": args}, dflash), ({"context": 131072, "args": args},
+                                                                             lambda n: "mtp"),
+                                  ({"context": 131072, "args": args}, lambda n: None),
+                                  ({"context": 131072, "args": args, "host": "0.0.0.0"}, dflash)):
                 cli, get = self.fakes(Path(tmp), name="iq3_s-128k", serving=4, **bad)
                 with self.assertRaises(RuntimeError, msg=bad):
-                    strata.probe(8080, "default", cli=cli, get=get)
+                    strata.probe(8080, "default", cli=cli, get=get, drafting_of=drafting)
             with self.assertRaises(RuntimeError):  # the v12 profile still rejects it
                 strata.probe(8080, cli=cli, get=get)
 
