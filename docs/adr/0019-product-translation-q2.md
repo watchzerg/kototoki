@@ -24,7 +24,7 @@
 
 ## 约束与未关闭项
 
-- **Q2 启动配置首用**：ADR-0017 建议的 smoke（整机内存与显存峰值、首次格式失败、交付失败、每包耗时）与一部整片的端到端运行，结果记在[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)。
+- **Q2 启动配置首用**（2026-11-08，细节见[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)）：smoke 与一部整片（HF-II）都通过，格式失败 0、交付失败 0、回退 0，显存峰值 16.1 GB、内存峰值 42.6–42.9 GiB；但每包约 16 s，约为 v12 F1（MTP、32k）的 6 倍，整片翻译 2498 s 对约 420 s。按 ADR-0017，是否换启动配置由用户决定。
 - 降级路径只经伪客户端离线验证；Strata 的请求不复现（同 seed 约半数 cue 不同，ADR-0017），重跑不保证同一译文。
 - 产品进程被强杀时 Strata 可能留在后台：下次运行会因 `--status` 非空而拒绝，需手动 `strata launch --stop`。
 - Strata 安装与模型下载在仓库外，由用户维护（[依赖布局](../development/dependencies.md)）；版本不是 0.2.12／build 0.1.58 时拒绝运行，升级等于换身份，须新决定。

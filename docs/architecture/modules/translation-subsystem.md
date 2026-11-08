@@ -1,6 +1,6 @@
 # 翻译子系统与双语合并
 
-状态：current（票据 05 交付，2026-10-14；票据 09 加入三级降级与回退报告，2026-10-14；票据 16 产品配方 `dp10-cut-degrade-v1`，2026-10-18；**2026-11-08 起产品翻译即 Q2**，配方 `q2-degrade-v1`，Strata 自动启停，[ADR-0019](../../adr/0019-product-translation-q2.md)）。Q2 路径只经伪服务／伪客户端离线验证，**真实运行未做**（见"代码与验证入口"）。
+状态：current（票据 05 交付，2026-10-14；票据 09 加入三级降级与回退报告，2026-10-14；票据 16 产品配方 `dp10-cut-degrade-v1`，2026-10-18；**2026-11-08 起产品翻译即 Q2**，配方 `q2-degrade-v1`，Strata 自动启停，[ADR-0019](../../adr/0019-product-translation-q2.md)）。2026-11-08 Q2 首用 smoke 与一部整片端到端已通过，但每包耗时约为 v12 F1 的 6 倍（见"代码与验证入口"）。
 
 ## 定位与阅读
 
@@ -83,8 +83,8 @@
 
 - 代码：`kototoki/translate/`（`recipes.py`、`strata.py`、`generate.py`、`batching.py`、`degrade.py`）、`kototoki/merge.py`；共享的 `kototoki/llama_server.py`（客户端部分）。
 - 测试（core，`just test`）：`tests/core/test_translate.py`（伪服务／伪客户端走完整流程：正常、续跑与截掉写了一半的行、全部完成不启动 Strata、基础设施失败重启即新 session 与放弃、`StrataRefused` 不重试且置 unavailable、注入行变化另起 run、空场景等）；`tests/core/test_translate_degrade.py`（拆分与邻文、10→5→1 降级与单条回退、超出 context 进入降级、续跑复用已记录节点、回退终态、经编排器写进 `published.json` 的回退计数）；`tests/core/test_translate_recipes.py`（`RECIPE_HASH` 钉子、提示／注入／请求体与研究侧逐字节对照、gap-pack-v2 规则）；`tests/core/test_llama_server.py`（共享模块：客户端、显存轮询、OOM 识别、names 用的命令行拼装）；`tests/core/test_merge.py`。`tests/core/test_translate_strata.py`（伪 CLI：已有 launch 时拒绝且不替别人停、等 names 释放显存、`probe` 各项不符即停并拒绝、未就绪／启动失败／被中断都 `--stop`、停止未确认或显存未释放只记 ERROR）。已删除：`test_translate_server.py`（H0 命令行）。
-- 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：Q2 首用 smoke（`just smoke translate_product`，`scripts/smoke/translate_product.py`，改为走 Strata）。**未运行。**
-- Q2 启动配置首用与整片端到端：ADR-0017 建议的 smoke（整机内存与显存峰值、首次格式失败、交付失败、每包耗时）与一部整片的端到端运行。**未运行，结果待用户补记。**
+- 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：Q2 首用 smoke（`just smoke translate_product`，`scripts/smoke/translate_product.py`，走 Strata）。2026-11-08 首用 smoke（`.local/smoke/20261108T104209Z/`）**通过**：合成 12 条、2 包，首次尝试全部接受（格式失败 0、交付失败 0、回退 0），`reasoning_content` 全空，推理自救／非有限 logits／重复截停 0，high 条目注入 1 行生效；Strata 加载 89 s，探测核对 0.2.12／build 0.1.58、DFlash2、kv int8、spec 4；整机显存峰值 16.1 GB、内存峰值 42.9 GiB；`--stop` 后 status 为空、空闲显存 14884 MiB。**每包约 25–31 s（均值 27.8 s，输出约 130 token）**，远慢于 v12 F1（MTP、32k）的约 3.2 s；冷启动后只有 2 包，原因未查明。此前两次失败已修：子进程里 `strata launch --no-tui` 不点名模型以退出码 2 拒绝（改为 `--model iq3_s`）；研究侧 probe 按参数判断起草方式，把默认启动误认成 MTP（改读服务日志）。
+- 2026-11-08 一部整片端到端（`python -m kototoki`，HF-II，W0，`.local/q2-product-fullfilm/`）**通过**：names 阶段 llama-server 建表 20 条（注入行 28）后停掉（10:51:50），翻译启动前空闲显存 14892 MiB，Strata 加载 98 s；1099 cue、149 包全部首次接受（格式失败 0、降级 0、回退 0、思考输出 0、推理自救／非有限 logits／重复截停 0），143 包带注入行；三份 SRT 各 1099 条、无空条，`ja-zh` 全为两行；`--stop` 后 status 为空、空闲显存 15031 MiB。整机显存峰值 16.1 GB、内存峰值 42.6 GiB（低于 v12 F1 的 61.6–63.5 GiB）。**翻译墙钟 2498 s，每包均值 16.1 s（p50 16.6、p90 19.5 s，输入约 1355、输出约 177 token，约 26 tok/s）**；v12 F1（MTP、32k 启动）同片约 420 s、每包约 3 s，Q2 默认启动慢约 6 倍。全程首请求 `cache_n` 都是 0（服务未复用前缀缓存）。原因未查（候选：128K context、CPU 图片读取器、DFlash2 本身）；按约束不改启动配置，是否换启动配置由用户决定（ADR-0017 约束）。
 - 未验证：Strata 自动启停与身份核对的真实运行（含停止后显存回到 14000 MiB、强杀残留的拒绝路径）；降级路径只经伪客户端；Strata 的请求不复现（同 seed 约半数 cue 不同，ADR-0017），重跑不保证同一译文；`q2-degrade-v1` 在产品里的质量没有独立裁判证据（沿用 ADR-0017 的 v12 F1 证据）。已知限制：空闲显存低于 14000 MiB（桌面程序占用较多）时翻译等满 120 s 后按 `server_start` 失败。
 
 ## 变更与决策来源

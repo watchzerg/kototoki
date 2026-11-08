@@ -32,7 +32,7 @@
 - **引擎并存**：H0 研究侧仍用 compat loader b11429，产品用官方 llama.cpp（现行 b11669，以[技术选型](../development/technology-stack.md)为准）。研究侧是否同步升级，未裁定（[0005](0005-apex-i-compact-translation-baseline.md)）。
 - **W0／X0 demo 的 CLI 旧默认**：省略参数时仍落到旧 PyanNet／fixed30，须显式选择新 Pyannote（[0003](0003-new-pyannote-baselines.md)）。
 - **未裁定或未验证**：
-  - Q2 启动配置的首用 smoke 与产品整片结果见[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)（[0019](0019-product-translation-q2.md)）；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
+  - Q2 默认启动配置在产品里每包约 16 s，约为 v12 F1（MTP、32k）的 6 倍（2026-11-08 smoke 与整片，[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)）；是否换启动配置待用户决定（[0017](0017-q2-strata-default-launch-baseline.md)、[0019](0019-product-translation-q2.md)）；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
   - 给新 SRT 生成 Q1／Q2 配方还没有通用入口（[0017](0017-q2-strata-default-launch-baseline.md)）；
   - `cross` 尚未在新素材上确认（[0012](0012-cross-asr-judge.md)）。
 
