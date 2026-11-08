@@ -1,6 +1,6 @@
 # 字幕翻译流程第十二轮（v12）：翻译模型换成 Strata＋Qwen3.8-Flash-Next（IQ3_S），对照 Q1
 
-状态：执行中，**暂停于票据 02**（2026-11-08：01 完成；02 因 MTP 草稿层需下载而未开跑，见 §8 第 4 项）。立项：planned（2026-11-08 起草；同日用户裁定立项，**含阶段 E**，预算按 §5 合计 10 run／$115；§8 第 2 项的旧锁已按用户指示删除）。  
+状态：执行中（2026-11-08：01 完成；02 曾因 MTP 草稿层需下载而暂停，用户已裁定 §8 第 4 项为 (a) 允许下载，续跑）。立项：planned（2026-11-08 起草；同日用户裁定立项，**含阶段 E**，预算按 §5 合计 10 run／$115；§8 第 2 项的旧锁已按用户指示删除）。  
 范围：只换 Q1 最后一步翻译所用的模型和推理引擎，其余不变：切包、邻文、提示、专名表注入、采样都与 Q1 相同。候选为 Strata 0.2.12（引擎 build 0.1.58）上的 Qwen3.8-Flash-Next GSQ-RCO IQ3_S。对照一律是 **Q1**（[ADR-0016](../adr/0016-q1-translation-baseline.md)）。不改产品 `kototoki/`，不改任何基线身份（新基线由用户在 §8 裁定后另写 ADR），不开封确认集。  
 执行载体：tracker 目录 `.scratch/strata-flash-next-v12/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**  
 先读：[Strata 用法调研](2026-11-08-strata-flash-next-usage.md)全文；[ADR-0016](../adr/0016-q1-translation-baseline.md)；[v11 研究文档](2026-10-22-q0-product-route-v11.md)的 §2.3、§4.0、§5、§7.1；`experiments/translation_v3/qwen.py`（请求、校验、重试）、`recipes.py`（`QWEN_MODEL`、`_check_model`、hash）；`experiments/scene_batching_v6/asr10.py`、`names11.py`、`v11.py`（产品 ASR 源与 dev 设施）。
@@ -161,6 +161,7 @@
 | --- | --- | --- |
 | 2026-11-08 | 01 离线实现 | 完成。`translation_v3/strata.py`：F1 请求体不带 `grammar`／`cache_prompt`、每个请求带 `enable_thinking`（思考时加 `thinking_budget_tokens`，`max_tokens`＋预算）；无 `/apply-template`／`/tokenize`，输入长度取 `usage.prompt_tokens`，超 Q1 预算只标记；首请求缓存只记录；格式失败按原规则换 seed＋1 重试一次。附着式 session：持 v3 `gpu.lock`，核对 `strata --version`、`launch --status` 与 run config（本机、模型名、32k、无 vision）、`/v1/models`、`/v1/status`（32k、单并发），固定身份进配方 hash，kv／drafting 等观测值记在 session；会话中采样整机显存／内存峰值。Strata 的 chat 响应**不回** `reasoning_tokens`／`reasoning_recoveries`，改记 `reasoning_content` 字符数，并统计 server log 中"推理循环自救"与"非有限 logits"的行数。Strata 配方上两次都失败的包只让它自己的 cue 未交付（§4.0），场景继续；Hy-MT2／Qwen 配方行为不变。配方：F1 dev `60bd457f…`、F1 产品 `a2075b25…`、F2 `903d1cad…`；Q1 hash 复算不变（`9c444d3c…`、`c10e143a…`），`qwen-wide` 不变。`--round v12`（recipes、copy-q1、smoke、smoke-report、stats、generate-aa、aa、product12）。smoke 取 v11 smoke 5 个场景中的 2 个剧集＋1 个电影整场。测试 `translation_v3` 88 项、`scene_batching_v6` v6–v12 66 项通过；`strata serve --engine mock` 客户端端到端（不占 GPU）走通重试与交付失败路径。GPU 0。 |
 | 2026-11-08 | 02 smoke 与可行性门 | **未开跑，停在启动前（§8 第 4 项）。** 开跑前核对通过（无 llama-server／Strata／其他 GPU 作业，无 gpu.lock，显存基线 1.5 GB）。调研 §3 固定参数的 `strata launch --plan` 显示**需下载约 5.2 GB（MTP 草稿层）**：本机 `D:\Strata\Strata-data\` 下没有 `mtp/`（旧 `iq3_s-128k` run config 指向的 `mtp\rt` 不存在），只有 DFlash2 草稿器（823 MB）。按授权"下载量不为 0 即停"，未启动 Strata；改 drafting 会改 §4.0 固定的启动参数，不自行改。03–06 都被 02 阻断，本轮暂停。GPU 0、裁判 $0。 |
+| 2026-11-08 | 02 smoke 与可行性门（续跑） | **门通过，进 C。** 用户裁定 §8 第 4 项 (a) 后启动 `kototoki-translate`（首次下载 MTP 草稿层约 5 GB，加载约 60 s），`probe` 核对通过（0.2.12／build 0.1.58、本机、32k、kv int8、MTP spec 4、单并发、无 vision）。v11 smoke 的 2 个剧集＋1 个电影场景整场，seed 20261011，跑两遍各 45 包：首次格式失败 **0／90**、交付失败 0、`reasoning_content` 全空、限长停止 0、server log 推理自救 0、非有限 logits 0、超 Q1 预算 0。每包耗时均值 3.28／3.20 s（p90 3.75／3.65 s），接受输出约 64–65 tok/s，墙钟 149／145 s。峰值显存 16.1 GB，**整机内存峰值 63.5 GiB（共 63.9 GiB）**。同 seed 两遍：包 84%、cue **44%** 文本不同（Q1 的 llama-server 约 24%）。结束后 `strata launch --stop`，显存回到 1.0 GB。GPU：smoke 2 次（不计 run）。 |
 
 ### 7.1 结论
 
@@ -183,6 +184,8 @@
    - (c) **`--drafting off`**：不用投机解码，最慢，但排除草稿器对复现性的影响。同样要修订 §4.0。
 
    裁定后从票据 02 接着跑：代码与配方已就绪；选 (b)／(c) 时先改 `strata.LAUNCH_FLAGS` 并重写 F1／F2 配方。
+
+   **已裁定（2026-11-08）：(a) 允许下载 MTP 草稿层**，其余参数不变，从票据 02 续跑。
 
 ## 附：执行提示词（粘贴到新 session）
 

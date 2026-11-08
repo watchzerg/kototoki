@@ -210,7 +210,8 @@ def probe(port: int = 8080, *, cli: Callable[..., str] = _cli, get: Callable[[st
     version = cli("--version").strip()
     if f"strata {STRATA_VERSION} " not in version + " " or f"build {ENGINE_BUILD}" not in version:
         raise RuntimeError(f"Strata version differs from {STRATA_VERSION} / build {ENGINE_BUILD}: {version!r}")
-    status = json.loads(cli("launch", "--status", "--output", "json"))
+    # the JSON document is the first line; 0.2.12 prints a human "name: ready at url" line after it
+    status = json.loads(cli("launch", "--status", "--output", "json").strip().splitlines()[0])
     running = [r for r in status.get("running", []) if r.get("state") == "ready"]
     if len(running) != 1 or running[0].get("port") != port:
         raise RuntimeError(f"Expected exactly one ready Strata launch on port {port}, got {status.get('running')!r}")

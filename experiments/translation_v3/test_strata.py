@@ -174,7 +174,8 @@ class StrataAttachTest(unittest.TestCase):
             if a == ("--version",):
                 return "strata 0.2.12 (build 0.1.58; python 3.12.15 at x)\n"
             return json.dumps({"running": [{"name": strata.PRESET, "profile": "launch-" + strata.PRESET,
-                                            "state": "ready", "port": 8080, "host": host, "config": str(config)}]})
+                                            "state": "ready", "port": 8080, "host": host, "config": str(config)}]}
+                              ) + "\n" + strata.PRESET + ": ready at http://127.0.0.1:8080\n"
 
         def get(url):
             if url.endswith("/v1/models"):
