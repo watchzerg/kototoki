@@ -1,6 +1,6 @@
 # ADR-0015：翻译分为两条基线——H0（Hy-MT2）与 Q0（Qwen 通用模型）
 
-状态：已接受（2026-10-21）。  
+状态：已接受（2026-10-21）；"Q 线当前基线是 Q0"一点 2026-11-08 起由 [ADR-0016：Q1](0016-q1-translation-baseline.md) 替代，Q0 的身份定义不变。下文"已知缺口"一条已在 v10 补上（`translate-srt` 对 Qwen 配方改用 `qwen.session_factory`）。下文保留 2026-10-21 的状态。  
 日期：2026-10-21。  
 关系：**不替代任何 ADR。** H0 就是 [ADR-0005](0005-apex-i-compact-translation-baseline.md)（模型与采样）＋[ADR-0010](0010-dp10-cut-translation-flow-baseline.md)（研究侧流程 `dp10-cut`）＋[ADR-0011](0011-dp10-cut-product-recipe.md)（产品配方 `dp10-cut-degrade-v1`）的合称，三者内容不变。Q0 是新增的并行基线，来自[第九轮（v9）](../research/2026-10-21-general-model-translation-v9.md)的 `qwen-wide`。[ADR-0008](0008-no-multi-translation-selection.md)（不自动选用"翻译多次再挑选"）对两条线同样适用。  
 范围：只给两条翻译基线命名并固定身份，供后续测试选对照。不改产品 `kototoki/`，不做 L3，也不决定产品是否改用 Qwen。
