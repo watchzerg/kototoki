@@ -15,7 +15,8 @@
 
 专家区：Qwen3.8-Flash-Next IQ3_S 要把 46.84 GiB 专家常驻内存；内存不够时引擎退到 mmap、从 SSD 读专家，答案不变但
 读提示与生成都慢约 5 倍（2026-11-08 整片实测）。因此启动前先等可用内存，ready 后从本次启动写进
-`<name>.engine.log` 的新内容判断专家区在内存还是退到 mmap，记进 `strata.json`；退到 mmap 只记 WARNING、不拒绝。
+`<name>.engine.log` 的新内容判断专家区：必须看到 `expert arena: locked`（全部专家锁进内存）且没有退到 mmap 的记录，
+否则停掉 Strata 并拒绝（`StrataRefused`，本批不再重试）；结果记进 `strata.json`。
 - 退出：只停自己启动的 launch：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 `MIN_FREE_MIB`；
   核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不能盖住原异常）。
 
@@ -58,6 +59,7 @@ MIN_FREE_MIB = 14000
 MIN_AVAILABLE_RAM_GIB = 52.0
 RAM_WAIT_S = 180.0
 MMAP_MARKERS = ("not enough RAM for the expert arena", "experts via mmap")
+ARENA_LOCKED = "expert arena: locked"
 LAUNCH_TIMEOUT_S = 900.0   # 加载约 73 s（调优记录）；首次还可能编译／预热
 READY_TIMEOUT_S = 300.0
 STOP_TIMEOUT_S = 180.0
@@ -175,10 +177,10 @@ def available_ram_gib() -> float | None:
 
 
 def expert_arena(engine_text: str) -> str | None:
-    """本次启动的引擎日志 → 专家区所在："mmap"（退到从文件读）、"ram"（有引擎日志且没有退化记录）、None（没有日志）。"""
-    if not engine_text.strip():
-        return None
-    return "mmap" if any(marker in engine_text for marker in MMAP_MARKERS) else "ram"
+    """本次启动的引擎日志 → 专家区所在："mmap"（退到从文件读）、"ram"（记有 `expert arena: locked`）、None（两者都没有）。"""
+    if any(marker in engine_text for marker in MMAP_MARKERS):
+        return "mmap"
+    return "ram" if ARENA_LOCKED in engine_text else None
 
 
 def read_from(path: Path, offset: int) -> str:
@@ -303,11 +305,14 @@ class StrataServer:
             observed = probe(launch, cli=self.cli, get=self.get, log_text=read_from(self.log_path, self.log_offset))
             engine_log = self.engine_log_dir / f"{launch.get('name')}.engine.log"
             observed["expert_arena"] = expert_arena(read_from(engine_log, engine_sizes.get(engine_log.name, 0)))
-            if observed["expert_arena"] == "mmap":
-                log.warning("[translate] Strata did not fit its experts in RAM and reads them from the SSD "
-                            "(see %s); translation will be several times slower. Free RAM and run again", engine_log)
             self.identity.update(strata=observed, cold_load_seconds=self.clock() - started)
             atomic_write_json(self.runtime_dir / "strata.json", dict(observed, attached_at_utc=utc_now()))
+            if observed["expert_arena"] != "ram":
+                raise StrataRefused(
+                    "Strata did not lock all experts in RAM (expert arena "
+                    + ("fell back to mmap, reading experts from the SSD" if observed["expert_arena"] == "mmap"
+                       else "not confirmed in the engine log")
+                    + f"; see {engine_log}); free RAM (about {MIN_AVAILABLE_RAM_GIB:.0f} GiB available) and run again")
             self.sampler = ResourceSampler(self.url, self.get)
             self.sampler.start()
             log.info("[translate] Strata ready in %.1f s (%s, %s, experts in %s)", self.identity["cold_load_seconds"],

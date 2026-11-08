@@ -48,7 +48,7 @@ class FakeStrata:
         self.extra_launch = False               # ready 时同时冒出第二个 launch
         self.free_before = 15000
         self.ram = [55.0]                       # 依次返回的可用内存（GiB），用完后保持最后一个值
-        self.engine_lines = "strata generate: expert arena: locked 1302 MiB\n"
+        self.engine_lines = "strata generate: expert arena: locked 1302 MiB via working-set minimum + VirtualLock\n"
         self.engine_log = root / "launch-logs" / "k1.engine.log"
         self.engine_log.parent.mkdir(exist_ok=True)
         self.engine_log.write_text("strata generate: experts via mmap (older launch)\n", encoding="utf-8")
@@ -267,18 +267,28 @@ class StrataServerTests(unittest.TestCase):
         self.assertIn("only 30.0 GiB RAM available", logs.output[0])
         self.assertIn("launch --no-tui --model iq3_s", self.verbs())
 
-    def test_mmap_fallback_is_recorded_and_warned_not_refused(self) -> None:
-        self.fake.engine_lines = ("strata generate: not enough RAM for the expert arena (2.21 GiB short)\n"
-                                  "strata generate: experts via mmap\n")
-        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
-            with self.server():
-                pass
-        self.assertEqual(read_json(self.root / "strata.json")["expert_arena"], "mmap")
-        self.assertTrue(any("reads them from the SSD" in line for line in logs.output))
+    def test_mmap_fallback_or_unconfirmed_arena_stops_and_refuses(self) -> None:
+        cases = [("strata generate: expert arena: locked 1 MiB\n"
+                  "strata generate: not enough RAM for the expert arena (2.21 GiB short)\n"
+                  "strata generate: experts via mmap\n", "mmap", "fell back to mmap"),
+                 ("strata generate: memory guard: ...\n", None, "not confirmed")]
+        for lines, arena, message in cases:
+            with self.subTest(arena=arena):
+                self.fake = FakeStrata(self.root)
+                self.fake.engine_lines = lines
+                self.pids.clear()
+                with self.assertRaisesRegex(StrataRefused, message):
+                    with self.server():
+                        self.fail("must not enter")
+                self.assertEqual(read_json(self.root / "strata.json")["expert_arena"], arena)
+                self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
+                self.assertIsNone(self.fake.state)
+                self.assertTrue(read_json(self.root / "strata-final.json")["released"])
 
     def test_expert_arena_parsing(self) -> None:
         self.assertIsNone(S.expert_arena(""))
-        self.assertEqual(S.expert_arena("strata generate: expert arena: locked\n"), "ram")
+        self.assertEqual(S.expert_arena("strata generate: expert arena: locked 3502 MiB\n"), "ram")
+        self.assertIsNone(S.expert_arena("strata generate: expert arena read unbuffered\n"))
         self.assertEqual(S.expert_arena("strata generate: experts via mmap (not enough RAM)\n"), "mmap")
 
     def test_status_parses_only_the_json_line(self) -> None:
