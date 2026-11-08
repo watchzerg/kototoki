@@ -14,7 +14,7 @@ from typing import Any
 import unittest
 from urllib.error import HTTPError, URLError
 
-from kototoki import names
+from kototoki import artifacts, names
 from kototoki.llama_server import InfraFailure, ManagedServer
 from kototoki.srt import parse_srt
 
@@ -86,7 +86,7 @@ class Harness:
         self.pids: list[int | None] = []
         self.start_failures: list[Exception | None] = []
         self.chat_error: tuple[Exception, str | None] | None = None
-        self.config = SimpleNamespace(paths=SimpleNamespace(output_dir=root / "out", llama_server=root / "x.exe"),
+        self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=root / "work", input_dir=root / "in", llama_server=root / "x.exe"),
                                       models=SimpleNamespace(names=root / "Qwen3.8-27B-UD-IQ3_S.gguf"),
                                       names=SimpleNamespace(port=8081, seed=7, enabled=True))
 
@@ -108,7 +108,7 @@ class Case(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.h = Harness(Path(tmp.name))
-        self.work = self.h.root / "out" / ".work" / "abc"
+        self.work = self.h.root / "work" / "abc"
 
 
 class SessionTests(Case):
@@ -116,7 +116,7 @@ class SessionTests(Case):
     def test_runtime_root_is_a_utc_stamp_with_pid(self) -> None:
         session = self.h.session()
         self.assertRegex(session.runtime_root.name, r"^\d{8}T\d{6}Z-\d+$")
-        self.assertEqual(session.runtime_root.parent, self.h.root / "out" / ".work" / "names-sessions")
+        self.assertEqual(session.runtime_root.parent, artifacts.work_root(self.h.root / "work", self.h.root / "in") / "names-sessions")
 
     def test_one_server_serves_the_batch_and_restarts_after_it_exits(self) -> None:
         with self.h.session() as session:

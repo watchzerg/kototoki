@@ -1,12 +1,14 @@
 """产物契约：工作目录、产物文件名、身份、匹配跳过、原子写、`failure.json` 与 `published.json`。
 
-布局（规格 §4）::
+布局（规格 §4、ADR-0020）::
 
-    <output_dir>/<rel_dir>/<stem>.{ja,zh,ja-zh}.srt   最终 SRT，镜像输入目录层级
-    <output_dir>/.work/lock                            编排器独占本输出目录
-    <output_dir>/.work/index.json                      <id> ↔ 相对路径
-    <output_dir>/.work/cache/                          HF_HOME／TORCH_HOME 与 model-verification.json
-    <output_dir>/.work/<id>/                           单个视频的工作目录，文件名见下方常量
+    <input_dir>/<rel_dir>/<stem>.ja-zh.srt     最终双语字幕，写在源文件旁（已存在即跳过该文件）
+    <work_dir>/cache/                          HF_HOME／TORCH_HOME 与 model-verification.json，各目标目录共用
+    <work_dir>/<目标目录键>/                    目标目录键 = `<input_dir 末段名>-<绝对路径 sha12>`（`work_root`）
+        lock                                   编排器独占该目标目录
+        input.json                             目标目录绝对路径
+        index.json                             <id> ↔ 相对路径
+        <id>/                                  单个输入文件的工作目录，文件名见下方常量
 
 坐标约定（逐产物）：
 
@@ -35,14 +37,14 @@ import threading
 import time
 from typing import Any
 
-WORK_DIR = ".work"
 INDEX = "index.json"
+INPUT_RECORD = "input.json"
 LOCK = "lock"
 CACHE_DIR = "cache"
 MODEL_VERIFICATION = "model-verification.json"
 
 PROBE = "probe.json"
-AUDIO_COPY_STEM = "audio"  # 流复制音轨为 audio.<ext>，扩展名由容器映射决定（票据 02）
+AUDIO_COPY_STEM = "audio"  # 流复制音轨为 audio.<ext>，扩展名由容器映射决定（票据 02）；音频输入不做流复制
 AUDIO_16K = "audio-16k.wav"
 EXTRACT_LOG = "extract.log"
 VAD = "vad.json"
@@ -63,7 +65,7 @@ STAGE_ARTIFACTS = (PROBE, AUDIO_16K, VAD, ASR, ALIGN, JA_CUES, NAME_TABLE, PUBLI
 # 顶层必须带 offset_s 的本地坐标产物。
 LOCAL_TIME_ARTIFACTS = frozenset({VAD, ASR, ALIGN})
 
-FINAL_SUFFIXES = {"ja": ".ja.srt", "zh": ".zh.srt", "ja-zh": ".ja-zh.srt"}
+FINAL_SUFFIX = ".ja-zh.srt"  # 唯一的最终产物：源文件旁的双语字幕
 
 WORK_ID_LENGTH = 12
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -150,22 +152,41 @@ def work_id(relative: str | PurePosixPath) -> str:
     return sha256_bytes(_relative(relative).as_posix().encode("utf-8"))[:WORK_ID_LENGTH]
 
 
-def work_root(output_dir: Path) -> Path:
-    return Path(output_dir) / WORK_DIR
+def input_key(input_dir: Path) -> str:
+    """目标目录键：`<末段名>-<绝对路径 sha12>`；路径按平台大小写规则归一，盘符根目录的末段名记为 `root`。"""
+    resolved = Path(input_dir).resolve()
+    digest = sha256_bytes(os.path.normcase(str(resolved)).encode("utf-8"))[:WORK_ID_LENGTH]
+    return f"{resolved.name or 'root'}-{digest}"
 
 
-def model_cache_path(output_dir: Path) -> Path:
-    return work_root(output_dir) / CACHE_DIR / MODEL_VERIFICATION
+def work_root(work_dir: Path, input_dir: Path) -> Path:
+    """一个目标目录的工作根：`<work_dir>/<目标目录键>/`。"""
+    return Path(work_dir) / input_key(input_dir)
 
 
-def register_work_dir(output_dir: Path, relative: str | PurePosixPath) -> Path:
-    """返回并创建 `.work/<id>/`，在 `.work/index.json` 登记 id ↔ 相对路径；短 id 碰撞时报错。
+def cache_dir(work_dir: Path) -> Path:
+    return Path(work_dir) / CACHE_DIR
 
-    读改写 `index.json`，须由编排器在扫描阶段串行调用。
+
+def model_cache_path(work_dir: Path) -> Path:
+    return cache_dir(work_dir) / MODEL_VERIFICATION
+
+
+def record_input(root: Path, input_dir: Path) -> None:
+    """在工作根写 `input.json`（目标目录绝对路径），只供人查；已有则不动。"""
+    path = Path(root) / INPUT_RECORD
+    if not path.is_file():
+        atomic_write_json(path, {"input_dir": str(Path(input_dir).resolve())})
+
+
+def register_work_dir(root: Path, relative: str | PurePosixPath) -> Path:
+    """返回并创建 `<root>/<id>/`，在 `<root>/index.json` 登记 id ↔ 相对路径；短 id 碰撞时报错。
+
+    `root` 即 `work_root(...)`。读改写 `index.json`，须由编排器在扫描阶段串行调用。
     """
     rel = _relative(relative).as_posix()
     identifier = work_id(rel)
-    index_path = work_root(output_dir) / INDEX
+    index_path = Path(root) / INDEX
     index = read_json(index_path) if index_path.is_file() else {}
     registered = index.get(identifier)
     if registered is not None and registered != rel:
@@ -173,16 +194,15 @@ def register_work_dir(output_dir: Path, relative: str | PurePosixPath) -> Path:
     if registered is None:
         index[identifier] = rel
         atomic_write_json(index_path, dict(sorted(index.items())))
-    directory = work_root(output_dir) / identifier
+    directory = Path(root) / identifier
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 
-def final_srt_paths(output_dir: Path, relative: str | PurePosixPath) -> dict[str, Path]:
-    """三份最终 SRT 的路径，镜像输入目录层级：`S1/ep01.mkv` → `<out>/S1/ep01.ja.srt` 等。"""
+def final_srt_path(input_dir: Path, relative: str | PurePosixPath) -> Path:
+    """源文件旁的双语字幕：`S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`。"""
     rel = _relative(relative)
-    base = Path(output_dir).joinpath(*rel.parent.parts)
-    return {kind: base / f"{rel.stem}{suffix}" for kind, suffix in FINAL_SUFFIXES.items()}
+    return Path(input_dir).joinpath(*rel.parent.parts) / f"{rel.stem}{FINAL_SUFFIX}"
 
 
 # --- 身份 ---------------------------------------------------------------------------------
@@ -274,43 +294,15 @@ def write_failure(work_dir: Path, stage: str, error: BaseException) -> None:
     })
 
 
-# --- 发布记录与覆盖规则 -----------------------------------------------------------------------
+# --- 发布记录 ---------------------------------------------------------------------------
 
-def read_published(work_dir: Path) -> dict[str, Any] | None:
-    path = Path(work_dir) / PUBLISHED
-    return read_json(path) if path.is_file() else None
+def record_published(work_dir: Path, final_path: Path, sha256: str, sources: Mapping[str, Any],
+                     translate_dir: str) -> None:
+    """移动双语字幕之前写 `published.json`（审计记录：字幕路径与 SHA256、来源身份、翻译 run 目录）。
 
-
-def record_published(work_dir: Path, final_paths: Mapping[str, Path], sha256: Mapping[str, str],
-                     sources: Mapping[str, Any], translate_dir: str) -> None:
-    """在 `publish_blockers` 放行之后、移动三份最终 SRT **之前**写 `published.json`。
-
-    此刻最终位置上已有文件的 SHA 记为 `previous_sha256`：若写记录后、移动完成前崩溃（可连续多次），
-    最终位置上残留的旧文件仍被认作未改动，不会误拒。
+    是否需要发布只看源文件旁的字幕是否存在（ADR-0020），本记录不参与判定。
     """
-    if set(sha256) != set(FINAL_SUFFIXES) or set(final_paths) != set(FINAL_SUFFIXES):
-        raise ValueError(f"published.json needs exactly the files and SHA256 of {sorted(FINAL_SUFFIXES)}")
     atomic_write_json(Path(work_dir) / PUBLISHED, {
-        "sha256": {kind: _sha256(sha256[kind], kind) for kind in FINAL_SUFFIXES},
-        "previous_sha256": {kind: sha256_file(path) for kind, path in final_paths.items() if Path(path).exists()},
-        "sources": dict(sources), "translate_dir": translate_dir, "published_at_utc": utc_now(),
+        "final": str(final_path), "sha256": _sha256(sha256, "ja-zh"), "sources": dict(sources),
+        "translate_dir": translate_dir, "published_at_utc": utc_now(),
     })
-
-
-def publish_blockers(final_paths: Mapping[str, Path], work_dir: Path, *, force: bool) -> list[str]:
-    """返回阻止发布的最终文件种类；空列表即可替换。
-
-    现有最终文件不存在，或其 SHA256 等于 `published.json` 的记录，视为未被改动；
-    任一存在且对不上记录（含没有记录）即视为用户改动，`force=False` 时阻止发布。
-    """
-    if force:
-        return []
-    record = read_published(work_dir) or {}
-    blockers = []
-    for kind, path in final_paths.items():
-        if not Path(path).exists():
-            continue
-        known = {(record.get(field) or {}).get(kind) for field in ("sha256", "previous_sha256")}
-        if sha256_file(path) not in known:
-            blockers.append(kind)
-    return blockers

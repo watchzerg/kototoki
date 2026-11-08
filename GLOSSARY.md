@@ -61,7 +61,7 @@ _Avoid_: F1（指基线时；F1 是 v12 的 MTP／32K 启动）、Flash-Next 基
 ### 双语字幕流水线
 
 **双语字幕流水线**：
-产品包 `kototoki/`，入口 `python -m kototoki [kototoki.toml]`：一批日语视频按阶段整批推进（probe／extract → vad → asr → align → ja-cues → names → translate → 发布），每部产出 `<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.ja-zh.srt`。
+产品包 `kototoki/`，入口 `python -m kototoki [kototoki.toml]`：一批日语视频或音频按阶段整批推进（probe／extract → vad → asr → align → ja-cues → names → translate → 发布），每个输入在源文件旁产出 `<stem>.ja-zh.srt`。
 _Avoid_: 产品后端, 正式后端
 
 **STT 引擎（w0／x0／cross）**：
@@ -88,10 +88,10 @@ _Avoid_: 计划器, 调度计划
 写在每个中间产物里的身份（上游 SHA256、配方 hash、模型 SHA256、相关配置），续跑时与期望身份相同即跳过、不同即原地替换；不含绝对路径。翻译阶段没有单一产物文件，其身份（`ja.srt` SHA256、配方 hash、seed、注入行 SHA256）与 run 目录键由翻译子系统的 `translate.plan` 给出。
 
 **发布**：
-三份最终 SRT 先写入工作目录暂存、记入 `published.json` 再一起移到输出目录；用户改动过的最终文件在 `force = false` 时不被覆盖。
+双语字幕 `<stem>.ja-zh.srt` 先写入工作目录暂存、记入 `published.json`（审计记录）再原子移到源文件旁。源文件旁已有同名字幕（不论来源）即跳过该文件，没有覆盖开关，要重做须先删掉它。
 
 **专名表（name table）**：
-`names` 阶段为每部影片的 `ja.srt` 建的专名清单（`name-table.json`，schema `name-table-v2`）：若干实体，各带种类（person／class／org／place／other）、规范中文译名、写法、`zh_variants` 与 evidence；`build.status` 为 `ok`／`failed`／`too_long`，后两者是空表。表在工作目录里，可人工校对；产品只把其中 `confidence: high` 的写法作为**注入行**交给翻译（[ADR-0019](docs/adr/0019-product-translation-q2.md)），改到注入行后重跑即重译该片。条目是转写内容，不进日志（`kototoki/names/table.py`，[ADR-0014](docs/adr/0014-name-consistency-in-product.md)）。
+`names` 阶段为每部影片的 `ja.srt` 建的专名清单（`name-table.json`，schema `name-table-v2`）：若干实体，各带种类（person／class／org／place／other）、规范中文译名、写法、`zh_variants` 与 evidence；`build.status` 为 `ok`／`failed`／`too_long`，后两者是空表。表在工作目录里，可人工校对；产品只把其中 `confidence: high` 的写法作为**注入行**交给翻译（[ADR-0019](docs/adr/0019-product-translation-q2.md)），改到注入行后删掉该片的 `*.ja-zh.srt` 再运行即重译该片。条目是转写内容，不进日志（`kototoki/names/table.py`，[ADR-0014](docs/adr/0014-name-consistency-in-product.md)）。
 _Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是历史命名）
 
 **实体（entity）**：

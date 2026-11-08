@@ -25,7 +25,7 @@ import smokelib
 
 sys.path.insert(0, str(smokelib.REPO))
 
-from kototoki import config, srt, translate  # noqa: E402
+from kototoki import artifacts, config, srt, translate  # noqa: E402
 from kototoki.translate import recipes as R  # noqa: E402
 
 NAME = "translate_product"
@@ -62,7 +62,7 @@ def synthetic_srt() -> str:
 def write_config(root: Path) -> config.Config:
     (root / "in").mkdir(parents=True, exist_ok=True)
     path = root / "kototoki.toml"
-    path.write_text('[paths]\ninput_dir = "in"\noutput_dir = "out"\n', encoding="utf-8", newline="\n")
+    path.write_text('[paths]\ninput_dir = "in"\nwork_dir = "work"\n', encoding="utf-8", newline="\n")
     return config.load(path)
 
 
@@ -108,7 +108,7 @@ def main() -> int:
     root = args.out.resolve() / NAME
     cfg = write_config(root)
     document = srt.parse_srt(synthetic_srt())
-    work_dir = cfg.paths.output_dir / ".work" / "smoke"
+    work_dir = cfg.paths.work_dir / "smoke"
     plan = translate.plan(work_dir, document, NAME_TABLE, cfg)
     result: dict[str, Any] = {
         "recipe": R.RECIPE_NAME, "recipe_hash": R.RECIPE_HASH, "seed": cfg.translate.seed, "model": R.MODEL,
@@ -136,7 +136,7 @@ def main() -> int:
                                "strata": {k: ((s.get("engine") or {}).get("strata") or {}).get(k)
                                           for k in ("version", "drafting", "expert_arena", "kv", "spec", "models")}}
                               for s in run.get("sessions", [])]
-    sessions_root = cfg.paths.output_dir / ".work" / "translate-sessions"
+    sessions_root = artifacts.work_root(cfg.paths.work_dir, cfg.paths.input_dir) / "translate-sessions"
     result["resources"] = [read(p) for p in sorted(sessions_root.rglob("resources.json"))]
     result["strata_final"] = [read(p) for p in sorted(sessions_root.rglob("strata-final.json"))]
     result["batches"] = batch_stats(plan.run_dir)

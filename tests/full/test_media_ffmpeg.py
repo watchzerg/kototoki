@@ -89,7 +89,7 @@ class MediaFfmpegCase(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._cfg_tmp = tempfile.TemporaryDirectory()
         cfg_dir = Path(cls._cfg_tmp.name)
-        (cfg_dir / "config.toml").write_text('[paths]\ninput_dir = "."\noutput_dir = "out"\n', encoding="utf-8")
+        (cfg_dir / "config.toml").write_text('[paths]\ninput_dir = "."\n', encoding="utf-8")
         cls.cfg = config.load(cfg_dir / "config.toml")
         for binary in (cls.cfg.paths.ffmpeg, cls.cfg.paths.ffprobe):
             if not binary.is_file():
@@ -207,7 +207,7 @@ class DownmixTests(MediaFfmpegCase):
         rate, channels, samples = read_wav(extract.wav)
         self.assertEqual((rate, channels), (RATE, 1))
         self.assertAlmostEqual(len(samples) / rate, 2.0, delta=0.05)
-        self.assertAlmostEqual(extract.decoded_duration_s, probe.video_duration_s, delta=0.1)
+        self.assertAlmostEqual(extract.decoded_duration_s, probe.duration_s, delta=0.1)
 
     def test_stereo_averages_channels(self) -> None:
         mono = self.make_clip("mono.mkv", 2.0, [Audio(tone_src(dur=2.0))])
@@ -238,11 +238,11 @@ class DurationCheckTests(MediaFfmpegCase):
         self.assertFalse((self.work_dir / "audio-16k.wav").exists())
         self.assertTrue((self.work_dir / "extract.log").is_file())
 
-    def test_video_duration_source_is_documented_value(self) -> None:
+    def test_duration_source_is_documented_value(self) -> None:
         path = self.make_clip("src.mkv", 2.0, [Audio(tone_src(dur=2.0))])
         probe = media.probe(path, self.cfg)
-        self.assertIn(probe.video_duration_source, {"stream.duration", "stream.tags.DURATION", "format.duration"})
-        self.assertAlmostEqual(probe.video_duration_s, 2.0, delta=0.1)
+        self.assertIn(probe.duration_source, {"stream.duration", "stream.tags.DURATION", "format.duration"})
+        self.assertAlmostEqual(probe.duration_s, 2.0, delta=0.1)
 
 
 class StreamCopyTests(MediaFfmpegCase):
@@ -258,6 +258,25 @@ class StreamCopyTests(MediaFfmpegCase):
                 self.assertEqual(extract.audio_copy.name, expected)
                 self.assertGreater(extract.audio_copy.stat().st_size, 0)
                 self.assertEqual(self.ffprobe_codec(extract.audio_copy), codec)
+
+
+class AudioOnlyInputTests(MediaFfmpegCase):
+    """音频输入（ADR-0020）：不做流复制，WAV 照常派生，时长参照取所选音轨。"""
+
+    def test_flac_input_has_no_audio_copy_and_correct_wav(self) -> None:
+        path = self.media_dir / "音声.flac"
+        run([str(self.cfg.paths.ffmpeg), "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
+             "-i", tone_src(dur=2.0), "-c:a", "flac", str(path)])
+        probe, extract = self.extract_clip(path)
+        self.assertFalse(probe.has_video)
+        self.assertAlmostEqual(probe.duration_s, 2.0, delta=0.1)
+        self.assertIsNone(extract.audio_copy)
+        self.assertIsNone(extract.payload()["audio_copy"])
+        self.assertEqual([item.name for item in self.work_dir.glob("audio.*")], [])
+        rate, channels, samples = read_wav(extract.wav)
+        self.assertEqual((rate, channels), (RATE, 1))
+        self.assertAlmostEqual(len(samples) / rate, 2.0, delta=0.05)
+        self.assertAlmostEqual(extract.decoded_duration_s, probe.duration_s, delta=0.1)
 
 
 class TrackSelectionTests(MediaFfmpegCase):

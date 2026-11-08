@@ -8,7 +8,7 @@
 
 `Session` 整批共用一个 server：首次需要时才启动，server 退出后下一部影片再启动，整批最多启动 `MAX_STARTS` 次；
 启动失败即 `unavailable`，本批其余需要模型的影片直接失败。每部只有一个请求，不做同调用内重启。server 运行日志在
-`<output_dir>/.work/names-sessions/<UTC戳>-<pid>/session-NN/`，每部影片的原始交换在
+`<工作根>/names-sessions/<UTC戳>-<pid>/session-NN/`，每部影片的原始交换在
 `<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`。
 
 依赖方向：只依赖基础层（`artifacts`、`config`、`srt`、`recipes`）与 `kototoki.llama_server`；不导入 torch、
@@ -64,7 +64,7 @@ class Session:
         self.server_factory = server_factory or self._managed_server
         self.client_factory = client_factory
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())  # UTC，与运行日志 `run-<戳>.log` 同一时间基准
-        self.runtime_root = artifacts.work_root(config.paths.output_dir) / SESSIONS_DIR / f"{stamp}-{os.getpid()}"
+        self.runtime_root = artifacts.work_root(config.paths.work_dir, config.paths.input_dir) / SESSIONS_DIR / f"{stamp}-{os.getpid()}"
         self.server: Any = None
         self.starts = 0
         self.unavailable: str | None = None
@@ -72,7 +72,7 @@ class Session:
     def _managed_server(self, runtime_dir: Path, on_pid: Callable[[int | None], None]) -> ManagedServer:
         return ManagedServer(runtime_dir, NAMES_SPEC, engine=self.config.paths.llama_server,
                              model=self.config.models.names, port=self.config.names.port,
-                             model_cache=artifacts.model_cache_path(self.config.paths.output_dir), on_pid=on_pid)
+                             model_cache=artifacts.model_cache_path(self.config.paths.work_dir), on_pid=on_pid)
 
     def __enter__(self) -> "Session":
         return self

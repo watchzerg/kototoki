@@ -6,7 +6,7 @@
   （配置文件放仓库外时默认模型目录与 llama-server 仍可用）。
 - `[vad]`、`[asr.*]`、`[align]`、`[names]` 的模型路径为相对路径时相对于 `paths.models_root`。翻译模型由 Strata
   自己管理（ADR-0019），`[translate]` 只有 `seed`（Strata 只接受正整数）。
-- `paths.input_dir`、`paths.output_dir` 没有默认值，必须写出。
+- `paths.input_dir` 没有默认值，必须写出；`paths.work_dir`（中间产物）默认仓库内 `.local/work`（ADR-0020）。
 
 不进配置文件的两项：GPU 锁路径固定为仓库内 `.local/gpu.lock`；破除死锁只认环境变量
 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效。
@@ -32,17 +32,19 @@ REQUIRED = object()  # 无默认值的键
 DEFAULTS: dict[str, dict[str, Any]] = {
     "paths": {
         "input_dir": REQUIRED,
-        "output_dir": REQUIRED,
+        "work_dir": ".local/work",
         "models_root": ".local/models",
         "ffmpeg": ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe",
         "ffprobe": ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe",
         "llama_server": ".local/tools/llama.cpp/b11669-cuda13.4/llama-server.exe",
     },
     "input": {
-        "video_extensions": [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"],
+        # 视频与音频；是否有视频流由 ffprobe 判定，不看扩展名（ADR-0020）。
+        "extensions": [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi",
+                       ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"],
         "audio_language": "jpn",
     },
-    "run": {"extract_workers": 4, "force": False, "stable_check_s": 10.0},
+    "run": {"extract_workers": 4, "stable_check_s": 10.0},
     "stt": {"engine": "w0"},
     "vad": {"model": "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"},
     "asr.w0": {"model": "faster-whisper-large-v3", "mel_assets": "w0-assets"},
@@ -56,7 +58,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "names": {"model": "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf", "port": 8081, "seed": 20261019},
 }
 # 按配置文件目录（用户值）或仓库根（默认值）解析的键。
-PATH_KEYS = {("paths", key) for key in ("input_dir", "output_dir", "models_root", "ffmpeg", "ffprobe", "llama_server")}
+PATH_KEYS = {("paths", key) for key in ("input_dir", "work_dir", "models_root", "ffmpeg", "ffprobe", "llama_server")}
 # 相对于 models_root 的模型键。
 MODEL_KEYS = {("vad", "model"), ("asr.w0", "model"), ("asr.w0", "mel_assets"), ("asr.x0", "model"),
               ("align", "model"), ("names", "model")}
@@ -69,7 +71,7 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class Paths:
     input_dir: Path
-    output_dir: Path
+    work_dir: Path
     models_root: Path
     ffmpeg: Path
     ffprobe: Path
@@ -78,14 +80,13 @@ class Paths:
 
 @dataclass(frozen=True)
 class InputConfig:
-    video_extensions: tuple[str, ...]
+    extensions: tuple[str, ...]
     audio_language: str
 
 
 @dataclass(frozen=True)
 class RunConfig:
     extract_workers: int
-    force: bool
     stable_check_s: float
 
 
@@ -224,7 +225,7 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
     return Config(
         source=source,
         paths=Paths(**{key: values["paths", key] for key in DEFAULTS["paths"]}),
-        input=InputConfig(video_extensions=tuple(ext.lower() for ext in values["input", "video_extensions"]),
+        input=InputConfig(extensions=tuple(ext.lower() for ext in values["input", "extensions"]),
                           audio_language=values["input", "audio_language"]),
         run=RunConfig(**{key: values["run", key] for key in DEFAULTS["run"]}),
         engine=engine,

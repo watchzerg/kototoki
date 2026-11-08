@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+import tempfile
 import unittest
+from unittest import mock
 
 from kototoki import media, recipes
 
@@ -70,11 +73,11 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(self.select(audio(1, "eng"), audio(2, "jpn"), language="ja").audio.index, 2)
         self.assertEqual(self.select(audio(1, "jpn"), audio(2, "eng"), language="ENG").audio.index, 2)
 
-    def test_no_audio_or_no_video_fails(self) -> None:
-        with self.assertRaisesRegex(media.MediaError, "No audio stream"):
+    def test_no_audio_fails(self) -> None:
+        with self.assertRaisesRegex(media.MediaError, "No audio stream in the input"):
             self.select()
-        with self.assertRaisesRegex(media.MediaError, "No video stream"):
-            media.parse_probe({"streams": [audio(0, "jpn")], "format": {}}, "jpn")
+        with self.assertRaisesRegex(media.MediaError, "No audio stream in the input"):
+            media.parse_probe({"streams": [], "format": {}}, "jpn")
 
     def test_records_absolute_index_codec_layout_start_time_and_subtitles(self) -> None:
         probe = media.parse_probe({"streams": [
@@ -94,7 +97,7 @@ class SelectionTests(unittest.TestCase):
 class VideoDurationTests(unittest.TestCase):
     def duration(self, video: dict[str, object], fmt: dict[str, object] | None = None) -> tuple[float, str]:
         probe = media.parse_probe({"streams": [video, audio(1, "jpn")], "format": fmt or {}}, "jpn")
-        return probe.video_duration_s, probe.video_duration_source
+        return probe.duration_s, probe.duration_source
 
     def test_stream_duration_first(self) -> None:
         self.assertEqual(self.duration(VIDEO, {"duration": "101"}), (100.0, "stream.duration"))
@@ -117,14 +120,14 @@ class VideoDurationTests(unittest.TestCase):
     def test_tag_contradicting_container_takes_smaller_and_warns(self) -> None:
         video = stream(0, "video", tags={"DURATION": "02:02:05.000000000"})  # 7325 s
         probe = media.parse_probe({"streams": [video, audio(1, "jpn")], "format": {"duration": "303"}}, "jpn")
-        self.assertEqual((probe.video_duration_s, probe.video_duration_source), (303.0, "format.duration"))
+        self.assertEqual((probe.duration_s, probe.duration_source), (303.0, "format.duration"))
         self.assertEqual(len(probe.warnings), 1)
         self.assertIn("stream.tags.DURATION", probe.warnings[0])
 
     def test_falls_back_to_container_duration_with_warning(self) -> None:
         probe = media.parse_probe({"streams": [stream(0, "video"), audio(1, "jpn")], "format": {"duration": "12.5"}},
                                   "jpn")
-        self.assertEqual((probe.video_duration_s, probe.video_duration_source), (12.5, "format.duration"))
+        self.assertEqual((probe.duration_s, probe.duration_source), (12.5, "format.duration"))
         self.assertIn("container duration", probe.warnings[-1])
         with self.assertRaisesRegex(media.MediaError, "duration is unknown"):
             self.duration(stream(0, "video"))
@@ -133,7 +136,74 @@ class VideoDurationTests(unittest.TestCase):
         cover = stream(0, "video", codec_name="mjpeg", duration="0.04", disposition={"attached_pic": 1})
         probe = media.parse_probe({"streams": [cover, audio(1, "jpn"), stream(2, "video", duration="50")],
                                    "format": {}}, "jpn")
-        self.assertEqual(probe.video_duration_s, 50.0)
+        self.assertEqual(probe.duration_s, 50.0)
+        self.assertTrue(probe.has_video)
+
+
+class AudioOnlyInputTests(unittest.TestCase):
+    """没有视频流（封面图不算）即音频输入：时长参照取所选音轨（ADR-0020）。"""
+
+    def test_audio_only_uses_chosen_audio_stream_duration(self) -> None:
+        probe = media.parse_probe({"streams": [audio(0, "eng", duration="10.0"), audio(1, "jpn", duration="61.5")],
+                                   "format": {"duration": "61.6"}}, "jpn")
+        self.assertFalse(probe.has_video)
+        self.assertEqual((probe.audio.index, probe.duration_s, probe.duration_source), (1, 61.5, "stream.duration"))
+        self.assertEqual(probe.warnings, ())
+        payload = probe.payload()
+        self.assertIs(payload["has_video"], False)
+        self.assertEqual((payload["duration_s"], payload["duration_source"]), (61.5, "stream.duration"))
+        self.assertNotIn("video_duration_s", payload)
+
+    def test_mp3_with_cover_art_counts_as_audio(self) -> None:
+        cover = stream(1, "video", codec_name="mjpeg", duration="0.04", disposition={"attached_pic": 1})
+        probe = media.parse_probe({"streams": [audio(0, "jpn", duration="30.0"), cover],
+                                   "format": {"duration": "30.0"}}, "jpn")
+        self.assertFalse(probe.has_video)
+        self.assertEqual(probe.duration_s, 30.0)
+
+    def test_falls_back_to_container_duration_with_audio_warning(self) -> None:
+        probe = media.parse_probe({"streams": [audio(0, "jpn")], "format": {"duration": "12.5"}}, "jpn")
+        self.assertEqual((probe.duration_s, probe.duration_source), (12.5, "format.duration"))
+        self.assertIn("Audio stream has no duration", probe.warnings[-1])
+        with self.assertRaisesRegex(media.MediaError, "Audio stream duration is unknown"):
+            media.parse_probe({"streams": [audio(0, "jpn")], "format": {}}, "jpn")
+
+    def test_stream_contradicting_container_takes_smaller_and_warns_audio(self) -> None:
+        probe = media.parse_probe({"streams": [audio(0, "jpn", duration="500.0")], "format": {"duration": "60"}}, "jpn")
+        self.assertEqual((probe.duration_s, probe.duration_source), (60.0, "format.duration"))
+        self.assertIn("Audio duration from stream.duration", probe.warnings[0])
+
+
+class ExtractTests(unittest.TestCase):
+    """`extract()` 的流复制分支；ffmpeg 调用用桩替换。"""
+
+    def run_extract(self, *, has_video: bool) -> tuple[mock.Mock, mock.Mock]:
+        probe = SimpleNamespace(audio=track(), has_video=has_video)
+        config = SimpleNamespace(paths=SimpleNamespace(ffmpeg=Path("ffmpeg.exe")))
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(media, "extract_original", return_value=(Path("audio.m4a"), "$ copy\n")) as copy, \
+                mock.patch.object(media, "derive_pcm16k", return_value="extract") as derive:
+            self.assertEqual(media.extract(Path("in.x"), Path(tmp) / "w", probe, config), "extract")
+        return copy, derive
+
+    def test_video_input_stream_copies_then_derives(self) -> None:
+        copy, derive = self.run_extract(has_video=True)
+        copy.assert_called_once()
+        self.assertEqual(derive.call_args.kwargs["audio_copy"], Path("audio.m4a"))
+        self.assertEqual(derive.call_args.kwargs["log_head"], "$ copy\n")
+
+    def test_audio_input_skips_stream_copy(self) -> None:
+        copy, derive = self.run_extract(has_video=False)
+        copy.assert_not_called()
+        self.assertIsNone(derive.call_args.kwargs["audio_copy"])
+
+    def test_payload_of_audio_input_has_null_audio_copy(self) -> None:
+        result = media.Extract(audio_copy=None, wav=Path("audio-16k.wav"), log=Path("extract.log"), sample_rate=16000,
+                               samples=16000, pcm_sha256="0" * 64, decoded_duration_s=1.0, duration_s=1.0,
+                               offset_s=0.0, pan="p", compensation={}, warnings=())
+        payload = result.payload()
+        self.assertIsNone(payload["audio_copy"])
+        self.assertEqual(payload["duration_s"], 1.0)
 
 
 class ContainerTests(unittest.TestCase):
@@ -210,12 +280,20 @@ class LogAndDurationTests(unittest.TestCase):
                                  "input_samples": 144000, "net_padding_s": 0.5})
         self.assertIsNone(media.parse_compensation("", track(), 1.0)["net_padding_s"])
 
-    def test_duration_check_against_video_stream(self) -> None:
-        self.assertEqual(media.check_duration(100.0, 100.9), [])
-        self.assertEqual(media.check_duration(100.9, 100.0), [])
-        with self.assertRaisesRegex(media.MediaError, "shorter than the video stream"):
-            media.check_duration(98.9, 100.0)
-        self.assertIn("longer than the video", media.check_duration(102.0, 100.0)[0])
+    def test_duration_check_against_input_duration(self) -> None:
+        for has_video in (True, False):
+            self.assertEqual(media.check_duration(100.0, 100.9, has_video=has_video), [])
+            self.assertEqual(media.check_duration(100.9, 100.0, has_video=has_video), [])
+            self.assertIn("longer than the input duration",
+                          media.check_duration(102.0, 100.0, has_video=has_video)[0])
+        with self.assertRaisesRegex(media.MediaError, "shorter than the input duration.*truncated"):
+            media.check_duration(98.9, 100.0, has_video=True)
+
+    def test_audio_input_shorter_than_estimated_duration_only_warns(self) -> None:
+        # VBR MP3 缺 Xing 头时 ffprobe 时长偏长：音频输入照常处理，只告警
+        (warning,) = media.check_duration(95.0, 100.0, has_video=False)
+        self.assertIn("5.000 s shorter than the input duration", warning)
+        self.assertIn("audio input, continuing", warning)
 
 
 if __name__ == "__main__":

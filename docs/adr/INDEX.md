@@ -11,14 +11,14 @@
 
 ## 当前有效决定
 
-更新于 2026-11-08（合并精简后；同日 ADR-0018 改为唯一基线 Q2，ADR-0019 把产品翻译切到 Q2）。
+更新于 2026-11-08（合并精简后；同日 ADR-0018 改为唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布）。
 
 | 主题 | 现行规则 | 权威出处 |
 | --- | --- | --- |
 | STT 基线 | **W0**：faster-whisper＋新 Pyannote VAD＋MMS `jpn` CTC。须用自有适配层移植 WhisperX 的切分合并与独立解码。**X0**：Qwen-ASR＋同一 VAD＋MMS。新 Pyannote＝`pyannote.audio 4.0.7`＋`pyannote/segmentation-3.0`（rev `e66f3d3b…`）。旧 PyanNet W0、fixed30、cut-merge 只作历史身份 | [0003](0003-new-pyannote-baselines.md) |
 | 设备 | ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU（产品固定 `cuda:0`） | [0003](0003-new-pyannote-baselines.md)、[0007](0007-bilingual-subtitle-pipeline-architecture.md) |
 | 产品 STT 引擎 | `[stt] engine` = `w0`（默认）｜`x0`｜`cross`（`cross-w0-x0-whisper-judge-v1`，Whisper 交叉打分，d > −1.0 取 x0）。改默认须新 ADR，并在全新隔离素材上确认 | [0012](0012-cross-asr-judge.md) |
-| 产品架构 | GPU 阶段按"阶段 × 整批"推进，每阶段一个子进程。阶段链为 `vad` → `asr` → `align`（MMS）→ `cues` → **`names`** → `translate` → publish。单一 CUDA 12.8 Python 3.13 环境；建表用独立进程的官方 llama.cpp，翻译用产品自动启停的 Strata，两者不同时驻留。`kototoki.toml` 驱动，无 CLI。每片一个工作目录，按身份与配方 hash 续跑 | [0007](0007-bilingual-subtitle-pipeline-architecture.md)；names 阶段见 [0014](0014-name-consistency-in-product.md)；翻译服务见 [0019](0019-product-translation-q2.md) |
+| 产品架构 | GPU 阶段按"阶段 × 整批"推进，每阶段一个子进程。阶段链为 `vad` → `asr` → `align`（MMS）→ `cues` → **`names`** → `translate` → publish。单一 CUDA 12.8 Python 3.13 环境；建表用独立进程的官方 llama.cpp，翻译用产品自动启停的 Strata，两者不同时驻留。`kototoki.toml` 驱动，无 CLI。视频与音频都是输入（ffprobe 判定，音频不做流复制）。工作目录在 `[paths] work_dir`（默认 `.local/work/`）下按目标目录分子目录，每片一个工作目录，按身份与配方 hash 续跑；只发布 `<主名>.ja-zh.srt` 到源文件旁，已存在即跳过该文件 | [0007](0007-bilingual-subtitle-pipeline-architecture.md)；names 阶段见 [0014](0014-name-consistency-in-product.md)；翻译服务见 [0019](0019-product-translation-q2.md)；输入、工作目录与发布见 [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) |
 | 翻译基线（唯一） | **Q2** 是唯一翻译基线，新的翻译测试都以 Q2 为对照；引用 Q1、Q0、F1、H0 时须写明并说明理由。H0 不再是基线，只作历史对照的身份（身份见 0005、0010）。新增后缀命名须用户裁定 | [0018](0018-q2-sole-translation-baseline.md)；H0／Q0 身份见 [0015](0015-two-translation-baselines.md) |
 | 产品翻译 | 产品配方 `q2-degrade-v1`（`332649cf…`）＝ Q2 规则＋失败包按 10→5→1 降级、单条仍失败保留日文。切包 `dp10-cut`、邻文 `wide-context-v1`，请求与研究侧 Q2 逐字节相同。Strata 由产品启停（`strata launch --no-tui --model iq3_s`，接入检查同 ADR-0017），整批结束或出错都 `--stop` 并核实显存。翻译身份含注入行 SHA：手改表的 high 条目即重译 | [0019](0019-product-translation-q2.md) |
 | **翻译基线 Q2：身份** | Q1 的配方规则不变：`qwen-wide`，加产品 `names` 建表中 `confidence: high` 的专名注入，不做事后替换。模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（DFlash2）。配方带 `strata_launch: "default"`，不用 grammar。每个输入一个实例。质量证据来自 v12 F1；Q2 的启动配置本身未跑过翻译 | [0017](0017-q2-strata-default-launch-baseline.md)（含 Q1 规则）；Q0 身份见 [0015](0015-two-translation-baselines.md) |
@@ -34,7 +34,8 @@
 - **未裁定或未验证**：
   - Q2 在产品里曾每包约 16 s（v12 F1 的 6 倍），原因是启动时整机内存不够放下专家区、引擎退到 mmap；专家锁进内存后整片重跑每包约 3.1 s（2026-11-08，[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)）；产品已改为启动前等可用内存、ready 后确认专家全部锁进内存、退到 mmap 即拒绝（[0019](0019-product-translation-q2.md)），因此需要约 52 GiB 可用内存；同 seed 跨 Strata 启动不可复现；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
   - 给新 SRT 生成 Q1／Q2 配方还没有通用入口（[0017](0017-q2-strata-default-launch-baseline.md)）；
-  - `cross` 尚未在新素材上确认（[0012](0012-cross-asr-judge.md)）。
+  - `cross` 尚未在新素材上确认（[0012](0012-cross-asr-judge.md)）；
+  - 音频输入未用真实音频文件跑过整条链；音频时长偏短只告警，损坏的音频文件会出不完整字幕（[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)）。
 
 ## 演进链
 
@@ -62,6 +63,9 @@
   1. [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13）：`b10-joint-degrade-v1`。
   2. → [0011](0011-dp10-cut-product-recipe.md)（已合并）（10-18）：`dp10-cut-degrade-v1`。
   3. → [0019](0019-product-translation-q2.md)（11-08）：`q2-degrade-v1`，即 Q2 规则＋降级；Strata 由产品启停，删除发布时替换与 `[names] enabled`。
+- **产品输入、工作目录与发布**：
+  1. [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13）：只扫视频；`<output_dir>/.work/`；三份 SRT 镜像发布到 `output_dir`，按 `published.json` 判定覆盖、`force`。
+  2. → [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)（11-08）：音频也作输入；`[paths] work_dir`（默认 `.local/work/`）按目标目录分子目录；只发布 `ja-zh.srt` 到源文件旁，已存在即跳过；删 `output_dir` 与 `force`。
 - **方法禁区**：[0008](0008-no-multi-translation-selection.md)（10-16），放弃 v4 `mbr8c` 与 v5 `mbr8s`。0012、0014–0017 都确认它仍适用。
 - **专名一致性**：
   1. [0013](0013-name-consistency-closed.md)（已合并）（10-19）：结题，冻结配置，不进产品。
@@ -81,7 +85,7 @@
 | --- | --- | --- |
 | [0003](0003-new-pyannote-baselines.md) | STT 基线 W0／X0（新 Pyannote） | 有效（并入 0001、0002） |
 | [0005](0005-apex-i-compact-translation-baseline.md) | H0 翻译模型、采样与引擎 | 有效（并入 0004） |
-| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 双语字幕流水线架构 | 有效；第 3 点的翻译引擎由 0019 替代 |
+| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 双语字幕流水线架构 | 有效；第 3 点的翻译引擎由 0019 替代；第 7、9、10 点的工作目录、输出目录锁与发布由 0020 替代 |
 | [0008](0008-no-multi-translation-selection.md) | 不自动选用"翻译多次再挑选" | 有效 |
 | [0010](0010-dp10-cut-translation-flow-baseline.md) | H0 翻译流程与产品配方（`dp10-cut`／`dp10-cut-degrade-v1`） | 部分有效（并入 0006、0009、0011）：切包规则仍是 Q2 的切包；第 6、7 点产品配方由 0019 替代 |
 | [0012](0012-cross-asr-judge.md) | 产品 STT 可选引擎 `cross` | 有效 |
@@ -90,8 +94,9 @@
 | [0017](0017-q2-strata-default-launch-baseline.md) | Q 线基线 Q2（含 Q1 规则） | 有效（并入 0016） |
 | [0018](0018-q2-sole-translation-baseline.md) | 唯一翻译基线 Q2 | 有效；第 3 点"产品当前实现"由 0019 替代 |
 | [0019](0019-product-translation-q2.md) | 产品翻译切到 Q2 | 有效 |
+| [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) | 音频输入、工作目录移出目标目录、双语字幕发布到源文件旁 | 有效 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0020 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0021 起。
 
 ## 记录新决定
 

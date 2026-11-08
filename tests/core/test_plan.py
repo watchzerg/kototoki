@@ -1,5 +1,5 @@
 """阶段计划模块（`kototoki.plan`）离线测试：阶段链逐级推进（cues → names → translate）、无语音直达发布、
-已发布即 `done`、最终文件改动或身份变化即重新发布（含旧版记录多出的键）、专名表只有注入行进翻译身份、
+计划从不返回 `done`（翻译阶段总要经过，`published.json` 不参与判定）、专名表只有注入行进翻译身份、
 连续调用结果相同且不改写入参、核对出错时标明阶段。
 壳写出的身份与本模块相等由 `tests/core/test_stt_workers.py` 覆盖；整批运行中的调用次数由 `tests/core/test_job.py` 覆盖。
 """
@@ -48,12 +48,12 @@ class PlanCase(unittest.TestCase):
         self.root = Path(tmp.name).resolve()
         (self.root / "in").mkdir()
         toml = self.root / "kototoki.toml"
-        toml.write_text('[paths]\ninput_dir = "in"\noutput_dir = "out"\n', encoding="utf-8")
+        toml.write_text('[paths]\ninput_dir = "in"\nwork_dir = "out"\n', encoding="utf-8")
         self.config = load(toml)
-        self.work = self.root / "out" / ".work" / "0123456789ab"
+        self.work = self.root / "out" / "in-0123456789ab" / "0123456789ab"
         self.work.mkdir(parents=True)
-        self.finals = artifacts.final_srt_paths(self.root / "out", "a.mkv")
-        self.target = plan.Target(self.work, self.finals, PROBE_IDENTITY, PCM)
+        self.final = artifacts.final_srt_path(self.root / "in", "a.mkv")
+        self.target = plan.Target(self.work, PROBE_IDENTITY, PCM)
         self.tables: list[dict] = []  # 伪 translate.plan 收到的专名表
         translate = types.ModuleType("kototoki.translate")
         translate.RECIPE_HASH = "a" * 64
@@ -112,15 +112,13 @@ class PlanCase(unittest.TestCase):
         self.write_cues()
         self.write_names(entries)
 
-    def publish(self, current: plan.Plan, extra_sources: dict | None = None) -> None:
-        texts = {kind: "" if current.no_speech else SRT_JA for kind in artifacts.FINAL_SUFFIXES}
-        for kind, path in self.finals.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(texts[kind].encode("utf-8"))
-        artifacts.record_published(self.work, self.finals,
-                                   {kind: artifacts.sha256_bytes(texts[kind].encode()) for kind in texts},
-                                   current.sources | {"translate_fallback_cues": 0} | (extra_sources or {}),
-                                   "translate/x")
+    def publish(self, current: plan.Plan) -> None:
+        """模拟已发布：字幕写在源文件旁并写 `published.json`；计划不应受此影响。"""
+        text = "" if current.no_speech else SRT_JA
+        self.final.parent.mkdir(parents=True, exist_ok=True)
+        self.final.write_bytes(text.encode("utf-8"))
+        artifacts.record_published(self.work, self.final, artifacts.sha256_bytes(text.encode()),
+                                   current.sources | {"translate_fallback_cues": 0}, "translate/x")
 
     def next(self) -> plan.Plan:
         return plan.next_stage(self.target, self.config, models)
@@ -158,7 +156,7 @@ class ChainTests(PlanCase):
         self.assertEqual(set(current.sources),
                          {"probe", "vad", "asr", "align", "ja_cues", "names", "translate", "no_speech"})
         self.publish(current)
-        self.assertEqual(self.next().stage, "done")
+        self.assertEqual(self.next().stage, "translate")  # 已发布与否不归计划
 
     def test_cues_stage_needs_both_ja_cues_and_ja_srt(self) -> None:
         self.write_vad()
@@ -182,41 +180,41 @@ class ChainTests(PlanCase):
         current = plan.advance(current, self.target, self.config, models)
         self.assertEqual(current.stage, "translate")
         self.publish(current)
-        done = plan.advance(current, self.target, self.config, models)
-        self.assertEqual(done.stage, "done")
-        with self.assertRaises(ValueError):
-            plan.advance(done, self.target, self.config, models)
+        self.assertEqual(plan.advance(current, self.target, self.config, models).stage, "translate")
 
-    def test_no_speech_goes_straight_to_publish_then_done(self) -> None:
+    def test_advance_refuses_the_publish_terminal(self) -> None:
+        self.write_vad(chunks=[])
+        current = self.next()
+        self.assertEqual(current.stage, "publish")
+        with self.assertRaises(ValueError):
+            plan.advance(current, self.target, self.config, models)
+
+    def test_no_speech_goes_straight_to_publish(self) -> None:
         self.write_vad(chunks=[])
         current = self.next()
         self.assertEqual((current.stage, current.no_speech), ("publish", True))
         self.assertEqual(current.sources, {"probe": PROBE_IDENTITY, "vad": plan.vad_identity(PCM, MODELS),
                                            "no_speech": True})
         self.publish(current)
-        self.assertEqual(self.next().stage, "done")
+        self.assertEqual(self.next().stage, "publish")  # published.json 存在也不改变
 
-    def test_changed_final_or_changed_identity_republishes(self) -> None:
+    def test_complete_run_and_published_record_still_return_translate(self) -> None:
+        # 翻译 run 已完成、published.json 与源文件旁字幕都在：计划仍停在 translate（只读回译文），不返回 done。
         self.write_upstream()
-        self.publish(self.next())
-        self.finals["zh"].write_text("edited\n", encoding="utf-8")
-        self.assertEqual(self.next().stage, "translate")
-        self.finals["zh"].write_bytes(SRT_JA.encode("utf-8"))
-        self.assertEqual(self.next().stage, "done")
+        first = self.next()
+        self.publish(first)
+        second = self.next()
+        self.assertEqual(second.stage, "translate")
+        self.assertEqual(second.identities, first.identities)
+        self.assertTrue(artifacts.read_json(self.work / artifacts.PUBLISHED)["final"].endswith("a.ja-zh.srt"))
+
+    def test_changed_identity_reaches_translate_or_earlier(self) -> None:
+        self.write_upstream()
         changed = replace(self.config, translate=replace(self.config.translate, seed=1))
         self.assertEqual(plan.next_stage(self.target, changed, models).stage, "translate")
         self.write_cues(SRT_JA.replace("こんにちは", "さようなら"))
         self.write_names()  # ja.srt 变了要重建表；表当前后翻译身份随 ja.srt 变化
         self.assertEqual(self.next().stage, "translate")
-
-    def test_old_record_with_names_apply_key_republishes(self) -> None:
-        # 旧版本发布记录多一个 `names_apply`（发布期替换的审计身份，ADR-0019 已删）：不算最新，重新发布。
-        self.write_upstream()
-        current = self.next()
-        self.publish(current, {"names_apply": {"upstream": {artifacts.NAME_TABLE: "f" * 64}, "recipe_hash": "e" * 64}})
-        self.assertEqual(self.next().stage, "translate")
-        self.publish(current)
-        self.assertEqual(self.next().stage, "done")
 
     def test_stale_upstream_restarts_from_that_stage(self) -> None:
         self.write_upstream()
@@ -254,7 +252,7 @@ class NamesChainTests(PlanCase):
         self.assertEqual(set(current.sources), {"probe", "vad", "asr", "align", "ja_cues", "names", "translate",
                                                 "no_speech"})
         self.publish(current)
-        self.assertEqual(self.next().stage, "done")
+        self.assertEqual(self.next().stage, "translate")
 
     def test_stale_table_stops_at_names(self) -> None:
         self.write_upstream()
@@ -271,16 +269,13 @@ class NamesChainTests(PlanCase):
         self.write_upstream([YAMADA, TOKYO])
         first = self.next()
         self.publish(first)
-        self.assertEqual(self.next().stage, "done")
-        # 改 high 条目的写法：表仍当前（不回到 names），但注入行变了，翻译身份随之变化，需重译并重新发布。
+        # 改 high 条目的写法：表仍当前（不回到 names），但注入行变了，翻译身份随之变化。
         self.edit_entries([dict(YAMADA, forms=[{"ja": "山田", "zh": "山田君"}]), TOKYO])
         second = self.next()
         self.assertEqual(second.stage, "translate")
         self.assertEqual(second.identities["names"], first.identities["names"])
         self.assertNotEqual(second.identities["translate"]["names_sha256"],
                             first.identities["translate"]["names_sha256"])
-        self.publish(second)
-        self.assertEqual(self.next().stage, "done")
 
     def test_editing_only_medium_or_low_entries_changes_nothing(self) -> None:
         self.write_upstream([YAMADA, TOKYO])
@@ -289,7 +284,7 @@ class NamesChainTests(PlanCase):
         low = dict(TOKYO, entity_ja="大阪", confidence="low", forms=[{"ja": "大阪", "zh": "大阪"}])
         self.edit_entries([YAMADA, dict(TOKYO, forms=[{"ja": "東京", "zh": "东京都"}]), low])
         second = self.next()
-        self.assertEqual(second.stage, "done")  # 注入行不变：翻译身份不变，已发布记录仍匹配
+        self.assertEqual(second.stage, "translate")  # 注入行不变：翻译身份不变
         self.assertEqual(second.identities, first.identities)
 
     def test_broken_table_is_a_translate_plan_error(self) -> None:
@@ -384,7 +379,7 @@ class AsrEngineTests(unittest.TestCase):
     def test_worker_models_pass_both_asr_entries_for_cross(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             toml = Path(tmp) / "kototoki.toml"
-            toml.write_text('[paths]\ninput_dir = "in"\noutput_dir = "out"\n[stt]\nengine = "cross"\n',
+            toml.write_text('[paths]\ninput_dir = "in"\nwork_dir = "out"\n[stt]\nengine = "cross"\n',
                             encoding="utf-8")
             worker_models = plan.worker_models(load(toml))
         self.assertTrue({"w0", "w0_mel_assets", "x0"} <= set(worker_models))

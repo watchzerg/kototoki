@@ -4,7 +4,7 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[模块边界](../module-boundaries.md#产品包的责任边界)）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：Strata 服务的启停与身份核对、`dp10-cut` 切包与 Q2 请求、专名注入、按批次落盘与续跑、基础设施失败的重启、批次终态失败的 10→5→1 降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`zh.srt`／`ja-zh.srt` 的写出与发布（编排器）、专名表的建表（[专名一致性](name-consistency.md)）、工作目录 `.work/<id>/` 本身的位置（[产物契约](artifact-contract.md)）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。研究侧同名规则见 `experiments/translation_v3/{qwen,strata}.py` 与[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是 Q2 的产品移植，不导入它们。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md) §3.3、§4、§6，[模块边界](../module-boundaries.md#产品包的责任边界)）中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：Strata 服务的启停与身份核对、`dp10-cut` 切包与 Q2 请求、专名注入、按批次落盘与续跑、基础设施失败的重启、批次终态失败的 10→5→1 降级与回退报告，以及中日两行合并。不负责：GPU 锁与 Job Object（[批次编排](batch-orchestration.md)）、`ja-zh.srt` 的写出与发布（编排器；`zh.srt` 不再发布，ADR-0020）、专名表的建表（[专名一致性](name-consistency.md)）、工作目录 `<work root>/<id>/` 本身的位置（[产物契约](artifact-contract.md)）、任何时间换算。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。研究侧同名规则见 `experiments/translation_v3/{qwen,strata}.py` 与[完整 SRT 翻译流程](translation-srt-flow.md)，本模块是 Q2 的产品移植，不导入它们。
 
 ## 当前行为规格
 
@@ -34,7 +34,7 @@
 | `StrataRefused` | 已有别的 launch 在服务；版本、端口、run config、`/v1/models`、原生 context 与 ADR-0017 不符 | 不重试：`Session.unavailable` 置位，本批其余需要模型的影片直接失败，已启动的 Strata 随即停掉 |
 | 其他异常 | 非 JSON 响应、写盘失败等 | 该 session 记 `stop_reason = session_error: …`，停掉 Strata，原样上抛 |
 
-**降级**（`degrade.py`，规格 §6）：批次终态失败（两次尝试都失败）后拆成前后两半 `父ID.a`／`父ID.b`（奇数条前半多 1 条），仍失败的半批拆成单条 `父ID.a.1`…，单条仍失败则该 cue 的译文 = 日文原文（回退，原因取该单条的失败种类）；只有 1 条的批次失败即回退。子批次与原批次用同一条邻文规则、同一 seed、同一专名注入规则。降级中每个节点（含失败的原批次）的结果一出来就追加到 `degrade.jsonl`；降级途中的基础设施失败照常重启 Strata，新 session 从未记录的节点继续，已记录的节点不再请求。整个批次完成后写成 `batches.jsonl` 的一行（带 `degrade.nodes` 与 `degrade.fallback`），回退由此对该配方 hash、seed 与注入行是终态：重跑同一命令不再尝试，要重试须改 `[translate] seed`（另起 run）；`force` 不触发重译。研究侧 Q2 对失败的包只空出该包，产品的 10→5→1 是唯一差别（[ADR-0019](../../adr/0019-product-translation-q2.md) 第 4 点）；它与两次可靠性尝试都不是"翻译多次再挑选"（[ADR-0008](../../adr/0008-no-multi-translation-selection.md)）。
+**降级**（`degrade.py`，规格 §6）：批次终态失败（两次尝试都失败）后拆成前后两半 `父ID.a`／`父ID.b`（奇数条前半多 1 条），仍失败的半批拆成单条 `父ID.a.1`…，单条仍失败则该 cue 的译文 = 日文原文（回退，原因取该单条的失败种类）；只有 1 条的批次失败即回退。子批次与原批次用同一条邻文规则、同一 seed、同一专名注入规则。降级中每个节点（含失败的原批次）的结果一出来就追加到 `degrade.jsonl`；降级途中的基础设施失败照常重启 Strata，新 session 从未记录的节点继续，已记录的节点不再请求。整个批次完成后写成 `batches.jsonl` 的一行（带 `degrade.nodes` 与 `degrade.fallback`），回退由此对该配方 hash、seed 与注入行是终态：重跑同一命令不再尝试，要重试须改 `[translate] seed`（另起 run）；要重做已发布的文件须先删掉其 `.ja-zh.srt`。研究侧 Q2 对失败的包只空出该包，产品的 10→5→1 是唯一差别（[ADR-0019](../../adr/0019-product-translation-q2.md) 第 4 点）；它与两次可靠性尝试都不是"翻译多次再挑选"（[ADR-0008](../../adr/0008-no-multi-translation-selection.md)）。
 
 **Strata 生命周期**（`strata.StrataServer`，一个 session 一次进入／退出）：
 
@@ -42,7 +42,7 @@
 2. 身份核对（`strata.probe`）：`strata --version` 为 0.2.12／build 0.1.58，launch 在 `127.0.0.1:8080`，run config 的 `model_name` 为 `qwen3.8-flash-next-iq3_s`、`--max-context 131072`，起草方式取自本次启动写进服务日志的 `[strata] drafting:` 一行（须为 DFlash2；Strata 总会给引擎传 `--mtp <权重目录>`，按 run config 参数判断会把默认启动误认成 MTP，2026-11-08 首次 smoke 实测），`/v1/models` 含该模型，`/v1/status` 的原生 context 为 131072。不符即 `StrataRefused`，并停掉刚启动的服务。
 3. 运行中：`ResourceSampler` 每 5 s 从 `/v1/status` 取整机显存与内存峰值；服务日志只计事件数（推理循环自救、logits 非有限、单 token 重复截停），不复制日志。
 4. 退出：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 14000 MiB；核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不盖住原异常）。产品进程被强杀时 Strata 可能留在后台，下次运行因 status 非空而拒绝，须手动 `strata launch --stop`。
-5. 证据：`<output_dir>/.work/translate-sessions/<UTC戳>-<pid>/session-NN/` 下 `strata.json`（接入时观察到的身份，不含 API key）、`resources.json`（显存／内存峰值、日志事件计数）、`strata-final.json`（停止与显存释放核实）。
+5. 证据：`<work root>/translate-sessions/<UTC戳>-<pid>/session-NN/` 下 `strata.json`（接入时观察到的身份，不含 API key）、`resources.json`（显存／内存峰值、日志事件计数）、`strata-final.json`（停止与显存释放核实）。
 
 **session**：一次 Strata 进入／退出即一个 session。首个 completion 的 `cache_n` 只在每个 session 记录一次（`run.json` 的 `cache_reset`）。每次重启都是新 session：影片 `run.json` 的 `sessions[]` 新增一项、`cache_state` 重置、写过批次或遇到基础设施失败的 session 超过一个时 `resumed = true`。Strata 启动失败（`server_start`）不新增 `sessions[]` 项，记入 `server_start_failures[]`。某部影片的重启额度全部耗在 `server_start` 上时，`Session` 记为不可用，本批其余影片直接抛 `TranslateError`，不再逐片等待；混有其他种类的失败不触发这一点。Strata 与 names 的 llama-server 不同时驻留（[模块边界：并发与生命周期](../module-boundaries.md#并发与生命周期)）；没有影片需要模型时不启动。
 
@@ -77,7 +77,7 @@
 
 ## 接口与依赖
 
-依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `paths.output_dir`、`translate.seed`）、`kototoki.srt` 与中间层 `kototoki.llama_server`（`LlamaClient`、`InfraFailure`、`nvidia_smi`、`wait_for_free_vram`、`explicit_oom`）；外部依赖是 Strata CLI 与本机 8080 服务（安装与模型由用户维护，见[依赖布局](../../development/dependencies.md)）。不导入 `names`（只读它写出的表内容，由 `plan` 传入）、`experiments.*`。编排器只导入包顶层的 `Session`、`translate_document` 与 `kototoki.merge`，[阶段计划](stage-plan.md)延迟导入包顶层的 `plan` 取 `TranslatePlan`；`RECIPE_HASH` 也在包顶层导出；`recipes`、`strata`、`batching`、`degrade`、`generate` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换服务（须有 `url`、`identity` 与上下文管理器协议）与 HTTP 客户端。
+依赖标准库、`kototoki.artifacts`、`kototoki.config`（只读 `translate.seed`）、`kototoki.srt` 与中间层 `kototoki.llama_server`（`LlamaClient`、`InfraFailure`、`nvidia_smi`、`wait_for_free_vram`、`explicit_oom`）；外部依赖是 Strata CLI 与本机 8080 服务（安装与模型由用户维护，见[依赖布局](../../development/dependencies.md)）。不导入 `names`（只读它写出的表内容，由 `plan` 传入）、`experiments.*`。编排器只导入包顶层的 `Session`、`translate_document` 与 `kototoki.merge`，[阶段计划](stage-plan.md)延迟导入包顶层的 `plan` 取 `TranslatePlan`；`RECIPE_HASH` 也在包顶层导出；`recipes`、`strata`、`batching`、`degrade`、`generate` 是内部实现。内部接缝：`Session(server_factory=..., client_factory=...)` 只供测试替换服务（须有 `url`、`identity` 与上下文管理器协议）与 HTTP 客户端。
 
 ## 代码与验证入口
 

@@ -2,7 +2,7 @@
 
 对外只有 `run(config) -> Summary`。流程按"阶段 × 整批"推进::
 
-    扫描（大小采样稳定性、镜像、短 id、发布前置判定）
+    扫描（视频与音频；大小采样稳定性、源文件旁字幕已存在即跳过、主名冲突、短 id）
     → probe/extract（线程池，整批完成）
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
     → ja-cues（进程内）
@@ -10,7 +10,7 @@
       整批建完即停 server）
     → translate（进程内，整批一个 Strata session；翻译子系统的计划说要模型时才建，启动前等 names 的显存释放，
       整批结束、出错或被中断都 `strata launch --stop`）
-    → 三份 SRT 一起发布
+    → 双语字幕 `<主名>.ja-zh.srt` 发布到源文件旁
 
 阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
 某阶段跑完再 `advance` 继续核对；产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。GPU 阶段产物
@@ -18,7 +18,7 @@
 写出。模型文件 SHA256 的核对（size+mtime 缓存，每次运行每阶段最多一次）在本模块经 `workers/gpu.verify_models`
 完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）。
 
-锁：启动即取 `<output_dir>/.work/lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
+工作根 `<work_dir>/<目标目录键>/`（`artifacts.work_root`，ADR-0020）。锁：启动即取工作根下的 `lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
 锁文件记录编排器、当前 worker 与服务进程（names 的 llama-server 或翻译的 Strata）的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
 锁、Job Object 与进程身份取自 `experiments/translation_v3/procs.py`（复制，不导入）。
 """
@@ -53,11 +53,11 @@ from kototoki.workers.protocol import FileJob, Jobs, write_jobs
 
 EXIT_OK = 0
 EXIT_FAILED = 1           # 有文件在某阶段失败；其余文件照常发布
-EXIT_CONFIG = 2           # 配置文件或输出目录不可用（__main__）
-EXIT_OUTPUT_LOCKED = 3    # 同一输出目录已有编排器在运行
+EXIT_CONFIG = 2           # 配置文件、输入目录或工作目录不可用（__main__）
+EXIT_WORK_LOCKED = 3      # 同一目标目录已有编排器在运行
 EXIT_GPU_LOCKED = 4       # `.local/gpu.lock` 被其他作业持有或残留
 
-PUBLISH_DIR = "publish"    # 三份最终 SRT 的暂存目录（工作目录内），写完后一起移动到最终位置
+PUBLISH_DIR = "publish"    # 双语字幕的暂存目录（工作目录内），写完后原子移动到源文件旁
 
 # worker 子进程的离线环境（沿用 experiments setup_runtime 的变量，不加私有 DLL 目录）。
 OFFLINE_ENV = {"PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
@@ -66,8 +66,8 @@ OFFLINE_ENV = {"PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE":
 QUIET_ENV = {"TQDM_DISABLE": "1", "HF_HUB_DISABLE_PROGRESS_BARS": "1", "TRANSFORMERS_VERBOSITY": "warning"}
 
 
-class OutputLocked(RuntimeError):
-    """同一输出目录已有编排器（或残留锁）。"""
+class WorkLocked(RuntimeError):
+    """同一目标目录已有编排器（或残留锁）。"""
 
 
 class GpuLocked(RuntimeError):
@@ -83,7 +83,7 @@ class ArtifactMissing(RuntimeError):
 
 
 class FinalPathCollision(RuntimeError):
-    """同目录另一个视频（主名相同、扩展名不同）已占用同一组最终 SRT 路径。"""
+    """同目录另一个输入文件（主名相同、扩展名不同）已占用同一份双语字幕路径。"""
 
 
 # 提取补偿（`probe.json` 的 `extract.compensation`）超过这么多秒时记 WARNING：净补入／丢弃与 swr 报告的丢弃样本。
@@ -319,10 +319,11 @@ def _count_stderr_problems(data: bytes) -> int:
 
 @dataclass
 class VideoFile:
+    """一个输入文件（视频或音频）在本次运行中的状态。"""
     relative: str                 # 输入目录内相对路径（正斜杠）
     path: Path
     work_dir: Path
-    finals: dict[str, Path]
+    final: Path                   # 源文件旁的双语字幕
     probe: media.Probe | None = None
     probe_identity: dict[str, Any] | None = None
     pcm_sha256: str | None = None
@@ -331,7 +332,7 @@ class VideoFile:
 
     def target(self) -> plan.Target:
         assert self.probe_identity is not None and self.pcm_sha256 is not None
-        return plan.Target(self.work_dir, self.finals, self.probe_identity, self.pcm_sha256)
+        return plan.Target(self.work_dir, self.probe_identity, self.pcm_sha256)
 
     @property
     def no_speech(self) -> bool:
@@ -339,19 +340,18 @@ class VideoFile:
 
     @property
     def translate_plan(self) -> TranslatePlan:
-        """核对到翻译阶段之后才存在（`plan.stage` 为 translate／publish／done 且有 cue）。"""
+        """核对到翻译阶段之后才存在（`plan.stage` 为 translate）。"""
         assert self.plan is not None and self.plan.translate is not None
         return self.plan.translate
 
 
 @dataclass
 class Summary:
-    total: int = 0                                         # 扫描到的视频数
+    total: int = 0                                         # 扫描到的输入文件数（视频与音频）
     published: list[str] = field(default_factory=list)     # 本次发布
-    up_to_date: list[str] = field(default_factory=list)    # 已发布且身份匹配，跳过
-    blocked: list[str] = field(default_factory=list)       # 最终文件被用户改动且 force=false，跳过
+    existing: list[str] = field(default_factory=list)      # 源文件旁已有双语字幕，跳过
     unstable: list[str] = field(default_factory=list)      # 大小仍在变化（写入中），跳过
-    no_speech: list[str] = field(default_factory=list)     # VAD 为空，发布零条目 SRT
+    no_speech: list[str] = field(default_factory=list)     # VAD 为空，发布零条目字幕
     failed: dict[str, str] = field(default_factory=dict)   # 相对路径 → 失败阶段
     fallback_cues: int = 0                                 # 译文回退为日文的 cue 数
 
@@ -407,7 +407,7 @@ def _merge_module() -> Any:
 def model_sha_lookup(config: Config) -> ModelSha:
     """按阶段核对 worker 用到的模型文件 SHA256（size+mtime 缓存与 worker 共用），每次运行每阶段最多一次。"""
     models = plan.worker_models(config)
-    cache_path = artifacts.model_cache_path(config.paths.output_dir)
+    cache_path = artifacts.model_cache_path(config.paths.work_dir)
     done: dict[str, Mapping[str, str]] = {}
 
     def lookup(stage: str) -> Mapping[str, str]:
@@ -467,7 +467,7 @@ def worker_command(stage: str, jobs_path: Path) -> list[str]:
 
 
 def child_env(config: Config) -> dict[str, str]:
-    cache = artifacts.work_root(config.paths.output_dir) / artifacts.CACHE_DIR
+    cache = artifacts.cache_dir(config.paths.work_dir)
     return {**os.environ, **OFFLINE_ENV, **QUIET_ENV, "HF_HOME": str(cache), "TORCH_HOME": str(cache)}
 
 
@@ -475,6 +475,7 @@ def child_env(config: Config) -> dict[str, str]:
 class _Context:
     config: Config
     summary: Summary
+    root: Path                    # 本目标目录的工作根
     stamp: str
     worker_command: Callable[[str, Path], list[str]]
     gpu_lock: ProcessLock
@@ -503,13 +504,12 @@ class _Context:
 
 def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, list[dict[str, Any]]]:
     """启动一次 worker 跑 `batch`；返回退出码与进度事件（stdout 的 JSON 行）。"""
-    config = ctx.config
-    root = artifacts.work_root(config.paths.output_dir)
+    config, root = ctx.config, ctx.root
     jobs_path = root / f"jobs-{stage}.json"
     write_jobs(jobs_path, Jobs(
         stage=stage, recipe_hash=plan.recipe_hash(stage, engine=config.engine),
         config={"engine": config.engine, "models": plan.worker_models(config),
-                "model_cache": str(artifacts.model_cache_path(config.paths.output_dir))},
+                "model_cache": str(artifacts.model_cache_path(config.paths.work_dir))},
         files=tuple(FileJob(v.work_dir.name, v.work_dir,
                             {name: v.work_dir / file for name, file in plan.STAGE_INPUTS[stage]}) for v in batch)))
     by_id = {v.work_dir.name: v for v in batch}
@@ -706,26 +706,22 @@ def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[di
     return results
 
 
-def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate_dir: str, fallback: int) -> bool:
-    """三份 SRT 先写到工作目录暂存，`publish_blockers` 放行 → `record_published` → 移动；成功后删 failure.json。"""
-    staging = video.work_dir / PUBLISH_DIR
-    staged = {kind: staging / path.name for kind, path in video.finals.items()}
-    for kind, path in staged.items():
-        srt.write_srt(texts[kind], path)
-    blockers = artifacts.publish_blockers(video.finals, video.work_dir, force=ctx.config.run.force)
-    if blockers:
-        ctx.summary.blocked.append(video.relative)
+def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, fallback: int) -> bool:
+    """双语字幕先写到工作目录暂存 → `record_published`（审计）→ 原子移动到源文件旁；成功后删 failure.json。
+
+    运行期间源文件旁出现了同名字幕（用户或别的工具写的）时不覆盖，按"已存在"跳过（ADR-0020）。
+    """
+    if video.final.exists():
+        ctx.summary.existing.append(video.relative)
         (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
-        logger.warning(f"[publish] {video.relative}: final file(s) changed by user, not overwritten "
-                       f"({', '.join(blockers)}); set [run] force = true to overwrite")
+        logger.warning(f"[publish] {video.relative}: {video.final.name} appeared during the run, not overwritten")
         return False
+    staged = video.work_dir / PUBLISH_DIR / video.final.name
+    srt.write_srt(text, staged)
     assert video.plan is not None
-    sources = video.plan.sources | {"translate_fallback_cues": fallback}
-    artifacts.record_published(video.work_dir, video.finals, {k: artifacts.sha256_file(p) for k, p in staged.items()},
-                               sources, translate_dir)
-    for kind, path in staged.items():
-        video.finals[kind].parent.mkdir(parents=True, exist_ok=True)
-        artifacts.replace_with_retry(path, video.finals[kind])
+    artifacts.record_published(video.work_dir, video.final, artifacts.sha256_file(staged),
+                               video.plan.sources | {"translate_fallback_cues": fallback}, translate_dir)
+    artifacts.replace_with_retry(staged, video.final)
     (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
     ctx.summary.published.append(video.relative)
     ctx.summary.fallback_cues += fallback
@@ -738,63 +734,63 @@ def publish(ctx: _Context, video: VideoFile, texts: Mapping[str, str], translate
 
 def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = worker_command,
         sleep: Callable[[float], None] = time.sleep, console: TextIO | None = None) -> Summary:
-    """跑完一批；输出目录锁冲突抛 `OutputLocked`，GPU 锁冲突抛 `GpuLocked`（已完成的 CPU 产物保留，可续跑）。"""
-    output_dir = config.paths.output_dir
-    root = artifacts.work_root(output_dir)
-    out_lock = ProcessLock(root / artifacts.LOCK, "output directory lock", {"config": str(config.source)})
+    """跑完一批；工作根锁冲突抛 `WorkLocked`，GPU 锁冲突抛 `GpuLocked`（已完成的 CPU 产物保留，可续跑）。"""
+    input_dir = config.paths.input_dir
+    root = artifacts.work_root(config.paths.work_dir, input_dir)
+    work_lock = ProcessLock(root / artifacts.LOCK, "work directory lock",
+                            {"config": str(config.source), "input_dir": str(input_dir)})
     try:
-        out_lock.acquire(break_stale=config.break_stale_lock)
+        work_lock.acquire(break_stale=config.break_stale_lock)
     except LockError as error:
-        raise OutputLocked(str(error)) from error
+        raise WorkLocked(str(error)) from error
     try:
         contain_children()
+        artifacts.record_input(root, input_dir)
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"output_dir": str(output_dir)})
-        ctx = _Context(config, Summary(), stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
+        gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"input_dir": str(input_dir)})
+        ctx = _Context(config, Summary(), root, stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
         with _run_logging(root / f"run-{stamp}.log", console):
             try:
                 _run(ctx)
             finally:
                 gpu_lock.release()
     finally:
-        out_lock.release()
+        work_lock.release()
     return ctx.summary
 
 
 def _run(ctx: _Context) -> None:
     config, summary = ctx.config, ctx.summary
-    output_dir = config.paths.output_dir
+    input_dir = config.paths.input_dir
 
-    found = scan(config.paths.input_dir, config.input.video_extensions)
+    found = scan(input_dir, config.input.extensions)
     summary.total = len(found)
     stable, summary.unstable = stable_files(found, config.run.stable_check_s, ctx.sleep)
     for rel in summary.unstable:
         logger.warning(f"[scan] {rel}: size still changing, skipped this run")
-    claimed: dict[str, str] = {}  # 最终 ja.srt 路径（按平台大小写规则）→ 先占用它的相对路径
+    claimed: dict[str, str] = {}  # 双语字幕路径（按平台大小写规则）→ 先占用它的相对路径
     for rel, path in stable:
+        final = artifacts.final_srt_path(input_dir, rel)
+        if final.exists():  # 只看文件名，不论是否本项目生成（ADR-0020）
+            summary.existing.append(rel)
+            logger.info(f"[scan] {rel}: {final.name} exists, skipped")
+            continue
         try:
-            work_dir = artifacts.register_work_dir(output_dir, rel)
+            work_dir = artifacts.register_work_dir(ctx.root, rel)
         except Exception as error:  # index.json 损坏、短 id 碰撞等：没有工作目录可写 failure.json，只记日志
             summary.failed[rel] = "scan"
             logger.error(f"[scan] FAILED {rel}: {type(error).__name__}", exc_info=error)
             continue
-        video = VideoFile(rel, path, work_dir, artifacts.final_srt_paths(output_dir, rel))
-        key = os.path.normcase(str(video.finals["ja"]))
+        video = VideoFile(rel, path, work_dir, final)
+        key = os.path.normcase(str(final))
         if key in claimed:
             ctx.fail(video, "scan", FinalPathCollision(
-                f"final SRT paths of {rel!r} are already taken by {claimed[key]!r} (same stem in the same directory)"))
+                f"subtitle path of {rel!r} is already taken by {claimed[key]!r} (same stem in the same directory)"))
             continue
         claimed[key] = rel
-        blockers = artifacts.publish_blockers(video.finals, video.work_dir, force=config.run.force)
-        if blockers:
-            summary.blocked.append(rel)
-            (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
-            logger.warning(f"[scan] {rel}: final file(s) changed by user ({', '.join(blockers)}), skipped; "
-                           f"set [run] force = true to overwrite")
-            continue
         ctx.files.append(video)
-    logger.info(f"[scan] {summary.total} video(s): {len(ctx.files)} to check, {len(summary.blocked)} blocked, "
-                f"{len(summary.unstable)} unstable")
+    logger.info(f"[scan] {summary.total} file(s): {len(ctx.files)} to process, {len(summary.existing)} with "
+                f"subtitles, {len(summary.unstable)} unstable")
 
     started = time.perf_counter()
     logger.info(f"[extract] start: {len(ctx.files)} file(s)")
@@ -822,11 +818,6 @@ def _run(ctx: _Context) -> None:
             video.plan = plan.next_stage(video.target(), config, ctx.models)
         except PlanError as error:
             ctx.fail(video, error.stage, error)
-            continue
-        if video.plan.stage == "done":
-            summary.up_to_date.append(video.relative)
-            (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
-            logger.info(f"[scan] up to date: {video.relative}")
 
     def planned(stage: str) -> list[VideoFile]:
         return [video for video in live() if video.plan is not None and video.plan.stage == stage]
@@ -853,26 +844,19 @@ def _run(ctx: _Context) -> None:
         try:
             stage = video.plan.stage if video.plan is not None else None
             if stage == "publish":
-                if publish(ctx, video, {kind: "" for kind in artifacts.FINAL_SUFFIXES}, "", 0):
+                if publish(ctx, video, "", "", 0):
                     summary.no_speech.append(video.relative)
             elif stage == "translate" and video.relative in translated:
                 translations, fallback, translate_dir = translated[video.relative]
                 document = video.plan.translate.document
-                texts = {"ja": (video.work_dir / JA_SRT).read_text(encoding="utf-8"),
-                         "zh": srt.render_srt(document, translations),
-                         "ja-zh": _merge_module().merge(document, translations) if document.cues else ""}
-                publish(ctx, video, texts, translate_dir, fallback)
-            elif stage == "done" and video.relative not in summary.up_to_date:
-                # 本次重做了上游（如删掉的表重建后注入行不变），推进后已无需重新发布：与开头的核对同样计入。
-                summary.up_to_date.append(video.relative)
-                (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
-                logger.info(f"[scan] up to date: {video.relative}")
+                text = _merge_module().merge(document, translations) if document.cues else ""
+                publish(ctx, video, text, translate_dir, fallback)
         except Exception as error:
             ctx.fail(video, "publish", error)
 
-    logger.info(f"[summary] {summary.total} video(s): {len(summary.published)} published "
-                f"({len(summary.no_speech)} no speech), {len(summary.up_to_date)} up to date, "
-                f"{len(summary.failed)} failed, {len(summary.blocked)} blocked, {len(summary.unstable)} unstable, "
+    logger.info(f"[summary] {summary.total} file(s): {len(summary.published)} published "
+                f"({len(summary.no_speech)} no speech), {len(summary.existing)} with subtitles, "
+                f"{len(summary.failed)} failed, {len(summary.unstable)} unstable, "
                 f"{summary.fallback_cues} fallback cue(s)")
     for rel, stage in summary.failed.items():
         logger.info(f"[summary] failed at {stage}: {rel}")

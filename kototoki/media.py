@@ -1,4 +1,7 @@
-"""媒体：ffprobe 选音轨、ffmpeg 流复制原始音轨、从视频容器派生 16 kHz 单声道 PCM16 WAV（规格 §2）。
+"""媒体：ffprobe 选音轨、ffmpeg 流复制原始音轨、从输入容器派生 16 kHz 单声道 PCM16 WAV（规格 §2）。
+
+输入可以是视频或音频（ADR-0020）：除封面图外没有视频流即为音频，不做流复制（源文件本身即原始音频），
+时长校验改对所选音轨的时长。
 
 本模块是唯一定义时间轴零点的地方：派生 WAV 用 `aresample=async=1:first_pts=0` 补齐起始静音与
 中途间隙，sample 0 即视频 0 秒，`offset_s` 恒为 0；音轨与容器的 `start_time` 只作诊断。
@@ -73,8 +76,9 @@ class Probe:
     ffprobe: dict[str, Any]     # `-show_streams -show_format` 原始 JSON，供视频身份指纹
     audio: AudioTrack           # 选中的音轨
     audio_tracks: tuple[AudioTrack, ...]
-    video_duration_s: float
-    video_duration_source: str  # stream.duration | stream.tags.DURATION | format.duration
+    has_video: bool             # 除封面图外有视频流；False 即音频输入
+    duration_s: float           # 时长校验的参照：视频输入取第一条视频流，音频输入取所选音轨
+    duration_source: str        # stream.duration | stream.tags.DURATION | format.duration
     container_start_time: float | None
     subtitles: tuple[dict[str, Any], ...]
     warnings: tuple[str, ...]
@@ -83,30 +87,30 @@ class Probe:
         """`probe.json` 的内容（不含身份）。"""
         return {"selected_audio": _track_dict(self.audio),
                 "audio_tracks": [_track_dict(track) for track in self.audio_tracks],
-                "video_duration_s": self.video_duration_s, "video_duration_source": self.video_duration_source,
+                "has_video": self.has_video, "duration_s": self.duration_s, "duration_source": self.duration_source,
                 "container_start_time": self.container_start_time, "subtitles": list(self.subtitles),
                 "warnings": list(self.warnings), "ffprobe": self.ffprobe}
 
 
 @dataclass(frozen=True)
 class Extract:
-    audio_copy: Path
+    audio_copy: Path | None     # 音频输入不做流复制
     wav: Path
     log: Path
     sample_rate: int
     samples: int
     pcm_sha256: str             # WAV 数据块（PCM 样本）的 SHA256
     decoded_duration_s: float
-    video_duration_s: float
+    duration_s: float
     offset_s: float
     pan: str
     compensation: dict[str, Any]
     warnings: tuple[str, ...]
 
     def payload(self) -> dict[str, Any]:
-        return {"audio_copy": self.audio_copy.name, "wav": self.wav.name, "log": self.log.name,
+        return {"audio_copy": self.audio_copy.name if self.audio_copy else None, "wav": self.wav.name, "log": self.log.name,
                 "sample_rate": self.sample_rate, "samples": self.samples, "pcm_sha256": self.pcm_sha256,
-                "decoded_duration_s": self.decoded_duration_s, "video_duration_s": self.video_duration_s,
+                "decoded_duration_s": self.decoded_duration_s, "duration_s": self.duration_s,
                 "offset_s": self.offset_s, "pan": self.pan, "compensation": dict(self.compensation),
                 "warnings": list(self.warnings)}
 
@@ -178,7 +182,7 @@ def _audio_track(stream: Mapping[str, Any]) -> AudioTrack:
 def select_audio(tracks: Sequence[AudioTrack], language: str) -> tuple[AudioTrack, list[str]]:
     """语言匹配且非 commentary 的音轨优先，其中 `default` 优先；无匹配取第一条。返回所选音轨与告警。"""
     if not tracks:
-        raise MediaError("No audio stream in the video")
+        raise MediaError("No audio stream in the input")
     wanted = normalize_language(language)
     matches = [track for track in tracks if normalize_language(track.language) == wanted and not track.comment]
     warnings = []
@@ -194,25 +198,27 @@ def select_audio(tracks: Sequence[AudioTrack], language: str) -> tuple[AudioTrac
 
 
 def parse_probe(ffprobe: dict[str, Any], language: str) -> Probe:
-    """ffprobe `-show_streams -show_format` JSON → `Probe`；视频时长取第一条视频流（非封面图）。"""
+    """ffprobe `-show_streams -show_format` JSON → `Probe`；时长参照取第一条视频流（非封面图），没有视频流
+    （音频输入）时取所选音轨。"""
     streams = ffprobe.get("streams") or []
     tracks = tuple(_audio_track(stream) for stream in streams if stream.get("codec_type") == "audio")
     chosen, warnings = select_audio(tracks, language)
     videos = [stream for stream in streams if stream.get("codec_type") == "video"
               and not (stream.get("disposition") or {}).get("attached_pic")]
-    if not videos:
-        raise MediaError("No video stream in the input; duration cannot be checked against the video")
-    duration, source = _stream_duration(videos[0])
+    kind = "Video" if videos else "Audio"
+    reference = videos[0] if videos else next(stream for stream in streams if stream.get("codec_type") == "audio"
+                                              and int(stream["index"]) == chosen.index)
+    duration, source = _stream_duration(reference)
     if duration is None:
         duration, source = _float((ffprobe.get("format") or {}).get("duration")), "format.duration"
         if duration is None:
-            raise MediaError("Video stream duration is unknown (no stream, tag or container duration)")
-        warnings.append("Video stream has no duration; using the container duration")
+            raise MediaError(f"{kind} stream duration is unknown (no stream, tag or container duration)")
+        warnings.append(f"{kind} stream has no duration; using the container duration")
     # 流时长（尤其是标签）可能与容器时长矛盾（如 `-c copy` 残留的原片标签）：取较小者并告警，不失败
     container = _float((ffprobe.get("format") or {}).get("duration"))
     if (source != "format.duration" and container is not None
             and abs(duration - container) > recipes.MEDIA["duration_tolerance_s"]):
-        warnings.append(f"Video duration from {source} ({duration:.3f} s) disagrees with the container duration "
+        warnings.append(f"{kind} duration from {source} ({duration:.3f} s) disagrees with the container duration "
                         f"({container:.3f} s); using the smaller one")
         if container < duration:
             duration, source = container, "format.duration"
@@ -221,8 +227,8 @@ def parse_probe(ffprobe: dict[str, Any], language: str) -> Probe:
                        "default": bool((stream.get("disposition") or {}).get("default")),
                        "forced": bool((stream.get("disposition") or {}).get("forced"))}
                       for stream in streams if stream.get("codec_type") == "subtitle")
-    return Probe(ffprobe=ffprobe, audio=chosen, audio_tracks=tracks, video_duration_s=duration,
-                 video_duration_source=source,
+    return Probe(ffprobe=ffprobe, audio=chosen, audio_tracks=tracks, has_video=bool(videos), duration_s=duration,
+                 duration_source=source,
                  container_start_time=_float((ffprobe.get("format") or {}).get("start_time")),
                  subtitles=subtitles, warnings=tuple(warnings))
 
@@ -279,14 +285,19 @@ def parse_compensation(log: str, track: AudioTrack, decoded_s: float) -> dict[st
             "input_samples": input_samples, "net_padding_s": net}
 
 
-def check_duration(decoded_s: float, video_s: float) -> list[str]:
-    """解码短于视频流超过容差判失败（`MediaError`）；长于视频超过容差只返回告警。"""
+def check_duration(decoded_s: float, reference_s: float, *, has_video: bool) -> list[str]:
+    """解码与参照时长（视频流或音频输入的所选音轨）偏差超过容差时：视频输入短于参照判失败（`MediaError`，
+    字幕会对不上画面）；音频输入短于参照只返回告警——没有画面要对齐，且 VBR MP3 缺 Xing 头时 ffprobe 的
+    时长是按码率估的、不可信（ADR-0020）。长于参照一律只返回告警。"""
     tolerance = recipes.MEDIA["duration_tolerance_s"]
-    if video_s - decoded_s > tolerance:
-        raise MediaError(f"Decoded audio is {video_s - decoded_s:.3f} s shorter than the video stream "
-                         f"({decoded_s:.3f} s vs {video_s:.3f} s); treating it as truncated")
-    if decoded_s - video_s > tolerance:
-        return [f"Decoded audio is {decoded_s - video_s:.3f} s longer than the video stream"]
+    if reference_s - decoded_s > tolerance:
+        message = (f"Decoded audio is {reference_s - decoded_s:.3f} s shorter than the input duration "
+                   f"({decoded_s:.3f} s vs {reference_s:.3f} s)")
+        if not has_video:
+            return [f"{message}; audio input, continuing (the duration may be an estimate)"]
+        raise MediaError(f"{message}; treating it as truncated")
+    if decoded_s - reference_s > tolerance:
+        return [f"Decoded audio is {decoded_s - reference_s:.3f} s longer than the input duration"]
     return []
 
 
@@ -337,9 +348,9 @@ def extract_original(video: Path, work_dir: Path, track: AudioTrack, ffmpeg: Pat
     return target, f"$ {subprocess.list2cmdline(command)}\n{result.stderr}"
 
 
-def derive_pcm16k(video: Path, work_dir: Path, probe_result: Probe, ffmpeg: Path, *, audio_copy: Path,
+def derive_pcm16k(video: Path, work_dir: Path, probe_result: Probe, ffmpeg: Path, *, audio_copy: Path | None,
                   log_head: str = "") -> Extract:
-    """从视频容器按绝对流索引解码，补齐时间轴、下混、重采样为 `audio-16k.wav`，verbose 日志写 `extract.log`。
+    """从输入容器按绝对流索引解码，补齐时间轴、下混、重采样为 `audio-16k.wav`，verbose 日志写 `extract.log`。
 
     时长校验在替换目标之前完成：截断时不留下 `audio-16k.wav`，只留日志。
     """
@@ -358,22 +369,23 @@ def derive_pcm16k(video: Path, work_dir: Path, probe_result: Probe, ffmpeg: Path
         if rate != recipes.SAMPLE_RATE:
             raise MediaError(f"Derived WAV sample rate is {rate}, expected {recipes.SAMPLE_RATE}")
         decoded_s = samples / rate
-        warnings = check_duration(decoded_s, probe_result.video_duration_s)
+        warnings = check_duration(decoded_s, probe_result.duration_s, has_video=probe_result.has_video)
         replace_with_retry(partial, target)
     finally:
         partial.unlink(missing_ok=True)
     return Extract(audio_copy=audio_copy, wav=target, log=log_path, sample_rate=rate, samples=samples,
                    pcm_sha256=pcm_sha256, decoded_duration_s=decoded_s,
-                   video_duration_s=probe_result.video_duration_s, offset_s=float(recipes.MEDIA["offset_s"]),
+                   duration_s=probe_result.duration_s, offset_s=float(recipes.MEDIA["offset_s"]),
                    pan=pan_filter(track), compensation=parse_compensation(result.stderr, track, decoded_s),
                    warnings=tuple(warnings))
 
 
 def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> Extract:
-    """流复制原始音轨并派生 16 kHz WAV；两条 ffmpeg 命令与输出都记入 `extract.log`。"""
+    """视频输入先流复制原始音轨，再派生 16 kHz WAV；ffmpeg 命令与输出都记入 `extract.log`。音频输入只派生 WAV。"""
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     pan_filter(probe_result.audio)  # 不支持的布局在任何 ffmpeg 运行前失败
-    audio_copy, copy_log = extract_original(path, work_dir, probe_result.audio, config.paths.ffmpeg)
+    audio_copy, copy_log = (extract_original(path, work_dir, probe_result.audio, config.paths.ffmpeg)
+                            if probe_result.has_video else (None, ""))
     return derive_pcm16k(path, work_dir, probe_result, config.paths.ffmpeg, audio_copy=audio_copy,
                          log_head=copy_log)

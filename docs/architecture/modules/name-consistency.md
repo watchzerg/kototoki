@@ -25,15 +25,15 @@
 | 超预算（`too_long`）、两次尝试都失败（`failed`） | 写空表（`build.status` 记原因），运行日志一行 WARNING，影片照常翻译与发布（空表不注入） |
 | server 起不来、OOM、HTTP 错误、传输失败 | 该影片在 `names` 阶段文件级失败（`failure.json`）；重跑同一命令对它再建表 |
 
-**表可人工校对，也是译法的唯一入口**：翻译按 Q2 规则注入表里 `confidence: high` 的实体，每个 `forms[]` 一行（[翻译子系统](translation-subsystem.md#当前行为规格)）。`name-table.json` 的跳过只比 `identity` 块（`ja_srt_sha256`、`BUILD` 配方 hash、`[names] seed`），用户改 `entries`（改错名、删条目、调 `confidence`）不触发重建。**改到会被注入的条目（`high` 的实体或其写法）会改变注入行的哈希 `names_sha256`，翻译身份随之变化，下次运行重译该片并重新发布；只改 medium／low 条目不触发任何重做。** `ja.srt`、建表配方或 seed 变化会重建并覆盖手改，不做保护。
+**表可人工校对，也是译法的唯一入口**：翻译按 Q2 规则注入表里 `confidence: high` 的实体，每个 `forms[]` 一行（[翻译子系统](translation-subsystem.md#当前行为规格)）。`name-table.json` 的跳过只比 `identity` 块（`ja_srt_sha256`、`BUILD` 配方 hash、`[names] seed`），用户改 `entries`（改错名、删条目、调 `confidence`）不触发重建。**改到会被注入的条目（`high` 的实体或其写法）会改变注入行的哈希 `names_sha256`，翻译身份随之变化；删掉该片源文件旁的 `*.ja-zh.srt` 后再运行即重译并重新发布（ADR-0020：字幕已存在的文件一律跳过）；只改 medium／low 条目不触发重译。** `ja.srt`、建表配方或 seed 变化会重建并覆盖手改，不做保护。
 
 **日志**（经编排写进运行日志，[批次编排：运行日志](batch-orchestration.md#运行日志)）：`[names] start: N file(s)`；server 加载、加载失败与等显存三条来自共享的 `kototoki.llama_server` logger，前缀 `[names]`（`NAMES_SPEC.stage`）；每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T s`（零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`）；每次不合格的尝试（回复被截断、非 JSON、无有效条目）在该行之前各记一行 WARNING `[names] attempt n/2 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）；`[names] end: … s`。条目文字、`work_guess`、提示与回复正文不进日志，只在工作目录。
 
 ## 实现设计
 
 - **server 配置**：`NAMES_SPEC`（`ServerSpec`）由 `recipes.NAMES_SERVER`（candidate `qwen3.8-27b-ud-iq3_s`、repo／revision、99 层、`-c 20480`、`-b 512 -ub 512 -fa on --jinja --reasoning off`、空闲显存阈值 13000 MiB、加载超时 180 s）与 `BUILD["model_asset"]`（文件名、大小、sha256）拼成；`ManagedServer` 另加 `--no-webui --log-file … -lv 4`。模型路径 `[names] model`（默认 `glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf`，相对 `models_root`）、端口 `[names] port`（默认 8081，与翻译的 8080 分开）。
-- **配方与身份**：`BUILD`（提示 v5 的 sha256、采样、schema sha256、`max_tokens`、`reasoning off`、上下文与预算、归一规则与常量、两次尝试与 seed 步长、模型资产）一个字典，hash 用 `kototoki.recipes.recipe_hash`（`BUILD_RECIPE_HASH`）。表的身份 `{ja_srt_sha256, recipe_hash: BUILD, seed}`，由[阶段计划](stage-plan.md)计算，以 `names` 键进 `published.json.sources`。表的内容经翻译身份的 `names_sha256` 影响译文（见上）。ADR-0019 删除了 `APPLY` 配方、`names-apply.json` 与 `names_apply` 身份键。
-- **资源所有权**：server 运行日志在 `<output_dir>/.work/names-sessions/<UTC戳>-<pid>/session-NN/`（`server.log`、`stdout.log`、`engine.json`、`engine-final.json`，与 `translate-sessions/` 同形）；每部影片的原始交换在 `<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`（`00001`、`00002` 为两段提示的 `/tokenize`，`chat-NN` 为建表请求），按运行分目录，重建时不与旧交换撞名。本模块不取 GPU 锁、不写 `name-table.json`（编排写）。
+- **配方与身份**：`BUILD`（提示 v5 的 sha256、采样、schema sha256、`max_tokens`、`reasoning off`、上下文与预算、归一规则与常量、两次尝试与 seed 步长、模型资产）一个字典，hash 用 `kototoki.recipes.recipe_hash`（`BUILD_RECIPE_HASH`）。表的身份 `{ja_srt_sha256, recipe_hash: BUILD, seed}`，由[阶段计划](stage-plan.md)计算，以 `names` 键进 `published.json.sources`（审计记录）。表的内容经翻译身份的 `names_sha256` 影响译文（见上）。ADR-0019 删除了 `APPLY` 配方、`names-apply.json` 与 `names_apply` 身份键。
+- **资源所有权**：server 运行日志在 `<work root>/names-sessions/<UTC戳>-<pid>/session-NN/`（`<work root>` 即 `<work_dir>/<input_dir 末段名>-<sha12>/`）（`server.log`、`stdout.log`、`engine.json`、`engine-final.json`，与 `translate-sessions/` 同形）；每部影片的原始交换在 `<work root>/<id>/names/transport/<UTC戳>-<pid>/session-NN/`（`00001`、`00002` 为两段提示的 `/tokenize`，`chat-NN` 为建表请求），按运行分目录，重建时不与旧交换撞名。本模块不取 GPU 锁、不写 `name-table.json`（编排写）。
 - **移植来源**：`table.py` 来自 `experiments/name_consistency/build_table.py`（`SYSTEM_PROMPT` 逐字节相同，去掉 CLI、思考模式与重归一）；只复制不导入。研究期的替换实现（`apply_table.py`）已于 ADR-0019 从产品删除，研究侧 `experiments/name_consistency/` 仍冻结。
 - **命名**：`kototoki.names` 包顶层只导出 `Session`、`build_document`、`NamesError`、`BUILD_RECIPE_HASH` 与 `BuildResult`。
 
@@ -41,7 +41,7 @@
 
 编排以 `importlib` 导入 `kototoki.names`，只用：`Session(config, *, on_server_pid=None)`（上下文管理器，`ensure_started()`、`stop()`、`unavailable`；`server_factory`／`client_factory` 只供测试）、`build_document(work_dir, document, session | None, seed) -> BuildResult`（`payload`、`attempts`、`seconds`、`status` ∈ `ok | failed | too_long`）、`NamesError`，以及 `BUILD_RECIPE_HASH`。[阶段计划](stage-plan.md)延迟导入 `kototoki.names.recipes` 取该 hash。翻译子系统不导入本模块，只读它写出的 `name-table.json`（经 `plan` 传入内容）。
 
-依赖基础层（`artifacts`、`config`、`srt`、`recipes`）与中间层 `kototoki.llama_server`（`ManagedServer`、`ServerSpec`、`LlamaClient`、`explicit_oom`）；不导入 torch、推理模块、翻译子系统与 `experiments.*`（`tests/core/test_job.py` 的禁止导入测试连同 `kototoki.names` 一起守门）。只读配置的 `paths.output_dir`、`paths.llama_server`、`models.names`、`names.port`（`seed` 由编排与阶段计划读）。
+依赖基础层（`artifacts`、`config`、`srt`、`recipes`）与中间层 `kototoki.llama_server`（`ManagedServer`、`ServerSpec`、`LlamaClient`、`explicit_oom`）；不导入 torch、推理模块、翻译子系统与 `experiments.*`（`tests/core/test_job.py` 的禁止导入测试连同 `kototoki.names` 一起守门）。只读配置的 `paths.llama_server`、`models.names`、`names.port`（`seed` 由编排与阶段计划读）。
 
 ## 代码与验证入口
 

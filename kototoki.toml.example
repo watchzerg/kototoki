@@ -6,20 +6,20 @@
 # 翻译所用的 Strata（0.2.12／build 0.1.58）与模型需自行安装，不在 assets.toml 里；运行前不得有别的 Strata launch 在服务。
 
 [paths]
-input_dir    = "D:/movie/inbox"         # 必填：递归扫描视频
-output_dir   = "D:/movie/subs"          # 必填：最终 SRT 与 .work/
+input_dir    = "D:/movie/inbox"         # 必填：递归扫描视频与音频；双语字幕 <主名>.ja-zh.srt 写在源文件旁
+# work_dir   = "D:/kototoki-work"       # 中间产物；省略时为仓库内 .local/work；其下按目标目录分子目录 <末段名>-<sha12>/；不得在 input_dir 内
 models_root  = ".local/models"
 ffmpeg       = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe"
 ffprobe      = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe"
 llama_server = ".local/tools/llama.cpp/b11669-cuda13.4/llama-server.exe"
 
 [input]
-video_extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"]
+extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi",           # 视频还是音频由 ffprobe 判定
+              ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"]
 audio_language   = "jpn"                # jpn／ja／jp 视为同一语言；无匹配时取第一条音轨并告警
 
 [run]
 extract_workers = 4                     # ffmpeg 并发数
-force = false                           # true 时允许覆盖已被改动的最终 SRT
 stable_check_s = 10                     # 两次采样文件大小不变才视为写入完成
 
 [stt]
@@ -48,11 +48,12 @@ soft_breaks = "、，,"
 lead_out_s = 0.3                        # 发声结束后向后延长，不越过下一条起点
 
 [translate]                             # 翻译由 Strata 自动启停（Q2，ADR-0019）：模型与端口（8080）由 Strata 管理，不可配
-seed  = 20261008                        # 正整数；改 seed 即另起翻译 run、整片重译
+seed  = 20261008                        # 正整数；改 seed 即另起翻译 run、整片重译（已有 .ja-zh.srt 的文件须先删掉字幕）
 
 [names]                                 # 专名建表（GPU，translate 之前，必开）；译法在翻译时注入，没有发布时替换；ADR-0014、ADR-0019
 model   = "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf"   # 相对 models_root
 port    = 8081
 seed    = 20261019                      # 改 seed 即重建表（另起身份）
-# 手改 <output_dir>/.work/<id>/name-table.json：改到 confidence 为 high 的实体或其写法 = 改了翻译注入行，
-# 下次运行会重译并重新发布该片；只改 medium／low 条目不触发任何重做。
+# 手改 <work_dir>/<末段名>-<sha12>/<id>/name-table.json：改到 confidence 为 high 的实体或其写法 = 改了翻译注入行，
+# 删掉该片的 .ja-zh.srt 后再运行即重译并重新发布；只改 medium／low 条目不触发任何重做。
+# 源文件旁已有 <主名>.ja-zh.srt 的文件一律跳过（不论是否本项目生成）；要重做就删掉它。

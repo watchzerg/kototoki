@@ -20,7 +20,7 @@ names 恒在链上（建表必开）；`sources` 含 `names`（表的身份）�
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 import importlib
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -34,7 +34,7 @@ if TYPE_CHECKING:  # 运行时延迟导入，见 translate_plan
 JA_SRT = "ja.srt"  # cues 阶段写出、翻译读取的日文 SRT（工作目录内）
 
 GPU_STAGES = ("vad", "asr", "align")
-# 需要核对身份的阶段，按链上顺序；`publish`／`done` 是计划的终态，不是阶段。
+# 需要核对身份的阶段，按链上顺序；`publish` 是计划的终态（无语音），不是阶段。
 STAGES = (*GPU_STAGES, "cues", "names", "translate")
 # 阶段产物（工作目录内文件名）。
 STAGE_OUTPUT = {"vad": artifacts.VAD, "asr": artifacts.ASR, "align": artifacts.ALIGN, "cues": artifacts.JA_CUES,
@@ -183,15 +183,15 @@ class PlanError(RuntimeError):
 class Target:
     """一个文件的计划输入：CPU 阶段之后已知的常量。"""
     work_dir: Path
-    finals: Mapping[str, Path]        # 三份最终 SRT 的路径
     probe: Mapping[str, Any]          # `probe.json` 的期望身份（已当前）
     pcm_sha256: str
 
 
 @dataclass(frozen=True)
 class Plan:
-    """`stage` 是第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`translate`），或终态
-    `publish`（无语音，直接发布零条目 SRT）／`done`（已发布且身份匹配、最终文件未改动）。
+    """`stage` 是第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`names`／`translate`），或终态
+    `publish`（无语音，直接发布零条目字幕）。翻译阶段总要经过（run 已完成时只读回译文）；是否已发布不归本模块，
+    编排在扫描时按源文件旁的字幕是否存在判定（ADR-0020）。
     `identities` 是 `probe` 与从 vad 起到 `stage`（含）各阶段的期望身份，键同 `published.json` 的 `sources`；
     `translate` 是核对到翻译阶段后翻译子系统给出的计划（run 目录、是否需要模型），此前为 None。
     """
@@ -202,7 +202,7 @@ class Plan:
 
     @property
     def sources(self) -> dict[str, Any]:
-        """`published.json` 的 `sources`：参与"已是最新"判定的全部身份与 `no_speech`。"""
+        """`published.json` 的 `sources`（审计记录）：已核对的全部身份与 `no_speech`。"""
         if self.no_speech:
             keys = ("probe", "vad")
         else:
@@ -237,7 +237,7 @@ def _check_from(target: Target, config: Config, models: ModelSha, plan: Plan) ->
             if stage == "translate":
                 translate = translate_plan(work, config)
                 ids[key] = translate.identity
-                return _publish_state(target, Plan(stage, ids, False, translate))
+                return Plan(stage, ids, False, translate)
             if stage == "vad":
                 ids[key] = vad_identity(pcm, models("vad"))
             elif stage == "asr":
@@ -252,21 +252,8 @@ def _check_from(target: Target, config: Config, models: ModelSha, plan: Plan) ->
             if not current:
                 return Plan(stage, ids, False)
             if stage == "vad" and artifacts.read_json(work / artifacts.VAD).get("chunks") == []:
-                return _publish_state(target, Plan("publish", {k: ids[k] for k in ("probe", "vad")}, True))
+                return Plan("publish", {k: ids[k] for k in ("probe", "vad")}, True)
         raise AssertionError(f"stage chain ended without reaching translate (from {plan.stage!r})")
     except Exception as error:
         raise PlanError(stage, error) from error
 
-
-def _publish_state(target: Target, plan: Plan) -> Plan:
-    """已发布记录的 `sources` 等于期望且三份最终文件未改动即 `done`；否则维持 `publish`／`translate`。"""
-    record = artifacts.read_published(target.work_dir)
-    expected = plan.sources
-    # 记录里多出的键（旧版本发布时的审计键）同样表示"已发布内容不是这份计划"；回退计数不是身份。
-    keys = set(expected) | (set(record["sources"]) - {"translate_fallback_cues"} if record is not None else set())
-    if record is not None and artifacts.canonical({key: record["sources"].get(key) for key in keys}) \
-            == artifacts.canonical({key: expected.get(key) for key in keys}):
-        if all(path.is_file() and artifacts.sha256_file(path) == record["sha256"][kind]
-               for kind, path in target.finals.items()):
-            return replace(plan, stage="done")
-    return plan

@@ -276,7 +276,7 @@ class PublishedFallbackCountTests(JobCase):
         console = io.StringIO()
         summary = self.run_job(console=console)
         self.assertEqual((summary.published, summary.fallback_cues), (["a.mkv"], 1))
-        record = artifacts.read_published(self.work_dir("a.mkv"))
+        record = read_json(self.work_dir("a.mkv") / artifacts.PUBLISHED)
         self.assertEqual(record["sources"]["translate_fallback_cues"], 1)
         self.assertRegex(record["translate_dir"],
                          rf"/{R.RECIPE_NAME}__s{self.config.translate.seed}__n[0-9a-f]{{12}}$")

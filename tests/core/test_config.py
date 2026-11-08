@@ -9,7 +9,7 @@ from dataclasses import asdict
 
 from kototoki import config, cues
 
-MINIMAL = '[paths]\ninput_dir = "in"\noutput_dir = "out"\n'
+MINIMAL = '[paths]\ninput_dir = "in"\n'
 
 
 class LoadTests(unittest.TestCase):
@@ -30,10 +30,10 @@ class LoadTests(unittest.TestCase):
         cfg = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(cfg.engine, "w0")
         self.assertEqual(cfg.run.extract_workers, 4)
-        self.assertIs(cfg.run.force, False)
         self.assertEqual(cfg.run.stable_check_s, 10.0)
         self.assertEqual(cfg.input.audio_language, "jpn")
-        self.assertEqual(cfg.input.video_extensions, (".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"))
+        self.assertEqual(cfg.input.extensions, (".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi", ".wav", ".flac",
+                                                ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"))
         self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 1.0, "。！？!?", "、，,", 0.3))
         self.assertEqual(cfg.translate, config.TranslateConfig(seed=20261008))
         self.assertEqual(cfg.names, config.NamesConfig(port=8081, seed=20261019))
@@ -44,15 +44,16 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(set(rules), cues.RULE_KEYS)
 
     def test_user_relative_paths_resolve_against_config_dir(self) -> None:
-        cfg = config.load(self.write(MINIMAL + 'models_root = "models"\nffmpeg = "bin/ffmpeg.exe"\n'), environ={})
+        cfg = config.load(self.write(MINIMAL + 'work_dir = "w"\nmodels_root = "models"\nffmpeg = "bin/ffmpeg.exe"\n'), environ={})
         self.assertEqual(cfg.paths.input_dir, self.root / "in")
-        self.assertEqual(cfg.paths.output_dir, self.root / "out")
+        self.assertEqual(cfg.paths.work_dir, self.root / "w")
         self.assertEqual(cfg.paths.models_root, self.root / "models")
         self.assertEqual(cfg.paths.ffmpeg, self.root / "bin" / "ffmpeg.exe")
 
     def test_default_relative_paths_resolve_against_repo_root(self) -> None:
         cfg = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(cfg.paths.models_root, config.REPO_ROOT / ".local" / "models")
+        self.assertEqual(cfg.paths.work_dir, config.REPO_ROOT / ".local" / "work")
         # 默认路径里的版本号由 test_assets_manifest 钉住与 assets.toml 一致；这里只核对相对仓库根解析。
         for key in ("ffmpeg", "ffprobe", "llama_server"):
             self.assertEqual(getattr(cfg.paths, key), config.REPO_ROOT / config.DEFAULTS["paths"][key])
@@ -95,19 +96,21 @@ class LoadTests(unittest.TestCase):
                              (MINIMAL + "[translate]\nport = 8080\n", "port"),
                              (MINIMAL + "[vad]\ndevice = \"cpu\"\n", "device"),
                              (MINIMAL + "[run]\nbreak_stale_lock = true\n", "break_stale_lock"),
+                             (MINIMAL + 'output_dir = "out"\n', "output_dir"),  # ADR-0020 删除
+                             (MINIMAL + "[run]\nforce = true\n", "force"),  # ADR-0020 删除
+                             (MINIMAL + '[input]\nvideo_extensions = [".mkv"]\n', "video_extensions"),  # 改名 extensions
                              (MINIMAL + "[extra]\nx = 1\n", "[extra]"),
                              (MINIMAL + "[asr.whisper]\nmodel = \"x\"\n", "[asr.whisper]")):
             with self.subTest(needle=needle), self.assertRaisesRegex(config.ConfigError, needle.replace("[", r"\[")):
                 config.load(self.write(text), environ={})
 
     def test_required_paths_and_types_are_checked(self) -> None:
-        bad = (('[paths]\ninput_dir = "in"\n', "output_dir is required"),
+        bad = (('[paths]\n', "input_dir is required"),
                (MINIMAL + "[run]\nextract_workers = \"4\"\n", "must be an integer"),
-               (MINIMAL + "[run]\nforce = 1\n", "true or false"),
                (MINIMAL + "[translate]\nseed = 0\n", r"\[translate\] seed"),  # Strata 不接受 0
                (MINIMAL + "[translate]\nseed = 2147483648\n", r"\[translate\] seed"),
                (MINIMAL + "[stt]\nengine = \"w1\"\n", "engine must be one of"),
-               (MINIMAL + "[input]\nvideo_extensions = \".mkv\"\n", "list of nonempty strings"),
+               (MINIMAL + "[input]\nextensions = \".mkv\"\n", "list of nonempty strings"),
                (MINIMAL + "[run]\nextract_workers = 0\n", "at least 1"))
         for text, message in bad:
             with self.subTest(message=message), self.assertRaisesRegex(config.ConfigError, message):
@@ -135,12 +138,14 @@ class LoadTests(unittest.TestCase):
 class ExampleFileTests(unittest.TestCase):
     def test_example_config_loads_and_lists_every_key(self) -> None:
         example = config.REPO_ROOT / "kototoki.toml.example"
+        self.assertIn("# work_dir", example.read_text(encoding="utf-8"))  # 示例里 work_dir 只以注释出现
         cfg = config.load(example, environ={})
         self.assertEqual(cfg.engine, "w0")
         with example.open("rb") as stream:
             document = tomllib.load(stream)
         written = {(section, key) for section, table in config._flatten(document).items() for key in table}
         expected = {(section, key) for section, table in config.DEFAULTS.items() for key in table}
+        expected.discard(("paths", "work_dir"))
         self.assertEqual(written, expected)
 
 

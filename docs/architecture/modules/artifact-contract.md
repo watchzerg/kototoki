@@ -4,26 +4,26 @@
 
 ## 定位与阅读
 
-负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）各阶段共用的三件事：输出目录与工作目录布局、产物身份与跳过／替换、原子写；编排器与 GPU worker 之间的 `--jobs` 协议；SRT 读写。不负责：各阶段的推理与 payload 字段（票据 02–07）、批次编排与锁（票据 06）、翻译 run 目录内部格式（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+负责双语字幕流水线（[规格](../../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）各阶段共用的三件事：工作目录布局与最终字幕路径、产物身份与跳过／替换、原子写；编排器与 GPU worker 之间的 `--jobs` 协议；SRT 读写。不负责：各阶段的推理与 payload 字段（票据 02–07）、批次编排与锁（票据 06）、翻译 run 目录内部格式（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
-**布局**（`kototoki/artifacts.py`）：最终 SRT 镜像输入目录层级，`S1/ep01.mkv` → `<out>/S1/ep01.{ja,zh,ja-zh}.srt`（`final_srt_paths`）。每个视频的工作目录是 `<out>/.work/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`）；`register_work_dir` 在 `.work/index.json` 登记 id ↔ 相对路径，同一 id 已登记为另一路径时报错（短 id 碰撞）。相对路径不得是绝对路径、含 `..` 或任何段含 `:`（盘符、NTFS 备用数据流）；`register_work_dir` 读改写 `index.json`，由编排器在扫描阶段串行调用。产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`NAME_TABLE`、`PUBLISHED`、`FAILURE` 等）；翻译 run 目录的键归翻译子系统（`translate.plan`，见[翻译子系统](translation-subsystem.md)），本模块不拼它。
+**布局**（`kototoki/artifacts.py`，ADR-0020）：最终产物只有写在源文件旁的双语字幕，`S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`（`final_srt_path`，后缀常量 `FINAL_SUFFIX`）。工作目录在 `[paths] work_dir` 下：`cache/` 放 `HF_HOME`／`TORCH_HOME` 与 `model-verification.json`（`cache_dir`，各目标目录共用），每个目标目录一个工作根 `<work_dir>/<input_dir 末段名>-<绝对路径 sha12>/`（`input_key`／`work_root`；路径按平台大小写规则归一，盘符根的末段名记为 `root`），内含 `lock`、`input.json`（`record_input`，目标目录绝对路径，只供人查）、`index.json`。每个输入的工作目录是 `<work root>/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`）；`register_work_dir(root, relative)` 在 `index.json` 登记 id ↔ 相对路径，同一 id 已登记为另一路径时报错（短 id 碰撞）。相对路径不得是绝对路径、含 `..` 或任何段含 `:`（盘符、NTFS 备用数据流）；`register_work_dir` 读改写 `index.json`，由编排器在扫描阶段串行调用。产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`NAME_TABLE`、`PUBLISHED`、`FAILURE` 等）；翻译 run 目录的键归翻译子系统（`translate.plan`，见[翻译子系统](translation-subsystem.md)），本模块不拼它。
 
 **坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）；只有 `align.json` 的 `units[].start/end` 含 offset；`ja-cues.json` 与 SRT 的 cue 时间是最终 SRT 时间。
 
 **身份**：JSON 产物顶层为 `{"identity": ..., **payload}`。
 
-- 视频身份（`video_identity`）= 相对路径＋大小＋`mtime_ns`＋ffprobe 指纹；指纹只取流的 `index`／`codec_name`／`channels`／`channel_layout`／`sample_rate`／`start_time`／`duration` 与容器 `duration`，`filename` 与 `tags` 不参与。
+- 输入文件身份（`video_identity`，视频与音频同用）= 相对路径＋大小＋`mtime_ns`＋ffprobe 指纹；指纹只取流的 `index`／`codec_name`／`channels`／`channel_layout`／`sample_rate`／`start_time`／`duration` 与容器 `duration`，`filename` 与 `tags` 不参与。
 - 派生身份（`derived_identity`）= 上游 SHA256（按名）＋配方 hash＋模型文件 SHA256（按名）＋影响输出的配置键；上游、配方、模型三处只接受 64 位小写十六进制摘要，因此绝对路径进不了这三处。
 - `is_current(path, expected)`：文件存在、可解析、`identity` 与期望（经 JSON 规范化）完全相同才为真；损坏或不匹配即为假，调用方重算后用 `write_artifact` 原地原子替换。
-- 模型文件 SHA256（`verify_model`）：首次完整计算并与期望比对，写入 `.work/cache/model-verification.json`（键为解析后的路径，记录 size 与 `mtime_ns`）；之后 size+mtime 不变即复用，不重算；不匹配报错且不入缓存。
+- 模型文件 SHA256（`verify_model`）：首次完整计算并与期望比对，写入 `<work_dir>/cache/model-verification.json`（键为解析后的路径，记录 size 与 `mtime_ns`）；之后 size+mtime 不变即复用，不重算；不匹配报错且不入缓存。
 
 **失败与发布**：
 
 - `write_failure(work_dir, stage, error)` 写 `failure.json`：阶段、异常类型与消息、当时已存在的阶段产物，不含音频与转写内容。
-- `record_published(work_dir, final_paths, sha256, sources, translate_dir)` 在 `publish_blockers` 放行后、移动三份最终 SRT **之前**写 `published.json`（三份 SHA256、来源产物身份、当前翻译 run 目录 `translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录），并把此刻最终位置上已有文件的 SHA 记为 `previous_sha256`。
-- `publish_blockers(final_paths, work_dir, force=...)`：现有最终文件不存在、或 SHA256 等于当前或上一份记录，视为未改动；否则（含没有记录时已存在的文件）视为用户改动并列为阻止项。`force=True` 时恒为空。编排器在扫描阶段调用它（票据 06）。记录磁盘上的旧 SHA 是为了"写记录后、移动完成前崩溃"（包括连续多次）时，最终位置上残留的旧文件不被误判为用户改动（规格 §4，2026-10-14 用户采纳）。
+- `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在移动双语字幕**之前**写 `published.json`（最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录 `translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。它只是审计记录，不参与任何判定。
+- 是否需要发布只看源文件旁的 `<主名>.ja-zh.srt` 是否存在（只看文件名，编排在扫描阶段判定，ADR-0020）；没有 `publish_blockers`、`read_published` 与 `force`，要重做就删掉该字幕。
 
 **原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；Windows `PermissionError`（播放器或扫描器占用）重试 20 次、间隔递增至 0.5 s；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
 
@@ -31,21 +31,21 @@
 
 **失败窗口**（w0／x0 共用）：`fail_window(asr, chunk_index, reason)` 把 `original_segments[i].text` 移入 `failed_windows`（`chunk_index`、`reason`、截断文字）并置空；`retained_text` 是保留文本，后续对齐、cue 与翻译只用它；`validate_failed_windows` 要求列表存在、索引唯一有效且对应窗口已置空。
 
-**cross 审计产物**：`engine = "cross"` 时 asr 阶段在 `.work/<id>/` 额外写三个审计文件，名称是 `artifacts.py` 的模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`，身份按单引擎计算）与 `asr-judge.json`（`offset_s`、每窗口两路原文、分歧区间、逐区间分数与决定，以及文件级计数汇总，身份同 cross 的 `asr.json`；字段见 [STT worker](stt-workers.md#cross-引擎)）。三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。它们**不是阶段产物**：不在 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游；asr 阶段的产物契约只认 `asr.json`。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。`asr.json` 本身的结构、`offset_s` 强制检查与失败窗口约定不变。
+**cross 审计产物**：`engine = "cross"` 时 asr 阶段在 `<work root>/<id>/` 额外写三个审计文件，名称是 `artifacts.py` 的模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`，身份按单引擎计算）与 `asr-judge.json`（`offset_s`、每窗口两路原文、分歧区间、逐区间分数与决定，以及文件级计数汇总，身份同 cross 的 `asr.json`；字段见 [STT worker](stt-workers.md#cross-引擎)）。三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。它们**不是阶段产物**：不在 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游；asr 阶段的产物契约只认 `asr.json`。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。`asr.json` 本身的结构、`offset_s` 强制检查与失败窗口约定不变。
 
-**专名产物**（[专名一致性](name-consistency.md)）：`NAME_TABLE = "name-table.json"` 是 names 阶段的阶段产物（在 `STAGE_ARTIFACTS`，参与 `is_current`，由编排经 `write_artifact` 写出，payload 为 `name-table-v2` 表与 `meta`／`build`）。身份由[阶段计划](stage-plan.md)给出，以 `names` 键进 `published.json` 的 `sources`；表含转写内容，只写在工作目录。ADR-0019 删除了发布时替换的审计产物 `NAMES_APPLY = "names-apply.json"` 与 `names_apply` 身份键：旧版本发布的记录里若有该键，`sources` 比较时视为不匹配，影片下次运行重新翻译并发布；工作目录里遗留的 `names-apply.json` 不再读取。
+**专名产物**（[专名一致性](name-consistency.md)）：`NAME_TABLE = "name-table.json"` 是 names 阶段的阶段产物（在 `STAGE_ARTIFACTS`，参与 `is_current`，由编排经 `write_artifact` 写出，payload 为 `name-table-v2` 表与 `meta`／`build`）。身份由[阶段计划](stage-plan.md)给出，以 `names` 键进 `published.json` 的 `sources`（审计）；表含转写内容，只写在工作目录。ADR-0019 删除了发布时替换的审计产物 `NAMES_APPLY = "names-apply.json"` 与 `names_apply` 身份键：旧版本发布的记录里若有该键，`sources` 比较时视为不匹配，影片下次运行重新翻译并发布；工作目录里遗留的 `names-apply.json` 不再读取。
 
-**SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。`write_srt` 原子写出、拒绝覆盖源文件；是否允许覆盖最终文件由 `publish_blockers` 判定。
+**SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。`write_srt` 原子写出、拒绝覆盖源文件；是否发布由编排按源文件旁字幕是否存在判定。
 
 ## 接口与依赖
 
-只依赖标准库；不导入 `experiments`、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)（`kototoki/plan.py`），worker 壳与编排都向它取。worker 中 CUDA 粘性错误的识别与包装为 `FatalWorkerError` 由各 worker 负责（票据 03／07）。`.work/lock`、GPU 锁与 worker 子进程重启归编排器（票据 06）。
+只依赖标准库；不导入 `experiments`、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)（`kototoki/plan.py`），worker 壳与编排都向它取。worker 中 CUDA 粘性错误的识别与包装为 `FatalWorkerError` 由各 worker 负责（票据 03／07）。`<work root>/lock`、GPU 锁与 worker 子进程重启归编排器（票据 06）。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
-- 测试（core，`just test`）：`tests/core/test_artifacts.py`（短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、覆盖规则四种组合与崩溃窗口、原子写重试与临时文件清理）、`tests/core/test_protocol.py`（jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`）、`tests/core/test_srt.py`（空 SRT、取整边界、严格解析、UTF-8 无 BOM）。
-- `failure.json` 的清理归编排器：该文件成功发布后、判定为已是最新或被覆盖规则拦下时删除（[批次编排](batch-orchestration.md)，票据 06；2026-10-19 审计 B-13）。`final_srt_paths` 只用主名，同目录主名相同、扩展名不同的视频会映射到同一组最终路径，由编排在扫描阶段检测并让后者失败（审计 B-1）。
+- 测试（core，`just test`）：`tests/core/test_artifacts.py`（短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、工作根键与最终字幕路径、`published.json` 审计记录、原子写重试与临时文件清理）、`tests/core/test_protocol.py`（jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`）、`tests/core/test_srt.py`（空 SRT、取整边界、严格解析、UTF-8 无 BOM）。
+- `failure.json` 的清理归编排器：该文件成功发布后、判定为已有字幕而跳过时删除（[批次编排](batch-orchestration.md)，票据 06；2026-10-19 审计 B-13）。`final_srt_path` 只用主名，同目录主名相同、扩展名不同的输入（含视频与音频）会映射到同一份字幕路径，由编排在扫描阶段检测并让后者失败（审计 B-1）。
 - 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟。worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
 
 ## 变更与决策来源

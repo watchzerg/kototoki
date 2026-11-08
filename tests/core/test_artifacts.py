@@ -38,27 +38,79 @@ class WorkDirTests(TempCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 a.work_id(bad)
 
-    def test_register_writes_index_and_is_idempotent(self) -> None:
-        first = a.register_work_dir(self.root, "S1/ep01.mkv")
-        again = a.register_work_dir(self.root, "S1/ep01.mkv")
+    def test_register_writes_index_under_root_and_is_idempotent(self) -> None:
+        work_root = self.root / "work" / "in-abc"
+        first = a.register_work_dir(work_root, "S1/ep01.mkv")
+        again = a.register_work_dir(work_root, "S1/ep01.mkv")
         self.assertEqual(first, again)
-        self.assertEqual(first, self.root / ".work" / a.work_id("S1/ep01.mkv"))
+        self.assertEqual(first, work_root / a.work_id("S1/ep01.mkv"))
         self.assertTrue(first.is_dir())
-        a.register_work_dir(self.root, "ep02.mkv")
-        index = a.read_json(self.root / ".work/index.json")
+        a.register_work_dir(work_root, "ep02.mkv")
+        index = a.read_json(work_root / "index.json")
         self.assertEqual(index, {a.work_id("S1/ep01.mkv"): "S1/ep01.mkv", a.work_id("ep02.mkv"): "ep02.mkv"})
 
     def test_short_id_collision_is_refused(self) -> None:
         identifier = a.work_id("S1/ep01.mkv")
-        a.atomic_write_json(self.root / ".work/index.json", {identifier: "other/file.mkv"})
+        a.atomic_write_json(self.root / "index.json", {identifier: "other/file.mkv"})
         with self.assertRaisesRegex(ValueError, "collides"):
             a.register_work_dir(self.root, "S1/ep01.mkv")
-        self.assertFalse((self.root / ".work" / identifier).exists())
+        self.assertFalse((self.root / identifier).exists())
 
-    def test_final_paths_mirror_input_tree(self) -> None:
-        paths = a.final_srt_paths(self.root, "S1/ep01.mkv")
-        self.assertEqual(paths, {"ja": self.root / "S1/ep01.ja.srt", "zh": self.root / "S1/ep01.zh.srt",
-                                 "ja-zh": self.root / "S1/ep01.ja-zh.srt"})
+    def test_final_path_sits_beside_the_source_and_mirrors_nesting(self) -> None:
+        self.assertEqual(a.final_srt_path(self.root, "ep01.mkv"), self.root / "ep01.ja-zh.srt")
+        self.assertEqual(a.final_srt_path(self.root, "S1/ep01.mkv"), self.root / "S1" / "ep01.ja-zh.srt")
+        self.assertEqual(a.final_srt_path(self.root, "S1/OVA/a.b.mp4"), self.root / "S1" / "OVA" / "a.b.ja-zh.srt")
+        self.assertEqual(a.final_srt_path(self.root, "S1\\ep01.mkv"), a.final_srt_path(self.root, "S1/ep01.mkv"))
+        self.assertEqual(a.FINAL_SUFFIX, ".ja-zh.srt")
+
+
+class InputKeyTests(TempCase):
+    def test_key_is_name_dash_sha12_of_normcased_resolved_path(self) -> None:
+        directory = self.root / "Anime"
+        directory.mkdir()
+        digest = a.sha256_bytes(os.path.normcase(str(directory.resolve())).encode("utf-8"))[:12]
+        self.assertEqual(a.input_key(directory), f"Anime-{digest}")
+        self.assertEqual(a.input_key(directory), a.input_key(directory))  # 稳定
+        self.assertEqual(a.input_key(directory / ".." / "Anime"), a.input_key(directory))  # 路径先 resolve
+
+    def test_case_variants_share_a_key_only_where_normcase_folds_case(self) -> None:
+        # 摘要只受 normcase 影响：大小写不同的同一路径在 Windows 上同键，在区分大小写的平台上异键。
+        directory = self.root / "Anime"
+        directory.mkdir()
+        digest = a.input_key(directory).rsplit("-", 1)[1]
+        folded = a.sha256_bytes(os.path.normcase(str(directory.resolve())).encode("utf-8"))[:12]
+        self.assertEqual(digest, folded)
+        if os.path.normcase("A") == os.path.normcase("a"):
+            with mock.patch.object(Path, "resolve", lambda self, strict=False: Path(str(self).upper())):
+                self.assertEqual(a.input_key(directory).rsplit("-", 1)[1], digest)
+
+    def test_different_input_dirs_get_different_roots(self) -> None:
+        one, two = self.root / "one" / "Anime", self.root / "two" / "Anime"
+        one.mkdir(parents=True)
+        two.mkdir(parents=True)
+        self.assertNotEqual(a.input_key(one), a.input_key(two))
+        self.assertTrue(a.input_key(one).startswith("Anime-") and a.input_key(two).startswith("Anime-"))
+        work = self.root / "work"
+        self.assertNotEqual(a.work_root(work, one), a.work_root(work, two))
+        self.assertEqual(a.work_root(work, one), work / a.input_key(one))
+
+    def test_drive_root_is_named_root(self) -> None:
+        anchor = Path(self.root.anchor)
+        self.assertTrue(a.input_key(anchor).startswith("root-"))
+
+    def test_cache_paths_are_shared_under_work_dir(self) -> None:
+        self.assertEqual(a.cache_dir(self.root), self.root / "cache")
+        self.assertEqual(a.model_cache_path(self.root), self.root / "cache" / "model-verification.json")
+
+    def test_record_input_writes_absolute_path_once(self) -> None:
+        directory = self.root / "in"
+        directory.mkdir()
+        work_root = self.root / "work" / a.input_key(directory)
+        a.record_input(work_root, directory)
+        self.assertEqual(a.read_json(work_root / "input.json"), {"input_dir": str(directory.resolve())})
+        a.atomic_write_json(work_root / "input.json", {"input_dir": "marker"})
+        a.record_input(work_root, directory)  # 已有则不动
+        self.assertEqual(a.read_json(work_root / "input.json"), {"input_dir": "marker"})
 
 
 class IdentityTests(TempCase):
@@ -178,7 +230,7 @@ class ModelVerificationTests(TempCase):
         self.model = self.root / "model.bin"
         self.model.write_bytes(b"weights")
         self.expected = a.sha256_bytes(b"weights")
-        self.cache = self.root / ".work/cache/model-verification.json"
+        self.cache = a.model_cache_path(self.root / "work")
         self.calls = 0
 
     def hasher(self, path: Path) -> str:
@@ -220,69 +272,21 @@ class ModelVerificationTests(TempCase):
         self.assertFalse(self.cache.exists())
 
 
-class PublishTests(TempCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.work = self.root / ".work/abc"
-        self.work.mkdir(parents=True)
-        self.finals = a.final_srt_paths(self.root, "ep01.mkv")
+class PublishRecordTests(TempCase):
+    def test_record_published_is_audit_only_content(self) -> None:
+        work = self.root / "abc"
+        work.mkdir()
+        final = self.root / "in" / "ep01.ja-zh.srt"
+        a.record_published(work, final, SHA_A, {"ja_cues": SHA_B}, "translate/srt-aaaaaaaaaaaa")
+        record = a.read_json(work / a.PUBLISHED)
+        self.assertEqual(set(record), {"final", "sha256", "sources", "translate_dir", "published_at_utc"})
+        self.assertEqual((record["final"], record["sha256"]), (str(final), SHA_A))
+        self.assertEqual((record["sources"], record["translate_dir"]), ({"ja_cues": SHA_B}, "translate/srt-aaaaaaaaaaaa"))
+        self.assertTrue(record["published_at_utc"])
 
-    def publish(self, texts: dict[str, str]) -> None:
-        self.record(texts, {"ja_cues": SHA_A}, "translate/srt-aaaaaaaaaaaa")
-        for kind, text in texts.items():
-            a.atomic_write_text(self.finals[kind], text)
-
-    def record(self, texts: dict[str, str], sources: dict | None = None, translate_dir: str = "translate/x") -> None:
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=False), [])
-        a.record_published(self.work, self.finals, {k: a.sha256_bytes(v.encode()) for k, v in texts.items()},
-                           sources or {}, translate_dir)
-
-    def texts(self, tag: str) -> dict[str, str]:
-        return {kind: f"{tag}-{kind}" for kind in a.FINAL_SUFFIXES}
-
-    def test_absent_files_may_be_published(self) -> None:
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=False), [])
-
-    def test_unchanged_files_may_be_replaced(self) -> None:
-        self.publish(self.texts("v1"))
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=False), [])
-        record = a.read_published(self.work)
-        self.assertEqual(record["translate_dir"], "translate/srt-aaaaaaaaaaaa")
-        self.assertEqual(record["sources"], {"ja_cues": SHA_A})
-
-    def test_user_modified_file_blocks_without_force(self) -> None:
-        self.publish(self.texts("v1"))
-        self.finals["zh"].write_text("用户手改", encoding="utf-8")
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=False), ["zh"])
-
-    def test_force_overrides_modified_file(self) -> None:
-        self.publish(self.texts("v1"))
-        self.finals["ja"].write_text("用户手改", encoding="utf-8")
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=True), [])
-
-    def test_existing_files_without_record_are_treated_as_user_files(self) -> None:
-        self.finals["ja-zh"].write_text("外来文件", encoding="utf-8")
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=False), ["ja-zh"])
-
-    def test_crash_between_record_and_move_keeps_old_files_replaceable(self) -> None:
-        self.publish(self.texts("v1"))
-        self.record(self.texts("v2"))  # 写完记录、尚未移动就崩溃
-        self.record(self.texts("v3"))  # 重跑后内容变化，又在移动中途崩溃
-        a.atomic_write_text(self.finals["ja"], self.texts("v3")["ja"])
-        self.record(self.texts("v4"))
-        self.publish(self.texts("v5"))
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=False), [])
-
-    def test_mixed_absent_unchanged_and_modified(self) -> None:
-        self.publish(self.texts("v1"))
-        self.finals["ja"].unlink()
-        self.finals["ja-zh"].write_text("用户手改", encoding="utf-8")
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=False), ["ja-zh"])
-        self.assertEqual(a.publish_blockers(self.finals, self.work, force=True), [])
-
-    def test_record_requires_all_three_digests(self) -> None:
+    def test_record_requires_a_digest(self) -> None:
         with self.assertRaises(ValueError):
-            a.record_published(self.work, self.finals, {"ja": SHA_A, "zh": SHA_A}, {}, "translate/x")
+            a.record_published(self.root, self.root / "x.ja-zh.srt", "not-a-digest", {}, "translate/x")
 
 
 class AtomicWriteTests(TempCase):

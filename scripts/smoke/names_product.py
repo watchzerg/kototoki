@@ -61,7 +61,7 @@ def synthetic_srt() -> str:
 def write_config(root: Path) -> config.Config:
     (root / "in").mkdir(parents=True, exist_ok=True)
     path = root / "kototoki.toml"
-    path.write_text('[paths]\ninput_dir = "in"\noutput_dir = "out"\n', encoding="utf-8", newline="\n")
+    path.write_text('[paths]\ninput_dir = "in"\nwork_dir = "work"\n', encoding="utf-8", newline="\n")
     return config.load(path)
 
 
@@ -75,7 +75,7 @@ def main() -> int:
     root = args.out.resolve() / NAME
     cfg = write_config(root)
     ja_text = synthetic_srt()
-    work_dir = cfg.paths.output_dir / "work"
+    work_dir = cfg.paths.work_dir / "doc"  # 单部影片的工作目录；server 运行日志落在 work_dir 下的目标目录键子目录
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "ja.srt").write_text(ja_text, encoding="utf-8", newline="\n")
     document = srt.read_srt(work_dir / "ja.srt")
@@ -93,7 +93,7 @@ def main() -> int:
         failures.append(f"build {type(error).__name__}: {str(error)[:500]}")
     timer.mark("build")
 
-    finals = sorted((cfg.paths.output_dir / ".work").rglob("engine-final.json"))
+    finals = sorted(cfg.paths.work_dir.rglob("engine-final.json"))
     engines = [json.loads(path.read_text(encoding="utf-8")) for path in finals]
     result["engine_sessions"] = [{"cold_load_seconds": e.get("cold_load_seconds"),
                                   "free_vram_mib_before_start": e.get("free_vram_mib_before_start"),

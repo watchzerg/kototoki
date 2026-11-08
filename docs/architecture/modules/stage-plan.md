@@ -15,7 +15,7 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► names ─►
                   vad.json 无语音时直接 ──────────────────────────────► publish
 ```
 
-需要核对身份的阶段按链上顺序为 `STAGES = (vad, asr, align, cues, names, translate)`，其中 `GPU_STAGES = (vad, asr, align)`（由 worker 子进程跑；names 与 translate 由编排在进程内跑，见[批次编排](batch-orchestration.md)）；names 恒在链上（建表必开，[ADR-0019](../../adr/0019-product-translation-q2.md)）；`publish`／`done` 是计划的终态，不是阶段。阶段表：`STAGE_OUTPUT`（阶段 → 工作目录内产物文件名，names 为 `name-table.json`）、`STAGE_INPUTS`（GPU 阶段 → worker jobs 的输入名与文件：vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）、`IDENTITY_KEY`（阶段 → `published.json` 的 `sources` 键，`cues` 阶段为 `ja_cues`，names 为 `names`）。
+需要核对身份的阶段按链上顺序为 `STAGES = (vad, asr, align, cues, names, translate)`，其中 `GPU_STAGES = (vad, asr, align)`（由 worker 子进程跑；names 与 translate 由编排在进程内跑，见[批次编排](batch-orchestration.md)）；names 恒在链上（建表必开，[ADR-0019](../../adr/0019-product-translation-q2.md)）；`publish`（无语音）是计划的终态，不是阶段。阶段表：`STAGE_OUTPUT`（阶段 → 工作目录内产物文件名，names 为 `name-table.json`）、`STAGE_INPUTS`（GPU 阶段 → worker jobs 的输入名与文件：vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）、`IDENTITY_KEY`（阶段 → 身份键，即 `published.json`〔审计记录〕的 `sources` 键，`cues` 阶段为 `ja_cues`，names 为 `names`）。
 
 **期望身份**（字段、键名与取值不变：现有产物目录续跑必须全部命中）：
 
@@ -31,9 +31,9 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► names ─►
 
 **cross 引擎的 asr 身份**（[ADR-0012](../../adr/0012-cross-asr-judge.md)）：`ASR_RECIPES` 有 `w0`、`x0`、`cross`（→ `recipes.CROSS`）三项，`recipe_hash("asr", engine="cross")` 与 `asr_identity("cross", …)` 可用，其它值抛错。`cross` 的 `asr.json` 身份：上游 PCM SHA256 ＋ `vad.json` SHA256 ＋ `recipe_hash(CROSS)` ＋ 两路模型文件 SHA256，即 w0 模型（`config.json`／`model.bin`／`preprocessor_config.json`／`tokenizer.json`／`vocabulary.json`）、mel 资产 `mel_filters.npz` 与 x0 模型（7 个文件），共 13 个；`model_files("asr", models, engine="cross")` 因而返回 w0 与 x0 两套清单的并集。`CROSS` 配方字典嵌入 `W0`、`X0` 与裁判参数，一个 hash 覆盖全部，任一子配方变化即身份变化（字段见[配置与配方](config-and-media.md)）。worker 另写的 `asr-w0.json`／`asr-x0.json` 用单引擎身份（`asr_identity("w0"|"x0", …)`，只含该路模型文件）、`asr-judge.json` 用 cross 身份，三者是审计产物，不进 `STAGE_OUTPUT`，不参与 `is_current`（见[产物契约](artifact-contract.md)）。身份字段与键名不变，其它阶段的身份函数与阶段链不变。
 
-**计划**：`Target(work_dir, finals, probe, pcm_sha256)` 是一个文件在 CPU 阶段之后已知的常量。`Plan` 是不可变值：`stage`（第一个需要运行的阶段，或终态 `publish`：无语音，直接发布零条目 SRT；`done`：已发布且身份匹配、最终文件未改动）、`identities`（`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `published.json` 的 `sources`；`names` 在表当前时已含其中）、`no_speech`、`translate`（核对到翻译阶段后才有的 `TranslatePlan`，否则 `None`），以及发布记录用的 `sources`（无语音时只含 `probe`、`vad`；否则为 `probe`、`vad`、`asr`、`align`、`ja_cues`、`names`、`translate`，加 `no_speech`）。
+**计划**：`Target(work_dir, probe, pcm_sha256)` 是一个文件在 CPU 阶段之后已知的常量。`Plan` 是不可变值：`stage`（第一个需要运行的阶段，或终态 `publish`：无语音，直接发布零条目字幕；是否已发布不归本模块，编排在扫描时按源文件旁的 `.ja-zh.srt` 是否存在判定，ADR-0020，所以没有 `done`）、`identities`（`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `sources`；`names` 在表当前时已含其中）、`no_speech`、`translate`（核对到翻译阶段后才有的 `TranslatePlan`，否则 `None`），以及发布记录用的 `sources`（无语音时只含 `probe`、`vad`；否则为 `probe`、`vad`、`asr`、`align`、`ja_cues`、`names`、`translate`，加 `no_speech`）。
 
-- `next_stage(target, config, models)`：从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果（`cues` 阶段同时要求 `ja.srt` 在）；`vad.json` 的 `chunks` 为空即无语音，跳到发布判定；全部当前时对照 `published.json`：`sources` 与期望相同且三份最终文件 SHA 等于记录即 `done`，否则 `translate`（无语音时 `publish`）。比较时取期望键与记录键的并集（`translate_fallback_cues` 不是身份）：旧版本发布时记录里多出的键（如 `names_apply`）同样触发重新发布。每文件每次运行调用一次。
+- `next_stage(target, config, models)`：从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果（`cues` 阶段同时要求 `ja.srt` 在）；`vad.json` 的 `chunks` 为空即无语音，结果为 `publish`；全部当前时结果为 `translate`（翻译阶段总要经过，run 已完成时只读回译文）。不读 `published.json`。每文件每次运行调用一次。
 - `advance(previous, …)`：`previous.stage` 跑完之后从该阶段继续同一核对，不从头重算、不改写入参；其产物不当前时返回的 `stage` 不变（调用方据此记失败）；对已到终态的计划报错。对同一目录连续调用结果相同。
 - 核对途中出错（如读不了上游产物）抛 `PlanError`，带正在核对的阶段，编排记为该阶段失败；损坏的产物不是错误，只是"不当前"。
 
@@ -44,7 +44,7 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► names ─►
 ## 代码与验证入口
 
 - 代码：`kototoki/plan.py`（`Target`、`Plan`、`next_stage`、`advance`、`PlanError`、`ModelSha`、各阶段身份函数、`names_identity`、`translate_plan`、`STAGES`／`GPU_STAGES`／`STAGE_INPUTS`／`STAGE_OUTPUT`／`IDENTITY_KEY`、`worker_models`、`model_files`、`recipe_hash`、模型文件 SHA256 常量）。
-- 测试（core，`just test`）：`tests/core/test_plan.py` 直接测计划模块：阶段链逐级推进、cues 阶段同时要求 `ja-cues.json` 与 `ja.srt`、无语音直达 `publish` 再 `done`、最终文件改动或身份改变即重新发布、`advance` 停在未写出产物的阶段、连续调用结果相同且不改写入参、`PlanError` 标明阶段、损坏产物视为不当前；翻译阶段用 `sys.modules` 里的伪 `kototoki.translate` 模块（只需 `plan` 返回 `identity` 与 `needs_model`），names 阶段用伪 `kototoki.names.recipes`（建表 hash）；names 组另测身份随配方 hash 与 seed 变化、链为 cues → names → translate、`ja.srt`／seed 变化或表缺失停在 names、手改注入条目改变翻译身份并重新翻译与发布、从 names 继续推进、无语音路径没有 names 键（具体用例以 `test_plan.py` 当前内容为准，ADR-0019 后随之改写）。`tests/core/test_job.py` 核对一次整批运行中每文件 `next_stage` 恰一次、每个跑过的阶段 `advance` 恰一次；`tests/core/test_stt_workers.py` 核对壳写出的身份与本模块的期望身份逐字段相等。
+- 测试（core，`just test`）：`tests/core/test_plan.py` 直接测计划模块：阶段链逐级推进、cues 阶段同时要求 `ja-cues.json` 与 `ja.srt`、无语音直达 `publish`、`advance` 停在未写出产物的阶段、连续调用结果相同且不改写入参、`PlanError` 标明阶段、损坏产物视为不当前；翻译阶段用 `sys.modules` 里的伪 `kototoki.translate` 模块（只需 `plan` 返回 `identity` 与 `needs_model`），names 阶段用伪 `kototoki.names.recipes`（建表 hash）；names 组另测身份随配方 hash 与 seed 变化、链为 cues → names → translate、`ja.srt`／seed 变化或表缺失停在 names、手改注入条目改变翻译身份并重新翻译与发布、从 names 继续推进、无语音路径没有 names 键（具体用例以 `test_plan.py` 当前内容为准，ADR-0019 后随之改写）。`tests/core/test_job.py` 核对一次整批运行中每文件 `next_stage` 恰一次、每个跑过的阶段 `advance` 恰一次；`tests/core/test_stt_workers.py` 核对壳写出的身份与本模块的期望身份逐字段相等。
 - 真实运行：票据 14 交付时对四个整片工作目录重算身份全等（见状态行）。
 - 未验证：没有单独的真实运行；行为由编排与 worker 的整片验收间接覆盖。
 

@@ -12,6 +12,7 @@ from typing import Any
 import unittest
 from urllib.error import HTTPError, URLError
 
+from kototoki import artifacts
 from kototoki.artifacts import read_json
 from kototoki.llama_server import InfraFailure, wait_for_free_vram
 from kototoki.srt import format_srt, parse_srt
@@ -113,7 +114,7 @@ class Harness:
         self.max_targets: int | None = None
         self.table: dict[str, Any] = EMPTY_TABLE
         self.servers: dict[str, FakeServer] = {}
-        self.config = SimpleNamespace(paths=SimpleNamespace(output_dir=root / "out"),
+        self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=root / "work", input_dir=root / "in"),
                                       translate=SimpleNamespace(seed=SEED))
 
     def session(self) -> Session:
@@ -128,7 +129,7 @@ class Harness:
         return Session(self.config, on_server_pid=self.pids.append, server_factory=server_factory,
                        client_factory=client_factory)
 
-    work_dir = property(lambda self: self.root / "out/.work/abc")
+    work_dir = property(lambda self: self.root / "work/abc")
 
     def plan(self, doc) -> TranslatePlan:
         return translate_plan(self.work_dir, doc, self.table, self.config)
@@ -207,7 +208,7 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_session_directory_is_a_utc_stamp_with_pid(self) -> None:
         session = self.h.session()
         self.assertRegex(session.runtime_root.name, r"^\d{8}T\d{6}Z-\d+$")
-        self.assertEqual(session.runtime_root.parent, self.h.root / "out" / ".work" / "translate-sessions")
+        self.assertEqual(session.runtime_root.parent, artifacts.work_root(self.h.root / "work", self.h.root / "in") / "translate-sessions")
 
     def test_one_strata_session_serves_the_whole_batch(self) -> None:
         a, b = document(12), document(5, "別")
