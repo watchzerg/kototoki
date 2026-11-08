@@ -52,7 +52,7 @@ class IdentityTest(unittest.TestCase):
     def test_product_build_hash_unchanged_and_s1_separate(self):
         from kototoki.names.recipes import BUILD, BUILD_RECIPE_HASH
         self.assertEqual(BUILD_RECIPE_HASH, PRODUCT_BUILD_HASH)
-        s1 = v13.s1_recipe()
+        s1 = v13.s1_recipe("v2")
         self.assertEqual(s1["build"], {k: v for k, v in BUILD.items() if k != "model_asset"}
                          | {"max_tokens": 8192, "context": 24576})
         self.assertEqual(s1["build"]["prompt_budget"], BUILD["prompt_budget"])  # 24576 - 8192 - 512 = 15872

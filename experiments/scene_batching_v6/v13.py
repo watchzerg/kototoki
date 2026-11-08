@@ -60,7 +60,7 @@ VARIANTS: dict[str, dict[str, Any]] = {
     "v3": {"name": "names-strata-v3", "dir": "B3", "response_format": True, "attempts": 5},
     "v4": {"name": "names-strata-v4", "dir": "B4", "response_format": False, "attempts": 5},
 }
-CANDIDATE = "v2"  # the variant whose tables feed tickets 03-05
+CANDIDATE = "v4"  # the variant whose tables feed tickets 03-05 (user, 2026-11-09: v4 passes on "all ok within 5 attempts")
 BUILD_DIR = VARIANTS[CANDIDATE]["dir"]
 B_ROOT = V13_ROOT / BUILD_DIR
 C_ROOT = V13_ROOT / "C"
