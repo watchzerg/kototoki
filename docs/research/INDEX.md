@@ -14,6 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；本节只摘要并链接。当前有效的决定及其演进链以[决定索引](../adr/INDEX.md)为准，新决定按其"记录新决定"步骤同步。
 
+2026-11-08：用户裁定立项[第十三轮（v13）专名建表换成 Strata＋Qwen3.8-Flash-Next](2026-11-08-names-on-strata-v13.md)（planned；重开已结题的专名研究线，由用户明确要求）。只把产品 names 阶段的建表模型从 Qwen3.8-27B（llama-server）换成 Strata 上的 Flash-Next（Q2 启动方式），提示 v5、采样、预算、两次尝试都不变，不发 `response_format`；对照为现有的 27B 表（不重建）。阶段依次为建表可行性门 → dev 表对参考的一致率非劣 → dev 翻译（Q2＋两种表，3 seed）→ 产品 ASR 源翻译（seed 54–56）。预算 GPU 13 run／裁判 $80。不改产品、ADR 与基线身份，不开封确认集；产品切换与 Q2 身份的处理留待结题后裁定。
 2026-11-08：用户决定产品翻译切到 Q2（[ADR-0019](../adr/0019-product-translation-q2.md)）：产品配方 `q2-degrade-v1`＝Q2 规则＋10→5→1 降级；Strata 由产品自动启停（`strata launch --no-tui --model iq3_s`＋ADR-0017 接入检查，结束或出错都 `--stop`），不与建表的 llama-server 同时驻留；删除发布时专名替换与 `[names] enabled`，注入行进翻译身份。H0 从产品移除。
 2026-11-08：用户决定翻译只保留一条基线（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)）：**Q2** 为唯一基线，新翻译测试都以 Q2 为对照；H0 退出基线，只作历史对照与产品当前实现（产品仍跑 `dp10-cut-degrade-v1`，切到 Q2 未裁定）。
 2026-11-08：用户决定换基线（[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)）：Q 线基线改为 **Q2**＝Q1 配方规则＋Strata Flash-Next IQ3_S，不加参数 `strata launch`（DFlash2，不用 v12 的 MTP；本机 quick tune 确认默认即最优）。质量证据来自 v12 F1，Q2 的启动配置（128K、图片读取器在 CPU、并发自动）未跑过翻译，建议首用前 smoke；v12 §8 第 5 项不再单独立项。
@@ -233,6 +234,10 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 ### 字幕质量探索第五轮（2026-10-16）
 
 - [方案、进度与结论](2026-10-16-quality-exploration-v5.md)：concluded。14 步（含追加的确认步）：swr 基线 → ASR 源 vs 参考源瓶颈定位、一致性指标、可读性、观感抽查 → 自动投向（先 STT）→ VAD 召回、ASR 候选第二轮 → 更省 MBR、语义效用、低温组合、术语表 → mbr8s 剧集确认 → 结题；唯一确认的改进是语义效用 MBR（剧集 −7%，6.3 倍墙钟），用户已裁定放弃（ADR-0008）；其余后续列在第 8 节
+
+### 专名建表第十三轮：Strata＋Qwen3.8-Flash-Next 对照 27B 建表（2026-11-08）
+
+- [方案（v13）](2026-11-08-names-on-strata-v13.md)：planned（2026-11-08 用户裁定立项）。候选 S1 只换建表模型与引擎（Strata Flash-Next，Q2 启动方式），对照现行 27B 表；翻译两臂都用 Q2 规则、只差注入的表。阶段：建表可行性门 → dev 表质量非劣 → dev 翻译 3 seed → 产品 ASR 源 seed 54–56。预算 GPU 13 run／裁判 $80。
 
 ### 字幕翻译流程第十二轮：Strata＋Qwen3.8-Flash-Next 对照 Q1（2026-11-08）
 
