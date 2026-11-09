@@ -20,7 +20,7 @@
 4. **Strata 生命周期下沉到中间层 `kototoki/strata.py`**（与 `llama_server.py` 同层，不属基础层）：`StrataServer`、`StrataRefused`、Strata 身份常量（模型名、版本、引擎 build、默认启动的解析值）与共享 `Session`（整批一个、启动计数、`unavailable`、`ensure_started`／`stop`、`on_server_pid`）。编排器持有 `Session` 并传给两个阶段；`names` 与翻译子系统互不导入；翻译子系统保留自己的同调用内重启与降级逻辑，只是改用共享的 session。这是第二个使用者出现后的正当抽取（[模块边界·接缝](../architecture/module-boundaries.md#产品包的责任边界)）。研究侧 `experiments/translation_v3/strata.py` 与 `scene_batching_v6/v13.py` 仍从 `kototoki.translate.strata` 导入 `drafting_from_log`、`StrataServer` 等名字，`experiments/` 不改，因此该模块保留为只做再导出的研究侧导入路径，产品内不使用（是否改研究侧导入另由用户裁定）。
 5. **失败路径。**
    - 建表请求遇到传输失败、HTTP 错误、OOM：停掉 Strata，该影片 `names` 阶段文件级失败（`failure.json`），下一个需要模型的影片再启动。
-   - 整批启动 Strata 的总次数上限 3 次（翻译"同调用内重启 2 次"即最多 3 次启动，names 此前"整批最多 3 次"，两者相同，取整批 3 次）；用尽即 `unavailable`，其余需要模型的影片在两个阶段都直接失败。
+   - 成功的启动不设整批上限（翻译"同调用内最多重启 2 次"仍是翻译自己的规则，行为不变）；Strata **启动失败**整批累计 3 次即 `unavailable`（与翻译"3 次连续 `server_start` 即放弃"、names 此前"整批最多 3 次启动"同量），其余需要模型的影片在两个阶段都直接失败。
    - `StrataRefused`（身份不符、已有别的 launch 在服务、专家区退到 mmap）不重试：共享 session 置为不可用，本批其余需要模型的影片在 names 与 translate 都直接失败。
 6. **删除与保留。**
    - 删除产品里 names 的 llama-server 路径：`NAMES_SERVER`、`NAMES_SPEC`、names 自己的 `Session`、`BUILD["model_asset"]`、`<work root>/names-sessions/`；配置键 `[names] model`、`[names] port`、`[paths] llama_server` 与默认的 27B 模型路径（产品已无其他使用者）。写了这些键的旧配置按未知键报错，不做兼容垫片。

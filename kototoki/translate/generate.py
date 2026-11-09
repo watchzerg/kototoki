@@ -1,13 +1,15 @@
-"""按批次落盘、可续跑的整片翻译；编排器传入的 `Session` 在整批影片间共用一个 Strata 服务（ADR-0019）。
+"""按批次落盘、可续跑的整片翻译；编排器传入的共享 `kototoki.strata.Session` 在整批影片间（names 建表与翻译）共用一个 Strata 服务（ADR-0019、ADR-0022）。
 
 `run_step` 复制自 `experiments/translation_v3/strata.py`（判定逻辑不变，去掉思考分支）。与研究侧的差别：
 
-- 研究侧只连接执行者启动好的服务；这里由 `Session` 持有 `strata.StrataServer`：第一次真正需要请求模型时才
-  `strata launch --no-tui --model iq3_s`、核对身份，整批影片顺序共用，退出时 `strata launch --stop` 并核实显存释放。
+- 研究侧只连接执行者启动好的服务；这里由编排器持有的共享 `kototoki.strata.Session` 持有 `StrataServer`：第一次真正需要
+  请求模型时才 `strata launch --no-tui --model iq3_s`、核对身份（可能已在 names 阶段启动），整批影片顺序共用，
+  编排器退出 session 时 `strata launch --stop` 并核实显存释放。
 - 研究侧按整场景落盘；这里每完成一批就向 `batches.jsonl` 追加一行，续跑从未完成的批次继续，
   末尾不完整的一行视为未写入并截掉；`scene.json` 只在全部批次完成后写出。
 - 基础设施失败（OOM、传输／连接断开、server 错误、服务起不来）在同一次调用内停掉服务、重新启动新 session 重做，
-  最多重启 `MAX_RESTARTS` 次；每次重启在 `run.json` 的 `sessions[]` 新增一项。身份不符（`StrataRefused`）不重试。
+  最多重启 `MAX_RESTARTS` 次；每次重启在 `run.json` 的 `sessions[]` 新增一项。身份不符（`StrataRefused`）不重试；共享
+  session 的启动失败整批累计 `strata.MAX_START_FAILURES` 次后也不再尝试。
 - 两次尝试都失败的批次（生成触顶、解析失败、HTTP 报超出 context）按 `degrade.py` 拆批降级，单条仍失败保留日文；
   研究侧只空出该包的 cue。降级完成的批次照常写入 `batches.jsonl`，回退对该身份是终态，重跑不再尝试。
 
@@ -15,7 +17,7 @@ run 目录由本子系统的 `plan` 决定：`<work_dir>/translate/srt-<sha12>/<
 配方名、seed、注入行的 SHA 四项分键；同名配方内容变化时 `run.json` 的 hash 不符即拒绝续跑，删除该目录可重跑），下有
 `run.json`、`batches.jsonl`、`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、
 `transport/session-NN/`（逐请求原始交换）、`infra-failures/`。`TranslatePlan.needs_model` 告诉编排器是否要取 GPU 锁：
-零条目或 `run.json` 已记完成时不需要。Strata session 的证据在 `<工作根>/translate-sessions/<UTC戳>-<pid>/session-NN/`。
+零条目或 `run.json` 已记完成时不需要。Strata session 的证据在 `<工作根>/strata-sessions/<UTC戳>-<pid>/session-NN/`（归中间层）。
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ import os
 from pathlib import Path
 import re
 import time
-from typing import Any, Callable
+from typing import Any
 from urllib.error import HTTPError, URLError
 
 from kototoki import artifacts
@@ -35,12 +37,12 @@ from kototoki.artifacts import atomic_write_json, object_hash, read_json, sha256
 from kototoki.config import Config
 from kototoki.srt import SourceDocument
 
-from kototoki.llama_server import InfraFailure, LlamaClient, explicit_oom
+from kototoki.llama_server import InfraFailure, explicit_oom
+from kototoki.strata import Session, StrataRefused
 
 from . import degrade
 from . import recipes as R
 from .batching import Batch, Scene, build_batches, cue_positions, scene_from_document, source_key
-from .strata import StrataRefused, StrataServer
 
 TRANSLATE_DIR = "translate"  # 工作目录内的翻译根目录
 RUN_SCHEMA = "kototoki-translate-run-v1"
@@ -48,7 +50,6 @@ SCENE_SCHEMA = "kototoki-translate-scene-v1"
 BATCHES = "batches.jsonl"
 DEGRADE = "degrade.jsonl"
 REPORT = "report.json"
-SESSIONS_DIR = "translate-sessions"
 MAX_RESTARTS = 2
 CLIENT_TIMEOUT_SECONDS = 600.0
 FATAL_KINDS = ("oom", "server")
@@ -109,55 +110,6 @@ def plan(work_dir: Path, document: SourceDocument, name_table: dict[str, Any], c
         run = _check_run(run_dir, seed, names, _source(document, scene_from_document(document)))
         needs_model = run["completion"].get("state") != "complete"
     return TranslatePlan(Path(work_dir), run_dir, identity, needs_model, document, rows)
-
-
-# --- session --------------------------------------------------------------------------------
-
-class Session:
-    """整批翻译共用的 Strata 生命周期：首次需要时才启动，`stop` 后再 `ensure_started` 即新 session。
-
-    `on_server_pid(pid)` 在服务 ready 后以 pid、停止后以 None 回调，供编排器写进 GPU 锁。
-    `server_factory`／`client_factory` 是只供测试的内部接缝（伪服务须有 `url`、`identity` 与上下文管理器协议）。
-    """
-
-    def __init__(self, config: Config, *, on_server_pid: Callable[[int | None], None] | None = None,
-                 server_factory: Callable[[Path, Callable[[int | None], None]], Any] | None = None,
-                 client_factory: Callable[..., Any] = LlamaClient):
-        self.config = config
-        self.on_server_pid = on_server_pid or (lambda pid: None)
-        self.server_factory = server_factory or self._managed_server
-        self.client_factory = client_factory
-        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())  # UTC，与运行日志 `run-<戳>.log` 同一时间基准
-        self.runtime_root = artifacts.work_root(config.paths.work_dir, config.paths.input_dir) / SESSIONS_DIR / f"{stamp}-{os.getpid()}"
-        self.server: Any = None
-        self.ordinal = 0
-        self.cache_state: dict[str, Any] = {}
-        # 某部影片因 server 一直起不来（显存被占、加载失败）用尽重启后，本批其余影片不再等待，直接失败。
-        self.unavailable: str | None = None
-
-    @staticmethod
-    def _managed_server(runtime_dir: Path, on_pid: Callable[[int | None], None]) -> StrataServer:
-        return StrataServer(runtime_dir, on_pid=on_pid)
-
-    def __enter__(self) -> "Session":
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.stop()
-
-    def ensure_started(self) -> Any:
-        if self.server is None:
-            self.ordinal += 1
-            self.cache_state = {"checked": False}
-            server = self.server_factory(self.runtime_root / f"session-{self.ordinal:02d}", self.on_server_pid)
-            server.__enter__()  # ready 后以 pid 回调；启动或核对失败时自行停掉并以 None 回调
-            self.server = server
-        return self.server
-
-    def stop(self) -> None:
-        server, self.server = self.server, None
-        if server is not None:
-            server.__exit__(None, None, None)  # 停止并核实显存释放后以 None 回调
 
 
 # --- 单次请求（研究侧 strata.run_step） ----------------------------------------------------------

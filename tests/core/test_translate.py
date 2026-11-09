@@ -1,6 +1,6 @@
 """翻译子系统伪客户端测试：`plan` 的 run 键、身份与 `needs_model`、正常、按批次续跑、基础设施失败（OOM、中途断开、
 起不来）重启即新 session、Strata 拒绝、空场景、`ja.srt`／seed／注入行变化换目录。批次终态失败的降级见
-`test_translate_degrade.py`，Strata 启停本身见 `test_translate_strata.py`。不启动 Strata，不占 GPU。"""
+`test_translate_degrade.py`，Strata 启停与共享 session 本身见 `test_strata.py`。不启动 Strata，不占 GPU。"""
 
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ from kototoki import artifacts
 from kototoki.artifacts import read_json
 from kototoki.llama_server import InfraFailure, wait_for_free_vram
 from kototoki.srt import format_srt, parse_srt
-from kototoki.translate import RECIPE_HASH, Session, TranslateError, TranslatePlan, translate_document
+from kototoki.strata import Session, StrataRefused
+from kototoki.translate import RECIPE_HASH, TranslateError, TranslatePlan, translate_document
 from kototoki.translate import plan as translate_plan
 from kototoki.translate import recipes as R
-from kototoki.translate.strata import StrataRefused
 
 SEED = 7
 EMPTY_TABLE: dict[str, Any] = {"entries": []}
@@ -208,7 +208,7 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_session_directory_is_a_utc_stamp_with_pid(self) -> None:
         session = self.h.session()
         self.assertRegex(session.runtime_root.name, r"^\d{8}T\d{6}Z-\d+$")
-        self.assertEqual(session.runtime_root.parent, artifacts.work_root(self.h.root / "work", self.h.root / "in") / "translate-sessions")
+        self.assertEqual(session.runtime_root.parent, artifacts.work_root(self.h.root / "work", self.h.root / "in") / "strata-sessions")
 
     def test_one_strata_session_serves_the_whole_batch(self) -> None:
         a, b = document(12), document(5, "別")

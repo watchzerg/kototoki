@@ -155,7 +155,8 @@
 
 （执行者填写：每张票据一行，含日期、提交、测试结果、GPU 数字；最后写完成报告，区分已实现、自动检查、GPU 结果、未验证项。）
 
-- 2026-11-09 票据 01（设计与文档先行）：新增 [ADR-0022](../adr/0022-product-names-on-strata.md)，同步决定索引、AGENTS.md、GLOSSARY、README、调研索引；改模块边界、专名一致性（整页）、翻译子系统、批次编排、阶段计划、配置与媒体、架构总览、技术设计规格。设计定稿：中间层 `kototoki/strata.py`＋共享 `Session`（整批最多启动 3 次、`<work root>/strata-sessions/`、日志前缀 `[strata]`），配方名 `q3-names-v1`；`kototoki/translate/strata.py` 保留为研究侧再导出（见 §8）。`docs-check` 无新增失败（44 条均为 main 上已有）。未改代码。
+- 2026-11-09 票据 01（设计与文档先行）：新增 [ADR-0022](../adr/0022-product-names-on-strata.md)，同步决定索引、AGENTS.md、GLOSSARY、README、调研索引；改模块边界、专名一致性（整页）、翻译子系统、批次编排、阶段计划、配置与媒体、架构总览、技术设计规格。设计定稿：中间层 `kototoki/strata.py`＋共享 `Session`（启动失败整批累计 3 次即不可用——票据 02 修正，原定"最多启动 3 次"、`<work root>/strata-sessions/`、日志前缀 `[strata]`），配方名 `q3-names-v1`；`kototoki/translate/strata.py` 保留为研究侧再导出（见 §8）。`docs-check` 无新增失败（44 条均为 main 上已有）。未改代码。
+- 2026-11-09 票据 02（Strata 下沉为共享模块）：新增 `kototoki/strata.py`（`StrataServer`、`StrataRefused`、身份常量、共享 `Session`、`strata-sessions/`），`kototoki/translate/strata.py` 改为研究侧再导出，`translate/recipes.py` 从中间层取身份常量（`RECIPE_HASH` 不变），`generate.py` 删掉自己的 `Session`；`test_translate_strata.py` 改名 `test_strata.py` 并加共享 session 测试，`test_translate.py` 只改导入。修正票据 01 的设计：整批上限只计 Strata **启动失败**（累计 3 次即不可用），成功启动不限次——原定"最多启动 3 次"会改变翻译既有行为，与本票据"行为不变"冲突；ADR-0022 与模块页同步改写。`just test` 600 过、`just check` 过、`docs-check` 44 条均为已有。
 
 ## 8. 待用户裁定
 

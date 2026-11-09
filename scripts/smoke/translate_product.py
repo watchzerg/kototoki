@@ -3,7 +3,7 @@ Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）
 
 入口：`just smoke translate_product`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
 `python scripts/smoke/translate_product.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。走产品代码：
-`translate.plan` → `translate.Session`（`StrataServer`：`--status` 为空才启动、`strata launch --no-tui`、ADR-0017 接入
+`translate.plan` → 共享 `strata.Session`（`StrataServer`：`--status` 为空才启动、`strata launch --no-tui`、ADR-0017 接入
 检查、结束 `--stop` 并核实显存释放）→ `translate.translate_document`，配方为产品配方 `q2-degrade-v1`，seed 取
 `config.load` 的默认值。开始前若已有 Strata launch 在服务，产品拒绝运行，本脚本照实记为失败。
 
@@ -25,7 +25,7 @@ import smokelib
 
 sys.path.insert(0, str(smokelib.REPO))
 
-from kototoki import artifacts, config, srt, translate  # noqa: E402
+from kototoki import artifacts, config, srt, strata, translate  # noqa: E402
 from kototoki.translate import recipes as R  # noqa: E402
 
 NAME = "translate_product"
@@ -117,7 +117,7 @@ def main() -> int:
                   "synthetic": True, "pause_after_cue": PAUSE_AFTER, "name_rows": 1}}
     translated = None
     try:
-        with translate.Session(cfg) as session:
+        with strata.Session(cfg) as session:
             translated = translate.translate_document(plan, session)
     except Exception as error:  # 记录失败类别后照常写结果
         failures.append(f"{type(error).__name__}: {str(error)[:500]}")
@@ -136,7 +136,7 @@ def main() -> int:
                                "strata": {k: ((s.get("engine") or {}).get("strata") or {}).get(k)
                                           for k in ("version", "drafting", "expert_arena", "kv", "spec", "models")}}
                               for s in run.get("sessions", [])]
-    sessions_root = artifacts.work_root(cfg.paths.work_dir, cfg.paths.input_dir) / "translate-sessions"
+    sessions_root = artifacts.work_root(cfg.paths.work_dir, cfg.paths.input_dir) / strata.SESSIONS_DIR
     result["resources"] = [read(p) for p in sorted(sessions_root.rglob("resources.json"))]
     result["strata_final"] = [read(p) for p in sorted(sessions_root.rglob("strata-final.json"))]
     result["batches"] = batch_stats(plan.run_dir)

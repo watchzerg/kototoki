@@ -21,9 +21,9 @@ import json
 from typing import Any
 
 from kototoki.artifacts import object_hash, sha256_bytes
+from kototoki.strata import MODEL, STRATA_ENGINE_BUILD, STRATA_LAUNCH, STRATA_RESOLVED, STRATA_VERSION
 
 RECIPE_NAME = "q2-degrade-v1"
-MODEL = "qwen3.8-flash-next-iq3_s"
 N_PREDICT = 4096
 # Q1 的输入预算（context 16384 − 4096 − 64）：Strata 下超出只记录（`over_q1_budget`），不判失败。
 Q1_CONTEXT = 16384
@@ -62,12 +62,8 @@ NAMES_FILTER = "window"
 NAMES_ROWS = "confidence high; one row per forms[] {source: ja, translation: zh}; dedupe by ja; skip empty"
 REQUEST_SHAPE = "chat-completions+no-grammar+usage-prompt-tokens"
 
-# Strata 服务身份（ADR-0017"服务"一节）；产品用 `strata launch --no-tui --model iq3_s` 启动，`strata.probe` 逐项核对。
-STRATA_VERSION = "0.2.12"
-STRATA_ENGINE_BUILD = "0.1.58"
-STRATA_RESOLVED = {"command": "strata launch", "model": "iq3_s", "context": 131072, "vision": "cpu",
-                   "parallel": "fit to the card", "drafting": "dflash2", "access": "local", "tune": "skip",
-                   "tuned_args": {}}
+# Strata 服务身份（ADR-0017"服务"一节）的常量在中间层 `kototoki.strata`（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、
+# `STRATA_RESOLVED`），建表配方取同一组值；产品用 `strata launch --no-tui --model iq3_s` 启动，`strata.probe` 逐项核对。
 
 RECIPE: dict[str, Any] = {
     "schema": "kototoki-translate-recipe-v2",
@@ -80,7 +76,7 @@ RECIPE: dict[str, Any] = {
     "names": {"version": NAMES_VERSION, "header_sha256": sha256_bytes(NAMES_HEADER.encode()), "filter": NAMES_FILTER,
               "rows": NAMES_ROWS},
     "model": MODEL,
-    "runtime": {"strata": STRATA_VERSION, "engine_build": STRATA_ENGINE_BUILD, "launch": "default",
+    "runtime": {"strata": STRATA_VERSION, "engine_build": STRATA_ENGINE_BUILD, "launch": STRATA_LAUNCH,
                 "resolved": STRATA_RESOLVED},
     "request": {"shape": REQUEST_SHAPE, "sampling": SAMPLING, "max_tokens": N_PREDICT,
                 "chat_template_kwargs": {"enable_thinking": False}, "grammar": None, "stream": False},
