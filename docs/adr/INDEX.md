@@ -11,20 +11,20 @@
 
 ## 当前有效决定
 
-更新于 2026-11-09（ADR-0021 把唯一基线改为 Q3）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
+更新于 2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
 
 | 主题 | 现行规则 | 权威出处 |
 | --- | --- | --- |
 | STT 基线 | **W0**：faster-whisper＋新 Pyannote VAD＋MMS `jpn` CTC。须用自有适配层移植 WhisperX 的切分合并与独立解码。**X0**：Qwen-ASR＋同一 VAD＋MMS。新 Pyannote＝`pyannote.audio 4.0.7`＋`pyannote/segmentation-3.0`（rev `e66f3d3b…`）。旧 PyanNet W0、fixed30、cut-merge 只作历史身份 | [0003](0003-new-pyannote-baselines.md) |
 | 设备 | ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU（产品固定 `cuda:0`） | [0003](0003-new-pyannote-baselines.md)、[0007](0007-bilingual-subtitle-pipeline-architecture.md) |
 | 产品 STT 引擎 | `[stt] engine` = `w0`（默认）｜`x0`｜`cross`（`cross-w0-x0-whisper-judge-v1`，Whisper 交叉打分，d > −1.0 取 x0）。改默认须新 ADR，并在全新隔离素材上确认 | [0012](0012-cross-asr-judge.md) |
-| 产品架构 | GPU 阶段按"阶段 × 整批"推进，每阶段一个子进程。阶段链为 `vad` → `asr` → `align`（MMS）→ `cues` → **`names`** → `translate` → publish。单一 CUDA 12.8 Python 3.13 环境；建表用独立进程的官方 llama.cpp，翻译用产品自动启停的 Strata，两者不同时驻留。`kototoki.toml` 驱动，无 CLI。视频与音频都是输入（ffprobe 判定，音频不做流复制）。工作目录在 `[paths] work_dir`（默认 `.local/work/`）下按目标目录分子目录，每片一个工作目录，按身份与配方 hash 续跑；只发布 `<主名>.ja-zh.srt` 到源文件旁，已存在即跳过该文件 | [0007](0007-bilingual-subtitle-pipeline-architecture.md)；names 阶段见 [0014](0014-name-consistency-in-product.md)；翻译服务见 [0019](0019-product-translation-q2.md)；输入、工作目录与发布见 [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) |
+| 产品架构 | GPU 阶段按"阶段 × 整批"推进，每阶段一个子进程。阶段链为 `vad` → `asr` → `align`（MMS）→ `cues` → **`names`** → `translate` → publish。单一 CUDA 12.8 Python 3.13 环境；建表与翻译用同一个由产品自动启停的 Strata session，整批只启动一次，产品不起 llama-server。`kototoki.toml` 驱动，无 CLI。视频与音频都是输入（ffprobe 判定，音频不做流复制）。工作目录在 `[paths] work_dir`（默认 `.local/work/`）下按目标目录分子目录，每片一个工作目录，按身份与配方 hash 续跑；只发布 `<主名>.ja-zh.srt` 到源文件旁，已存在即跳过该文件 | [0007](0007-bilingual-subtitle-pipeline-architecture.md)；names 阶段见 [0014](0014-name-consistency-in-product.md)；翻译服务见 [0019](0019-product-translation-q2.md)；建表服务与共享 Strata session 见 [0022](0022-product-names-on-strata.md)；输入、工作目录与发布见 [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) |
 | 翻译基线（唯一） | **Q3** 是唯一翻译基线，新的翻译测试都以 Q3 为对照；引用 Q2、Q1、Q0、F1、H0 时须写明并说明理由。Q2 是前任身份；H0 不再是基线，只作历史对照的身份（身份见 0005、0010）。新增后缀命名须用户裁定 | [0021](0021-q3-strata-names-baseline.md)；对照规则沿用 [0018](0018-q2-sole-translation-baseline.md) 第 2、4 点；H0／Q0 身份见 [0015](0015-two-translation-baselines.md) |
-| 产品翻译 | 产品配方 `q2-degrade-v1`（`332649cf…`）＝ Q2 规则＋失败包按 10→5→1 降级、单条仍失败保留日文。切包 `dp10-cut`、邻文 `wide-context-v1`，请求与研究侧 Q2 逐字节相同。Strata 由产品启停（`strata launch --no-tui --model iq3_s`，接入检查同 ADR-0017），整批结束或出错都 `--stop` 并核实显存。翻译身份含注入行 SHA：手改表的 high 条目即重译 | [0019](0019-product-translation-q2.md) |
-| **翻译基线 Q3：身份** | Q2 的翻译规则不变，只换注入表的来源：表由同一个 Strata 实例上的 Flash-Next 建，建表配方 `names-strata-v4`（`38cb7bcd…`）＝产品 `BUILD` 去掉 llama.cpp 资产、`max_tokens` 8192＋context 24576（预算 15872）、不发 `response_format`、`enable_thinking: false`、`count_tokens` 预算检查，失败后依次换 seed 最多 5 次请求，取第一张合格的表（不挑选）。同一 session 先建表再翻译，不起 llama-server。dev 剧集 wrong-referent 显著变差、两次建表差别大，用户已知并接受 | [0021](0021-q3-strata-names-baseline.md) |
+| 产品翻译 | 产品配方 `q2-degrade-v1`（`332649cf…`）＝ Q2 规则＋失败包按 10→5→1 降级、单条仍失败保留日文。切包 `dp10-cut`、邻文 `wide-context-v1`，请求与研究侧 Q2 逐字节相同。Strata 由产品启停（`strata launch --no-tui --model iq3_s`，接入检查同 ADR-0017），session 与 names 建表共用（0022），整批结束或出错都 `--stop` 并核实显存。翻译身份含注入行 SHA：手改表的 high 条目即重译 | [0019](0019-product-translation-q2.md) |
+| **翻译基线 Q3：身份** | Q2 的翻译规则不变，只换注入表的来源：表由同一个 Strata 实例上的 Flash-Next 建，建表配方 `names-strata-v4`（`38cb7bcd…`）＝产品 `BUILD` 去掉 llama.cpp 资产、`max_tokens` 8192＋context 24576（预算 15872）、不发 `response_format`、`enable_thinking: false`、`count_tokens` 预算检查，失败后依次换 seed 最多 5 次请求，取第一张合格的表（不挑选）。同一 session 先建表再翻译，不起 llama-server。产品自 0022 起按同一规则建表（配方 `q3-names-v1`）。dev 剧集 wrong-referent 显著变差、两次建表差别大，用户已知并接受 | [0021](0021-q3-strata-names-baseline.md) |
 | 翻译基线 Q2（前任）：身份 | Q1 的配方规则不变：`qwen-wide`，加产品 `names` 建表中 `confidence: high` 的专名注入，不做事后替换。模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（DFlash2）。配方带 `strata_launch: "default"`，不用 grammar。每个输入一个实例。质量证据来自 v12 F1；Q2 的启动配置本身未跑过翻译 | [0017](0017-q2-strata-default-launch-baseline.md)（含 Q1 规则）；Q0 身份见 [0015](0015-two-translation-baselines.md) |
 | 方法禁区 | 不自动选用"翻译多次再挑选"（MBR、best-of-N、多次投票及更省的变体）：不提议、不列候选、不在无人值守时执行。两次可靠性重试与 10→5→1 降级不算在内。边界情况先问 | [0008](0008-no-multi-translation-selection.md) |
-| 专名一致性 | 研究线已结题，不开新轮次，建表配置冻结（no-think、提示 v5；v13 由用户明确要求重开，产出 Q3 的 Strata 建表配方）。产品 `names` 阶段用 Qwen3.8-27B 建表，必开（与基线 Q3 不一致，见未关闭项）；表只经翻译注入（high 条目）使用，没有发布时替换；表可手改，改到注入行即重译 | [0014](0014-name-consistency-in-product.md)；替换与开关的删除见 [0019](0019-product-translation-q2.md)；基线的建表见 [0021](0021-q3-strata-names-baseline.md) |
+| 专名一致性 | 研究线已结题，不开新轮次，建表配置冻结（no-think、提示 v5；v13 由用户明确要求重开，产出 Q3 的 Strata 建表配方）。产品 `names` 阶段在与翻译共用的 Strata session 上用 Flash-Next 建表（配方 `q3-names-v1`，请求与 seed 序列与 Q3 的 `names-strata-v4` 逐字节一致，最多 5 次请求），必开，不起 llama-server；表只经翻译注入（high 条目）使用，没有发布时替换；表可手改，改到注入行即重译 | [0014](0014-name-consistency-in-product.md)；替换与开关的删除见 [0019](0019-product-translation-q2.md)；基线的建表见 [0021](0021-q3-strata-names-baseline.md)；产品建表与共享 session 见 [0022](0022-product-names-on-strata.md) |
 
 ### 未关闭项
 
@@ -32,10 +32,10 @@
 
 - **引擎并存**：H0 研究侧仍用 compat loader b11429，产品用官方 llama.cpp（现行 b11669，以[技术选型](../development/technology-stack.md)为准）。研究侧是否同步升级，未裁定（[0005](0005-apex-i-compact-translation-baseline.md)）。
 - **W0／X0 demo 的 CLI 旧默认**：省略参数时仍落到旧 PyanNet／fixed30，须显式选择新 Pyannote（[0003](0003-new-pyannote-baselines.md)）。
-- **产品与基线 Q3 不一致**（2026-11-09）：产品仍用 27B＋llama-server 建表、`q2-degrade-v1` 翻译；基线 Q3 用 Strata 建表（5 次尝试）。产品切换须另写 ADR 并改 `kototoki/`（[0021](0021-q3-strata-names-baseline.md)）。
+- ~~产品与基线 Q3 不一致~~（2026-11-09 提出，同日由 [0022](0022-product-names-on-strata.md) 关闭：产品建表切到 Strata，规则与 Q3 逐字节一致；翻译仍是 `q2-degrade-v1`＝Q2 规则＋降级）。
 - **未裁定或未验证**：
   - Q2 在产品里曾每包约 16 s（v12 F1 的 6 倍），原因是启动时整机内存不够放下专家区、引擎退到 mmap；专家锁进内存后整片重跑每包约 3.1 s（2026-11-08，[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)）；产品已改为启动前等可用内存、ready 后确认专家全部锁进内存、退到 mmap 即拒绝（[0019](0019-product-translation-q2.md)），因此需要约 52 GiB 可用内存；同 seed 跨 Strata 启动不可复现；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
-  - 给新 SRT 生成 Q1／Q2／Q3 翻译配方已有 `v13.write_q2`，但用 Q3 建表还没有通用入口（只覆盖 v13 固定输入）；Q3 的产品结果只来自一次建表，同一部片两次建表写法 Jaccard 只有 0.56／0.48（[0021](0021-q3-strata-names-baseline.md)）；
+  - 给新 SRT 生成 Q1／Q2／Q3 翻译配方已有 `v13.write_q2`；用 Q3 规则建表的通用入口自 0022 起是产品的 names 阶段（研究侧 v13 仍只覆盖固定输入）；Q3 的产品结果只来自一次建表，同一部片两次建表写法 Jaccard 只有 0.56／0.48（[0021](0021-q3-strata-names-baseline.md)）；
   - `cross` 尚未在新素材上确认（[0012](0012-cross-asr-judge.md)）；
   - 音频输入未用真实音频文件跑过整条链；音频时长偏短只告警，损坏的音频文件会出不完整字幕（[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)）。
 
@@ -65,6 +65,7 @@
   1. [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13）：`b10-joint-degrade-v1`。
   2. → [0011](0011-dp10-cut-product-recipe.md)（已合并）（10-18）：`dp10-cut-degrade-v1`。
   3. → [0019](0019-product-translation-q2.md)（11-08）：`q2-degrade-v1`，即 Q2 规则＋降级；Strata 由产品启停，删除发布时替换与 `[names] enabled`。
+  4. → [0022](0022-product-names-on-strata.md)（11-09）：配方不变；Strata session 改为与 names 建表共用，生命周期下沉到 `kototoki/strata.py`。
 - **产品输入、工作目录与发布**：
   1. [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13）：只扫视频；`<output_dir>/.work/`；三份 SRT 镜像发布到 `output_dir`，按 `published.json` 判定覆盖、`force`。
   2. → [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)（11-08）：音频也作输入；`[paths] work_dir`（默认 `.local/work/`）按目标目录分子目录；只发布 `ja-zh.srt` 到源文件旁，已存在即跳过；删 `output_dir` 与 `force`。
@@ -74,13 +75,14 @@
   2. → [0014](0014-name-consistency-in-product.md)（10-19 同日）：替代第 3 条，进产品 `names` 阶段。
   3. → 该阶段产出的表在 [0016](0016-q1-translation-baseline.md)（已合并） 起用于 Q 线注入。
   4. → [0019](0019-product-translation-q2.md)（11-08）：产品只注入、不替换，建表必开。
+  5. → [0022](0022-product-names-on-strata.md)（11-09）：产品建表切到 Strata Flash-Next（`q3-names-v1`，与 Q3 的 `names-strata-v4` 逐字节一致，最多 5 次请求），names 与翻译共用一个 Strata session，产品不再起 llama-server、不加载 27B。
 - **Q 线基线**：
   1. [0015](0015-two-translation-baselines.md)（10-21）：**Q0**＝Qwen3.8-27B＋`qwen-wide`（`719237b9…`），来自 v9。
   2. → [0016](0016-q1-translation-baseline.md)（已合并）（11-08）：**Q1**＝Q0＋只注入 high 条目的专名表，来自 v11。
   3. → [0017](0017-q2-strata-default-launch-baseline.md)（11-08 同日）：**Q2**＝Q1 规则＋Strata Flash-Next，不加参数启动、DFlash2。v12 的 F1 是同一规则下 MTP 启动的候选。
   4. → [0018](0018-q2-sole-translation-baseline.md)（11-08 同日）：Q2 成为唯一翻译基线，H0 退出基线。
   5. → [0019](0019-product-translation-q2.md)（11-08 同日）：产品翻译切到 Q2。
-  6. → [0021](0021-q3-strata-names-baseline.md)（11-09）：**Q3**＝Q2 翻译规则＋Strata Flash-Next 建表（`names-strata-v4`，最多 5 次请求），来自 v13；产品未切换。
+  6. → [0021](0021-q3-strata-names-baseline.md)（11-09）：**Q3**＝Q2 翻译规则＋Strata Flash-Next 建表（`names-strata-v4`，最多 5 次请求），来自 v13；产品建表同日由 0022 切换。
 
 ## 全部 ADR
 
@@ -88,19 +90,20 @@
 | --- | --- | --- |
 | [0003](0003-new-pyannote-baselines.md) | STT 基线 W0／X0（新 Pyannote） | 有效（并入 0001、0002） |
 | [0005](0005-apex-i-compact-translation-baseline.md) | H0 翻译模型、采样与引擎 | 有效（并入 0004） |
-| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 双语字幕流水线架构 | 有效；第 3 点的翻译引擎由 0019 替代；第 7、9、10 点的工作目录、输出目录锁与发布由 0020 替代 |
+| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 双语字幕流水线架构 | 有效；第 3 点的翻译引擎由 0019 替代、建表引擎由 0022 替代；第 7、9、10 点的工作目录、输出目录锁与发布由 0020 替代 |
 | [0008](0008-no-multi-translation-selection.md) | 不自动选用"翻译多次再挑选" | 有效 |
 | [0010](0010-dp10-cut-translation-flow-baseline.md) | H0 翻译流程与产品配方（`dp10-cut`／`dp10-cut-degrade-v1`） | 部分有效（并入 0006、0009、0011）：切包规则仍是 Q2 的切包；第 6、7 点产品配方由 0019 替代 |
 | [0012](0012-cross-asr-judge.md) | 产品 STT 可选引擎 `cross` | 有效 |
-| [0014](0014-name-consistency-in-product.md) | 专名一致性（研究线结题＋进产品） | 部分有效（并入 0013）：替换、开关与 `names_apply` 由 0019 替代；第 10 点对基线的建表由 0021 替代 |
+| [0014](0014-name-consistency-in-product.md) | 专名一致性（研究线结题＋进产品） | 部分有效（并入 0013）：替换、开关与 `names_apply` 由 0019 替代；第 3 点的建表模型与 llama-server 由 0022 替代；第 10 点对基线的建表由 0021 替代 |
 | [0015](0015-two-translation-baselines.md) | 翻译两条基线：H0 与 Q 线 | 部分有效：两条基线安排由 0018 替代，H0／Q0 身份与测试规则仍有效 |
 | [0017](0017-q2-strata-default-launch-baseline.md) | Q 线基线 Q2（含 Q1 规则） | 部分有效（并入 0016）：第 1 点由 0021 替代（基线改为 Q3），Q1／Q2 规则、服务与接入检查仍有效 |
 | [0018](0018-q2-sole-translation-baseline.md) | 唯一翻译基线 Q2 | 部分有效：第 1 点由 0021 替代（唯一基线改为 Q3）；第 3 点"产品当前实现"由 0019 替代 |
-| [0019](0019-product-translation-q2.md) | 产品翻译切到 Q2 | 有效 |
+| [0019](0019-product-translation-q2.md) | 产品翻译切到 Q2 | 有效；第 2 点中的 llama-server 建表与"不同时驻留"由 0022 替代 |
 | [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) | 音频输入、工作目录移出目标目录、双语字幕发布到源文件旁 | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 唯一翻译基线 Q3（Q2 规则＋Strata 建表，最多 5 次请求） | 有效 |
+| [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0022 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0023 起。
 
 ## 记录新决定
 

@@ -155,6 +155,10 @@
 
 （执行者填写：每张票据一行，含日期、提交、测试结果、GPU 数字；最后写完成报告，区分已实现、自动检查、GPU 结果、未验证项。）
 
+- 2026-11-09 票据 01（设计与文档先行）：新增 [ADR-0022](../adr/0022-product-names-on-strata.md)，同步决定索引、AGENTS.md、GLOSSARY、README、调研索引；改模块边界、专名一致性（整页）、翻译子系统、批次编排、阶段计划、配置与媒体、架构总览、技术设计规格。设计定稿：中间层 `kototoki/strata.py`＋共享 `Session`（整批最多启动 3 次、`<work root>/strata-sessions/`、日志前缀 `[strata]`），配方名 `q3-names-v1`；`kototoki/translate/strata.py` 保留为研究侧再导出（见 §8）。`docs-check` 无新增失败（44 条均为 main 上已有）。未改代码。
+
 ## 8. 待用户裁定
 
 （执行者追加。）
+
+1. **`kototoki/translate/strata.py` 的去留**：研究侧 `experiments/translation_v3/strata.py`（`drafting_from_log`）与 `experiments/scene_batching_v6/v13.py`（`StrataServer`、`ResourceSampler`、`http_get`、模块本身）从 `kototoki.translate.strata` 导入，而 `experiments/` 不在本次改动范围。执行者把生命周期移到 `kototoki/strata.py` 后，保留 `kototoki/translate/strata.py` 作只做再导出的研究侧导入路径（产品内不使用，模块边界已写明）。是否改研究侧导入并删掉这个再导出模块，请用户裁定。

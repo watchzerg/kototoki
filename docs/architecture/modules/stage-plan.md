@@ -24,7 +24,7 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► names ─►
 | `probe.json` | `probe_identity`：`video_identity`（相对路径、大小、`mtime_ns`、ffprobe 指纹）＋ `MEDIA` 配方 hash ＋ `audio_language` |
 | `vad.json`／`asr.json`／`align.json` | `vad_identity`／`asr_identity`／`align_identity`：上游 PCM 与上游产物 SHA256、配方 hash（`recipe_hash(stage, engine=…)`，只有 asr 需要引擎）、模型文件 SHA256；worker 壳写进产物的是同一个函数的结果 |
 | `ja-cues.json` | `cues_identity`：上游 `align.json` ＋ `CUES` 配方 hash ＋ `[cues]` 规则 |
-| `name-table.json` | `names_identity(ja_srt_sha256, config)`：`{ja_srt_sha256, recipe_hash, seed}`（与翻译身份同形），`recipe_hash` 为延迟导入的 `kototoki.names.recipes.BUILD_RECIPE_HASH`（模型 SHA256 在建表配方里，不进身份），`seed` 为 `[names] seed`；表不当前即需要建表，没有"是否需要模型"的内部状态 |
+| `name-table.json` | `names_identity(ja_srt_sha256, config)`：`{ja_srt_sha256, recipe_hash, seed}`（与翻译身份同形），`recipe_hash` 为延迟导入的 `kototoki.names.recipes.BUILD_RECIPE_HASH`（模型名与 Strata 身份在建表配方里，不进身份），`seed` 为 `[names] seed`；表不当前即需要建表，没有"是否需要模型"的内部状态 |
 | 翻译 | `translate_plan`：读 `ja.srt` 与 `name-table.json`（核对到翻译阶段时表必已当前），调用翻译子系统 `translate.plan(work_dir, ja.srt, name_table, config)`（核对到该阶段时才导入），身份 `{ja_srt_sha256, recipe_hash, seed, names_sha256}`、run 目录与 `needs_model` 都由它给出，计划把整个 `TranslatePlan` 带在 `Plan.translate` 上。表中会被注入的条目一改，`names_sha256` 变、翻译身份变、重新翻译并发布；`names` 阶段自己的身份不变（表仍当前，不重建） |
 
 **模型文件清单**：`worker_models(config)` 给出 jobs `config.models` 的路径表（`Config.models` 的同名键：`vad`、`w0`、`w0_mel_assets`、`x0`、`align`）；`model_files(stage, models, engine=…)` 给出 GPU 阶段加载前要核对的 `{名称: (路径, 期望 SHA256)}`：segmentation-3.0 `pytorch_model.bin`；faster-whisper-large-v3 的 `config.json`／`model.bin`／`preprocessor_config.json`／`tokenizer.json`／`vocabulary.json` 与 `w0-assets/mel_filters.npz`；qwen3-asr-1.7b-hf 的 `model.safetensors` 与全部 `.json`／`.jinja`（共 7 个）；mms-1b-all 的 adapter、`model.safetensors` 与 5 个配置／词表文件。期望值取自 W0／X0 基线运行记录，核对结果即身份的 `models` 字段。模型文件的 SHA256 本模块不算，由调用方经 `ModelSha` 回调（阶段名 → `{模型文件名: SHA256}`）提供：编排用 `workers/gpu.verify_models` 加 size+mtime 缓存，每次运行每阶段最多一次。
@@ -57,3 +57,5 @@ probe/extract ─► vad ─► asr ─► align ─► cues ─► names ─►
 2026-10-19／20 专名一致性进产品（[ADR-0014](../../adr/0014-name-consistency-in-product.md)）：票据 `.scratch/name-consistency-product/issues/05-config-assets-plan.md` 加 names 阶段与两个身份，06 接入编排并同步本页。
 
 2026-11-08 产品翻译切到 Q2（[ADR-0019](../../adr/0019-product-translation-q2.md)）：删除 `[names] enabled` 与 `names_apply` 身份，translate 身份加 `names_sha256`，`translate_plan` 读 `name-table.json` 交给翻译子系统；发布状态判定比较期望键与记录键的并集。
+
+2026-11-09 产品建表切到 Strata（[ADR-0022](../../adr/0022-product-names-on-strata.md)）：`names_identity` 形状不变，`BUILD_RECIPE_HASH` 换为新配方 `q3-names-v1` 的值，旧 `name-table.json` 全部失效、重建。

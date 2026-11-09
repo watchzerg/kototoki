@@ -23,7 +23,7 @@
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
 | 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2 给出初值） | [显示契约](../testing/demo-display-contract.md)为起点 |
 | 翻译（2026-11-08 起，ADR-0019） | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，默认启动配置，产品以 `strata launch --no-tui --model iq3_s` 启动，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`（前 20／后 5 条按条数，可见 ≤35 条，超出先去后邻）；`confidence: high` 的专名注入；每批最多两次（seed、seed+1）。此前为 Hy-MT2 30B-A3B APEX-I-Compact＋`official30b-cached-v1`＋`dp10-cut`（H0，ADR-0005／ADR-0010，产品已删除） | [ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) |
-| 专名一致性（2026-10-20 起建表；2026-11-08 起建表必开、表只经翻译注入使用，没有发布时替换，ADR-0019） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：Qwen3.8-27B-UD-IQ3_S 经 llama-server（no-think、提示 v5、`-c 20480`）把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一；翻译时只注入 `confidence: high` 的写法（每个 `forms[]` 一行 `日文 → 中文`，按日文去重，只注入出现在该批可见台词里的行）。建表配置照抄 ADR-0013 冻结配置，不调参 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[专名一致性模块页](../architecture/modules/name-consistency.md) |
+| 专名一致性（2026-10-20 起建表；2026-11-08 起建表必开、表只经翻译注入使用，没有发布时替换，ADR-0019；2026-11-09 起在与翻译共用的 Strata 上按基线 Q3 规则建表，[ADR-0022](../adr/0022-product-names-on-strata.md)） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：Strata 上的 Qwen3.8-Flash-Next（no-think、提示 v5、context 24576、`max_tokens` 8192、不发 `response_format`，配方 `q3-names-v1`）把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，不合格依次换 seed 最多 5 次请求；翻译时只注入 `confidence: high` 的写法（每个 `forms[]` 一行 `日文 → 中文`，按日文去重，只注入出现在该批可见台词里的行）。建表规则与 Q3 的 `names-strata-v4` 逐字节一致，不调参 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[专名一致性模块页](../architecture/modules/name-consistency.md) |
 | 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文就是翻译结果（注入的专名译法已在翻译里，不再替换） | 用户裁定 |
 
 ### 1.2 已裁定（2026-10-13）
@@ -91,7 +91,7 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 | asr | 逐窗识别，纯文字 | `audio-16k.wav`+`vad.json` → `asr.json`（`cross` 另写审计文件 `asr-w0.json`、`asr-x0.json`、`asr-judge.json`） | GPU | w0：加载 7 s，推理 150–170 s；x0：加载 19 s，推理 365–395 s；`cross`：两部电影 asr 阶段 1211.6 s，为 w0 阶段（323.4 s）的 3.75 倍（w0 转写 286.0 s＋x0 转写 863.7 s＋Whisper 打分 40.7 s＋加载与启动，[验收记录](../research/acceptance/2026-10-19-cross-asr-acceptance.md)） |
 | align | 逐窗 CTC 对齐，字符时间 | `audio-16k.wav`+`asr.json` → `align.json`（现有 `result.json` 结构） | GPU | 加载 17 s，推理 53–56 s |
 | ja-cues | 字符 units → 日文 cue，含无时间字符的时间回填 | `align.json` → `ja.srt`+`ja-cues.json` | CPU | <1 s |
-| names | 起 llama-server 加载 Qwen3.8-27B-UD-IQ3_S，整份 `ja.srt`（剥时间轴、带 cue 编号）一次送入，按 JSON schema 取回专名表并归一；终态失败写空表（见 §6）；零条目不起 server | `ja.srt` → `name-table.json` | GPU（整批共用一个 server） | 每部约 40–50 s；整批加载（含 sha256 核对）约 13 s；整机显存峰值约 13.4 GB（[验收记录](../research/acceptance/2026-10-20-name-consistency-product.md)） |
+| names | 在与翻译共用的 Strata session（Qwen3.8-Flash-Next）上把整份 `ja.srt`（剥时间轴、带 cue 编号）一次送入，按 JSON schema 解析专名表并归一，不合格依次换 seed 最多 5 次请求；终态失败写空表（见 §6）；零条目不请求 | `ja.srt` → `name-table.json` | GPU（整批共用一个 Strata session，与 translate 同一个） | Strata 加载约 75–100 s（整批一次，与翻译共摊）；每部建表耗时以 ADR-0022 所指计划 §7 的实测为准 |
 | translate | 产品配方 `q2-degrade-v1` 整片翻译（ADR-0019；之前为 `dp10-cut-degrade-v1`，ADR-0011），续跑语义沿用 v3；Strata 由产品自动启停（§3.3） | `ja.srt`＋`name-table.json` → `zh.srt`+翻译 run 目录 | GPU（独占） | Q2：HF-II 1099 条、149 包约 2498 s（每包约 16 s），另加 Strata 加载约 98 s（2026-11-08）；此前 H0 为 1993 条约 270 s、387 条约 66 s |
 | ~~替换~~ | 已删除（ADR-0019）：不再有发布时替换、`names-apply.json` 与 `names_apply` 身份键；专名译法只经翻译注入 | — | — | — |
 | merge | 按 cue 编号合并 | `ja.srt`+`zh` → `ja-zh.srt`（发布到源文件旁） | CPU | <1 s |
@@ -128,7 +128,7 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 ### 3.1 结论
 
 - **CPU 阶段（probe、extract、ja-cues、merge）与 GPU 阶段分开**。extract 用一个小进程池（默认 `min(4, cpu_count)`）先跑完整批，GPU 阶段再开始：worker 启动时拿到的是固定的 `batch.json`，整批 extract 只需 1–2 分钟，不做流式投喂。
-- **GPU 阶段按"阶段 × 整批"推进，而不是"文件 × 全流程"**：加载 VAD → 跑完本批全部文件 → 卸载；加载 ASR → 跑完本批 → 卸载；加载 MMS → …；然后启动 llama-server（Qwen3.8）→ 为本批全部 `ja.srt` 建专名表 → 关闭；最后（ADR-0019）启动 Strata（`strata launch --no-tui --model iq3_s`）→ 翻译本批全部 SRT → `strata launch --stop`。Strata 与 llama-server 不同时驻留。第一版没有批次切分参数。
+- **GPU 阶段按"阶段 × 整批"推进，而不是"文件 × 全流程"**：加载 VAD → 跑完本批全部文件 → 卸载；加载 ASR → 跑完本批 → 卸载；加载 MMS → …；然后启动 Strata（`strata launch --no-tui --model iq3_s`，ADR-0019／ADR-0022）→ 为本批全部 `ja.srt` 建专名表 → 不停，翻译本批全部 SRT → `strata launch --stop`。产品只有 Strata 一个服务进程，不起 llama-server。第一版没有批次切分参数。
 - 每个 GPU 阶段在**独立子进程**中执行（一个阶段一个子进程，而不是一个文件一个子进程）：进程退出即彻底释放显存与 CUDA 上下文，崩溃不拖垮编排器，OOM 的影响范围只有一个阶段。worker 逐文件增量写结果；worker 进程异常退出时，编排器按增量结果判定"正在处理的文件"，把它记为该阶段失败，再为其后的文件重启 worker；重启次数按文件计，而不是整阶段只重启一次，避免一个文件的 OOM 把其后所有文件连带标失败。worker 遇到单文件异常（非 CUDA 粘性错误）记失败并继续下一文件，退出码 1；检测到 CUDA 粘性错误（后续文件必然失败）时退出码 2 让编排器重启。编排器本身不加载任何模型，也不 import torch（有测试保证，范围见 §7.1）。
 
 ### 3.2 为什么这样选
@@ -136,7 +136,7 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 | 考虑 | 分阶段批处理（采用） | 逐文件全流程 |
 | --- | --- | --- |
 | 显存 | 任一时刻只有一个模型驻留；翻译峰值 15.7–15.8 GB 已接近 16 GB 整卡，无法与任何 STT 模型共存。**例外**：`cross` 引擎的 asr 阶段内 Whisper 与 Qwen 同进程共驻，整卡峰值实测 10688 MiB（T0 探针）／10030 MiB（产品路径验收）；探针实测峰值加 1 GB 余量仍 ≤ 13.5 GB 才共驻（已通过），否则回退为 Whisper 整批转写 → 卸载 → Qwen 整批转写 → 卸载 → Whisper 整批打分的三段式，产物与接口不变（回退未实测）。MMS 对齐与翻译不变，仍独立阶段、不与之共驻 | 需要 VAD+ASR+MMS 共驻（估计 10–12 GB，未验证），翻译仍必须单独一段 |
-| 模型加载开销 | 每阶段每批一次：Pyannote 28 s、MMS 17 s、whisper 7 s、Qwen 19 s、llama-server 约 1 min | 每文件重复一次，20 部电影多付约 20–40 分钟 |
+| 模型加载开销 | 每阶段每批一次：Pyannote 28 s、MMS 17 s、whisper 7 s、Qwen 19 s、Strata 约 75–100 s（建表与翻译共用一次） | 每文件重复一次，20 部电影多付约 20–40 分钟 |
 | 首个结果出现时间 | 整批 STT 结束后才有第一份 `ja.srt`，整批翻译结束后才有第一份双语 SRT | 第一部电影约 10 分钟后完成 |
 | 失败隔离 | 一个文件失败只跳过它，阶段继续 | 同样可做 |
 
@@ -146,9 +146,9 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 
 - GPU 阶段严格串行，由 `.local/gpu.lock`（沿用现有互斥语义：不抢占、不杀进程、死锁需显式 `KOTOTOKI_BREAK_STALE_LOCK=1`，一次性生效）保护。GPU 锁在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；翻译阶段只在有文件需要模型（`needs_model`：非零条目且 run 未完成）时才取锁、建 session，全部 run 已完成或零条目时整批不占 GPU（票据 15）。
 - 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`（同 `ProcessLock` 语义，`<work root>` 见 §4），已被占用则退出码 3（`WorkLocked`），否则两个编排器会在 GPU 锁之前并发写同一 `index.json` 与工作目录。GPU 锁信息记 `input_dir`。
-- 启动 llama-server 前用 `nvidia-smi` 轮询空闲显存：上一 worker 退出后 WDDM 释放显存有延迟，直接启动可能分配失败并白白消耗重启额度；空闲量低于阈值超时则按基础设施失败处理，错误信息写明当时的空闲量。
+- 启动 Strata 前用 `nvidia-smi` 轮询空闲显存：上一 worker 退出后 WDDM 释放显存有延迟，直接启动可能分配失败并白白消耗重启额度；空闲量低于阈值超时则按基础设施失败处理，错误信息写明当时的空闲量。
 - 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立；并发只会争抢算力与显存，没有吞吐收益。
-- names 阶段：排在 translate 之前，names 的 llama-server（约 12 GB）与翻译的 Strata（几乎占满整卡）串行，前一个 `Session` 退出后后一个启动前照常轮询空闲显存（Strata 要求 ≥14000 MiB），translate 仍是最后一个 GPU 阶段。整批共用一个 Qwen server：首次有文件需要建表时才启动（表已当前、零条目时不起，也不取锁），server 进程退出时下一部影片重启，整批最多启动 3 次；任何一次启动失败即置 `unavailable`，本批其余需要建表的影片直接失败。每部影片一个请求，不做同调用内重启；端口默认 8081（Strata 固定 8080）。GPU 锁里记录当前服务的 pid（见[专名一致性](../architecture/modules/name-consistency.md)）。
+- names 阶段：排在 translate 之前，与 translate 共用同一个 Strata session（[ADR-0022](../adr/0022-product-names-on-strata.md)）：编排在 names 之前建一个共享 `strata.Session`，第一次真正需要模型时启动（表已当前、零条目时不起，也不取锁；names 全部当前时由 translate 第一次启动），两阶段之间不停，整批最多启动 3 次；启动失败用尽额度或 `StrataRefused` 即置 `unavailable`，本批其余需要模型的影片在两个阶段都直接失败。每部影片最多 5 个请求（seed 依次 +1），不做同调用内重启，传输／HTTP／OOM 失败停掉 Strata、该影片失败。GPU 锁里记录 Strata 的 pid（见[专名一致性](../architecture/modules/name-consistency.md)、[批次编排](../architecture/modules/batch-orchestration.md)）。
 - 翻译阶段（ADR-0019）：整批共用一个 Strata session，沿用 v3 `generate.py` 的批次与续跑语义，一次 session 顺序翻完本批所有需要模型的 SRT（每个 SRT 是一个 scene）。Strata 在第一次真正需要请求模型时才启动：`strata launch --status` 必须为空（别人的 launch 在服务则拒绝，不替别人停）→ 等空闲显存 ≥14000 MiB → `strata launch --no-tui --model iq3_s`（子进程里必须点名模型；`--model iq3_s` 即默认选择，计划与不带参数的 `strata launch` 逐行相同）→ 等唯一一个 ready 的 launch → 按 ADR-0017 核对身份（版本 0.2.12／build 0.1.58、本机 8080、run config 的模型与 `--max-context 131072`、服务日志所记的 DFlash2 起草、`/v1/models`、原生上下文 131072），不符即拒绝；整批结束、出错或被中断时 `strata launch --stop` 并核实 status 为空、显存回到 14000 MiB，核实失败只记 ERROR 与 `strata-final.json`。不需要模型的文件（零条目、run 已完成）只读回译文，且全部不需要时不启动 Strata；锁或 session 建不起来只让需要模型的文件失败，Strata 一直起不来或被拒绝时本批其余需要模型的文件直接失败（票据 15；见[翻译子系统](../architecture/modules/translation-subsystem.md)）。
 
 ### 3.4 时间线示意（4 部电影、w0）
@@ -173,7 +173,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4][names 1 2 3 4][translate 1
     index.json           <id> ↔ 相对路径
     jobs-<stage>.json    各阶段 worker 的 --jobs 文件
     translate-sessions/  Strata 运行证据（每次运行一个 `<UTC戳>-<pid>` 目录，按 session 分子目录，整批影片共用：`strata.json`、`resources.json`、`strata-final.json`）
-    names-sessions/      names 阶段的 llama-server 运行日志，同上形状
+    strata-sessions/     names 与翻译共用的 Strata session 证据（接入身份、资源峰值、停止核实；ADR-0022 前为 translate-sessions/）
     run-<戳>.log         运行日志，与控制台逐行相同（INFO／WARNING／ERROR）
     run-<戳>-<stage>.stderr.log  该阶段 worker 的 stderr（壳日志与第三方告警），每次启动追加
     <id>/
@@ -230,7 +230,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 - x0 生成触顶（4096 token）：只把该窗口记为失败窗口，不让整部影片失败。表示方式由 worker 协议（票据 00）统一规定，w0／x0 相同：`asr.json` 中该窗的 `text` 置空，截断文字与原因记入 `failed_windows`（供诊断，不进对齐、cue 与翻译），"每个字符恰好一个 unit"的不变量按保留文本计算；窗口失败数进入汇总。现有 `x0_demo/pipeline.py::validate_asr` 拒绝 `token_limit_reached` 的行为不移植。
 - 阶段级终态与基础设施失败区分（沿用 v3，ADR-0019 起对象是 Strata）：OOM、服务崩溃／断开、传输错误、`server_error`、Strata 起不来是基础设施失败，同一调用内停掉 Strata 并重新启动，最多重启 2 次；每次重启是 v3 意义上的新 session（`sessions[]` 新增一项、`cache_state` 重置、`resumed=true`；首个请求的 `cache_n` 只记录，不据此判失败）。生成触顶、解析／校验失败、HTTP 报超出 context 是批次终态，进入下面的降级。**Strata 被拒绝**（`StrataRefused`：已有别的 launch 在服务、身份与 ADR-0017 不符）不重试，本批其余需要模型的影片直接失败；输入超过 Q1 预算（12224 token）只记录、不判失败。
 - 翻译降级（产品规则，区别于 v3 实验的"不缩批"与研究侧 Q2 的"只空出该包"；ADR-0019）：批次（≤10 条）两次尝试都失败 → 拆成前后两半（与原批次用同一条邻文规则与专名注入规则，seed 不变）→ 仍失败的半批拆成单条（10→5→1）→ 单条仍失败时该 cue 的中文位置保留日文原文。子批次 ID 为 `父ID.a`／`父ID.b`，场景文件记录降级树；降级清单写 `translate/report.json` 并在控制台汇总，发布日志行与汇总给出回退 cue 数。降级改变了研究侧配方的失败处理，产品配方另名、另算 hash（`q2-degrade-v1`）；译文校验在研究侧的 ID 集合／顺序／非空之外另拒绝含空行的译文。这与两次可靠性尝试都不是"翻译多次再挑选"（ADR-0008）。
-- 专名建表失败（ADR-0014、ADR-0019）：提示超预算（`/tokenize` 后超过 20480 − 4096 − 512）或回复两次尝试（seed、seed+1）都不合格，写 `build.status` 为 `too_long`／`failed` 的空表，运行日志一行 WARNING，影片照常翻译与发布（空表不注入）——表是观感优化，不该让整部影片没有字幕；server 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（`failure.json`），server 一直起不来时本批其余需要建表的影片直接失败，重跑同一命令对它们再建表。没有发布时替换，因而没有替换失败。
+- 专名建表失败（ADR-0014、ADR-0019、ADR-0022）：提示超预算（`/v1/messages/count_tokens` 两段之和超过 24576 − 8192 − 512 = 15872）或依次换 seed 的 5 次回复都不合格，写 `build.status` 为 `too_long`／`failed` 的空表，运行日志一行 WARNING，影片照常翻译与发布（空表不注入）——表是观感优化，不该让整部影片没有字幕；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（`failure.json`），Strata 一直起不来或被拒绝时本批其余需要模型的影片直接失败，重跑同一命令对它们再建表。没有发布时替换，因而没有替换失败。
 - 续跑：重跑同一命令即可；已完成的产物按身份跳过。翻译按批次增量落盘（v3 原本按整个场景落盘，产品改为每批次追加写），中断后从未完成的批次继续。回退为日文的 cue 对该配方 hash 与 seed 是终态，重跑同一命令不会再试；要重试须改 `[translate] seed`（另起 run 目录，整片重译；seed 须为正整数）；要重做已发布的文件须先删掉其 `.ja-zh.srt`（ADR-0020）。
 
 ## 7. 进程、环境与依赖
@@ -243,14 +243,13 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
  ├─ python -m kototoki.workers.vad    --jobs batch.json   (子进程，加载一次，循环文件)
  ├─ python -m kototoki.workers.asr    --jobs batch.json   (引擎取 jobs 的 config.engine：w0|x0|cross)
  ├─ python -m kototoki.workers.align  --jobs batch.json
- ├─ llama-server（Qwen3.8）+ 进程内 HTTP 客户端建专名表（一个 server session 服务整批，先于翻译）
- ├─ Strata（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next，建表的 llama-server 停掉之后才启动）+ 进程内 HTTP 客户端循环翻译（一个 Strata session 服务整批，结束时 `strata launch --stop`）
+ ├─ Strata（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next）+ 进程内 HTTP 客户端先逐片建专名表、再循环翻译（一个 Strata session 服务整批两个阶段，第一次需要时启动，结束时 `strata launch --stop`）
  └─ 进程内 ja-cues / merge
 ```
 
 - worker 之间只通过 `<work root>/<id>/` 下的 JSON 交接，每阶段重验输入身份（继承 X0 的做法）。编排器与 worker 用同一解释器（`sys.executable`）。
-- 锁：只有编排器获取 `.local/gpu.lock`（仓库内固定路径，不随配置文件移动），worker、翻译模块都不再获取；v3 的 `GpuLock`／W0 的 `gpu_lock` 不移植，只保留 `ProcessLock` 给编排器。锁文件记录编排器、当前 worker 与 llama-server（names 与翻译各自的）的 pid。
-- 所有 worker 与 llama-server 放进 KILL_ON_JOB_CLOSE Job Object：编排器被强杀时子进程随之退出，不留占显存的孤儿。Strata 服务由 `strata launch` 在后台启动，不在 Job Object 内，靠 `Session` 退出（含异常与中断）时的 `strata launch --stop` 收尾；进程被强杀时它可能残留，下次运行因 `--status` 非空而拒绝，须手动 `strata launch --stop`。
+- 锁：只有编排器获取 `.local/gpu.lock`（仓库内固定路径，不随配置文件移动），worker、翻译模块都不再获取；v3 的 `GpuLock`／W0 的 `gpu_lock` 不移植，只保留 `ProcessLock` 给编排器。锁文件记录编排器、当前 worker 与 Strata 的 pid。
+- 所有 worker 与 Strata CLI 子进程放进 KILL_ON_JOB_CLOSE Job Object：编排器被强杀时子进程随之退出，不留占显存的孤儿。Strata 服务由 `strata launch` 在后台启动，不在 Job Object 内，靠 `Session` 退出（含异常与中断）时的 `strata launch --stop` 收尾；进程被强杀时它可能残留，下次运行因 `--status` 非空而拒绝，须手动 `strata launch --stop`。
 - 编排器为 worker 子进程设置离线环境（`HF_HUB_OFFLINE=1`、`HF_HOME`／`TORCH_HOME` 指向 `<work_dir>/cache/`（各目标目录共用，不是每文件一份）、`PYANNOTE_METRICS_ENABLED=0` 等，沿用 `setup_runtime` 的变量但**不再加私有 DLL 目录**），保持本地运行不变量。子进程环境统一 `PYTHONUTF8=1`，进度 JSON 与日志文件显式 UTF-8（本机根环境默认 cp1252，`scripts/check_docs.py` 在无 mise 的 shell 下即因此崩溃）。
 - DLL 解析顺序：ASR worker 必须先 `import torch` 再导入 `ctranslate2`／`faster_whisper`，cublas／cudart 与 cuDNN 子库由此来自 torch 目录；CT2 在导入时按全路径加载自带的 `cudnn64_9.dll`（9.10 调度器），与 torch 的 9.19 调度器同进程并存，2026-10-14 用户接受（01 smoke #3：W0 冻结窗口 token 与特征逐一一致）。有导入顺序测试。VAD worker 不需要 FFmpeg PATH：01 smoke #2 实测 pyannote＋torchcodec 对内存波形推理全程不加载任何 FFmpeg DLL。
 - "编排器不 import torch"的测试断言 `import kototoki.job` 与 `kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec` 与任何 `experiments.*`。
@@ -283,7 +282,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 **为什么从 CUDA 13 退到 CUDA 12**：CT2 是 w0 的推理内核且只有 CUDA 12 wheel；cuDNN 9 的 DLL 文件名在 CUDA 12 与 13 构建间相同，同进程只能加载一份，原方案 A 因此要求 w0 worker 不 import torch 并用 NumPy 重写特征，复杂且无先例。整体 CUDA 12 后 w0 worker 与 VAD、对齐、x0 worker 一样正常 import torch，特征链保持现有 torch 实现，等价性风险最小。代价是 torch 停在 2.11.0 而非 2.14.1；用户 2026-10-14 接受。CT2 wheel 在 sm_120 上是 PTX JIT（只含 sm_86 PTX；01 smoke #3 冷启动 27 s、二次 5 s）。2026-10-14 复议过 cu12／cu13 混用并维持本决定；事实、重新评估的触发条件与届时的可靠形态记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 依据段，不在此重复。
 
-**llama.cpp 改用官方 b11583 构建**（2026-11-08 起产品只有 names 建表还用 llama-server，翻译已换 Strata，ADR-0019）：上游 2026-07-13 合并 `hy_v3` 架构；本机 APEX-I-Compact GGUF 的路由偏置张量已是上游命名 `blk.N.exp_probs_b`（2026-10-13 本地读取确认），旧补丁针对的 `.bias` 命名问题不存在。这替代了 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md) 中"继续使用 b11429 兼容 loader、不以 stock 引擎替代"的条款（用户 2026-10-14 确认），由 ADR-0007 记录。票据 01 的 smoke 要对比兼容引擎与 stock 引擎的 `/tokenize` 输出与固定 seed 的短生成，并在一个真实 b10 批次上测量显存峰值（现有 15.7–15.8 GB 是兼容引擎的数字）。`ManagedServer` 要求的 `identity.json` 与驻留日志解析按 stock 构建适配。
+**llama.cpp 改用官方 b11583 构建**（2026-11-08 起产品只有 names 建表还用 llama-server，翻译已换 Strata，ADR-0019；2026-11-09 起建表也换 Strata，产品不再用 llama-server，llama.cpp 只供研究侧，ADR-0022）：上游 2026-07-13 合并 `hy_v3` 架构；本机 APEX-I-Compact GGUF 的路由偏置张量已是上游命名 `blk.N.exp_probs_b`（2026-10-13 本地读取确认），旧补丁针对的 `.bias` 命名问题不存在。这替代了 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md) 中"继续使用 b11429 兼容 loader、不以 stock 引擎替代"的条款（用户 2026-10-14 确认），由 ADR-0007 记录。票据 01 的 smoke 要对比兼容引擎与 stock 引擎的 `/tokenize` 输出与固定 seed 的短生成，并在一个真实 b10 批次上测量显存峰值（现有 15.7–15.8 GB 是兼容引擎的数字）。`ManagedServer` 要求的 `identity.json` 与驻留日志解析按 stock 构建适配。
 
 **依赖管理**：根 `pyproject.toml` 改为产品项目 `kototoki`，运行时依赖写入 `dependencies`，`[[tool.uv.index]]` 声明 `pytorch-cu128`（`explicit = true`），`[tool.uv.sources]` 把 torch／torchaudio／torchcodec 指向该索引，`tool.uv.environments` 限 win32，`uv.lock` 锁定；测试工具放 dependency group。后果：根环境从此有 Torch，`experiments/` 中原本因缺 NumPy／Torch 跳过的离线测试会实际运行。三个历史环境保留供复现，不删除。
 
@@ -356,7 +355,7 @@ work_dir    = ".local/work"             # 缓存与各目标目录的工作根�
 models_root = ".local/models"           # 下面各模型路径相对于它
 ffmpeg      = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe"
 ffprobe     = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe"
-llama_server = ".local/tools/llama.cpp/b11669-cuda13.4/llama-server.exe"
+# （已删除的键：llama_server；产品不再起 llama-server，ADR-0022）
 
 [input]
 extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi", ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"]   # 视频还是音频由 ffprobe 判定
@@ -396,14 +395,12 @@ lead_out_s = 0.3                        # 发声结束后向后延长，不越�
 # seed 须为小于 2**31 的正整数（Strata 不接受 0）
 seed  = 20261008
 
-[names]
-model   = "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf"   # 相对 models_root
-port    = 8081
+[names]                                  # 2026-11-09 起（ADR-0022）建表在与翻译共用的 Strata 上，只剩 seed
 seed    = 20261019                      # 改 seed 即重建专名表（另起身份）
-# （已删除的键：enabled；建表必开。写了按未知键报错）
+# （已删除的键：enabled、model、port；建表必开。写了按未知键报错）
 ```
 
-用户写出的相对路径以配置文件所在目录解析；用户省略的键用上述默认值，其中相对路径默认值以仓库根目录解析（配置文件放仓库外时默认模型目录与 llama-server 仍可用）。未知键报错而不是忽略。GPU 锁路径固定为仓库内 `.local/gpu.lock`，不可配置；破除死锁用环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效，不放配置文件（配置里的开关是粘性的，每次都会自动破锁）。
+用户写出的相对路径以配置文件所在目录解析；用户省略的键用上述默认值，其中相对路径默认值以仓库根目录解析（配置文件放仓库外时默认模型目录仍可用）。未知键报错而不是忽略。GPU 锁路径固定为仓库内 `.local/gpu.lock`，不可配置；破除死锁用环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效，不放配置文件（配置里的开关是粘性的，每次都会自动破锁）。
 
 ### 10.2 暴露与冻结的边界
 
@@ -414,7 +411,7 @@ seed    = 20261019                      # 改 seed 即重建专名表（另起�
 | 输入扩展名、音轨语言偏好 | MMS FP32、归一化、字符映射 |
 | cue 显示规则（§5.2） | 翻译采样（0.7／0.8／20）、dp10-cut 切包与 wide-context 邻文、`qwen-joint-v1` 提示、专名注入规则、模型与 Strata 身份核对（ADR-0019） |
 | 翻译 seed | 翻译请求重试次数、失败分类、降级策略 |
-| 专名表 `model`、`port`、`seed` | 建表提示 v5、官方 non-thinking 采样、JSON schema、`max_tokens`、`-c 20480`、`--reasoning off`、归一规则与常量（配方 `BUILD`） |
+| 专名表 `seed` | 建表提示 v5、官方 non-thinking 采样、JSON schema、`max_tokens` 8192、context 24576、思考关闭、5 次尝试、归一规则与常量、模型与 Strata 身份（配方 `BUILD` = `q3-names-v1`，ADR-0022） |
 | | 产物 schema 版本 |
 
 每个产物记录生效的配置快照与配方 hash；只改配置文件里的项不会使已有 STT 产物失效（cue 规则例外：改了只重跑 ja-cues 及之后）。
@@ -490,3 +487,5 @@ seed    = 20261019                      # 改 seed 即重建专名表（另起�
 2026-11-08（产品翻译切到 Q2，[ADR-0019](../adr/0019-product-translation-q2.md)）：用户裁定产品翻译与基线同为 Q2：配方 `q2-degrade-v1`（Strata 上的 Qwen3.8-Flash-Next IQ3_S，chat completions、无 grammar、`wide-context-v1`、`confidence: high` 专名注入）；Strata 由产品自动启停、不与 llama-server 同时驻留；删除发布时专名替换、`names-apply.json`、`names_apply` 身份键、`[names] enabled`、`[translate] model`／`port` 与 Hy-MT2 后端；翻译身份加 `names_sha256`，手改表中会被注入的条目即重译；失败路径保留 10→5→1 降级（§1.1、§1.2、§2、§3.1、§3.3、§4、§6、§7.1、§10、§11 已改，其余章节的 Hy-MT2／替换描述是历史设计依据）。
 
 2026-11-08（音频输入、工作目录外置、双语字幕发布到源文件旁，[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)）：用户裁定音频文件也是输入（`[input] extensions` 替代 `video_extensions`，ffprobe 判定视频／音频，音频不做流复制）；`[paths] output_dir` 删除、新增 `work_dir`，按目标目录分工作根并共用 `cache/`；只发布 `<stem>.ja-zh.srt` 到源文件旁，已存在即跳过，删除 `[run] force` 与按 `published.json` 判定覆盖（§1、§2、§3.3、§4、§6、§7.1、§10 已改，其余章节的 `.work/`、三份 SRT、`force` 描述是历史设计依据）；锁改为 `<work root>/lock`（退出码 3）。
+
+2026-11-09（产品建表切到 Strata，[ADR-0022](../adr/0022-product-names-on-strata.md)）：用户决定产品 `names` 阶段按基线 Q3 的规则在 Strata 上建表（配方 `q3-names-v1`，请求与 seed 序列与 `names-strata-v4` 逐字节一致，最多 5 次请求），names 与 translate 共用一个由编排持有的 Strata session（`kototoki/strata.py`，整批只启动一次），产品不再起 llama-server、不加载 27B；删除 `[names] model`／`port`、`[paths] llama_server`；本文 §1.2、§3、§4、§6、§7、§10 已按此改写，`names-sessions/` 改为共用的 `strata-sessions/`。

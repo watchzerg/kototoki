@@ -46,7 +46,7 @@ Since 2026-10-21 this line is named **H0**, with **Q0** beside it (ADR-0015).
 _Avoid_: Hy 基线、旧基线
 
 **Q0**：
-通用模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Qwen3.8-27B UD-IQ3_S（与产品 `names` 同一模型），`translation_v3` 配方 `qwen-wide`——切包与 H0 相同，只读邻文前 20／后 5（`wide-context-v1`），提示 `qwen-joint-v1`。证据只到 v9 dev 筛选（accuracy 两类显著优于 H0，unnatural 变差、墙钟约 3.3 倍）；未进产品；`translate-srt` 自 v10 起可跑 Qwen 配方。
+通用模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Qwen3.8-27B UD-IQ3_S（2026-11-09 前与产品 `names` 同一模型），`translation_v3` 配方 `qwen-wide`——切包与 H0 相同，只读邻文前 20／后 5（`wide-context-v1`），提示 `qwen-joint-v1`。证据只到 v9 dev 筛选（accuracy 两类显著优于 H0，unnatural 变差、墙钟约 3.3 倍）；未进产品；`translate-srt` 自 v10 起可跑 Qwen 配方。
 2026-11-08 起 Q 线的当前基线先由 **Q1**、同日再由 **Q2** 接替，2026-11-09 起为 **Q3**；Q0 保留为历史身份。
 _Avoid_: qwen-wide（指基线时）、通用模型基线、X0（那是 Qwen-ASR 的 STT 基线）
 
@@ -59,7 +59,7 @@ _Avoid_: N\*（指基线时）、q0-names-high（指基线时）、Q0＋注入
 _Avoid_: F1（指基线时；F1 是 v12 的 MTP／32K 启动）、Flash-Next 基线
 
 **Q3**：
-唯一的翻译基线（[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)，2026-11-09）：Q2 的翻译规则不变，只换注入表的来源——表由同一 Strata 实例上的 Flash-Next 建，建表配方 `names-strata-v4`（`38cb7bcd…`；产品 `BUILD` 去掉 llama.cpp 资产、`max_tokens` 8192＋context 24576、不发 `response_format`、`enable_thinking: false`，失败后依次换 seed 最多 5 次请求，取第一张合格的表，不挑选）。每个输入一个实例（v13 dev `q2-names-s1` `eeba5a71…`）。证据来自 v13：dev 电影与产品 ASR 源显著变好，dev 剧集 wrong-referent 显著变差，两次建表差别大，用户已知并接受。未进产品。
+唯一的翻译基线（[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)，2026-11-09）：Q2 的翻译规则不变，只换注入表的来源——表由同一 Strata 实例上的 Flash-Next 建，建表配方 `names-strata-v4`（`38cb7bcd…`；产品 `BUILD` 去掉 llama.cpp 资产、`max_tokens` 8192＋context 24576、不发 `response_format`、`enable_thinking: false`，失败后依次换 seed 最多 5 次请求，取第一张合格的表，不挑选）。每个输入一个实例（v13 dev `q2-names-s1` `eeba5a71…`）。证据来自 v13：dev 电影与产品 ASR 源显著变好，dev 剧集 wrong-referent 显著变差，两次建表差别大，用户已知并接受。2026-11-09 起产品按同一规则建表（配方 `q3-names-v1`，[ADR-0022](docs/adr/0022-product-names-on-strata.md)）；产品翻译仍是 `q2-degrade-v1`。
 _Avoid_: S1（指基线时；S1 是 v13 的候选臂）、names-strata-v4（指基线时）、Strata 建表基线
 
 ### 双语字幕流水线

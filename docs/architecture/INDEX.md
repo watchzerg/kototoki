@@ -1,6 +1,6 @@
 # 当前架构总览
 
-仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频或音频在源文件旁生产中日双语 SRT，STT 默认 W0、可选 X0，翻译用 Q2 规则的产品配方 `q2-degrade-v1`（Strata 上的 Qwen3.8-Flash-Next，由产品自动启停，[ADR-0019](../adr/0019-product-translation-q2.md)），翻译前用 Qwen3.8 建专名表、翻译时把表里高置信的译法注入提示（[ADR-0014](../adr/0014-name-consistency-in-product.md)、ADR-0019，没有发布时替换）。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `dp10-cut`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，研究侧翻译基线是 Q2（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)），H0 的模型与采样见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)／完整 SRT 流程见 [ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)（历史对照）；产品配方见 [ADR-0019](../adr/0019-product-translation-q2.md)。
+仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频或音频在源文件旁生产中日双语 SRT，STT 默认 W0、可选 X0，翻译用 Q2 规则的产品配方 `q2-degrade-v1`（Strata 上的 Qwen3.8-Flash-Next，由产品自动启停，[ADR-0019](../adr/0019-product-translation-q2.md)），翻译前在同一个 Strata session 上用 Flash-Next 按基线 Q3 的规则建专名表（[ADR-0022](../adr/0022-product-names-on-strata.md)）、翻译时把表里高置信的译法注入提示（[ADR-0014](../adr/0014-name-consistency-in-product.md)、ADR-0019，没有发布时替换）。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `dp10-cut`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，研究侧翻译基线是 Q2（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)），H0 的模型与采样见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)／完整 SRT 流程见 [ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)（历史对照）；产品配方见 [ADR-0019](../adr/0019-product-translation-q2.md)。
 
 本页是理解当前系统的入口，覆盖正式代码；"当前"指同一仓库版本的已实现结构，不代表全部环境已验收。阅读顺序：本页 → [模块边界](module-boundaries.md) → 受影响的模块页 → 源码与测试。
 
@@ -24,8 +24,8 @@
 | [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0／x0／cross 逐窗转写（`asr.json`，窗口级 `failed_windows`，x0 触顶窗口置空；`cross` 为可选引擎，w0 与 x0 共驻、Whisper 交叉打分裁判，另写三个审计产物）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
 | [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／专名建表／翻译）、续跑与按文件重启、工作根锁与 `.local/gpu.lock`、Job Object、双语字幕发布到源文件旁（已存在即跳过）；拥有 `<work_dir>/<目标目录键>/` 的锁、运行日志（目的地与格式）与发布记录 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/logs.py` |
 | [阶段计划](modules/stage-plan.md) | 双语字幕流水线的阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段期望身份，以及按产物身份判定"下一个要跑的阶段"与发布状态（`next_stage`／`advance`）；编排与 worker 壳共用，翻译阶段的身份转问翻译子系统，names 身份延迟导入 `names.recipes` 取配方 hash | `kototoki/plan.py` |
-| [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：整批共用一个由产品自动启停的 Strata session（`strata launch --no-tui --model iq3_s`／`--stop`、身份核对、不与 llama-server 同时驻留）、产品配方 `q2-degrade-v1`（`dp10-cut` 切包、`wide-context-v1` 邻文、`qwen-joint-v1` chat 请求、`confidence: high` 的专名注入，终态失败按 10→5→1 降级）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
-| [专名一致性](modules/name-consistency.md) | 双语字幕流水线的 names 阶段：整批共用一个 Qwen3.8 llama-server session（最多启动 3 次、启动失败即 unavailable）、整份 `ja.srt` 一次建 `name-table-v2` 表并归一（终态失败写空表照常翻译，不注入）；建表必开；表由翻译注入使用，没有发布时替换；`BUILD` 配方与 hash | `kototoki/names/` |
+| [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：与 names 建表共用一个由产品自动启停的 Strata session（中间层 `kototoki/strata.py`：`strata launch --no-tui --model iq3_s`／`--stop`、身份核对、专家区检查）、产品配方 `q2-degrade-v1`（`dp10-cut` 切包、`wide-context-v1` 邻文、`qwen-joint-v1` chat 请求、`confidence: high` 的专名注入，终态失败按 10→5→1 降级）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
+| [专名一致性](modules/name-consistency.md) | 双语字幕流水线的 names 阶段：在与翻译共用的 Strata session 上用 Flash-Next 按 Q3 规则（配方 `q3-names-v1`，最多 5 次请求）把整份 `ja.srt` 一次建成 `name-table-v2` 表并归一（终态失败写空表照常翻译，不注入）；建表必开；表由翻译注入使用，没有发布时替换；`BUILD` 配方与 hash | `kototoki/names/` |
 | 历史实验代码（冻结或只作回归参考） | 不建模块页；复现历史时按各自 README 使用冻结配置与旧身份，见下方列表 | 见下 |
 
 历史实验代码：[whisper](../../experiments/whisper/README.md)、[qwen](../../experiments/qwen/README.md)、[x0_flow](../../experiments/x0_flow/README.md)、[japanese_ctc](../../experiments/japanese_ctc/README.md)、[framework_equivalence](../../experiments/framework_equivalence/README.md)、[components](../../experiments/components/README.md)、[crisp](../../experiments/crisp/README.md)、[asr_candidates](../../experiments/asr_candidates/README.md)、[vad_comparison](../../experiments/vad_comparison/README.md)（除 `vad_stage.py` 外）、[fullfilm_comparison](../../experiments/fullfilm_comparison/README.md)、[performance](../../experiments/performance/README.md)、`experiments/analysis/`；翻译侧 [translation_flow](../../experiments/translation_flow/README.md)（v1／v2，v2 冻结）、[translation_eval](../../experiments/translation_eval/README.md)、[translation_judge](../../experiments/translation_judge/README.md)、[translation_compat](../../experiments/translation_compat/README.md)、[translation_corpus](../../experiments/translation_corpus/README.md)、[translation_four_quantization](../../experiments/translation_four_quantization/README.md)、[translation_v4](../../experiments/translation_v4/README.md)，以及 `experiments/` 根下 `translation_*.py`、`run_experiment.py`、`run_round2.py`、`x0_flow_evaluate.py` 等单文件脚本。其中当前模块仍在导入的少数符号见[模块边界](module-boundaries.md#依赖方向)。
@@ -59,8 +59,9 @@ flowchart TB
   JOB -->|直接调用| CUES["cues（纯函数）"]
   JOB -->|直接调用| MERGE["merge（纯函数）"]
   JOB -->|next_stage / advance，期望身份| PLAN["plan（阶段计划）"]
-  JOB -->|持有 session| NM["names/（专名）"]
-  JOB -->|持有 session| TR["translate/（子系统）"]
+  JOB -->|持有共享 session| ST["strata（中间层）"]
+  JOB -->|传入 session| NM["names/（专名）"]
+  JOB -->|传入 session| TR["translate/（子系统）"]
   JOB -.->|子进程：--jobs 文件 + 退出码| WK["workers.vad / workers.asr / workers.align"]
   WK -->|身份、模型清单| PLAN
   PLAN -.->|translate.plan（延迟导入）| TR
@@ -68,16 +69,19 @@ flowchart TB
   WK --> VAD["vad"]
   WK --> ASR["asr_whisper ／ asr_qwen"]
   WK --> ALIGN["align"]
-  TR --> LS["llama_server（中间层）"]
-  TR -->|strata CLI 与 HTTP| STRATA["Strata（外部服务）"]
+  TR --> ST
+  NM --> ST
+  TR --> LS["llama_server（中间层，客户端）"]
   NM --> LS
-  LS -->|进程与 HTTP| LLAMA["llama-server（独立进程）"]
+  ST --> LS
+  ST -->|strata CLI 与 HTTP| STRATA["Strata（外部服务）"]
   MEDIA --> BASE
   CUES --> BASE
   MERGE --> BASE
   PLAN --> BASE
   TR --> BASE
   NM --> BASE
+  ST --> BASE
   LS --> BASE
   WK --> BASE
   VAD --> BASE
@@ -94,7 +98,7 @@ flowchart TB
 
 | 入口 | 解释器 | 模块 |
 | --- | --- | --- |
-| `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；专名建表（Qwen3.8-27B）起一个本机 llama-server，建完停掉后翻译再启动本机 Strata（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next，两者不同时驻留），Strata 须预先安装并备好模型 | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
+| `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；专名建表与翻译共用一个本机 Strata session（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next，第一次需要时启动、整批结束停止），Strata 须预先安装并备好模型；产品不起 llama-server | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
 | `python -m experiments.vad_comparison.vad_stage` | `.local/envs/vad-pyannote-gpu-v1` | 外部 VAD 阶段 |
 | `python -m experiments.w0_demo.run` | `.local/envs/whisper-latest` | W0 pipeline |
 | `python -m experiments.x0_demo.run`／`just x0-demo` | 根 `.venv`，子进程用 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |
