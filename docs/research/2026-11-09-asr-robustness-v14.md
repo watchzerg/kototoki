@@ -1,6 +1,6 @@
 # ASR 稳健性第十四轮（v14）：w0 模型不变，幻觉守卫、漏句补窗与日文转写后校正
 
-状态：draft（2026-11-09 起草，待用户裁定立项）。立项后改 planned，结题后改 concluded。
+状态：planned（2026-11-09 起草，同日用户裁定立项，§8 第 1、2 项已裁定）。结题后改 concluded。
 范围：产品 STT 路线 **w0**（faster-whisper large-v3，[ADR-0003](../adr/0003-new-pyannote-baselines.md)）的前后处理，模型、VAD 参数、MMS 对齐都不换。三条臂：A 幻觉／重复守卫，B 漏句补窗（窗内无字子段重解码），C 用 Strata 上的 Flash-Next 做日文转写的上下文后校正。量尺是 HF II／III 的日文 CER。不改产品 `kototoki/`、不改任何 ADR 或基线身份、不开封确认集；产品化在 §8 裁定后另做。
 执行载体：tracker 目录 `.scratch/asr-robustness-v14/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**
 先读：[技术设计](../specs/bilingual-subtitle-pipeline.md) §1.1、§11；[STT worker 模块页](../architecture/modules/stt-workers.md)；[v5 研究文档](2026-10-16-quality-exploration-v5.md) §7 第 02、11、12 步与 §8；[架构与流程评估](../../.scratch/architecture-review/2026-10-19-report.md)（本地）A-1、A-2；[ADR-0012](../adr/0012-cross-asr-judge.md)；代码 `kototoki/asr_whisper.py`、`kototoki/vad.py`、`kototoki/workers/{asr,align}.py`、`kototoki_eval/`、`experiments/quality_v5/{asr_source,vad_sweep,asr_round2}.py`、`kototoki/strata.py`、`kototoki/translate/recipes.py`。
