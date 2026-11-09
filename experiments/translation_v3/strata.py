@@ -235,8 +235,8 @@ def _arg(args: list[str], flag: str) -> str | None:
 def log_drafting(name: str) -> str | None:
     """Drafting of the latest start of launch ``name``: its last ``[strata] drafting:`` server-log line (v13 ticket 01).
     Strata always passes ``--mtp <dir>`` to the engine and adds DFlash2 on top, so the run-config arguments cannot
-    tell the two apart (ADR-0019; the product reads the same line, ``kototoki.translate.strata.drafting_from_log``)."""
-    from kototoki.translate.strata import drafting_from_log
+    tell the two apart (ADR-0019; the product reads the same line, ``kototoki.strata.drafting_from_log``; moved from ``kototoki.translate.strata`` by ADR-0022)."""
+    from kototoki.strata import drafting_from_log
     path = server_log(name)
     return drafting_from_log(path.read_text(encoding="utf-8", errors="replace"))[0] if path.is_file() else None
 

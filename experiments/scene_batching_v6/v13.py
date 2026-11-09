@@ -353,7 +353,7 @@ def preflight(*, cli: Callable[..., str] | None = None, ram: Callable[[], float 
               ) -> dict[str, Any]:
     """§5 before every GPU ticket: no gpu.lock, no llama-server, no Strata launch, >= 52 GiB available RAM.
     Raises SystemExit (nothing is stopped or killed) when one fails."""
-    from kototoki.translate import strata as P
+    from kototoki import strata as P
     cli = cli or P.run_cli
     ram = ram or P.available_ram_gib
     found = {"gpu_lock": lock.is_file(), "llama_processes": processes(), "strata_running": P.running(cli),
@@ -372,7 +372,7 @@ def serve(runtime_dir: Path) -> Iterator[Any]:
     """Preflight, then the product ``StrataServer`` (``strata launch --no-tui --model iq3_s``, identity check, expert
     arena locked in RAM or refused, ``--stop`` and VRAM release on exit). The research sessions inside take the GPU
     lock themselves."""
-    from kototoki.translate.strata import StrataServer
+    from kototoki.strata import StrataServer
     found = preflight()
     index = len(list(runtime_dir.glob("session-*"))) + 1 if runtime_dir.is_dir() else 1
     session = runtime_dir / f"session-{index:02d}"
@@ -386,7 +386,7 @@ def serve(runtime_dir: Path) -> Iterator[Any]:
 
 def run_builds(variants: tuple[str, ...] = (CANDIDATE,), *, root: Path = V13_ROOT) -> dict[str, Any]:
     """GPU ticket 02: start Strata once, build every table of each variant into its own directory, stop."""
-    from kototoki.translate.strata import ResourceSampler, http_get
+    from kototoki.strata import ResourceSampler, http_get
     from experiments.translation_v3.server import GpuLock
     with serve(root / VARIANTS[variants[0]]["dir"] / "runtime"):
         lock = GpuLock("v13-names-build")

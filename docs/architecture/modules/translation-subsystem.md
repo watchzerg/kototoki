@@ -68,7 +68,7 @@
 | 文件 | 来源 | 取舍 |
 | --- | --- | --- |
 | `recipes.py` | `experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables`、v9 `wide-context-v1` | Q2 规则写成常量：提示、注入行与过滤、请求体、校验、配方字典与 hash；与研究侧逐字节对照由测试钉住；新增的校验（拒绝空行）与降级字段使它另算 hash（`q2-degrade-v1`） |
-| `kototoki/strata.py`（ADR-0022 前为 `translate/strata.py`） | `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支 | 产品新增启停：`strata launch --status`／`--no-tui --model iq3_s`／`--stop`、空闲显存与 status 核实、资源采样；只有这一个实现，不抽后端协议；ADR-0022 起与 names 共用，`translate/strata.py` 只再导出给研究侧既有导入 |
+| `kototoki/strata.py`（ADR-0022 前为 `translate/strata.py`） | `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支 | 产品新增启停：`strata launch --status`／`--no-tui --model iq3_s`／`--stop`、空闲显存与 status 核实、资源采样；只有这一个实现，不抽后端协议；ADR-0022 起与 names 共用，`translate/strata.py` 已删除（研究侧导入改指 `kototoki.strata`） |
 | `degrade.py` | 新增（研究侧 Q2 只空出失败的包） | 拆分规则、降级树与回退、`report.json` 内容；不导入 `generate`，由其传入请求函数与降级日志；邻文经 `batching.neighbours` |
 | `batching.py` | `translation_v3/batching.py`、`data.py` | gap-pack-v2 切包（`silence`、`gap_pack_cuts` 只留 `group_gap=None` 分支）、`wide-context-v1` 邻文；`Scene`／`Cue`（带秒）由 `ja.srt` 构造，`source_key` 是 `srt-<sha12>` 的唯一出处 |
 | `generate.py` | `translation_v3/strata.py::run_step`、`generate.py` | `run_step` 判定不变（去掉思考分支）；共享 `strata.Session` 取代研究侧"执行者先启动服务"；按批次追加落盘；同调用内重启 Strata |

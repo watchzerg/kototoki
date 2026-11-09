@@ -169,7 +169,7 @@
 提交（均在 `main`，ssh 签名）：01 `052b065`、02 `f21b1bf`、03 `f9a14cc`、04 `8410d90`、05 `e702cf4`、07 `c6f8f64`、06 重跑结果见本行所在提交。
 
 **已实现**
-- 中间层 `kototoki/strata.py`：`StrataServer`、`StrataRefused`、身份常量、共享 `Session`（第一次需要模型时启动，整批一个，启动失败累计 3 次或 `StrataRefused` 后本批不可用，退出即 `--stop` 并核实显存释放）；`kototoki/translate/strata.py` 只作研究侧再导出（§8 第 1 条）。
+- 中间层 `kototoki/strata.py`：`StrataServer`、`StrataRefused`、身份常量、共享 `Session`（第一次需要模型时启动，整批一个，启动失败累计 3 次或 `StrataRefused` 后本批不可用，退出即 `--stop` 并核实显存释放）；`kototoki/translate/strata.py` 的再导出按 §8 第 1 条的裁定删除，研究侧导入改指 `kototoki.strata`。
 - `kototoki/names/`：建表在共享 Strata session 上按 Q3 规则做——配方 `q3-names-v1`（`BUILD_RECIPE_HASH` `d3317926…`），建表块、模型、运行时身份、请求形状与 `names-strata-v4` 相同，请求体与 seed 序列与 v13 逐字节一致，最多 5 次尝试取第一张合格的表；`count_tokens` 预算检查与退路照 v13；删除 names 的 llama-server session、`NAMES_SERVER`／`NAMES_SPEC`／`model_asset`。
 - 编排 `job._run` 持有一个 Strata session 包住 names 与 translate，两阶段按需传入，都不需要时不启动，中断也 stop，pid 进 GPU 锁；`kototoki.translate` 不再导出 `Session`。
 - 配置：删 `[paths] llama_server`、`[names] model`／`port`（旧键按未知键报错），`[names] seed` 校验为正整数；`kototoki.toml.example` 同步。
@@ -190,6 +190,6 @@
 
 （执行者追加。）
 
-1. **`kototoki/translate/strata.py` 的去留**：研究侧 `experiments/translation_v3/strata.py`（`drafting_from_log`）与 `experiments/scene_batching_v6/v13.py`（`StrataServer`、`ResourceSampler`、`http_get`、模块本身）从 `kototoki.translate.strata` 导入，而 `experiments/` 不在本次改动范围。执行者把生命周期移到 `kototoki/strata.py` 后，保留 `kototoki/translate/strata.py` 作只做再导出的研究侧导入路径（产品内不使用，模块边界已写明）。是否改研究侧导入并删掉这个再导出模块，请用户裁定。
+1. **`kototoki/translate/strata.py` 的去留**：研究侧 `experiments/translation_v3/strata.py`（`drafting_from_log`）与 `experiments/scene_batching_v6/v13.py`（`StrataServer`、`ResourceSampler`、`http_get`、模块本身）从 `kototoki.translate.strata` 导入，而 `experiments/` 不在本次改动范围。执行者把生命周期移到 `kototoki/strata.py` 后，保留 `kototoki/translate/strata.py` 作只做再导出的研究侧导入路径（产品内不使用，模块边界已写明）。是否改研究侧导入并删掉这个再导出模块，请用户裁定。**已裁定（2026-11-09）**：删掉再导出模块，`experiments/translation_v3/strata.py` 与 `scene_batching_v6/v13.py` 的导入改为 `kototoki.strata`（各一行，研究脚本行为与配方 hash 不变）；ADR-0022、模块边界、翻译子系统模块页、`scene_batching_v6/README.md` 同步，`test_strata.py` 改为断言旧路径不可导入。
 2. **GPU 验证的内存门未过（票据 06 未执行）**：2026-11-09 12:04–12:14 开跑前核对，除可用内存外全部通过（无 llama-server／Strata／GPU 作业，空闲显存 15089 MiB，status 为空，`--plan` 无下载）；可用内存 50.5 GiB，低于 §5 的 52 GiB，等满 10 分钟仍为 50.5–50.6 GiB。占用来自桌面程序与内核（进程 working set 合计 8.4 GiB、committed 13.9 GiB、内核池 4.2 GiB、Hyper-V 在运行），执行者按规则不关用户的程序。2026-11-08 两次通过时启动前可用 54.2／54.3 GiB，差 1.26 GiB 即退到 mmap，故不能以 50.5 GiB 开跑。请用户决定：腾出约 2 GiB 内存后重跑票据 06（`just smoke names_product`，再 HF-II 整片，命令与通过条件见 §4／§5），或另定门。**已解决**：用户重启机器后可用内存 53.7 GiB，执行者按原门重跑票据 06，smoke 与整片均通过（§7）。
 3. **票据 06 结果的提交未能签名**：2026-11-09 20:50 提交时 ssh 签名经 1Password agent 失败两次（`1Password: failed to fill whole buffer`，应是重启后 1Password 尚未解锁）。按 §6“不绕过签名、失败即停下”，票据 06 的文档改动（本文 §7／§8、ADR-0022、三个模块页、开发工作流、`docs/INDEX.md`）已写入工作区并 `git add`，未提交。请解锁 1Password 后在仓库根运行下面的命令即可（提交信息已备好）：`git commit -F "C:/Users/watch/AppData/Local/Temp/claude/48969ae9cead7bf2/ea36c9ec-4545-5d89-8462-0c7b37692b4b/scratchpad/commit06.txt"`，或自行撰写提交信息。**已解决**：用户解锁 1Password 并审批后，以提交 `017ecc6` 落盘。

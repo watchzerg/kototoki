@@ -17,7 +17,7 @@
    - 不同：不含研究侧的说明字段（`prompt_budget_check`、`retries` 两段文字），因此 hash 不同；不含 llama.cpp 的 `model_asset`。
    表的身份仍是 `{ja_srt_sha256, recipe_hash, seed}`：配方一变，旧 `name-table.json` 全部失效、重建；注入行变则 `names_sha256` 变、重译。不迁移旧产物。
 3. **names 与翻译共用一个 Strata session。** 整批只启动一次：第一次真正需要模型时启动（可能在 names，也可能在 translate），两阶段之间不停；整批结束、出错或编排被中断时 `strata launch --stop` 并核实 status 为空、显存释放；没有影片需要模型时不启动。启动前检查（status 为空、空闲显存 ≥14000 MiB、可用内存 ≥52 GiB）、接入检查（ADR-0017／ADR-0019）与专家区检查（必须 `ram`）不变。GPU 锁照常记录 Strata 的 pid。产品任何阶段都不再启动 llama-server、不加载 27B。
-4. **Strata 生命周期下沉到中间层 `kototoki/strata.py`**（与 `llama_server.py` 同层，不属基础层）：`StrataServer`、`StrataRefused`、Strata 身份常量（模型名、版本、引擎 build、默认启动的解析值）与共享 `Session`（整批一个、启动计数、`unavailable`、`ensure_started`／`stop`、`on_server_pid`）。编排器持有 `Session` 并传给两个阶段；`names` 与翻译子系统互不导入；翻译子系统保留自己的同调用内重启与降级逻辑，只是改用共享的 session。这是第二个使用者出现后的正当抽取（[模块边界·接缝](../architecture/module-boundaries.md#产品包的责任边界)）。研究侧 `experiments/translation_v3/strata.py` 与 `scene_batching_v6/v13.py` 仍从 `kototoki.translate.strata` 导入 `drafting_from_log`、`StrataServer` 等名字，`experiments/` 不改，因此该模块保留为只做再导出的研究侧导入路径，产品内不使用（是否改研究侧导入另由用户裁定）。
+4. **Strata 生命周期下沉到中间层 `kototoki/strata.py`**（与 `llama_server.py` 同层，不属基础层）：`StrataServer`、`StrataRefused`、Strata 身份常量（模型名、版本、引擎 build、默认启动的解析值）与共享 `Session`（整批一个、启动计数、`unavailable`、`ensure_started`／`stop`、`on_server_pid`）。编排器持有 `Session` 并传给两个阶段；`names` 与翻译子系统互不导入；翻译子系统保留自己的同调用内重启与降级逻辑，只是改用共享的 session。这是第二个使用者出现后的正当抽取（[模块边界·接缝](../architecture/module-boundaries.md#产品包的责任边界)）。研究侧 `experiments/translation_v3/strata.py` 与 `scene_batching_v6/v13.py` 原从 `kototoki.translate.strata` 导入 `drafting_from_log`、`StrataServer` 等名字；2026-11-09 用户裁定删掉这个只做再导出的模块、把两处研究侧导入改为 `kototoki.strata`（各改一行，研究脚本行为与配方 hash 不变）。
 5. **失败路径。**
    - 建表请求遇到传输失败、HTTP 错误、OOM：停掉 Strata，该影片 `names` 阶段文件级失败（`failure.json`），下一个需要模型的影片再启动。
    - 成功的启动不设整批上限（翻译"同调用内最多重启 2 次"仍是翻译自己的规则，行为不变）；Strata **启动失败**整批累计 3 次即 `unavailable`（与翻译"3 次连续 `server_start` 即放弃"、names 此前"整批最多 3 次启动"同量），其余需要模型的影片在两个阶段都直接失败。
@@ -40,7 +40,7 @@
 - 配置：删三个键；默认模型目录只剩 STT 模型。
 - 产物：所有旧 `name-table.json` 因配方 hash 变化失效、重建；注入行变化使翻译身份变化，未发布的影片重译，已发布的影片按 ADR-0020 跳过（源文件旁有字幕即不动）。
 - 资源：names 阶段现在也要求 Strata 的启动条件（空闲显存 ≥14000 MiB、可用内存 ≥52 GiB）；整批只加载一次模型。
-- 研究侧不受影响：`experiments/` 不改，`assets.toml` 条目保留，`kototoki.translate.strata` 导入路径保留。
+- 研究侧只改导入路径：`experiments/translation_v3/strata.py` 与 `scene_batching_v6/v13.py` 的 `kototoki.translate.strata` 导入改为 `kototoki.strata`（2026-11-09 用户裁定），`assets.toml` 条目保留。
 
 ## 未验证
 

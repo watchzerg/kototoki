@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 import subprocess
@@ -418,12 +419,10 @@ class SessionTests(unittest.TestCase):
         session.stop()
         self.assertEqual(self.pids, [None, 1002, None])
 
-    def test_research_import_path_still_works(self) -> None:
-        from kototoki.translate import strata as legacy
-
-        for name in ("drafting_from_log", "run_cli", "available_ram_gib", "running", "StrataServer", "ResourceSampler",
-                     "http_get", "StrataRefused"):
-            self.assertIs(getattr(legacy, name), getattr(S, name), name)
+    def test_old_translate_strata_path_is_gone(self) -> None:
+        # ADR-0022：再导出模块已删除，研究侧改为直接导入 kototoki.strata
+        with self.assertRaises(ImportError):
+            importlib.import_module("kototoki.translate.strata")
 
 
 if __name__ == "__main__":
