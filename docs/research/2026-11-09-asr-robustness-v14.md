@@ -1,0 +1,164 @@
+# ASR 稳健性第十四轮（v14）：w0 模型不变，幻觉守卫、漏句补窗与日文转写后校正
+
+状态：draft（2026-11-09 起草，待用户裁定立项）。立项后改 planned，结题后改 concluded。
+范围：产品 STT 路线 **w0**（faster-whisper large-v3，[ADR-0003](../adr/0003-new-pyannote-baselines.md)）的前后处理，模型、VAD 参数、MMS 对齐都不换。三条臂：A 幻觉／重复守卫，B 漏句补窗（窗内无字子段重解码），C 用 Strata 上的 Flash-Next 做日文转写的上下文后校正。量尺是 HF II／III 的日文 CER。不改产品 `kototoki/`、不改任何 ADR 或基线身份、不开封确认集；产品化在 §8 裁定后另做。
+执行载体：tracker 目录 `.scratch/asr-robustness-v14/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**
+先读：[技术设计](../specs/bilingual-subtitle-pipeline.md) §1.1、§11；[STT worker 模块页](../architecture/modules/stt-workers.md)；[v5 研究文档](2026-10-16-quality-exploration-v5.md) §7 第 02、11、12 步与 §8；[架构与流程评估](../../.scratch/architecture-review/2026-10-19-report.md)（本地）A-1、A-2；[ADR-0012](../adr/0012-cross-asr-judge.md)；代码 `kototoki/asr_whisper.py`、`kototoki/vad.py`、`kototoki/workers/{asr,align}.py`、`kototoki_eval/`、`experiments/quality_v5/{asr_source,vad_sweep,asr_round2}.py`、`kototoki/strata.py`、`kototoki/translate/recipes.py`。
+
+本文的对照、终点、门与预算在起草时定下（§4、§5）。执行者只补实现细节（字段名、脚本结构），并在票据里写明理由。
+
+## 1. 为什么做这一轮
+
+- v5 第 02 步量化过：产品中文字幕的错误约四分之三来自 ASR（r_all 0.76，CI90 0.70–0.82），翻译侧在产品输入上的收益上限约 1%。翻译流程 v3–v13 已基本饱和，剩余空间在 STT 侧。
+- STT 侧至今只做过 v5 的第 11 步（VAD 召回：6 组参数无一组两部都优）与第 12 步（ASR 候选第二轮：无可采纳），产品 w0 保持原样。2026-10-18 用户裁定停止换 ASR 模型这条线。
+- w0 对 Whisper 的重复／幻觉没有任何检查（架构评估 A-1，至今未实现）：`no_repeat_ngram_size=0`、`repetition_penalty=1`，`transcribe` 只在抛异常时记失败窗口，生成触顶 448 token 不标记。错文字被 MMS 硬对齐成时间像样的字幕并进入翻译，不报错。ATKD-089 一片 388 窗里 36 窗压缩比 >2.4，涉及 14% 的 cue。
+- 漏句（v5 第 02 步的 missed 桶）来自 VAD 漏检或窗内短弱语音没被转写。VAD 层加召回会带来更多插入（v5 第 11 步），所以本轮不碰 VAD 参数，改从"窗内有语音子段却没有一个字"这一可观测信号入手。
+- 人名误识（遠坂→东坂、士郎→四郎）与同音错词只靠声学模型修不掉；产品翻译前 Strata 已经在跑 Flash-Next，加一步上下文校正不用再起服务。这是新组件，先在研究侧量 CER。
+- `cross`（[ADR-0012](../adr/0012-cross-asr-judge.md)）已是产品可选引擎（默认 w0），剩下"新素材确认"与"是否改默认"两件裁定的事，**不在本轮**。
+
+## 2. 已知事实（不要重复）
+
+### 2.1 量尺与对照
+
+- **官方整片口径**：`python -m kototoki_eval <参考> <align.json> --output <.local 下新路径>`，参考 `hf-{ii,iii}-full.json`（`srt_display`；副本在 `.local/quality-exploration-v5/01/out-w0/`，原件 `.local/fullfilm-comparison/fullfilm-v1/corpus/references/`）。基线 w0：**II 16.81%（S 876／D 676／I 260）、III 13.77%**（2026-10-05 基线，2026-10-16 swr 回归逐项相同，评分文件 `.local/quality-exploration-v5/01/eval/product-w0-hf-{ii,iii}.json`）。
+- **单元口径**（`experiments/quality_v5/asr_source.py` 的 `units`）：参考 cue 与产品 cue 按时间重叠连通成单元，逐单元日文 CER（`kototoki_eval` 规范化），分桶 exact／light（≤0.25）／heavy／missed／inserted；与官方口径差约 1 pp。只用 SRT，不需要 `align.json`。
+- 两种口径都把删除算进 CER：把窗口置空会把替换与插入换成删除。守卫"值不值"由整片 CER 决定，不由"拦住了多少错字"决定。
+- 人名错误、中文层收益本轮不量（需要翻译与裁判，另立项）。
+
+### 2.2 输入材料
+
+- **HF II**：当前 main 的产品整片在 `.local/q3-product-fullfilm/work/input-7c924c80249b/8d2f3e76dd0c/`（2026-11-09，w0；`vad.json`、`asr.json`（含 `asr_traces` 的 token 序列）、`align.json`、`ja.srt`、`ja-cues.json`、`audio-16k.wav`、`name-table.json`（Q3 规则建表，25 条、high 20））。
+- **HF III**：盘点时没有找到当前配方的产品形状 `asr.json`／`align.json`（v5 01 的旧布局工作目录已不在；`.local/quality-exploration-v5/{11,12}/runs/*/fb2e0da74018/` 是改过 VAD 或换过模型的产物，只能借 `audio-16k.wav` 身份核对）。票据 01 先按身份核实；缺就用产品 worker 直接重算（`jobs-*.json` → `kototoki.workers.vad`／`asr`／`align`，做法同 `asr_round2.jobs`），记 1 个 GPU run。重算结果的官方 CER 须与基线 13.77% 逐项相同（w0 数值确定，v5 01 已证）。HF III 的 27B 旧表在 `.local/name-consistency-product/after/HF-III/name-table.json`（15 条；与 Q3 规则不同，C2 只作"有表"对照，§4.4 注明）。
+- `vad.json` 的每个窗口带组成它的子段 `segments`（秒），窗口 ≤30 s、整数样本坐标、块内间隙保留；窗口边界都落在 VAD 间隙上（ATKD-089 硬切 0）。`align.json` 的 units 覆盖全文、每字一个时间。
+- w0 解码：`model.model.generate(... max_length=model.max_length=448, return_scores=True)`，`avg_logprob` 已记在 `asr.json` 段里；`asr_traces[i].tokens` 是完整 token 序列。Whisper 原版守卫阈值：压缩比 >2.4、`avg_logprob` <−1.0（本轮作为筛选起点，不是定论）。
+- x0 有 `token_limit_reached` 判定（触顶窗口置空并记 `failed_windows`），w0 没有对应逻辑。
+
+### 2.3 Strata 的约束（C 臂用，详见 [ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[用法调研](2026-11-08-strata-flash-next-usage.md)）
+
+- 没有 grammar／约束解码；`response_format` 只是"改提示＋事后校验"，不用。思考用 `chat_template_kwargs.enable_thinking: false` 关闭；`top_k` ≤64；`seed` 正整数。
+- 同 seed 跨启动不可复现（A/A 约半数 cue 不同）。
+- 启动 `strata launch --no-tui --model iq3_s`，先 `--plan` 确认下载量为 0；专家区约 47 GiB 常驻内存，开跑前可用内存 ≥52 GiB，退到 mmap 即停；不能与 llama-server 或 CT2 作业同驻 GPU。产品的翻译请求形状与采样在 `kototoki/translate/recipes.py`（`temperature 0.7, top_p 0.8, top_k 20, min_p 0, presence_penalty 0`，`max_tokens` 见 `N_PREDICT`）；共享 session 由 `kototoki.strata.Session`／`StrataServer` 管理，研究侧可以直接复用（v13 已这样做）。
+- Flash-Next 写长 JSON 会失控（v13：写满 `max_tokens` 不结束）。C 臂每次请求只覆盖一个包（≈20 条 cue），输出短，预计不触发；仍要记录触顶与解析失败。
+
+## 3. 本轮要回答的问题
+
+1. **A 守卫**：w0 的问题窗口（压缩比高、触顶、低置信）有多少，其中多少确实是错字（对参考 CER 高）？把它们置空后两部整片 CER 怎么变？只对问题窗口换一组去重复解码参数再解一次能否比置空更好？
+2. **B 补窗**：窗内"有 VAD 子段却一个字都没落上"的子段有多少、覆盖多少参考文字？把这些子段单独作为窗口重解码（并过 A 的守卫）后，两部 CER 怎么变，删除降了多少、插入涨了多少？
+3. **C 后校正**：Flash-Next 在只读前后文（和可选专名表）的条件下改日文转写，两部 CER 怎么变？改动里改好、改坏、无影响各多少？有没有改写（而非纠错）倾向？墙钟与资源代价？
+4. **结论写法**：每臂写三种之一——"建议进产品（需 ADR 与新配方版本）"／"有效但不够进产品，原因 X"／"不进，原因 X"；并写明 STT 侧还剩什么证据边界。
+
+## 4. 设计
+
+### 4.0 通用规则
+
+- **对照**：产品 w0 当前输出（§2.2），官方口径 II 16.81%、III 13.77%。所有臂都从同一份 `vad.json` 与 `audio-16k.wav` 出发，产物写成产品形状（`asr.json` 同结构、经产品 `kototoki.workers.align` 对齐），这样官方口径可直接比；C 臂只改 `ja.srt` 文字，用单元口径比。
+- **门（每臂相同的"候选"标准）**：两部 CER **都**低于对照，且两部合计编辑量降幅 ≥0.3 pp（II＋III 参考字符合计约 2 万，约 60 处编辑）。两部只降一部，或合计 <0.3 pp，写"有效但不够"。门是立项时定的，执行者不改；觉得门不合理写进 §8。
+- **身份**：任何改解码或改输出的变体都是新配方 id（如 `w0-faster-whisper-large-v3-guard-v1`），研究侧只在 `metadata.experiment` 记，不改 `kototoki/recipes.py`；产品配方 hash 须有测试证明不变。
+- **只改判定或补解，不重解已有窗口**：A 的置空与 B 的补窗都不改动正常窗口的 token，所以离线模拟与真实运行逐字相同；GPU 只用于"补解"和"核实 worker 路径"。
+- **不做"多次解码再挑选"**：A2 对问题窗口换参数只解一次、无条件采用（或按守卫置空），不在多个解码结果里挑分数高的；B 对子段也只解一次。这是 [ADR-0008](../adr/0008-no-multi-translation-selection.md) 的同类边界，执行者不得越过。
+- 数字写法：CER 带 S／D／I 分解；每臂报告窗口数、字符数、墙钟、显存峰值；未知值不填 0。
+
+### 4.1 A：幻觉／重复守卫
+
+- **A0 离线筛选与归因（无 GPU）**：对两部 `asr.json` 的每个窗口算三个信号——压缩比（Whisper 定义：UTF-8 字节数／zlib 压缩后字节数）、是否触顶（`len(tokens)` 达 `max_length` 448 或 EOT 缺失）、`avg_logprob`。用 `asr_source.units` 的时间对齐法求每窗对参考的 CER。报告：各信号阈值下被标记的窗口数、字符数、被标记窗口的 CER 分布对未标记窗口的分布；按 Whisper 默认阈值（压缩比 >2.4，或触顶，或 `avg_logprob` <−1.0 且压缩比 >2.4）与 2–3 个邻近阈值各算一次。
+- **A1 置空模拟（无 GPU）**：被标记窗口文字置空（按产品协议 `fail_window` 写法），其余不动，经产品 `align` worker（GPU，极短）或直接在 `align.json` 上删掉对应 units 后算官方 CER。两部都降才进 A2；两部都不降则 A＝"不进，置空代价大于收益"，A2 不跑。
+- **A2 问题窗口单次补解（GPU 1 run）**：只对 A0 选中的窗口，用同一模型、同一提示、同一 beam，只加 `no_repeat_ngram_size=5`（v5 第 12 步对 anime-whisper 的设置）再解一次；补解结果仍过 A0 守卫，仍触阈值即置空。写产品形状 `asr.json`，经 `align`，算官方 CER。与 A1 比：补解比置空好多少。
+- A 的结论取 A1 与 A2 中更好的一个按 §4.0 的门判。
+
+### 4.2 B：窗内无字子段的补窗
+
+- **B0 离线统计（无 GPU）**：对每个窗口的每个 VAD 子段（`vad.json` 的 `segments`），用 `align.json` 的 units 时间数"落在该子段内的字符数"。把时长 ≥0.5 s 且字符数为 0 的子段记为"空子段"。再用参考字幕算每个空子段覆盖的参考字符数（时间重叠）。同时把对照 CER 的删除项按位置分三类：落在窗口外（VAD 漏检）、落在空子段、落在有字子段内部。报告三类的字符数与占比。
+- **进 B1 的条件**：空子段覆盖的参考字符数 ≥ 两部合计删除字符数的 15%（低于此补窗的上限不够过门，B＝"不进，漏句主要不在空子段"，把三类占比写成 STT 侧的证据边界）。
+- **B1 补窗重解码（GPU 1 run）**：每个空子段单独作为一个窗口（整数样本坐标，两端不加 pad；短于 1 s 的子段不补，记数），w0 同配方解码；结果过 A0 守卫（默认阈值），仍触阈值即不采纳。把补解文字合并进对应窗口的段（按时间插在原文字的对应位置，或作为独立段追加——执行者定一种并写明，须让 `align` 与 cue 阶段不变地消费），写产品形状 `asr.json`，经 `align`，算官方 CER。报告删除降了多少、插入涨了多少、守卫拦下多少补解。
+- B 按 §4.0 的门判。
+
+### 4.3 C：日文转写的上下文后校正（Strata＋Flash-Next）
+
+- **输入**：产品 `ja.srt`（对照的 cue 文字与时间）。按 cue 顺序切成包：每包 20 条待校正 cue，前 10 条、后 5 条只读邻文（与 `qwen-wide` 的"前多后少"思路一致，数值是本轮初值）。C2 另给专名表：HF II 用 `.local/q3-product-fullfilm/.../name-table.json` 的 high 条目，HF III 用 27B 旧表的 high 条目，按"日文写法 → 规范日文写法"注入（表里只有日文写法与中文译法；若表没有"规范日文写法"字段，就注入该实体的全部 `forms[]` 日文写法并说明"这些写法指同一人物"）。
+- **提示（配方 `ja-correct-v1`）**：system 说明任务是"修正日语语音识别的错字：同音／近音误识、人名误识、明显不成词的片段；不改说法、不补漏、不删句、不改标点以外的任何正确文字；没有把握就保持原文"；user 给邻文（标"只读"）与待校正 cue（带 id）；输出 JSON 对象 `{id: 修正后文字}`，**只列有改动的 cue**，没有改动输出 `{}`。no-think。采样 `temperature 0.3, top_p 0.8, top_k 20, min_p 0, presence_penalty 0`，seed 固定 20261109，`max_tokens` 2048。提示允许一次修订（第一次运行后若明显改写或输出格式不稳，可修订一次并记为 `ja-correct-v2`，两版都报告）。
+- **程序守卫**：只接受"该 cue 的字符级编辑比 ≤0.5 且修正文字非空"的改动，其余保持原文并计数；JSON 解析失败或触顶的包重试一次（seed＋1），仍失败则整包保持原文并计数（不算交付失败，这是研究侧）。
+- **运行**：C1（无表）与 C2（有表）各跑两部，一次 Strata session 内完成（启动同 Q2；复用 `kototoki.strata.StrataServer` 的启停与核对；开跑前核对与 §5 相同）。记墙钟、每包耗时、显存与内存峰值、思考输出是否为空、触顶与解析失败数。
+- **评估（单元口径，无 GPU）**：校正后 `ja.srt` 对参考的单元 CER，与对照 `ja.srt` 的单元 CER 比；逐被改 cue 判"改好（单元 CER 降）／改坏／无影响"并计数；被改 cue 里"改动落在参考就没有的字上"（改写倾向）的比例。另抽 30 条改动按改好／改坏各半，Opus（`opus`，只读）逐条写一句是什么类型的错（人名／同音词／改写），只作描述，不设门，预算 ≤$5。
+- C 按 §4.0 的门判，但 C 的 CER 是单元口径：须同时报告对照 `ja.srt` 的单元口径作为分母，不与官方口径的 16.81／13.77 直接相减。
+
+### 4.4 臂间关系与顺序
+
+- 顺序：01（A0、B0 离线）→ 02（A1、A2）→ 03（B1）→ 04（C1、C2）→ 05 结题。A、B、C 互不阻断；A0 的守卫实现被 A2、B1 复用。
+- A 与 B 都过门时，补做一次"A＋B 叠加"的离线合成（B1 的补解文字叠到 A 置空后的 `asr.json`，经 `align`，算 CER），只报告，不另设门。C 不与 A、B 叠加（C 的输入是对照 `ja.srt`，叠加留给产品化阶段）。
+- 任一臂过门，§8 写出产品化的形状草案（阶段位置、新配方 id、ADR 要点、需要的新素材确认），不实现。
+
+## 5. 判定纪律、预算与停止条件
+
+- 判定纪律：数字带口径；CER 给 S／D／I；未知值不填 0；日文转写、参考字幕、校正输出都是转写内容，不进 Git 与日志（只记计数与指标）；每个数字能从 `.local/asr-robustness-v14/` 的产物复算。
+- **资源互斥**：每张 GPU 票据开跑前，用 PowerShell `Get-Process` 核实没有 llama-server、没有其他 GPU 作业、没有 Strata 实例，并读 `.local/gpu.lock`；不抢占、不杀进程、不关用户的程序。CT2／torch 作业（02、03）持 `.local/gpu.lock`（研究侧沿用 `experiments/quality_v5` 的做法）。04 启动 Strata 前确认可用内存 ≥52 GiB、`--plan` 下载量为 0；ready 后确认专家区锁进内存，退到 mmap 即停；结束后 `strata launch --stop` 并核实显存释放。
+- **预算上限**（GPU run：一次 worker 整批或一次 Strata session 记为 1）：
+
+  | 票据 | GPU run | 其他 |
+  | --- | --- | --- |
+  | 01 A0／B0 离线（含 HF III 产品 STT 重算，若缺） | ≤1 | — |
+  | 02 A1／A2 | ≤2（A1 的 align 很短，与 A2 合记） | — |
+  | 03 B1 | ≤1 | — |
+  | 04 C1／C2 | ≤2（预计 1 个 session；session 中断重启记 1） | Opus 抽看 ≤$5 |
+  | **合计** | **≤6** | **≤$5** |
+
+  某票据超限，用已有数据写该臂结论。
+- **停止条件**：A1 两部都不降 → A2 不跑；B0 不满足 §4.2 条件 → B1 不跑；C1 两部 CER 都升且改坏多于改好 → C2 不跑。三臂都不跑 GPU 时直接结题，把离线统计作为"STT 侧证据边界"交付。
+- **不做的事**：
+  - 换 ASR 模型或 checkpoint（含许可未声明的日语微调）；改 VAD 参数或 onset／offset（v5 第 11 步已测）；改 MMS 对齐；
+  - 对正常窗口重解码、温度回退或任何改变全部窗口 token 的做法；多次解码再挑选（§4.0）；
+  - C 臂开思考、用 `response_format`、换模型或量化、调 Strata 引擎参数；C 臂做翻译或量中文；
+  - 改 `kototoki/`、任何 ADR、基线身份；改 `experiments/quality_v5/` 的既有脚本（只导入）；开封确认集；
+  - 跑 `cross`、`x0` 或翻译；
+  - 新增方向（想法写进 §8）。
+- 无人值守：中途不请求用户裁定，需要裁定的事集中写进 §8。
+
+## 6. 执行载体与记录协议
+
+- tracker：`.scratch/asr-robustness-v14/{spec.md,map.md,issues/NN-*.md}`，按 [tracker 约定](../agents/issue-tracker.md)。map 写接跑手册、预算台账和 Decisions-so-far。票据清单：
+
+  | NN | 票据 | 臂 | GPU |
+  | --- | --- | --- | --- |
+  | 01 | 输入核实（HF III 缺则重算）；A0 守卫信号与归因；B0 空子段与删除项定位；离线测试 | A0、B0 | ≤1 |
+  | 02 | A1 置空模拟＋A2 问题窗口单次补解，官方 CER | A | ≤2 |
+  | 03 | B1 空子段补窗重解码，官方 CER | B | ≤1 |
+  | 04 | C1／C2 后校正（一次 Strata session），单元 CER 与改动分类，Opus 抽看 | C | ≤2 |
+  | 05 | 结题：§7.1 三臂结论、§8、索引登记 | — | 否 |
+
+- 代码放 `experiments/asr_robustness_v14/`（新包，带 README 与离线测试，接 `just experiments-test`）。只导入 `kototoki.asr_whisper`、`kototoki.vad`、`kototoki.workers.{asr,align,protocol}`、`kototoki.strata`、`kototoki_eval`、`experiments.quality_v5.asr_source`；`kototoki/` 与 `experiments/quality_v5/` 不改。
+- 产物根目录 `.local/asr-robustness-v14/<票据编号>/`。`.local/q3-product-fullfilm/`、`.local/quality-exploration-v5/`、`.local/name-consistency-product/` 只读复用。
+- 每完成一张票据，依次做：
+  1. 票据写 Answer，状态改为 resolved；
+  2. map 的 Decisions-so-far 加一行；
+  3. 本文 §7 加一行；
+  4. 提交 Git（本文、`docs/research/INDEX.md`、`experiments/asr_robustness_v14/`）。签名失败不绕过，记在 §8 第 0 项。
+- 结题时在[调研索引](INDEX.md)的时间线加一行。产品化与 ADR 只在 §8 提出。
+
+## 7. 进度与结论
+
+（执行者填写：每张票据一行，含日期、提交、测试结果、GPU 数字；最后写 §7.1。）
+
+### 7.1 结论
+
+（执行者填写：A、B、C 各一行，三种写法之一；回答 §3 的四个问题；STT 侧剩余的证据边界。）
+
+## 8. 待用户裁定
+
+开跑前须定：
+
+1. **立项与预算**：按 §5 立项，上限 GPU 6 run、Opus 抽看 $5；三条臂的门与"不做的事"以本文为准。
+2. **C 臂的边界确认**：后校正是一次额外的模型调用、单次输出、无挑选，不属于 ADR-0008 的"多次翻译再挑选"；但它是产品里的新组件（若进产品会放在 cues 之后、names 之前）。确认允许在研究侧做。
+
+结题后须定（执行者在结论里给出建议）：
+
+3. 过门的臂是否进产品：新配方 id、ADR、需要的新素材确认（候选：YODAS2 国会录音 1,371 条参考字幕从未用于产品 STT 评分，HF I 参考可信度稍差）。
+
+执行中产生的裁定项由执行者追加在下面（第 0 项留给提交签名问题）。
+
+## 附：执行提示词（粘贴到新 session）
+
+```text
+按 docs/research/2026-11-09-asr-robustness-v14.md 无人值守执行第十四轮（v14）。先读该文"先读"一行列出的文件。开始前把本文状态改为 planned，并在 docs/research/INDEX.md 的"决定与探索时间线"加一行"2026-11-09：用户裁定立项 v14"（§8 第 1、2 项已裁定）。
+授权：本轮 GPU 作业——票据 01（HF III 产品 STT 重算，若缺）、02、03 的 CT2／torch worker 作业，票据 04 的 Strata 启停（strata launch --plan / strata launch --no-tui --model iq3_s / strata launch --stop）——与 ≤$5 的 Opus 抽看，预算以文档 §5 为上限。不得运行 strata update，不得进行任何会下载文件的 launch（--plan 下载量不为 0 时停下，写进 §8）；不得启动 llama-server；不得下载任何模型权重。
+规则：中途不问我，需要裁定的事写进 §8；按 §6 的记录协议逐票据提交；每张 GPU 票据开跑前用 Get-Process 核实没有 llama-server、Strata 或其他 GPU 作业，读 .local/gpu.lock，不抢占、不杀进程、不关我的程序；04 开跑前确认可用内存 ≥52 GiB，Strata 启动后确认专家区全部锁进内存，退到 mmap 就停下写进 §8，结束后 strata launch --stop 并核实显存释放。门、对照、预算与"不做的事"以文档为准，不自行修改。不改 kototoki/、ADR、基线身份与 experiments/quality_v5/ 的既有脚本；不换模型、不改 VAD 参数、不做多次解码再挑选。子 agent 用 Agent 工具显式指定 model（默认 sonnet，复杂设计或统计升级 opus，不用 Fable）。
+完成标准：§7 每张票据有一行；§7.1 给出 A、B、C 三臂的结论（三种写法之一）并回答 §3 的四个问题；§8 列出待裁定项与建议；调研索引时间线登记结题行。
+```
