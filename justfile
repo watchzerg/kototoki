@@ -29,6 +29,7 @@ experiments-test:
     {{legacy}} python -m unittest discover -s experiments/vad_comparison -t . -p 'test_*.py' -v
     {{legacy}} python -m unittest discover -s experiments/fullfilm_comparison -t . -p 'test_*.py' -v
     {{legacy}} python -m unittest discover -s experiments/asr_candidates -t . -p 'test_*.py' -v
+    {{legacy}} python -m unittest discover -s experiments/asr_robustness_v14 -t . -p 'test_*.py' -v
 
 x0-demo *args:
     {{legacy}} python -m experiments.x0_demo.run {{args}}
