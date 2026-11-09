@@ -31,6 +31,10 @@
 | `correct-eval --run R` | 04 | 校正结果的单元口径评估与改动分类（离线） |
 | `correct-sample --run R` | 04 | 抽 30 条改动供 Opus 抽看（离线） |
 
+## 结论（2026-11-09 结题）
+
+A 不进、B 不进、C 有效但不够进产品；数字、口径与待裁定项见[研究文档](../../docs/research/2026-11-09-asr-robustness-v14.md) §7、§7.1、§8。`fill.py`（B1）已实现但本轮未运行。产物在 `.local/asr-robustness-v14/`（不进 Git）。
+
 ## 验证
 
 离线，无 GPU／模型／网络：
