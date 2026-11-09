@@ -1,6 +1,6 @@
 # ADR-0014：专名一致性——研究线已结题，冻结配置已移植进产品 `names` 阶段
 
-状态：已接受。合并整理于 2026-11-08（并入 ADR-0013 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。第 3 点中的发布时替换、第 5 点（`[names] enabled`）、第 6 点（`names_apply`）、第 7 点（手改表只重做替换）自 2026-11-08 起由 [ADR-0019](0019-product-translation-q2.md) 替代：表只经翻译注入使用，建表必开，手改注入行即重译。第 10 点中"Q 线用 `names` 建表注入"自 2026-11-09 起对基线由 [ADR-0021](0021-q3-strata-names-baseline.md) 替代：基线 Q3 的表由 Strata Flash-Next 建（`names-strata-v4`）。第 3 点中的建表模型（Qwen3.8-27B 经 llama-server）与串行驻留自 2026-11-09 起由 [ADR-0022](0022-product-names-on-strata.md) 替代：产品在与翻译共用的 Strata session 上用 Flash-Next 按 Q3 规则建表，阶段位置不变。  
+状态：已接受。合并整理于 2026-11-08（并入 ADR-0013 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。第 3 点中的发布时替换、第 5 点（`[names] enabled`）、第 6 点（`names_apply`）、第 7 点（手改表只重做替换）自 2026-11-08 起由 [ADR-0019](0019-product-translation-q2.md) 替代：表只经翻译注入使用，建表必开，手改注入行即重译。第 10 点中"Q 线用 `names` 建表注入"自 2026-11-09 起对基线由 [ADR-0021](0021-q3-strata-names-baseline.md) 替代：基线 Q3 的表由 Strata Flash-Next 建（`names-strata-v4`）。第 3 点中的建表模型（Qwen3.8-27B 经 llama-server）与串行驻留自 2026-11-09 起由 [ADR-0022](0022-product-names-on-strata.md) 替代：产品在与翻译共用的 Strata session 上用 Flash-Next 按 Q3 规则建表，阶段位置不变。第 1 点“研究线关闭”自 2026-11-10 起由用户明确要求局部重开：[v15](../research/2026-11-10-asr-robustness-v15.md) 票据 04 在**日文转写侧**量“只允许按专名表写法替换”（方向 ① 的日文侧版本，表按 `zh` 分组定指称），不重做中文侧替换；是否进产品待 v15 结题后另立 ADR。  
 范围：专名一致性（日文侧建专名表＋生成后程序替换）的研究线状态、冻结的最佳配置，以及它在产品包 `kototoki/` 中的 `names` 阶段与发布时替换。
 
 ## 决定
