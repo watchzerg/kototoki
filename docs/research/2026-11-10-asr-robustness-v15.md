@@ -1,6 +1,6 @@
 # ASR 稳健性第十五轮（v15）：A 守卫进产品的选型、B1 补窗实跑、C3 表内专名替换
 
-状态：draft（2026-11-10 起草；用户已就 v14 §7.1 的三臂口头裁定方向，§8 开跑前事项确认后改 planned）。
+状态：planned（2026-11-10 起草，同日用户裁定立项，§8 第 1–6 项全部按执行者建议裁定）。结题后改 concluded。
 范围：接 [v14](2026-11-09-asr-robustness-v14.md) 的三个后续。**A**：幻觉／重复守卫按“安全网”而不是“降 CER”立项，选出规则与动作并给出产品化形状草案；**B**：B1 空子段补窗实跑，只报数不设门，降多少由用户裁定；**C**：把 v14 的自由后校正收窄为“只允许按专名表替换”（C3），在日文转写侧量 CER、人名命中与有害率，并（条件触发）量对翻译的连带影响。w0 模型、VAD 参数、MMS 对齐仍不换；产品 `kototoki/`、ADR、基线身份本轮不改，产品化只在 §8 提草案。
 执行载体：tracker 目录 `.scratch/asr-robustness-v15/`（spec、map、票据；Git 忽略）。**本文是唯一进 Git 的进度与结论记录。**
 先读：[v14 研究文档](2026-11-09-asr-robustness-v14.md) §2、§4、§7、§7.1、§8；[ADR-0014](../adr/0014-name-consistency-in-product.md)（第 1 点的两个未测方向、第 2 点的替换规则一）、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)；[STT worker 模块页](../architecture/modules/stt-workers.md)；[模块边界](../architecture/module-boundaries.md)；代码 `experiments/asr_robustness_v14/`（全部）、`kototoki/workers/{asr,protocol}.py`、`kototoki/recipes.py`、`kototoki/names/{__init__,table,recipes}.py`、`kototoki/strata.py`、`experiments/quality_v5/asr_source.py`。
@@ -124,12 +124,12 @@
 
 开跑前须定：
 
-1. **立项与预算**：按 §5 立项，上限 GPU 12 run、Opus 与裁判 $21。
-2. **是否预批准票据 07**（A 守卫实现进产品，改 `kototoki/workers/asr.py` 与 `kototoki/recipes.py`，起草 ADR-0023）。建议：**否**，先看 01／02 的选型结果再批；若批准，执行者在 02 结束后按 §4.1 草案直接实现并走 HF III 验收，ADR 仍由用户裁定后落稿。
-3. **B1 的裁定口径**：执行者只报“两部各降多少编辑、插入涨多少、每部多少 GPU 秒”，用户据此决定进不进产品；若用户想要一个预设的最低值，请在此写明。
-4. **C3 的翻译影响阶段（票据 05）**是否要做：6 GPU run、裁判 ≤$15，只在 C3 两部都不升时触发。建议：做。
-5. **HF III 改用 Q3 建表**（与 HF II 同口径，顺手补 v14 §8 第 8 项）。建议：是。
-6. **重开 ADR-0014 研究线的范围**：仅限本轮 C3（日文转写侧、表内写法替换、以表的 `zh` 分组定指称）；中文侧替换（ADR-0019 已删）不重做。
+1. **立项与预算**：按 §5 立项，上限 GPU 12 run、Opus 与裁判 $21。**裁定（2026-11-10）：是。**
+2. **是否预批准票据 07**（A 守卫实现进产品，改 `kototoki/workers/asr.py` 与 `kototoki/recipes.py`，起草 ADR-0023）。建议：**否**，先看 01／02 的选型结果再批；若批准，执行者在 02 结束后按 §4.1 草案直接实现并走 HF III 验收，ADR 仍由用户裁定后落稿。**裁定：否，票据 07 不开。**
+3. **B1 的裁定口径**：执行者只报“两部各降多少编辑、插入涨多少、每部多少 GPU 秒”，用户据此决定进不进产品；若用户想要一个预设的最低值，请在此写明。**裁定：只报数，不设最低值。**
+4. **C3 的翻译影响阶段（票据 05）**是否要做：6 GPU run、裁判 ≤$15，只在 C3 两部都不升时触发。建议：做。**裁定：做。**
+5. **HF III 改用 Q3 建表**（与 HF II 同口径，顺手补 v14 §8 第 8 项）。建议：是。**裁定：是。**
+6. **重开 ADR-0014 研究线的范围**：仅限本轮 C3（日文转写侧、表内写法替换、以表的 `zh` 分组定指称）；中文侧替换（ADR-0019 已删）不重做。**裁定：是，范围如此。**
 
 结题后须定（执行者在结论里给出建议）：
 
@@ -140,7 +140,7 @@
 ## 附：执行提示词（粘贴到新 session）
 
 ```text
-按 docs/research/2026-11-10-asr-robustness-v15.md 无人值守执行第十五轮（v15）。先读该文"先读"一行列出的文件。开始前把本文状态改为 planned，并在 docs/research/INDEX.md 的"决定与探索时间线"加一行"2026-11-10：用户裁定立项 v15"（§8 第 1–6 项按用户批示填写裁定结果）。
+按 docs/research/2026-11-10-asr-robustness-v15.md 无人值守执行第十五轮（v15）。先读该文"先读"一行列出的文件。本文状态已是 planned，§8 第 1–6 项已裁定（票据 07 不开），调研索引时间线已登记立项，开始前不必再改。
 授权：本轮 GPU 作业——票据 02、03 的 CT2／torch worker 作业，票据 04（与 05，若触发）的 Strata 启停（strata launch --plan / strata launch --no-tui --model iq3_s / strata launch --stop）与产品翻译配方——与 ≤$21 的 Opus 判读、抽看和配对裁判，预算以文档 §5 为上限。不得运行 strata update，不得进行任何会下载文件的 launch（--plan 下载量不为 0 时停下，写进 §8）；不得启动 llama-server；不得下载任何模型权重。
 规则：中途不问我，需要裁定的事写进 §8；按 §6 的记录协议逐票据提交；每张 GPU 票据开跑前用 Get-Process 核实没有 llama-server、Strata 或其他 GPU 作业，读 .local/gpu.lock，不抢占、不杀进程、不关我的程序；Strata 开跑前确认可用内存 ≥52 GiB，启动后确认专家区全部锁进内存，退到 mmap 就停下写进 §8，结束后 strata launch --stop 并核实显存释放。判据、预算与"不做的事"以文档为准，不自行修改。不改 kototoki/（票据 07 未预批准）、ADR、基线身份与 experiments/quality_v5/、experiments/asr_robustness_v14/ 的既有脚本；不换模型、不改 VAD 参数、不做多次解码再挑选。子 agent 用 Agent 工具显式指定 model（默认 sonnet，复杂设计或统计升级 opus，不用 Fable）。
 完成标准：§7 每张票据有一行；§7.1 给出 A 的选型与产品化草案、B 与 C3 的数字与解读，回答 §3 的四个问题；§8 列出待裁定项与建议；调研索引时间线登记结题行。
