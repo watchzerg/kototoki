@@ -1,6 +1,6 @@
 # 产品建表切到 Strata（对齐基线 Q3）
 
-状态：**停在票据 06（GPU 验证）**——票据 01–05、07 完成（2026-11-09），代码与文档已交付、离线门全过；GPU 验证因可用内存 50.5 GiB < 52 GiB 未开跑（§7、§8 第 2 条），待用户腾出内存后重跑 06 再改 done。  
+状态：**done**（2026-11-09；票据 01–07 全部完成，GPU 验证 smoke 与 HF-II 整片均通过，见 §7）。  
 目标：产品 `kototoki/` 的 `names` 阶段改为在 Strata 上用 Qwen3.8-Flash-Next 建表，建表规则与基线 Q3（[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）的 `names-strata-v4` 相同。names 与 translate 共用同一个 Strata 实例，产品不再启动 llama-server、不再加载 27B。  
 执行载体：tracker `.scratch/q3-product-switch/`（spec、map、票据，Git 忽略）。本文是唯一进 Git 的计划与完成记录：完成后在 §7 填结果，状态改为 done。  
 先读：[ADR-0021](../adr/0021-q3-strata-names-baseline.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)；[模块边界](../architecture/module-boundaries.md)；模块页 [专名一致性](../architecture/modules/name-consistency.md)、[翻译子系统](../architecture/modules/translation-subsystem.md)、[批次编排](../architecture/modules/batch-orchestration.md)、[阶段计划](../architecture/modules/stage-plan.md)、[配置与媒体](../architecture/modules/config-and-media.md)；[技术设计](../specs/bilingual-subtitle-pipeline.md)；[测试设计与验收](../agents/testing.md)、[验证边界](../testing/validation.md)；[CODING_STANDARDS](../../CODING_STANDARDS.md)。
@@ -161,11 +161,12 @@
 - 2026-11-09 票据 04（编排共用 session）：`job._run` 建一个 `kototoki.strata.Session` 包住 names 与 translate（退出即 `--stop`，之后才放 GPU 锁），两阶段按需传入（names 有 cue、translate `needs_model`），整批只启动一次、都不需要时不启动；`kototoki.translate` 不再导出 `Session`。`test_job.py`／`test_job_ffmpeg.py` 改用伪 `kototoki.strata` 模块，新增整批一个 session、`StrataRefused` 两阶段都失败、Ctrl+C 仍 stop 的用例。`just test` 609 过、full 层 ffmpeg 3 过、`just check` 过、`docs-check` 44 条均为已有。
 - 2026-11-09 票据 05（删除与配置）：删 `[paths] llama_server`、`[names] model`／`port`（`Paths`／`Models`／`NamesConfig` 同步，旧键按未知键报错），`[names] seed` 与翻译一样校验为正整数；`kototoki.toml.example`、config 与资产清单测试同步；`scripts/smoke/names_product.py` 重写为走共享 `strata.Session`（通过条件含专家区在内存、`released`、`status == ok`、≥1 person、全程无 llama-server）；`scripts/upgrade.py` 与依赖布局、技术选型、开发工作流文档改为“llama.cpp 与 27B 只供研究侧”。`just test` 609 过、full 层 ffmpeg 3 过、`just check` 过、`docs-check` 44 条均为已有；smoke 只做了导入检查，真实运行在票据 06。
 - 2026-11-09 票据 06（GPU 验证）：**未执行，GPU 门未过**。开跑前核对：无 llama-server、无 Strata、无其他 GPU 作业（`Get-Process`），`.local/gpu.lock` 不存在，空闲显存 15089 MiB，`strata launch --status` 为空，`--plan` 无下载；可用内存 50.5 GiB（< 52 GiB），按 §5 每分钟采样等满 10 分钟仍 50.5–50.6 GiB（进程 working set 合计 8.4 GiB、committed 13.9 GiB、内核池 4.2 GiB；11-08 两次通过时启动前可用 54.2／54.3 GiB）。按“不关用户的程序”与“仍不够就停下”未启动 Strata，`just smoke names_product` 与 HF-II 整片都没有跑；见 §8 第 2 条。
+- 2026-11-09 票据 06 重跑（用户重启后，§8 第 2 条由此解决）：开跑前可用内存 53.7 GiB、空闲显存 14977 MiB、无 llama-server／Strata／GPU 作业、无 `gpu.lock`、`--plan` 无下载。`just smoke names_product`（`.local/smoke/20261109T122829Z/`）**通过**，87.5 s：Strata 启动后 `expert_arena` 为 `ram`、drafting `dflash2`、kv `int8`；`count_tokens` 可用（`prompt_check: count_tokens`）；建表第 1 次即 `ok`（5.9 s，提示 1655／输出 299 token），2 条均为 person、置信度非 high，注入行 0（只记录）；表对身份 current；全程无 llama-server 进程；整机显存峰值 16007 MiB、内存峰值 61.1 GiB；`--stop` 后 status 为空、空闲显存 14977 MiB。 HF-II 整片（`python -m kototoki`，W0，全新 `.local/q3-product-fullfilm/`，源文件经硬链接放入新 input 目录、旁边无 `ja-zh.srt`）**通过**，墙钟 1014.8 s、退出码 0：extract 17.2 s、vad 74.7 s、asr 174.7 s、align 87.4 s（1 个窗口 CTC 目标过长的既有告警）；**names 阶段首次启动 Strata**（ready 78.1 s，`expert_arena` 为 `ram`，引擎日志 VirtualLock 3502 MiB＋45 片 pinned 43 GiB），建表第 1 次失败（seed 20261019，回复 JSON 数组末尾多逗号，7879 输出 token，55.1 s），第 2 次 `ok`（seed 20261020，48.6 s）：25 条（person 10、class 4、org 2、place 2、other 7；high 20、medium 5），归一丢弃 74（shape 64、ja_shape 10），提示 13240／输出 7766 token，建表共 103.8 s，names 阶段 182.0 s；**translate 沿用同一 session、未重启**：149 包 462.0 s，每包均值 3.10 s（p50 3.20、p90 3.70、最大 4.00 s，约 146 tok/s，输出约 178 token），149 包全部首次接受，重试、降级、回退、思考输出均为 0，144 包带注入行（20 条 high 条目展开为 44 行），`cache_n` 全为 0；整机显存峰值 16099 MiB、内存峰值 60.8 GiB；`--stop` 后 status 为空、空闲显存 15059 MiB，GPU 锁释放；`ja.srt` 与发布的 `ja-zh.srt` 各 1099 条、`ja-zh` 全为两行；`published.json` 的 names 来源 recipe_hash `d3317926…`、translate 的 `names_sha256` `e3733fce…`。 与 2026-11-08 的 Q2 整片（27B＋llama-server 建表、翻译 533 s、每包 3.07 s）相比：建表多一次失败重试、翻译速度相当、整机内存峰值相近（60.8 对 62.4 GiB）。两次 GPU 运行之间 Strata 都已完全停掉。
 - 2026-11-09 票据 07（收尾）：待填标记只剩 `docs/development/workflow.md:57`（按需，时机未到，保留）；`kototoki/` 无 `NAMES_SERVER`／`NAMES_SPEC`／`model_asset`／27B 路径残留，“llama-server”只在说明文字里；计划状态改为“停在票据 06”；`docs/INDEX.md` 条目同步。
 
 ### 完成报告（2026-11-09）
 
-提交（均在 `main`，ssh 签名）：01 `052b065`、02 `f21b1bf`、03 `f9a14cc`、04 `8410d90`、05 `e702cf4`、07 见本行所在提交。
+提交（均在 `main`，ssh 签名）：01 `052b065`、02 `f21b1bf`、03 `f9a14cc`、04 `8410d90`、05 `e702cf4`、07 `c6f8f64`、06 重跑结果见本行所在提交。
 
 **已实现**
 - 中间层 `kototoki/strata.py`：`StrataServer`、`StrataRefused`、身份常量、共享 `Session`（第一次需要模型时启动，整批一个，启动失败累计 3 次或 `StrataRefused` 后本批不可用，退出即 `--stop` 并核实显存释放）；`kototoki/translate/strata.py` 只作研究侧再导出（§8 第 1 条）。
@@ -177,16 +178,18 @@
 
 **自动检查**（最后一次，票据 05 后）：`just test` 609 过；`tests.full.test_job_ffmpeg` 3 过；`tests.core.test_upgrade_script` 过；`just check` 过；`docs-check` 44 条均为 main 上已有；§5 列的行为各有测试（v13 逐字节对照 5 项与 hash 重构、5 次尝试与空表、共享 session 只启动一次、中断 stop、`StrataRefused` 两阶段都失败、不需要模型不启动、改表使翻译失效、禁止导入守门）。`just test-full` 的其他用例未跑（需要 ffmpeg 以外的真实资产）。
 
-**GPU 结果**：无。票据 06 因可用内存 50.5 GiB < 52 GiB 未开跑（见上及 §8 第 2 条）。
+**GPU 结果**（2026-11-09，票据 06 重跑）：smoke 通过（建表 1 次即 ok、专家区在内存、停后显存释放）；HF-II 整片通过（§5 全部条件：Strata 只启动一次、`ram`、无 llama-server；建表 ok 用了 2 次尝试；翻译交付失败 0、回退 0；SRT 1099 条、`ja-zh` 全两行；停后 status 为空、空闲显存 15059 MiB ≥ 14000；峰值显存 16099 MiB、内存 60.8 GiB、建表 103.8 s、翻译每包均值 3.10 s）。数字见上面票据 06 重跑一行。
 
 **未验证项**
-- Strata 路径的产品真实运行：`just smoke names_product`、HF-II 整片（建表耗时、尝试次数、翻译每包耗时、内存与显存峰值、`--stop` 后释放）。
-- 产品写出的表未经人工抽看；`count_tokens` 退路、5 次都失败写空表、Strata 起不来等失败路径只经伪服务测试。
-- 模块页“未验证”小节（专名一致性、批次编排、翻译子系统）与 ADR-0022“未验证”保持原文，待 06 重跑后填写。
+- 产品写出的表未经人工抽看（25 条里 high 20、含 other 7 条）；注入后的译文质量只有研究侧 Q2／Q3 证据，未跑裁判。
+- `count_tokens` 退路、5 次都失败写空表、Strata 起不来、被中断时 stop 等失败路径只经伪服务测试；x0 输出、其他作品与剧集未跑。
+- 建表在同 seed 下跨 Strata 启动不保证可复现（本次第 1 次尝试失败说明输出受采样影响；v13 已观测同片两次建表差异大）。
+- 整机内存峰值 60.8 GiB（共 63.9），可用内存门 52 GiB 之下仍可能退到 mmap；本次开跑前 53.7 GiB 够用，余量约 1.7 GiB。
 
 ## 8. 待用户裁定
 
 （执行者追加。）
 
 1. **`kototoki/translate/strata.py` 的去留**：研究侧 `experiments/translation_v3/strata.py`（`drafting_from_log`）与 `experiments/scene_batching_v6/v13.py`（`StrataServer`、`ResourceSampler`、`http_get`、模块本身）从 `kototoki.translate.strata` 导入，而 `experiments/` 不在本次改动范围。执行者把生命周期移到 `kototoki/strata.py` 后，保留 `kototoki/translate/strata.py` 作只做再导出的研究侧导入路径（产品内不使用，模块边界已写明）。是否改研究侧导入并删掉这个再导出模块，请用户裁定。
-2. **GPU 验证的内存门未过（票据 06 未执行）**：2026-11-09 12:04–12:14 开跑前核对，除可用内存外全部通过（无 llama-server／Strata／GPU 作业，空闲显存 15089 MiB，status 为空，`--plan` 无下载）；可用内存 50.5 GiB，低于 §5 的 52 GiB，等满 10 分钟仍为 50.5–50.6 GiB。占用来自桌面程序与内核（进程 working set 合计 8.4 GiB、committed 13.9 GiB、内核池 4.2 GiB、Hyper-V 在运行），执行者按规则不关用户的程序。2026-11-08 两次通过时启动前可用 54.2／54.3 GiB，差 1.26 GiB 即退到 mmap，故不能以 50.5 GiB 开跑。请用户决定：腾出约 2 GiB 内存后重跑票据 06（`just smoke names_product`，再 HF-II 整片，命令与通过条件见 §4／§5），或另定门。
+2. **GPU 验证的内存门未过（票据 06 未执行）**：2026-11-09 12:04–12:14 开跑前核对，除可用内存外全部通过（无 llama-server／Strata／GPU 作业，空闲显存 15089 MiB，status 为空，`--plan` 无下载）；可用内存 50.5 GiB，低于 §5 的 52 GiB，等满 10 分钟仍为 50.5–50.6 GiB。占用来自桌面程序与内核（进程 working set 合计 8.4 GiB、committed 13.9 GiB、内核池 4.2 GiB、Hyper-V 在运行），执行者按规则不关用户的程序。2026-11-08 两次通过时启动前可用 54.2／54.3 GiB，差 1.26 GiB 即退到 mmap，故不能以 50.5 GiB 开跑。请用户决定：腾出约 2 GiB 内存后重跑票据 06（`just smoke names_product`，再 HF-II 整片，命令与通过条件见 §4／§5），或另定门。**已解决**：用户重启机器后可用内存 53.7 GiB，执行者按原门重跑票据 06，smoke 与整片均通过（§7）。
+3. **票据 06 结果的提交未能签名**：2026-11-09 20:50 提交时 ssh 签名经 1Password agent 失败两次（`1Password: failed to fill whole buffer`，应是重启后 1Password 尚未解锁）。按 §6“不绕过签名、失败即停下”，票据 06 的文档改动（本文 §7／§8、ADR-0022、三个模块页、开发工作流、`docs/INDEX.md`）已写入工作区并 `git add`，未提交。请解锁 1Password 后在仓库根运行下面的命令即可（提交信息已备好）：`git commit -F "C:/Users/watch/AppData/Local/Temp/claude/48969ae9cead7bf2/ea36c9ec-4545-5d89-8462-0c7b37692b4b/scratchpad/commit06.txt"`，或自行撰写提交信息。

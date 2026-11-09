@@ -79,7 +79,8 @@
 - 测试（full，`just test-full`）：`tests/full/test_job_ffmpeg.py` 沿用 `JobCase` 的接缝（`FAKE_MEDIA = False`），媒体阶段用 ffmpeg 合成的 3 s 视频走真实 `media.probe`／`extract`，GPU 阶段仍是伪 worker、cue、专名与翻译仍是假实现：检查派生 WAV 规格、三个 GPU 阶段各启动一次、共享 Strata session 在 names 阶段启动、翻译后退出、`name-table.json` 落盘、双语字幕发布到源文件旁及 `published.json`（`sources` 含 `names`）；音轨标 `eng` 的合成视频照常发布，且控制台恰有一行选轨回退的 WARNING。`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙另断言 `compensation_warnings` 给出一行补入告警。不经 `python -m kototoki` 子进程、不起 Strata（伪 `kototoki.strata` 模块）。
 - 真实运行：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)（Heaven's Feel II／III 各以 w0、x0 整批运行，12 份 SRT 齐全；首轮翻译因空闲显存低于启动阈值失败，重跑时 STT 按产物身份全部跳过、只做翻译与发布）。
 - 真实失败路径：[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)——asr 阶段强杀编排器后 worker 随 Job Object 退出、残留锁默认拒绝（退出码 3）、`KOTOTOKI_BREAK_STALE_LOCK=1` 后从 vad 产物续跑；无语音视频、损坏文件隔离、子目录镜像、当时的"用户改动最终文件的拒绝与 `force` 覆盖"（ADR-0020 已删除该机制）、重跑逐字节一致均通过。
-- 未验证：共用 Strata session 的编排（在 names 阶段启动、GPU 锁里的 Strata pid、被中断时的停止与显存核实）的真实运行（结果记在 ADR-0022 所指计划的 §7）；names 阶段的 x0 输出、其他作品与失败路径的真实运行；worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径；2026-10-19 的小修集合（最终路径碰撞、中断取消提取、临时文件清理、空锁破除、补偿告警等）只经离线测试，未做真实运行。
+- 真实运行（共用 Strata session，2026-11-09，ADR-0022 所指计划的 §7）：HF-II 整片 W0 一次通过，墙钟 1014.8 s；Strata 在 names 阶段启动一次（78.1 s，`ram`）、翻译沿用、整批结束后 `--stop`（status 为空、空闲显存 15059 MiB）再放 GPU 锁；建表 2 次尝试 ok，翻译 149 包回退 0，发布 `ja-zh.srt` 1099 条。
+- 未验证：被中断时的停止与显存核实的真实路径；names 阶段的 x0 输出、其他作品与失败路径的真实运行；worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径；2026-10-19 的小修集合（最终路径碰撞、中断取消提取、临时文件清理、空锁破除、补偿告警等）只经离线测试，未做真实运行。
 
 ## 变更与决策来源
 
