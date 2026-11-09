@@ -40,6 +40,10 @@
 - C3b 守卫：before→after 字符 diff，间隔 ≤2 字的改动区段合并，每个区段可向两侧等同上下文对称扩展，after 侧片段必须正好是一个表内写法，否则整条回退（`rejected_not_table`）；纯删除回退（`rejected_deletion`）；v14 的编辑比 ≤0.5 守卫仍在前面。
 - 人名命中率：参考单元文字（规范化）里每次出现规范写法，候选单元文字也含它的比例。
 
+## 结论（2026-11-10 结题）
+
+A 选中 `repeat-strict`＋折叠并建议进产品；B1 两部都净变差；C3a 在 §4.3 的频次规则下 HF II Δ0、改取表头写法（附录 `c3a-entity`）后 −26 编辑；C3b 与 HF III Q3 建表因可用内存 <52 GiB 未跑（`names-build` 待补跑）。数字、口径与待裁定项见[研究文档](../../docs/research/2026-11-10-asr-robustness-v15.md) §7、§7.1、§8。产物在 `.local/asr-robustness-v15/`（不进 Git）。
+
 ## 验证
 
 离线，无 GPU／模型／网络：
