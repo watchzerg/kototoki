@@ -8,8 +8,8 @@
 1. **产品建表即 Q3 的建表规则。** `names` 阶段在 Strata 上用 `qwen3.8-flash-next-iq3_s` 建表，请求体与 seed 序列与 v13 的 `names-strata-v4`（`experiments/scene_batching_v6/v13.py` 的 `NamesClient`＋`build_one`）逐字节一致：
    - 提示 v5、JSON schema、采样（0.7／0.8／20、`presence_penalty` 1.5）、归一兜底不变；`max_tokens` 8192、context 24576（提示预算 24576 − 8192 − 512 = 15872，数值与此前相同）；
    - 请求不带 `response_format`，带 `chat_template_kwargs.enable_thinking: false` 与 `model`，非流式；
-   - 预算检查走 `/v1/messages/count_tokens`：system 与 user 两段各作一条 user 消息计数再相加，超预算（`too_long`）不发请求、写空表。该端点不可用（HTTP／传输错误、响应形状不符）时退路与 v13 相同：本 session 内不再预检、计数按 0，只记录 `usage.prompt_tokens`，超预算只标记不失败，运行日志一行 WARNING；
-   - 失败后依次换 seed：请求用 seed、seed＋1、…、seed＋4，最多 5 个请求，取第一张合格的表即停，不在多张表里挑选（[ADR-0008](0008-no-multi-translation-selection.md)）。实现复用 `table.build_table`（两次一组：seed、seed＋1），外层在结果为 `failed` 且还有请求额度时以 seed＋2k 再调一次，第 6 次尝试（seed＋5）不发请求，与 v13 `build_one` 相同；
+   - 预算检查走 `/v1/messages/count_tokens`：system 与 user 两段各作一条 user 消息计数再相加，超预算（`too_long`）不发请求、写空表。该端点不可用（HTTP／传输错误、响应形状不符）时退路与 v13 相同：该影片内不再预检、计数按 0，只记录 `usage.prompt_tokens`，超预算只标记不失败，运行日志一行 WARNING；
+   - 失败后依次换 seed：请求用 seed、seed＋1、…、seed＋4，最多 5 个请求，取第一张合格的表即停，不在多张表里挑选（[ADR-0008](0008-no-multi-translation-selection.md)）。实现把 `table.ATTEMPTS` 改为 5，一次 `build_table` 调用内完成（v13 是两次一组加外层以 seed＋2k 重调，第 6 次不发请求；两者的请求体与 seed 序列逐字节相同，`tests/core/test_names_session.py` 导入 v13 对照）；
    - 5 次都失败写 `build.status = failed` 的空表，影片照常翻译、不注入，同现行规则。
    产品代码不导入 `experiments.*`；等价由 `tests/core/` 导入 v13 做逐字节对照守门。
 2. **新建表配方 `q3-names-v1`。** `kototoki/names/recipes.py` 的 `BUILD` 改为该配方，`BUILD_RECIPE_HASH` 由 `tests/core/test_names_recipes.py` 钉住。它与 `names-strata-v4`（`38cb7bcd…`）的对应关系：

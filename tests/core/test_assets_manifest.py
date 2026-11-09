@@ -1,5 +1,5 @@
-"""代码常量 == 资产清单 `assets.toml`：防止模型 SHA 表、专名建表的模型身份、默认路径里的版本号漂移。
-翻译模型由 Strata 管理（ADR-0019），不在清单里。
+"""代码常量 == 资产清单 `assets.toml`：防止模型 SHA 表、默认路径里的版本号漂移。
+翻译与专名建表的模型由 Strata 管理（ADR-0019、ADR-0022），不在清单里；清单里的 llama.cpp 与 27B 条目只供研究侧。
 
 清单是身份的唯一权威（docs/development/dependencies.md）；代码常量保留用于运行时自校验，这里逐项钉住相等。
 """
@@ -11,7 +11,6 @@ import tomllib
 import unittest
 
 from kototoki import config, plan, recipes
-from kototoki.names import recipes as names_recipes
 
 with (config.REPO_ROOT / "assets.toml").open("rb") as _stream:
     MANIFEST = tomllib.load(_stream)
@@ -34,12 +33,6 @@ class ModelConstantsTests(unittest.TestCase):
     def test_no_hy_mt2_translation_model_is_listed(self) -> None:
         self.assertFalse([name for name in MODELS if "hy-mt" in name.lower() or "apex" in name.lower()])
         self.assertNotIn("model", config.DEFAULTS["translate"])
-
-    def test_names_model_asset_equals_manifest(self) -> None:
-        model, asset = MODELS["qwen3.8-27b-ud-iq3_s"], names_recipes.BUILD["model_asset"]
-        self.assertEqual((model["repo"], model["revision"]),
-                         (names_recipes.NAMES_SERVER["repo"], names_recipes.NAMES_SERVER["revision"]))
-        self.assertEqual(model["files"], {asset["file"]: {"sha256": asset["sha256"], "size": asset["size"]}})
 
     def test_default_model_paths_point_into_manifest_dirs(self) -> None:
         defaults = config.DEFAULTS

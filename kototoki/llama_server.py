@@ -1,8 +1,8 @@
 """受管 llama-server 与本机 HTTP 客户端：按 `ServerSpec` 组命令行、模型与引擎身份核对、启动前空闲显存轮询、驻留证据校验。
 
-中间层，不属基础层；两个使用者（ADR-0019 起）：专名建表（names）用整套 llama-server 生命周期（`NAMES_SPEC`）；
-翻译子系统（Strata）只用本机回环客户端 `LlamaClient`、空闲显存轮询 `wait_for_free_vram`／`nvidia_smi` 与 OOM 识别
-`explicit_oom`。研究侧 `experiments/translation_v3/{qwen,strata}.py` 也导入本模块，位置因此不动。
+中间层，不属基础层。产品（ADR-0022 起 names 与翻译都在 Strata 上）只用本机回环客户端 `LlamaClient`、空闲显存轮询
+`wait_for_free_vram`／`nvidia_smi` 与 OOM 识别 `explicit_oom`；整套 llama-server 生命周期（`ManagedServer` 等）产品不再
+使用，只剩研究侧 `experiments/translation_v3/{qwen,strata}.py` 等导入，位置因此不动、不删除。
 
 来源（2026-10-19 票据 02 从翻译子系统原样抽出，行为不变）：
 - `ManagedServer`、`server_command`、`port_free`、`check_model`、`check_engine` 来自 `kototoki/translate/server.py`，

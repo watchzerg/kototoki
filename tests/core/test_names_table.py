@@ -450,11 +450,12 @@ class BuildTableTests(unittest.TestCase):
         self.assertEqual(body["messages"], bt.build_messages(document()))
         self.assertEqual((body["temperature"], body["top_p"], body["top_k"], body["min_p"], body["presence_penalty"]),
                          (0.7, 0.8, 20, 0.0, 1.5))
-        self.assertEqual((body["seed"], body["max_tokens"], body["stream"]), (20261019, 4096, False))
+        self.assertEqual((body["seed"], body["max_tokens"], body["stream"]), (20261019, 8192, False))
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
-        self.assertEqual(body["response_format"]["type"], "json_schema")
-        self.assertEqual(body["response_format"]["json_schema"]["name"], "name_table")
-        self.assertIs(body["response_format"]["json_schema"]["schema"], bt.RESPONSE_SCHEMA)
+        self.assertEqual(body["model"], "qwen3.8-flash-next-iq3_s")
+        self.assertNotIn("response_format", body)  # Strata 会据此改写提示（v13 §4.0），不发
+        self.assertEqual(list(body), ["messages", "temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                                      "seed", "max_tokens", "chat_template_kwargs", "stream", "model"])
 
     def test_missing_usage_is_none(self):
         for usage in (None, {}):
@@ -492,30 +493,37 @@ class BuildTableTests(unittest.TestCase):
         result = bt.build_table(document(), server.chat, server.tokenize, 5)
         self.assertEqual(([b["seed"] for b in server.bodies], result.status), ([5, 6], "ok"))
 
-    def test_two_failures_return_failed_empty_table(self):
-        server = FakeServer(response(reply_text(), "length"), response("不是 JSON\n第二行"))
+    def test_five_failures_return_failed_empty_table(self):
+        server = FakeServer(*[response(reply_text(), "length")] * 4, response("不是 JSON\n第二行"))
         result = bt.build_table(document(), server.chat, server.tokenize, 100)
-        self.assertEqual((result.status, result.attempts, len(server.bodies)), ("failed", 2, 2))
+        self.assertEqual((result.status, result.attempts, len(server.bodies)), ("failed", 5, 5))
+        self.assertEqual([b["seed"] for b in server.bodies], [100, 101, 102, 103, 104])
         payload = result.payload
         self.assertEqual((payload["entries"], payload["work_guess"]), ([], None))
         self.assertEqual(payload["build"]["status"], "failed")
         # 原因是最后一次错误的首行，不含回复正文
         self.assertNotIn("\n", payload["build"]["reason"])
         self.assertNotIn("第二行", payload["build"]["reason"])
-        self.assertEqual((payload["meta"]["seed"], payload["meta"]["attempt"]), (101, 2))
+        self.assertEqual((payload["meta"]["seed"], payload["meta"]["attempt"]), (104, 5))
+
+    def test_fourth_attempt_succeeds(self):
+        server = FakeServer(*[response("不是 JSON")] * 3, response(reply_text()))
+        result = bt.build_table(document(), server.chat, server.tokenize, 100)
+        self.assertEqual((result.status, result.attempts, [b["seed"] for b in server.bodies]),
+                         ("ok", 4, [100, 101, 102, 103]))
 
     def test_failed_attempts_log_warnings_without_reply_text(self):
-        server = FakeServer(response(reply_text(), "length"), response("不是 JSON\n第二行"))
+        server = FakeServer(response(reply_text(), "length"), *[response("不是 JSON\n第二行")] * 4)
         with self.assertLogs("kototoki.names", level="WARNING") as logs:
             bt.build_table(document(), server.chat, server.tokenize, 100)
         lines = [r.getMessage() for r in logs.records]
-        self.assertEqual(len(lines), 2)
-        self.assertTrue(lines[0].startswith("[names] attempt 1/2 failed (seed 100): reply truncated"), lines[0])
-        self.assertTrue(lines[1].startswith("[names] attempt 2/2 failed (seed 101): "), lines[1])
+        self.assertEqual(len(lines), 5)
+        self.assertTrue(lines[0].startswith("[names] attempt 1/5 failed (seed 100): reply truncated"), lines[0])
+        self.assertTrue(lines[4].startswith("[names] attempt 5/5 failed (seed 104): "), lines[4])
         self.assertFalse(any("不是 JSON" in line or "第二行" in line for line in lines))
 
-    def test_two_length_failures_reason(self):
-        server = FakeServer(response(reply_text(), "length"), response(reply_text(), "length"))
+    def test_five_length_failures_reason(self):
+        server = FakeServer(*[response(reply_text(), "length")] * 5)
         result = bt.build_table(document(), server.chat, server.tokenize, 1)
         self.assertEqual(result.status, "failed")
         self.assertIn("finish_reason=length", result.payload["build"]["reason"])

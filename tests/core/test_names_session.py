@@ -1,6 +1,8 @@
-"""`kototoki.names` 对编排器的接口：`Session` 的启动／重启／unavailable 与 `build_document` 的错误映射。
+"""`kototoki.names` 对编排器的接口：`build_document` 在共享 Strata session 上建表、错误映射，以及与研究侧 v13
+（`NamesClient`＋`build_one`，基线 Q3 的 `names-strata-v4`）的请求体与 seed 序列逐字节对照。
 
-server 与客户端都是假实现（`server_factory`／`client_factory` 接缝），不起 llama-server、不加载模型。
+共享 session 用真实的 `kototoki.strata.Session`，Strata 服务与 HTTP 客户端是假实现（`server_factory`／`client_factory`
+接缝），不起 Strata、不加载模型。对照测试导入 `experiments.scene_batching_v6.v13`（产品代码不导入 experiments）。
 """
 
 from __future__ import annotations
@@ -14,37 +16,45 @@ from typing import Any
 import unittest
 from urllib.error import HTTPError, URLError
 
-from kototoki import artifacts, names
-from kototoki.llama_server import InfraFailure, ManagedServer
+from experiments.scene_batching_v6 import v13
+from kototoki import names
+from kototoki.llama_server import InfraFailure
+from kototoki.names import table
 from kototoki.srt import parse_srt
+from kototoki.strata import MODEL, Session, StrataRefused
 
 SRT = "1\n00:00:01,000 --> 00:00:02,000\nシロウが来た\n\n2\n00:00:03,000 --> 00:00:04,000\nシロウだ\n"
 REPLY = {"work_guess": None, "entries": [{
     "entity_ja": "シロウ", "kind": "person", "confidence": "medium", "zh": "士郎",
     "forms": [{"ja": "シロウ", "zh": "士郎"}], "zh_variants": [], "evidence": [1, 2]}]}
+GOOD = json.dumps(REPLY, ensure_ascii=False)
 
 
-class FakeProcess:
-    def __init__(self) -> None:
-        self.code: int | None = None
+def reply(content: str = GOOD, finish: str = "stop", prompt_tokens: int = 20) -> dict[str, Any]:
+    return {"choices": [{"finish_reason": finish, "message": {"content": content}}],
+            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 30}}
 
-    def poll(self) -> int | None:
-        return self.code
+
+def http_error(code: int = 500) -> HTTPError:
+    return HTTPError("http://127.0.0.1:8080/x", code, "error", {}, io.BytesIO(b""))
 
 
 class FakeServer:
+    """伪 Strata 服务：`__enter__` 按 harness 的安排成功、拒绝或启动失败。"""
+
+    url = "http://127.0.0.1:8080"
+    identity = {"candidate": MODEL}
+
     def __init__(self, harness: "Harness", runtime_dir: Path, on_pid) -> None:
         self.harness, self.runtime_dir, self.on_pid = harness, runtime_dir, on_pid
         self.number = len(harness.servers) + 1
-        self.url = f"http://127.0.0.1:{9000 + self.number}"
-        self.process = FakeProcess()
 
     def __enter__(self) -> "FakeServer":
         failure = self.harness.start_failures.pop(0) if self.harness.start_failures else None
-        self.on_pid(1000 + self.number)
         if failure is not None:
             self.on_pid(None)
             raise failure
+        self.on_pid(1000 + self.number)
         self.harness.events.append(f"start:{self.number}")
         return self
 
@@ -54,26 +64,33 @@ class FakeServer:
 
 
 class FakeClient:
+    """伪 HTTP 客户端：`chat_completion` 按 `replies` 吐回复（或抛异常），`request` 只接受 count_tokens。"""
+
     def __init__(self, harness: "Harness", url: str, timeout: float, trace_dir: Path) -> None:
         self.harness = harness
         harness.clients.append({"url": url, "timeout": timeout, "trace_dir": trace_dir})
         self.last_exchange: str | None = None
 
-    def tokenize(self, text: str) -> list[int]:
-        return [1] * 10
+    def request(self, endpoint: str, data: dict[str, Any], *, trace_label: str | None = None) -> dict[str, Any]:
+        assert endpoint == names.COUNT_TOKENS and trace_label == "count", (endpoint, trace_label)
+        self.harness.count_bodies.append(json.dumps(data, ensure_ascii=False))
+        if isinstance(self.harness.count_result, Exception):
+            raise self.harness.count_result
+        if isinstance(self.harness.count_result, dict):
+            return self.harness.count_result
+        return {"input_tokens": 10}
 
     def chat_completion(self, body: dict[str, Any]) -> dict[str, Any]:
-        self.harness.bodies.append(body)
-        if self.harness.chat_error is not None:
-            error, raw = self.harness.chat_error
-            if raw is not None:
+        self.harness.bodies.append(json.dumps(body, ensure_ascii=False))
+        item = self.harness.replies.pop(0)
+        if isinstance(item, Exception):
+            if self.harness.error_raw is not None:
                 exchange = self.harness.root / "exchange"
                 exchange.mkdir(exist_ok=True)
-                (exchange / "response.raw").write_text(raw, encoding="utf-8")
+                (exchange / "response.raw").write_text(self.harness.error_raw, encoding="utf-8")
                 self.last_exchange = str(exchange)
-            raise error
-        return {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(REPLY, ensure_ascii=False)}}],
-                "usage": {"prompt_tokens": 20, "completion_tokens": 30}}
+            raise item
+        return item
 
 
 class Harness:
@@ -81,16 +98,17 @@ class Harness:
         self.root = root
         self.servers: list[FakeServer] = []
         self.clients: list[dict[str, Any]] = []
-        self.bodies: list[dict[str, Any]] = []
+        self.bodies: list[str] = []         # 发出的建表请求体（JSON 文本）
+        self.count_bodies: list[str] = []   # 发出的 count_tokens 请求体（JSON 文本）
         self.events: list[str] = []
         self.pids: list[int | None] = []
         self.start_failures: list[Exception | None] = []
-        self.chat_error: tuple[Exception, str | None] | None = None
-        self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=root / "work", input_dir=root / "in", llama_server=root / "x.exe"),
-                                      models=SimpleNamespace(names=root / "Qwen3.8-27B-UD-IQ3_S.gguf"),
-                                      names=SimpleNamespace(port=8081, seed=7, enabled=True))
+        self.replies: list[Any] = [reply()]
+        self.error_raw: str | None = None
+        self.count_result: Any = None       # None：正常计数；Exception：抛出；dict：原样返回
+        self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=root / "work", input_dir=root / "in"))
 
-    def session(self) -> names.Session:
+    def session(self) -> Session:
         def server_factory(runtime_dir: Path, on_pid) -> FakeServer:
             server = FakeServer(self, runtime_dir, on_pid)
             self.servers.append(server)
@@ -99,8 +117,8 @@ class Harness:
         def client_factory(url: str, *, timeout: float, trace_dir: Path) -> FakeClient:
             return FakeClient(self, url, timeout, trace_dir)
 
-        return names.Session(self.config, on_server_pid=self.pids.append, server_factory=server_factory,
-                             client_factory=client_factory)
+        return Session(self.config, on_server_pid=self.pids.append, server_factory=server_factory,
+                       client_factory=client_factory)
 
 
 class Case(unittest.TestCase):
@@ -109,92 +127,196 @@ class Case(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.h = Harness(Path(tmp.name))
         self.work = self.h.root / "work" / "abc"
+        self.doc = parse_srt(SRT)
 
-
-class SessionTests(Case):
-
-    def test_runtime_root_is_a_utc_stamp_with_pid(self) -> None:
-        session = self.h.session()
-        self.assertRegex(session.runtime_root.name, r"^\d{8}T\d{6}Z-\d+$")
-        self.assertEqual(session.runtime_root.parent, artifacts.work_root(self.h.root / "work", self.h.root / "in") / "names-sessions")
-
-    def test_one_server_serves_the_batch_and_restarts_after_it_exits(self) -> None:
-        with self.h.session() as session:
-            first = session.ensure_started()
-            self.assertIs(session.ensure_started(), first)
-            first.process.code = 1  # server 自行退出：下一部影片再启动
-            second = session.ensure_started()
-            self.assertIsNot(second, first)
-            self.assertEqual(second.runtime_dir, session.runtime_root / "session-02")
-        self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
-        self.assertEqual(self.h.pids, [1001, None, 1002, None])
-
-    def test_at_most_three_starts_per_batch(self) -> None:
-        session = self.h.session()
-        for _ in range(names.MAX_STARTS):
-            session.ensure_started().process.code = 1
-        with self.assertRaisesRegex(names.NamesError, "already started 3 times"):
-            session.ensure_started()
-        self.assertIsNotNone(session.unavailable)
-        self.assertEqual(len(self.h.servers), 3)
-
-    def test_start_failure_makes_the_session_unavailable(self) -> None:
-        self.h.start_failures = [InfraFailure("Free GPU memory 100 MiB stayed below 13000 MiB")]
-        session = self.h.session()
-        with self.assertRaisesRegex(names.NamesError, "failed to start: InfraFailure: Free GPU memory"):
-            session.ensure_started()
-        with self.assertRaisesRegex(names.NamesError, "could not start earlier in this batch"):
-            session.ensure_started()
-        self.assertEqual(len(self.h.servers), 1)  # 不再尝试启动
-        self.assertIsNone(session.server)
-
-    def test_managed_server_uses_names_spec_and_config(self) -> None:
-        session = names.Session(self.h.config)
-        server = session._managed_server(self.h.root / "rt", lambda pid: None)
-        self.assertIsInstance(server, ManagedServer)
-        self.assertIs(server.spec, names.NAMES_SPEC)
-        self.assertEqual((server.engine, server.model, server.port),
-                         (self.h.root / "x.exe", self.h.root / "Qwen3.8-27B-UD-IQ3_S.gguf", 8081))
+    def seeds(self) -> list[int]:
+        return [json.loads(b)["seed"] for b in self.h.bodies]
 
 
 class BuildDocumentTests(Case):
-    def test_zero_cue_document_needs_no_server(self) -> None:
+    def test_zero_cue_document_does_not_touch_the_session(self) -> None:
         result = names.build_document(self.work, parse_srt(""), None, 7)
         self.assertEqual((result.status, result.attempts, result.payload["entries"]), ("ok", 0, []))
         self.assertEqual(self.h.servers, [])
 
-    def test_builds_through_the_session_server(self) -> None:
+    def test_builds_through_the_shared_session(self) -> None:
         with self.h.session() as session:
-            result = names.build_document(self.work, parse_srt(SRT), session, 7)
+            result = names.build_document(self.work, self.doc, session, 7)
+            self.assertIsNotNone(session.server)  # 两阶段共用：建表后不停
         self.assertEqual((result.status, result.attempts), ("ok", 1))
         self.assertEqual([entry["entity_ja"] for entry in result.payload["entries"]], ["シロウ"])
+        self.assertEqual(result.payload["build"],
+                         {"status": "ok", "reason": None, "prompt_check": "count_tokens", "over_budget_by_usage": False})
         (client,) = self.h.clients
-        self.assertEqual((client["url"], client["timeout"]), (self.h.servers[0].url, 1800.0))
+        self.assertEqual((client["url"], client["timeout"]), ("http://127.0.0.1:8080", 1800.0))
         self.assertEqual(client["trace_dir"],
                          self.work / "names" / "transport" / session.runtime_root.name / "session-01")
-        self.assertEqual(self.h.bodies[0]["seed"], 7)
+        self.assertEqual(self.h.events, ["start:1", "stop:1"])
+        self.assertEqual(self.h.pids, [1001, None])
+        # 预算检查：system 与 user 两段各作一条 user 消息计数
+        messages = table.build_messages(self.doc)
+        self.assertEqual(self.h.count_bodies, [json.dumps({"model": MODEL, "messages": [{"role": "user", "content": m["content"]}]},
+                                                          ensure_ascii=False) for m in messages])
+        body = json.loads(self.h.bodies[0])
+        self.assertEqual((body["seed"], body["max_tokens"], body["model"]), (7, 8192, MODEL))
+        self.assertNotIn("response_format", body)
 
-    def test_http_error_with_oom_body_raises_and_stops_the_server(self) -> None:
-        error = HTTPError("http://127.0.0.1:9001/v1/chat/completions", 500, "Internal Server Error", {},
-                          io.BytesIO(b""))
-        self.h.chat_error = (error, '{"error": "CUDA error: out of memory"}')
+    def test_first_attempt_fails_then_the_next_seed_succeeds(self) -> None:
+        self.h.replies = [reply(finish="length"), reply("不是 JSON"), reply()]
+        with self.h.session() as session:
+            result = names.build_document(self.work, self.doc, session, 7)
+        self.assertEqual((result.status, result.attempts, self.seeds()), ("ok", 3, [7, 8, 9]))
+        self.assertEqual(result.payload["meta"]["seed"], 9)
+
+    def test_five_failures_write_an_empty_table_with_exactly_five_requests(self) -> None:
+        self.h.replies = [reply(finish="length")] * 2 + [reply("不是 JSON")] * 3 + [reply()]
+        with self.h.session() as session:
+            with self.assertLogs("kototoki.names", level="WARNING") as logs:
+                result = names.build_document(self.work, self.doc, session, 7)
+            self.assertIsNotNone(session.server)  # 终态失败不停 Strata
+        self.assertEqual((result.status, result.attempts, self.seeds()), ("failed", 5, [7, 8, 9, 10, 11]))
+        self.assertEqual((result.payload["entries"], result.payload["meta"]["attempt"]), ([], 5))
+        self.assertEqual(result.payload["build"]["status"], "failed")
+        self.assertEqual(len(logs.records), 5)
+        self.assertEqual(len(self.h.replies), 1)  # 第 6 个回复没被取走
+
+    def test_count_tokens_unavailable_falls_back_to_no_precheck(self) -> None:
+        for broken in (http_error(404), URLError("refused"), {"tokens": 3}, {"input_tokens": "10"}):
+            with self.subTest(broken=broken):
+                self.h = Harness(self.h.root)
+                self.h.count_result = broken
+                self.h.replies = [reply(prompt_tokens=table.PROMPT_BUDGET + 1)]
+                with self.h.session() as session:
+                    with self.assertLogs("kototoki.names", level="WARNING") as logs:
+                        result = names.build_document(self.work, self.doc, session, 7)
+                self.assertEqual(result.status, "ok")  # 预检跳过，提示照常发送
+                self.assertEqual(len(self.h.count_bodies), 1)  # 第二段不再尝试
+                self.assertEqual(len(self.h.bodies), 1)
+                self.assertEqual(len(logs.records), 1)
+                self.assertIn("count_tokens unavailable", logs.records[0].getMessage())
+                self.assertTrue(result.payload["build"]["prompt_check"].startswith("skipped ("))
+                self.assertTrue(result.payload["build"]["over_budget_by_usage"])  # 只记录，不失败
+
+    def test_over_budget_prompt_is_not_sent(self) -> None:
+        self.h.count_result = {"input_tokens": table.PROMPT_BUDGET}
+        with self.h.session() as session:
+            result = names.build_document(self.work, self.doc, session, 7)
+        self.assertEqual((result.status, self.h.bodies, len(self.h.count_bodies)), ("too_long", [], 2))
+        self.assertEqual(result.payload["build"]["prompt_check"], "count_tokens")
+
+    def test_http_error_with_oom_body_raises_and_stops_strata(self) -> None:
+        self.h.replies = [http_error(500)]
+        self.h.error_raw = '{"error": "CUDA error: out of memory"}'
         with self.h.session() as session:
             with self.assertRaisesRegex(names.NamesError, r"^HTTP 500 \(oom\)") as caught:
-                names.build_document(self.work, parse_srt(SRT), session, 7)
+                names.build_document(self.work, self.doc, session, 7)
             self.assertIsNone(session.server)
             self.assertEqual(self.h.events, ["start:1", "stop:1"])
             self.assertNotIn("out of memory", str(caught.exception))  # 正文留在交换目录，不进消息
+            self.assertIsNone(session.unavailable)  # 下一部需要模型的影片再启动
 
-    def test_transport_failure_raises_and_next_document_restarts(self) -> None:
-        self.h.chat_error = (URLError(ConnectionRefusedError("refused")), None)
+    def test_http_error_without_oom_is_a_server_error(self) -> None:
+        self.h.replies = [http_error(503)]
+        with self.h.session() as session:
+            with self.assertRaisesRegex(names.NamesError, r"^HTTP 503 \(server_error\)"):
+                names.build_document(self.work, self.doc, session, 7)
+
+    def test_transport_failure_raises_and_the_next_document_restarts(self) -> None:
+        self.h.replies = [URLError(ConnectionRefusedError("refused")), reply()]
         with self.h.session() as session:
             with self.assertRaisesRegex(names.NamesError, "transport failure: URLError"):
-                names.build_document(self.work, parse_srt(SRT), session, 7)
-            self.h.chat_error = None
-            result = names.build_document(self.work, parse_srt(SRT), session, 7)
+                names.build_document(self.work, self.doc, session, 7)
+            result = names.build_document(self.work, self.doc, session, 7)
         self.assertEqual(result.status, "ok")
         self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
         self.assertEqual(self.h.clients[1]["trace_dir"].name, "session-02")
+
+    def test_refused_strata_fails_this_and_every_later_document(self) -> None:
+        self.h.start_failures = [StrataRefused("another Strata launch is serving")]
+        with self.h.session() as session:
+            with self.assertRaisesRegex(names.NamesError, "Strata unavailable: another Strata launch"):
+                names.build_document(self.work, self.doc, session, 7)
+            with self.assertRaisesRegex(names.NamesError, "unavailable for the rest of this batch"):
+                names.build_document(self.work, self.doc, session, 7)
+        self.assertEqual(len(self.h.servers), 1)  # 第二部没有再碰工厂
+        self.assertEqual(self.h.bodies, [])
+
+    def test_start_failure_fails_this_document_and_the_next_one_tries_again(self) -> None:
+        self.h.start_failures = [InfraFailure("Strata did not become ready within 300 s")]
+        with self.h.session() as session:
+            with self.assertRaisesRegex(names.NamesError, "Strata failed to start: Strata did not become ready"):
+                names.build_document(self.work, self.doc, session, 7)
+            self.assertIsNone(session.unavailable)
+            result = names.build_document(self.work, self.doc, session, 7)
+        self.assertEqual((result.status, self.h.events), ("ok", ["start:2", "stop:2"]))
+
+
+class V13ByteExactTests(Case):
+    """同一份文档、同一串伪回复：产品 `build_document` 发出的建表请求与 count_tokens 请求，和研究侧 v13
+    `NamesClient`＋`build_one`（`names-strata-v4`）逐字节相同，seed 序列相同。"""
+
+    def v13_run(self, replies: list[dict[str, Any]], seed: int, *, count_error: Exception | None = None
+                ) -> tuple[list[str], list[str], Any]:
+        chats: list[str] = []
+        counts: list[str] = []
+
+        def post(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
+            if url.endswith(v13.COUNT_TOKENS):
+                counts.append(json.dumps(body, ensure_ascii=False))
+                if count_error is not None:
+                    raise count_error
+                return {"input_tokens": 10}
+            self.assertTrue(url.endswith("/v1/chat/completions"), url)
+            chats.append(json.dumps(body, ensure_ascii=False))
+            return replies.pop(0)
+
+        client = v13.NamesClient(post=post, variant="v4")
+        result, _record = v13.build_one(self.doc, client, seed)
+        return chats, counts, result
+
+    def product_run(self, replies: list[dict[str, Any]], seed: int, *, count_error: Exception | None = None
+                    ) -> tuple[list[str], list[str], Any]:
+        self.h = Harness(self.h.root)
+        self.h.replies = list(replies)
+        self.h.count_result = count_error
+        with self.h.session() as session:
+            result = names.build_document(self.work, self.doc, session, seed)
+        return self.h.bodies, self.h.count_bodies, result
+
+    def compare(self, replies: list[dict[str, Any]], seed: int, *, count_error: Exception | None = None) -> None:
+        theirs = self.v13_run(list(replies), seed, count_error=count_error)
+        ours = self.product_run(list(replies), seed, count_error=count_error)
+        self.assertEqual(ours[0], theirs[0])  # 建表请求体（JSON 文本）
+        self.assertEqual(ours[1], theirs[1])  # count_tokens 请求体
+        self.assertEqual((ours[2].status, ours[2].attempts), (theirs[2].status, theirs[2].attempts))
+        self.assertEqual(ours[2].payload["entries"], theirs[2].payload["entries"])
+
+    def test_first_attempt_ok(self) -> None:
+        self.compare([reply()], 20261019)
+        self.assertEqual(self.seeds(), [20261019])
+        self.assertEqual(json.loads(self.h.bodies[0]), v13.strata_body(table._request_body(table.build_messages(self.doc), 20261019)))
+
+    def test_two_failures_then_ok(self) -> None:
+        self.compare([reply(finish="length"), reply("不是 JSON"), reply()], 7)
+        self.assertEqual(self.seeds(), [7, 8, 9])
+
+    def test_five_failures(self) -> None:
+        self.compare([reply(finish="length")] * 3 + [reply("不是 JSON")] * 2 + [reply()] * 2, 100)
+        self.assertEqual(self.seeds(), [100, 101, 102, 103, 104])  # 第 6 次不发请求
+        self.assertEqual(len(self.h.replies), 2)
+
+    def test_count_tokens_fallback(self) -> None:
+        self.compare([reply()], 7, count_error=http_error(404))
+        self.assertEqual(len(self.h.count_bodies), 1)
+
+    def test_request_keys_and_values(self) -> None:
+        body = v13.strata_body(table._request_body(table.build_messages(self.doc), 7))
+        self.assertEqual(list(body), ["messages", "temperature", "top_p", "top_k", "min_p", "presence_penalty", "seed",
+                                      "max_tokens", "chat_template_kwargs", "stream", "model"])
+        self.assertEqual((body["max_tokens"], body["model"], body["chat_template_kwargs"], body["stream"]),
+                         (v13.S1_MAX_TOKENS, v13.strata.MODEL, {"enable_thinking": False}, False))
+        self.assertEqual((table.MAX_TOKENS, table.CONTEXT_SIZE), (v13.S1_MAX_TOKENS, v13.S1_CONTEXT))
+        self.assertEqual(table.ATTEMPTS, v13.VARIANTS["v4"]["attempts"])
 
 
 if __name__ == "__main__":

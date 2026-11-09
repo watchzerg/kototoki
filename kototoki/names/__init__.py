@@ -1,109 +1,76 @@
-"""专名一致性：对编排器只暴露 `Session`、`build_document`、`NamesError` 与建表配方 hash `BUILD_RECIPE_HASH`。
+"""专名一致性：对编排器只暴露 `build_document`、`NamesError`、`BuildResult` 与建表配方 hash `BUILD_RECIPE_HASH`。
 
-- 建表（`table`）：整份 `ja.srt` 一次送入 Qwen llama-server（no-think），取回 `name-table-v2` 表并归一；终态失败
-  （超预算 `too_long`、两次尝试都失败 `failed`）返回空表，由编排器照常写出，翻译照常进行（只是没有注入行）。
+- 建表（`table`）：整份 `ja.srt` 一次送入与翻译共用的 Strata（Qwen3.8-Flash-Next，思考关闭，ADR-0022），取回
+  `name-table-v2` 表并归一；终态失败（超预算 `too_long`、5 次尝试都失败 `failed`）返回空表，由编排器照常写出，
+  翻译照常进行（只是没有注入行）。
 - 表的使用者是翻译子系统（ADR-0019：Q2 规则只注入 `confidence: high` 的写法，没有发布时替换）；本模块不知道注入规则。
-- 配方（`recipes`）：建表配方字典与 hash；`NAMES_SPEC` 是本模块用 `recipes.NAMES_SERVER` 与模型资产拼成的
-  llama-server 配置。
+- 配方（`recipes`）：建表配方 `q3-names-v1` 的字典与 hash，与基线 Q3 的 `names-strata-v4` 同一建表块。
 
-`Session` 整批共用一个 server：首次需要时才启动，server 退出后下一部影片再启动，整批最多启动 `MAX_STARTS` 次；
-启动失败即 `unavailable`，本批其余需要模型的影片直接失败。每部只有一个请求，不做同调用内重启。server 运行日志在
-`<工作根>/names-sessions/<UTC戳>-<pid>/session-NN/`，每部影片的原始交换在
-`<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`。
+Strata 的生命周期归中间层 `kototoki.strata`：编排器持有共享 `Session` 传进来，本模块只 `ensure_started()`／`stop()`，
+不启停、不核对身份。每部影片一个客户端（`session.client_factory`），原始交换在
+`<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`（`count-NN` 计数、`chat-NN` 建表）。预算检查用
+`/v1/messages/count_tokens`（Strata 没有 `/tokenize`），端点不可用时该影片不再预检、计数按 0（v13 的退路）。
+不做同调用内重启：传输失败、HTTP 错误、OOM 停掉 Strata（下一部需要模型的影片再启动）并抛 `NamesError`。
 
-依赖方向：只依赖基础层（`artifacts`、`config`、`srt`、`recipes`）与 `kototoki.llama_server`；不导入 torch、
-`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、不打含条目文字的日志。
-见 docs/architecture/modules/name-consistency.md。
+依赖方向：只依赖基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata` 与 `kototoki.llama_server`
+（`explicit_oom`）；不导入 torch、`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、
+不打含条目文字的日志。见 docs/architecture/modules/name-consistency.md。
 """
 
 from __future__ import annotations
 
-import os
+import logging
 from pathlib import Path
-import time
-from typing import Any, Callable
+from typing import Any
 from urllib.error import HTTPError, URLError
 
-from kototoki import artifacts
-from kototoki.config import Config
-from kototoki.llama_server import LlamaClient, ManagedServer, ServerSpec, explicit_oom
+from kototoki.llama_server import InfraFailure, explicit_oom
 from kototoki.srt import SourceDocument
+from kototoki.strata import MODEL, Session, StrataRefused
 
-from .recipes import BUILD, BUILD_RECIPE_HASH, NAMES_SERVER
-from .table import BuildResult, build_table
+from .recipes import BUILD, BUILD_RECIPE_HASH
+from .table import PROMPT_BUDGET, BuildResult, build_table
 
-__all__ = ["BUILD_RECIPE_HASH", "BuildResult", "NamesError", "Session", "build_document"]
+__all__ = ["BUILD_RECIPE_HASH", "BuildResult", "NamesError", "build_document"]
 
-SESSIONS_DIR = "names-sessions"   # `.work/` 下 server 运行日志的根
 TRANSPORT_DIR = "names/transport"  # 工作目录内原始交换的根
-MAX_STARTS = 3                     # 整批最多启动 server 的次数（即重启 2 次）
 CLIENT_TIMEOUT_SECONDS = 1800.0
+COUNT_TOKENS = "/v1/messages/count_tokens"
 
-NAMES_SPEC = ServerSpec(
-    stage="names", candidate=NAMES_SERVER["candidate"],
-    model_asset={"repo": NAMES_SERVER["repo"], "revision": NAMES_SERVER["revision"], **BUILD["model_asset"]},
-    layers=NAMES_SERVER["layers"], context=NAMES_SERVER["context"], extra_args=NAMES_SERVER["extra_args"],
-    min_free_mib=NAMES_SERVER["min_free_mib"], load_timeout_s=NAMES_SERVER["load_timeout_s"])
+log = logging.getLogger(__name__)
 
 
 class NamesError(RuntimeError):
-    """该影片建表失败（server 起不来、传输失败、HTTP 错误或 OOM）；编排器记为 names 阶段文件级失败。"""
+    """该影片建表失败（Strata 起不来或被拒绝、传输失败、HTTP 错误或 OOM）；编排器记为 names 阶段文件级失败。"""
 
 
-class Session:
-    """整批建表共用的 server 生命周期。`on_server_pid(pid)` 在 server 启动后以 pid、停止后以 None 回调。
+class _TokenCounter:
+    """`build_table` 的 `tokenize` 回调：一段提示作一条 user 消息经 `/v1/messages/count_tokens` 计数。
 
-    `server_factory`／`client_factory` 是只供测试的内部接缝。
+    端点返回 HTTP／传输错误或响应形状不符（没有整数 `input_tokens`）时，该影片内不再预检、计数按 0，运行日志一行
+    WARNING；与研究侧 v13 `NamesClient.tokenize` 的退路相同（复制，不导入）。
     """
 
-    def __init__(self, config: Config, *, on_server_pid: Callable[[int | None], None] | None = None,
-                 server_factory: Callable[[Path, Callable[[int | None], None]], Any] | None = None,
-                 client_factory: Callable[..., Any] = LlamaClient):
-        self.config = config
-        self.on_server_pid = on_server_pid or (lambda pid: None)
-        self.server_factory = server_factory or self._managed_server
-        self.client_factory = client_factory
-        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())  # UTC，与运行日志 `run-<戳>.log` 同一时间基准
-        self.runtime_root = artifacts.work_root(config.paths.work_dir, config.paths.input_dir) / SESSIONS_DIR / f"{stamp}-{os.getpid()}"
-        self.server: Any = None
-        self.starts = 0
-        self.unavailable: str | None = None
+    def __init__(self, client: Any):
+        self.client = client
+        self.ok: bool | None = None
+        self.error: str | None = None
 
-    def _managed_server(self, runtime_dir: Path, on_pid: Callable[[int | None], None]) -> ManagedServer:
-        return ManagedServer(runtime_dir, NAMES_SPEC, engine=self.config.paths.llama_server,
-                             model=self.config.models.names, port=self.config.names.port,
-                             model_cache=artifacts.model_cache_path(self.config.paths.work_dir), on_pid=on_pid)
-
-    def __enter__(self) -> "Session":
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.stop()
-
-    def ensure_started(self) -> Any:
-        """返回运行中的 server；未启动或已退出时启动新的。启动失败或启动次数用尽即 `unavailable` 并抛 `NamesError`。"""
-        if self.unavailable is not None:
-            raise NamesError(f"llama-server could not start earlier in this batch: {self.unavailable}")
-        if self.server is not None and self.server.process.poll() is None:
-            return self.server
-        self.stop()  # server 已自行退出：收尾（记 engine-final.json、以 None 回调）后重启
-        if self.starts >= MAX_STARTS:
-            self.unavailable = f"llama-server already started {MAX_STARTS} times in this batch"
-            raise NamesError(self.unavailable)
-        self.starts += 1
-        server = self.server_factory(self.runtime_root / f"session-{self.starts:02d}", self.on_server_pid)
+    def __call__(self, text: str) -> int:
+        if self.ok is False:
+            return 0
         try:
-            server.__enter__()  # 进程一启动即以 pid 回调；加载失败时自行清理并以 None 回调
-        except Exception as exc:
-            self.unavailable = f"{type(exc).__name__}: {exc}"
-            raise NamesError(f"llama-server failed to start: {self.unavailable}") from exc
-        self.server = server
-        return server
-
-    def stop(self) -> None:
-        server, self.server = self.server, None
-        if server is not None:
-            server.__exit__(None, None, None)
+            n = self.client.request(COUNT_TOKENS, {"model": MODEL, "messages": [{"role": "user", "content": text}]},
+                                    trace_label="count")["input_tokens"]
+            if type(n) is not int:
+                raise ValueError(f"input_tokens is {type(n).__name__}")
+        except (HTTPError, URLError, KeyError, ValueError, TypeError) as exc:
+            self.ok, self.error = False, f"{type(exc).__name__}: {exc}"[:300]
+            log.warning("[names] count_tokens unavailable (%s): no prompt budget precheck for this document",
+                        self.error)
+            return 0
+        self.ok = True
+        return n
 
 
 def _no_server(*args: Any) -> Any:
@@ -113,17 +80,24 @@ def _no_server(*args: Any) -> Any:
 def build_document(work_dir: Path, document: SourceDocument, session: Session | None, seed: int) -> BuildResult:
     """为一部影片建表，返回 `BuildResult`（payload 即 `name-table.json` 的内容，不含身份块）。
 
-    零条目文档不起 server（`session` 可为 None），直接得到空表。传输失败、HTTP 错误或 OOM 时停掉 server（下一部
-    影片 `ensure_started` 再启动）并抛 `NamesError`，消息只带状态码与分类，回复正文留在交换目录里。
+    零条目文档不碰 session（可为 None），直接得到空表。`session.ensure_started()` 被拒绝（`StrataRefused`，含本批已不可用）
+    或启动失败（`InfraFailure`）时抛 `NamesError`；传输失败、HTTP 错误或 OOM 时停掉 Strata（下一部需要模型的影片
+    `ensure_started` 再启动）并抛 `NamesError`，消息只带状态码与分类，回复正文留在交换目录里。
     """
     if not document.cues:
         return build_table(document, _no_server, _no_server, seed)
     assert session is not None
-    server = session.ensure_started()
-    trace_dir = Path(work_dir) / TRANSPORT_DIR / session.runtime_root.name / f"session-{session.starts:02d}"
-    client = session.client_factory(server.url, timeout=CLIENT_TIMEOUT_SECONDS, trace_dir=trace_dir)
     try:
-        return build_table(document, client.chat_completion, lambda text: len(client.tokenize(text)), seed)
+        server = session.ensure_started()
+    except StrataRefused as exc:
+        raise NamesError(f"Strata unavailable: {exc}") from exc
+    except InfraFailure as exc:
+        raise NamesError(f"Strata failed to start: {exc}") from exc
+    trace_dir = Path(work_dir) / TRANSPORT_DIR / session.runtime_root.name / f"session-{session.ordinal:02d}"
+    client = session.client_factory(server.url, timeout=CLIENT_TIMEOUT_SECONDS, trace_dir=trace_dir)
+    counter = _TokenCounter(client)
+    try:
+        result = build_table(document, client.chat_completion, counter, seed)
     except HTTPError as exc:
         body = _response_body(client) + str(exc)
         kind = "oom" if explicit_oom(body) else "server_error"
@@ -132,6 +106,12 @@ def build_document(work_dir: Path, document: SourceDocument, session: Session | 
     except (URLError, ConnectionError, TimeoutError) as exc:
         session.stop()
         raise NamesError(f"transport failure: {type(exc).__name__}: {exc}") from exc
+    # 预算检查的方式与"按 usage 看是否超预算"记进 build 块（计数不可用时提示仍照常发送，只记录、不失败）。
+    prompt_tokens = result.payload["meta"].get("prompt_tokens")
+    result.payload["build"].update(
+        prompt_check="count_tokens" if counter.ok else f"skipped ({counter.error})" if counter.ok is False else None,
+        over_budget_by_usage=type(prompt_tokens) is int and prompt_tokens > PROMPT_BUDGET)
+    return result
 
 
 def _response_body(client: Any) -> str:
