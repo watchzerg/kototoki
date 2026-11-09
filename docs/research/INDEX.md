@@ -14,6 +14,7 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；本节只摘要并链接。当前有效的决定及其演进链以[决定索引](../adr/INDEX.md)为准，新决定按其"记录新决定"步骤同步。
 
+2026-11-09：用户决定采纳 [v13](2026-11-08-names-on-strata-v13.md) 的 S1 v4 作为新基线（[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）：**Q3**＝Q2 翻译规则＋专名表改由同一 Strata 实例上的 Flash-Next 建（`names-strata-v4`，失败后最多 5 次请求），取代 Q2 成为唯一翻译基线；不起 llama-server。v13 按自己的门写的"S1 不进"保留为研究结论，dev 剧集 wrong-referent 变差与两次建表差异大由用户接受。产品未切换（仍是 27B 建表＋`q2-degrade-v1`）。
 2026-11-09：用户放行 [v13](2026-11-08-names-on-strata-v13.md) 的 S1 v4（"5 次内全部建成"为可行性标准），走完 C–E 后结题：**S1 仍不进**——dev 表质量非劣（一致率 Δ +0.054 [−0.032, +0.132]），产品 ASR 源翻译明显更好（全体 Δ −0.095 [−0.159, −0.031]，人名错误 65 对 78），dev 电影 accuracy 也显著更好（−0.049），但 dev 剧集 wrong-referent 显著变差（+0.042 [+0.021, +0.067]，集中在 S1 表拆条／串名的 W08、W11），不过非劣门；且建表单次请求不稳定、两次建表差异大（A/A 写法 Jaccard 约 0.5）。建表维持 27B；后续选项见 §8 第 10 项。GPU 15／15、裁判 $62.52／$80。
 2026-11-09：[第十三轮（v13）](2026-11-08-names-on-strata-v13.md)结题（concluded；停在阶段 B）：**S1 不进**。补试的 v3（`response_format`＋最多 5 次）与 v4（最多 5 次）都在 5 次内 17／17 建成，但首次失败 6／17 与 4／17，不过"≤2／17"；`response_format` 不减少失控（11／31 对 v2 5／25），v4 失败全是写满 8192 的失控、JSON 语法错 0。表质量与翻译未测。是否放宽门放行 v4 进 C–E 待用户裁定（§8 第 8 项），否则建表维持 27B。GPU 3／15、裁判 $0。
 2026-11-08：用户要求 [v13](2026-11-08-names-on-strata-v13.md) 补试 `response_format: json_schema` 与"失败后最多重试 5 次"（v3＝两者都开、v4＝只重试），在一次 Strata session 里补跑建表与可行性门（门不变），过门的一臂继续 C–E；B 预算加 1 run（合计 15）。
@@ -243,7 +244,7 @@ ADR-0001／0002中被替代的选择保留历史范围，原生特征及可复�
 
 ### 专名建表第十三轮：Strata＋Qwen3.8-Flash-Next 对照 27B 建表（2026-11-08）
 
-- [方案（v13）](2026-11-08-names-on-strata-v13.md)：concluded（2026-11-09 结题；S1 v1–v4 都不过原可行性门，放行 v4 后 C–E：表非劣、产品与 dev 电影翻译更好，但 dev 剧集 wrong-referent 显著变差，S1 不进，建表维持 27B）。候选 S1 只换建表模型与引擎（Strata Flash-Next，Q2 启动方式），对照现行 27B 表；翻译两臂都用 Q2 规则、只差注入的表。阶段：建表可行性门 → dev 表质量非劣 → dev 翻译 3 seed → 产品 ASR 源 seed 54–56。预算 GPU 13 run／裁判 $80。
+- [方案（v13）](2026-11-08-names-on-strata-v13.md)：concluded（2026-11-09 结题；S1 v1–v4 都不过原可行性门，放行 v4 后 C–E：表非劣、产品与 dev 电影翻译更好，但 dev 剧集 wrong-referent 显著变差，S1 不进，建表维持 27B；2026-11-09 用户仍采纳 S1 v4 为基线 Q3，ADR-0021）。候选 S1 只换建表模型与引擎（Strata Flash-Next，Q2 启动方式），对照现行 27B 表；翻译两臂都用 Q2 规则、只差注入的表。阶段：建表可行性门 → dev 表质量非劣 → dev 翻译 3 seed → 产品 ASR 源 seed 54–56。预算 GPU 13 run／裁判 $80。
 
 ### 字幕翻译流程第十二轮：Strata＋Qwen3.8-Flash-Next 对照 Q1（2026-11-08）
 

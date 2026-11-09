@@ -6,7 +6,7 @@
 
 ## 后续 session 从这里开始
 
-**2026-11-08 起 Hy-MT2 不再是基线，也不再是产品翻译模型**：翻译只有一条基线 Q2（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)），模型是 Strata 上的 Qwen3.8-Flash-Next，由用户安装在仓库外（[依赖布局](../development/dependencies.md)），产品已不使用本页的 GGUF（[ADR-0019](../adr/0019-product-translation-q2.md)）；`assets.toml` 里 APEX 的条目已删除。本页其余内容是研究侧 H0 与历史对照的资产记录。此前的状态：当前字幕翻译基线已采纳 **Hy-MT2 30B-A3B APEX-I-Compact**（`hy-mt2-30b-a3b-apex-i-compact`），见[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)；运行须使用[demo 中的显式兼容引擎命令](../../experiments/translation_demo/README.md)，APEX 的资产记录位于下方新增三款清单。此前 Q3_K_M 与其他资产继续保留为对照，历史决定见[ADR-0004](../adr/0004-hy-mt2-translation-baseline.md)。
+**2026-11-08 起 Hy-MT2 不再是基线，也不再是产品翻译模型**：翻译只有一条基线（2026-11-08 起为 Q2，[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)；2026-11-09 起为 Q3，[ADR-0021](../adr/0021-q3-strata-names-baseline.md)），模型是 Strata 上的 Qwen3.8-Flash-Next，由用户安装在仓库外（[依赖布局](../development/dependencies.md)），产品已不使用本页的 GGUF（[ADR-0019](../adr/0019-product-translation-q2.md)）；`assets.toml` 里 APEX 的条目已删除。本页其余内容是研究侧 H0 与历史对照的资产记录。此前的状态：当前字幕翻译基线已采纳 **Hy-MT2 30B-A3B APEX-I-Compact**（`hy-mt2-30b-a3b-apex-i-compact`），见[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)；运行须使用[demo 中的显式兼容引擎命令](../../experiments/translation_demo/README.md)，APEX 的资产记录位于下方新增三款清单。此前 Q3_K_M 与其他资产继续保留为对照，历史决定见[ADR-0004](../adr/0004-hy-mt2-translation-baseline.md)。
 
 模型目录：`D:/AI_Projects/kototoki/.local/models/translation/`。运行前读取
 原六个资产的 `D:/AI_Projects/kototoki/.local/manifests/translation-download-plan.json`；新增三个量化候选读取
