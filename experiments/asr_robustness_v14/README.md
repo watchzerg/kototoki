@@ -13,7 +13,7 @@
 | `gaps.py` | 01 | B0：VAD 子段落字统计、空子段与参考覆盖、对照删除项按位置分类 | 离线 |
 | `guard.py` | 02 | A1／A2：幻觉守卫。A1 把被标记窗口的字符从 `align.json` 的 `text`／`units` 删掉（其余 unit 时间不变）并评官方 CER；A2 对同批窗口加 `no_repeat_ngram_size=5` 单次补解，仍触阈值即置空；`gate` 给出 §4.0 的门 | `blank` 离线；`redecode` GPU |
 | `fill.py` | 03 | B1：每个时长 ≥1 s 的空子段单独作窗口、w0 同配方解一次，过 A0 守卫后按时间插入所在窗口的段文字（`insert_position`／`merge_fill`），再经产品 `align` 评官方 CER | GPU |
-| `correct.py` | 04 | C1／C2：Strata 上 Flash-Next 只读前后文修正日文错字（C2 另注入 `confidence: high` 专名表），程序守卫编辑比 ≤0.5；单元口径评估与改动分类 | 校正 GPU（Strata）；评估离线 |
+| `correct.py` | 04 | C1／C2：Strata 上 Flash-Next 只读前后文修正日文错字（C2 另注入 `confidence: high` 专名表），程序守卫编辑比 ≤0.5；提示 `ja-correct-v1` 与收紧的修订 `ja-correct-v2`（§4.3 允许的一次修订）；单元口径评估与改动分类 | 校正 GPU（Strata）；评估离线 |
 | `decode.py` | 02／03 | GPU 公共部分：持有产品 `WhisperAsr` 单次解码、写研究侧产品形状 `asr.json`；`signal_of`、`models_sha256` 为纯函数 | 解码 GPU；纯函数离线 |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.asr_robustness_v14 <子命令>`。
