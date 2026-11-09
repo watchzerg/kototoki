@@ -6,10 +6,10 @@
     → probe/extract（线程池，整批完成）
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
     → ja-cues（进程内）
-    → names（进程内，整批一个 Qwen llama-server session；有非零条目的 `ja.srt` 要建表时才取 GPU 锁、建 session；
-      整批建完即停 server）
-    → translate（进程内，整批一个 Strata session；翻译子系统的计划说要模型时才建，启动前等 names 的显存释放，
-      整批结束、出错或被中断都 `strata launch --stop`）
+    → names 与 translate 共用一个 Strata session（`kototoki.strata.Session`，编排持有，ADR-0022）：第一次真正需要模型时
+      才启动（可能在 names，也可能在 translate），两阶段之间不停，整批结束、出错或被中断都 `strata launch --stop`
+    → names（进程内；有非零条目的 `ja.srt` 要建表时才取 GPU 锁，零条目文件不碰 session）
+    → translate（进程内；翻译子系统的计划说要模型时才取 GPU 锁，不需要模型的文件不碰 session）
     → 双语字幕 `<主名>.ja-zh.srt` 发布到源文件旁
 
 阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
@@ -19,7 +19,7 @@
 完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）。
 
 工作根 `<work_dir>/<目标目录键>/`（`artifacts.work_root`，ADR-0020）。锁：启动即取工作根下的 `lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
-锁文件记录编排器、当前 worker 与服务进程（names 的 llama-server 或翻译的 Strata）的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
+锁文件记录编排器、当前 worker 与 Strata 服务的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
 锁、Job Object 与进程身份取自 `experiments/translation_v3/procs.py`（复制，不导入）。
 """
 
@@ -166,7 +166,7 @@ _job_handle: Any = None
 
 
 def contain_children() -> None:
-    """把编排器进程放进 KILL_ON_JOB_CLOSE Job Object；之后启动的 ffmpeg、worker 与 llama-server 自动加入。
+    """把编排器进程放进 KILL_ON_JOB_CLOSE Job Object；之后启动的 ffmpeg、worker 与 Strata CLI 自动加入（Strata 服务本身在后台，靠 `--stop` 收尾）。
 
     句柄只由本进程持有、从不显式关闭：编排器以任何方式退出时系统关闭句柄，子进程随之结束，
     不留占显存的孤儿。每个进程只做一次；非 Windows 平台不做。
@@ -390,7 +390,11 @@ def stable_files(files: list[tuple[str, Path]], interval_s: float,
     return stable, [rel for rel, _ in unstable]
 
 
-# --- 专名、翻译与合并的延迟导入、模型核对 -----------------------------------------------------------
+# --- Strata、专名、翻译与合并的延迟导入、模型核对 ----------------------------------------------------
+
+def _strata_module() -> Any:
+    return importlib.import_module("kototoki.strata")
+
 
 def _names_module() -> Any:
     return importlib.import_module("kototoki.names")
@@ -622,10 +626,11 @@ def _names_line(relative: str, result: Any) -> str:
             f"{meta['prompt_tokens']} prompt tok, {meta['completion_tokens']} completion tok, {result.seconds:.1f} s")
 
 
-def names_batch(ctx: _Context, batch: list[VideoFile]) -> None:
+def names_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> None:
     """为 `batch` 建专名表并写 `name-table.json`；建表终态失败（`too_long`／`failed`）写空表、记 WARNING，影片照常往下走。
 
-    只有某个文件的 `ja.srt` 有 cue 时才取 GPU 锁、建 session；session 建不起来只让需要模型的文件失败。
+    只有某个文件的 `ja.srt` 有 cue 时才取 GPU 锁，有 cue 的文件拿到共享 `session`（第一次请求模型时启动 Strata），零条目
+    文件传 None；取锁失败只让有 cue 的文件失败，建表异常只让该文件失败。
     """
     if not batch:
         return
@@ -639,39 +644,37 @@ def names_batch(ctx: _Context, batch: list[VideoFile]) -> None:
         except Exception as error:
             ctx.fail(video, "names", error)
     needed = [video for video in batch if not video.failed and documents[video.relative].cues]
-    session: Any = None
     if needed:
         try:
             ctx.ensure_gpu_lock()
-            session = names.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid))
         except Exception as error:
             for video in needed:
                 ctx.fail(video, "names", error)
-    with session if session is not None else contextlib.nullcontext():
-        for video in batch:
-            if video.failed:
-                continue
-            assert video.plan is not None
-            try:
-                result = names.build_document(video.work_dir, documents[video.relative], session,
-                                              ctx.config.names.seed)
-                artifacts.write_artifact(video.work_dir / artifacts.NAME_TABLE, video.plan.identities["names"],
-                                         result.payload)
-            except Exception as error:
-                ctx.fail(video, "names", error)
-                continue
-            line = _names_line(video.relative, result)
-            (logger.info if result.status == "ok" else logger.warning)(line)
-            advance_or_fail(ctx, video, "names")
-    ctx.gpu_lock.update(server_pid=None)
+    for video in batch:
+        if video.failed:
+            continue
+        assert video.plan is not None
+        document = documents[video.relative]
+        try:
+            result = names.build_document(video.work_dir, document, session if document.cues else None,
+                                          ctx.config.names.seed)
+            artifacts.write_artifact(video.work_dir / artifacts.NAME_TABLE, video.plan.identities["names"],
+                                     result.payload)
+        except Exception as error:
+            ctx.fail(video, "names", error)
+            continue
+        line = _names_line(video.relative, result)
+        (logger.info if result.status == "ok" else logger.warning)(line)
+        advance_or_fail(ctx, video, "names")
     logger.info(f"[names] end: {time.perf_counter() - started:.1f}s")
 
 
-def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[dict[str, str], int, str]]:
+def translate_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> dict[str, tuple[dict[str, str], int, str]]:
     """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 回退条数, run 目录相对工作目录)。
 
-    只有某个文件 `needs_model` 时才取 GPU 锁、建 session（零条目或 run 已完成的文件不需要模型，直接读回译文）；
-    session 建不起来只让需要模型的文件失败。
+    只有某个文件 `needs_model` 时才取 GPU 锁（names 已取时沿用），需要模型的文件拿到共享 `session`（names 阶段没有
+    启动 Strata 时在这里第一次启动）；零条目或 run 已完成的文件不需要模型，传 None、直接读回译文。取锁失败只让需要
+    模型的文件失败。
     """
     results: dict[str, tuple[dict[str, str], int, str]] = {}
     if not batch:
@@ -680,28 +683,24 @@ def translate_batch(ctx: _Context, batch: list[VideoFile]) -> dict[str, tuple[di
     logger.info(f"[translate] start: {len(batch)} file(s)")
     translate = _translate_module()
     needed = [video for video in batch if video.translate_plan.needs_model]
-    session: Any = contextlib.nullcontext()
     if needed:
         try:
             ctx.ensure_gpu_lock()
-            session = translate.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid))
         except Exception as error:
             for video in needed:
                 ctx.fail(video, "translate", error)
-    with session:
-        for video in batch:
-            if video.failed:
-                continue
-            tplan = video.translate_plan
-            try:
-                result = translate.translate_document(tplan, session if tplan.needs_model else None)
-            except Exception as error:
-                ctx.fail(video, "translate", error)
-                continue
-            results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
-            logger.info(f"[translate] done {video.relative}: {len(tplan.document.cues)} cue(s), "
-                        f"{result.fallback_count} fallback")
-    ctx.gpu_lock.update(server_pid=None)
+    for video in batch:
+        if video.failed:
+            continue
+        tplan = video.translate_plan
+        try:
+            result = translate.translate_document(tplan, session if tplan.needs_model else None)
+        except Exception as error:
+            ctx.fail(video, "translate", error)
+            continue
+        results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
+        logger.info(f"[translate] done {video.relative}: {len(tplan.document.cues)} cue(s), "
+                    f"{result.fallback_count} fallback")
     logger.info(f"[translate] end: {time.perf_counter() - started:.1f}s")
     return results
 
@@ -836,8 +835,11 @@ def _run(ctx: _Context) -> None:
             continue
         advance_or_fail(ctx, video, "cues")
 
-    names_batch(ctx, planned("names"))
-    translated = translate_batch(ctx, planned("translate"))
+    # names 与 translate 共用一个 Strata session：第一次需要模型时启动，退出上下文（正常、出错、中断）即 `--stop` 并核实
+    # 显存释放，之后才放 GPU 锁；两阶段都不需要模型时整批不启动。pid 经回调写进 GPU 锁（未取锁时 update 是空操作）。
+    with _strata_module().Session(config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid)) as session:
+        names_batch(ctx, planned("names"), session)
+        translated = translate_batch(ctx, planned("translate"), session)
     ctx.gpu_lock.release()
 
     for video in live():

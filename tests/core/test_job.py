@@ -33,8 +33,7 @@ FAKE_WORKER = Path(__file__).resolve().parents[1] / "fake_worker.py"
 SRT_JA = "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n"
 MERGED = "1\n00:00:01,000 --> 00:00:02,000\n你好\nこんにちは\n"  # 伪合并给出的双语字幕
 DEAD_PID = 999999999
-FAKE_SERVER_PID = 12345
-FAKE_NAMES_SERVER_PID = 23456
+FAKE_SERVER_PID = 12345   # 伪 Strata 的 pid（names 与翻译共用同一个 session）
 
 
 def fake_worker_command(stage: str, jobs_path: Path) -> list[str]:
@@ -77,76 +76,90 @@ class JobCase(unittest.TestCase):
         self.enterContext(mock.patch("kototoki.job.gpu.verify_models", return_value=FAKE_MODELS))
         self.enterContext(mock.patch("kototoki.job.contain_children"))  # 不把测试进程放进 Job Object
 
-        # 假翻译与合并模块：orchestrator 通过 importlib 取用。
+        # 假 Strata 共享 session（`kototoki.strata.Session`，orchestrator 经 importlib 取用）：构造不启动，第一次
+        # `ensure_started` 才"启动"（记 session_enter、回调 pid），`stop`／退出上下文记 session_exit。
         self.calls: list[str] = []
+        self.session_error: Exception | None = None   # 设置后 ensure_started 抛（Strata 起不来，不置 unavailable）
+        self.session_refused: str | None = None       # 设置后 ensure_started 抛 StrataRefused 并置 unavailable
+        self.strata_sessions: list = []               # 本次运行构造的共享 session（应恰一个）
+        self.interrupt_translate: set[str] = set()    # work id：伪翻译在记下调用后抛 KeyboardInterrupt
+        case = self
+
+        class StrataRefused(RuntimeError):
+            pass
+
+        class StrataSession:
+            def __init__(self, config, on_server_pid):
+                case.strata_sessions.append(self)
+                self.on_server_pid = on_server_pid
+                self.server = None
+                self.unavailable: str | None = None
+                self.ordinal = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.stop()
+                return False
+
+            def ensure_started(self):
+                if self.unavailable is not None:
+                    raise StrataRefused(f"Strata is unavailable for the rest of this batch: {self.unavailable}")
+                if self.server is None:
+                    if case.session_refused is not None:
+                        self.unavailable = case.session_refused
+                        raise StrataRefused(case.session_refused)
+                    if case.session_error is not None:
+                        raise case.session_error
+                    self.ordinal += 1
+                    case.calls.append("session_enter")
+                    self.on_server_pid(FAKE_SERVER_PID)
+                    self.server = types.SimpleNamespace(url="http://127.0.0.1:8080")
+                return self.server
+
+            def stop(self):
+                if self.server is not None:
+                    self.server = None
+                    case.calls.append("session_exit")
+                    self.on_server_pid(None)
+
+        strata = types.ModuleType("kototoki.strata")
+        strata.Session = StrataSession
+        strata.StrataRefused = StrataRefused
+
+        # 假翻译与合并模块：orchestrator 通过 importlib 取用。
         self.translate_snapshots: list[dict] = []
         self.translate_errors: set[str] = set()  # work id
         # (work id, 注入行 SHA)：伪 run 已完成，再计划即 needs_model=False；注入行一变即另起 run（同真实子系统）
         self.translate_done: set[tuple[str, str]] = set()
-        self.session_error: Exception | None = None  # 设置后 Session() 构造即抛
-        self.session_inits: list[list[str]] = []      # 每次构造翻译 Session 时 `calls` 的快照
         self.fallback = 0
-        case = self
-
-        class Session:
-            def __init__(self, config, on_server_pid):
-                case.session_inits.append(list(case.calls))
-                if case.session_error is not None:
-                    raise case.session_error
-                self.on_server_pid = on_server_pid
-
-            def __enter__(self):
-                case.calls.append("session_enter")
-                self.on_server_pid(FAKE_SERVER_PID)
-                return self
-
-            def __exit__(self, *exc):
-                case.calls.append("session_exit")
-                return False
 
         translate = types.ModuleType("kototoki.translate")
         translate.RECIPE_HASH = "a" * 64
-        translate.Session = Session
         translate.plan = self._translate_plan
         translate.translate_document = self._translate_document
         merge = types.ModuleType("kototoki.merge")
         merge.merge = self._merge
 
-        # 假专名模块：建表按 `name_entries` 给表；只有建表与 session，没有发布期替换（ADR-0019）。
+        # 假专名模块：建表按 `name_entries` 给表，在共享 session 上"请求模型"；没有发布期替换（ADR-0019）。
         self.name_entries: list[dict] = []          # 伪建表给出的条目；默认空表
         self.names_status: dict[str, str] = {}      # work id → 伪建表终态（failed／too_long）
         self.names_errors: set[str] = set()         # work id：伪 build_document 抛 NamesError
-        self.names_session_error: Exception | None = None  # 设置后 names.Session() 构造即抛
         self.names_snapshots: list[dict] = []
         self.planned_tables: list[dict] = []        # 伪 translate.plan 收到的专名表
 
         class NamesError(RuntimeError):
             pass
 
-        class NamesSession:
-            def __init__(self, config, on_server_pid):
-                if case.names_session_error is not None:
-                    raise case.names_session_error
-                self.on_server_pid = on_server_pid
-
-            def __enter__(self):
-                case.calls.append("names_session_enter")
-                self.on_server_pid(FAKE_NAMES_SERVER_PID)
-                return self
-
-            def __exit__(self, *exc):
-                case.calls.append("names_session_exit")
-                return False
-
         names = types.ModuleType("kototoki.names")
-        names.Session = NamesSession
         names.NamesError = NamesError
         names.build_document = self._build_document
         names.BUILD_RECIPE_HASH = "d" * 64
         names_recipes = types.ModuleType("kototoki.names.recipes")
         names_recipes.BUILD_RECIPE_HASH = "d" * 64
         self.enterContext(mock.patch.dict(sys.modules, {
-            "kototoki.translate": translate, "kototoki.merge": merge,
+            "kototoki.strata": strata, "kototoki.translate": translate, "kototoki.merge": merge,
             "kototoki.names": names, "kototoki.names.recipes": names_recipes}))
 
     # --- 假实现 -------------------------------------------------------------------------------
@@ -191,14 +204,16 @@ class JobCase(unittest.TestCase):
 
     def _build_document(self, work_dir, document, session, seed):
         identifier = Path(work_dir).name
+        if document.cues:  # 同真实模块：有 cue 才向共享 session 要模型（可能就在这里启动 Strata）
+            if session is None:
+                raise AssertionError("a document with cues was built without a session")
+            session.ensure_started()
         self.calls.append(f"names:{identifier}")
         gpu_lock = self.config.gpu_lock
         self.names_snapshots.append({
             "lock": json.loads(gpu_lock.read_text(encoding="utf-8")) if gpu_lock.is_file() else None,
             "session": session is not None, "seed": seed,
             "ja_srt": (Path(work_dir) / "ja.srt").is_file()})
-        if document.cues and session is None:
-            raise AssertionError("a document with cues was built without a session")
         if identifier in self.names_errors:
             raise sys.modules["kototoki.names"].NamesError("fake names transport failure")
         status = self.names_status.get(identifier, "ok")
@@ -230,6 +245,10 @@ class JobCase(unittest.TestCase):
 
     def _translate_document(self, plan, session):
         identifier = plan.work_dir.name
+        if plan.needs_model:  # 同真实子系统：要模型才向共享 session 要服务（names 没启动时在这里启动）
+            if session is None:
+                raise AssertionError("a plan that needs the model was translated without a session")
+            session.ensure_started()
         self.calls.append(f"translate:{identifier}")
         gpu_lock = self.config.gpu_lock
         self.translate_snapshots.append({
@@ -237,8 +256,8 @@ class JobCase(unittest.TestCase):
             "lock": json.loads(gpu_lock.read_text(encoding="utf-8")) if gpu_lock.is_file() else None,
             "finals": list(self.input.rglob("*.srt")),
             "session": session is not None})
-        if plan.needs_model and session is None:
-            raise AssertionError("a plan that needs the model was translated without a session")
+        if identifier in self.interrupt_translate:
+            raise KeyboardInterrupt
         if identifier in self.translate_errors:
             raise RuntimeError("fake translate failure")
         self.translate_done.add((identifier, plan.names_sha256))
@@ -488,9 +507,9 @@ class StageTests(JobCase):
         stages = [e["stage"] for e in self.entries("file")]
         self.assertEqual(stages, ["vad"] * 3 + ["asr"] * 3 + ["align"] * 3)
         ids = self.ids("a.mkv", "b.mkv", "c.mkv")
-        self.assertEqual(self.calls, ["names_session_enter", *[f"names:{i}" for i in ids], "names_session_exit",
-                                      "session_enter", *[f"translate:{i}" for i in ids], "session_exit"]
-                         + ["merge"] * 3)
+        # 共享 Strata session：names 第一部启动，两阶段之间不停，翻译完才停
+        self.assertEqual(self.calls, ["session_enter", *[f"names:{i}" for i in ids], *[f"translate:{i}" for i in ids],
+                                      "session_exit"] + ["merge"] * 3)
         for snapshot in self.translate_snapshots:  # 翻译开始时 9 个 GPU 步骤已完成、尚无最终文件
             self.assertEqual(len(snapshot["processed"]), 9)
             self.assertEqual(snapshot["finals"], [])
@@ -805,8 +824,7 @@ class TranslatePlanTests(JobCase):
         self.assertEqual((summary.published, summary.existing, summary.failed), (["a.mkv", "b.mkv"], [], {}))
         self.assertEqual((len(self.extracted), len(self.launches())), (extracted, launches))
         self.assertEqual(self.calls, [f"translate:{i}" for i in self.ids("a.mkv", "b.mkv")] + ["merge"] * 2)
-        self.assertNotIn("names_session_enter", self.calls)
-        self.assertNotIn("session_enter", self.calls)
+        self.assertNotIn("session_enter", self.calls)  # 两阶段都不需要模型：Strata 不启动
         for snapshot in self.translate_snapshots:
             self.assertIsNone(snapshot["lock"])  # 未取 GPU 锁
             self.assertFalse(snapshot["session"])
@@ -851,17 +869,16 @@ class NamesTests(JobCase):
     def table(self, rel: str) -> dict:
         return artifacts.read_json(self.work_dir(rel) / artifacts.NAME_TABLE)
 
-    def test_table_built_after_cues_before_translate_with_its_own_server(self) -> None:
+    def test_table_built_after_cues_before_translate_on_the_shared_session(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
         summary = self.run_job()
         self.assertEqual(summary.published, ["a.mkv", "b.mkv"])
         ids = self.ids("a.mkv", "b.mkv")
-        self.assertEqual(self.calls[:self.calls.index("session_enter")],
-                         ["names_session_enter", *[f"names:{i}" for i in ids], "names_session_exit"])
-        for snapshot in self.names_snapshots:
+        self.assertEqual(self.calls[:3], ["session_enter", *[f"names:{i}" for i in ids]])
+        for snapshot in self.names_snapshots:  # 建表时 Strata 已在跑，GPU 锁记着它的 pid
             self.assertTrue(snapshot["ja_srt"])
             self.assertEqual((snapshot["lock"]["server_pid"], snapshot["seed"]),
-                             (FAKE_NAMES_SERVER_PID, self.config.names.seed))
+                             (FAKE_SERVER_PID, self.config.names.seed))
         self.assertEqual(self.translate_snapshots[0]["lock"]["server_pid"], FAKE_SERVER_PID)
         for rel in ("a.mkv", "b.mkv"):
             table = self.table(rel)
@@ -873,15 +890,43 @@ class NamesTests(JobCase):
             self.assertEqual(sources["names"], table["identity"])
             self.assertEqual(sources["translate"]["names_sha256"], self.injected_sha256(table))
 
-    def test_names_server_exits_before_the_strata_session_is_created(self) -> None:
-        # 两个模型不同时占显存：names 的 llama-server 退出后才构造并进入翻译（Strata）session。
+    def test_strata_starts_once_in_names_and_stops_after_translate(self) -> None:
+        # ADR-0022：整批一个 Strata session，names 第一部启动，两阶段之间不停，翻译结束才 --stop，之后才放 GPU 锁。
         self.make_inputs("a.mkv", "b.mkv")
         self.run_job()
-        self.assertEqual(len(self.session_inits), 1)
-        (before,) = self.session_inits
-        self.assertEqual(before[-1], "names_session_exit")
-        self.assertEqual(self.calls.count("names_session_exit"), 1)
-        self.assertLess(self.calls.index("names_session_exit"), self.calls.index("session_enter"))
+        self.assertEqual(len(self.strata_sessions), 1)
+        self.assertEqual((self.calls.count("session_enter"), self.calls.count("session_exit")), (1, 1))
+        self.assertLess(self.calls.index("session_enter"), self.calls.index(f"names:{self.ids('a.mkv')[0]}"))
+        self.assertGreater(self.calls.index("session_exit"), self.calls.index(f"translate:{self.ids('b.mkv')[0]}"))
+        self.assertFalse(self.config.gpu_lock.exists())
+
+    def test_refused_strata_fails_both_stages_without_starting(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.run_job()
+        self.final("b.mkv").unlink()
+        b = self.ids("b.mkv")[0]
+        self.translate_done = {done for done in self.translate_done if done[0] != b}  # b：表当前，只有翻译要模型
+        self.make_inputs("c.mkv")  # c：从头跑，names 就要模型
+        self.session_refused = "another Strata launch is serving"
+        self.calls.clear()
+        summary = self.run_job()
+        self.assertEqual(summary.failed, {"c.mkv": "names", "b.mkv": "translate"})
+        self.assertEqual(summary.published, [])
+        self.assertNotIn("session_enter", self.calls)
+        self.assertEqual(len(self.strata_sessions), 2)
+        self.assertEqual(self.strata_sessions[-1].unavailable, "another Strata launch is serving")
+        self.assertIn("unavailable for the rest of this batch", self.failure("b.mkv")["message"])
+
+    def test_interrupt_during_translate_stops_strata_and_releases_the_locks(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.interrupt_translate = set(self.ids("a.mkv"))
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_job()
+        self.assertEqual(self.calls[-1], "session_exit")
+        self.assertEqual(self.calls.count("session_enter"), 1)
+        self.assertNotIn(f"translate:{self.ids('b.mkv')[0]}", self.calls)
+        self.assertFalse(self.config.gpu_lock.exists())
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
 
     def test_high_confidence_entries_reach_the_translate_plan_without_replacing_output(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
@@ -950,7 +995,7 @@ class NamesTests(JobCase):
     def test_session_failure_only_fails_files_with_cues(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
         self.empty_cues = {"b.mkv"}
-        self.names_session_error = RuntimeError("names llama-server unavailable")
+        self.session_error = RuntimeError("Strata did not become ready")
         summary = self.run_job()
         self.assertEqual(summary.failed, {"a.mkv": "names", "c.mkv": "names"})
         self.assertEqual(summary.published, ["b.mkv"])
@@ -972,7 +1017,8 @@ class NamesTests(JobCase):
         self.calls.clear()
         again = self.run_job()
         self.assertEqual((again.published, again.existing), (["a.mkv"], ["b.mkv"]))
-        self.assertEqual(self.calls[:3], ["names_session_enter", f"names:{self.ids('a.mkv')[0]}", "names_session_exit"])
+        a = self.ids("a.mkv")[0]
+        self.assertEqual(self.calls, ["session_enter", f"names:{a}", f"translate:{a}", "session_exit", "merge"])
 
     def test_terminal_build_failure_publishes_with_empty_table(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")

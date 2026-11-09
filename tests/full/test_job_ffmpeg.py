@@ -61,8 +61,9 @@ class EndToEndTests(JobCase):
         self.assertEqual(len(list(work.glob(f"{artifacts.AUDIO_COPY_STEM}.*"))), 1)  # 视频输入做原音轨流复制
         self.assertEqual([launch["ids"] for launch in self.launches()], [self.ids(rel)] * 3)
         identifier = self.ids(rel)[0]
-        self.assertEqual(self.calls, ["names_session_enter", f"names:{identifier}", "names_session_exit",
-                                      "session_enter", f"translate:{identifier}", "session_exit", "merge"])
+        # 共享 Strata session：names 启动、翻译后退出（ADR-0022）
+        self.assertEqual(self.calls, ["session_enter", f"names:{identifier}", f"translate:{identifier}",
+                                      "session_exit", "merge"])
         self.assertTrue((work / artifacts.NAME_TABLE).is_file())
         self.assertFalse((work / "names-apply.json").exists())  # ADR-0019：没有发布时替换
         self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_JA)  # 日文字幕留在工作目录
