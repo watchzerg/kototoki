@@ -1,6 +1,6 @@
 # 产品建表切到 Strata（对齐基线 Q3）
 
-状态：planned（2026-11-09 起草，用户要求在新 session 里用 goal 无人值守执行）。  
+状态：**停在票据 06（GPU 验证）**——票据 01–05、07 完成（2026-11-09），代码与文档已交付、离线门全过；GPU 验证因可用内存 50.5 GiB < 52 GiB 未开跑（§7、§8 第 2 条），待用户腾出内存后重跑 06 再改 done。  
 目标：产品 `kototoki/` 的 `names` 阶段改为在 Strata 上用 Qwen3.8-Flash-Next 建表，建表规则与基线 Q3（[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）的 `names-strata-v4` 相同。names 与 translate 共用同一个 Strata 实例，产品不再启动 llama-server、不再加载 27B。  
 执行载体：tracker `.scratch/q3-product-switch/`（spec、map、票据，Git 忽略）。本文是唯一进 Git 的计划与完成记录：完成后在 §7 填结果，状态改为 done。  
 先读：[ADR-0021](../adr/0021-q3-strata-names-baseline.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)；[模块边界](../architecture/module-boundaries.md)；模块页 [专名一致性](../architecture/modules/name-consistency.md)、[翻译子系统](../architecture/modules/translation-subsystem.md)、[批次编排](../architecture/modules/batch-orchestration.md)、[阶段计划](../architecture/modules/stage-plan.md)、[配置与媒体](../architecture/modules/config-and-media.md)；[技术设计](../specs/bilingual-subtitle-pipeline.md)；[测试设计与验收](../agents/testing.md)、[验证边界](../testing/validation.md)；[CODING_STANDARDS](../../CODING_STANDARDS.md)。
@@ -160,9 +160,33 @@
 - 2026-11-09 票据 03（names 改走 Strata）：`table.py` 改为 Q3 参数（`max_tokens` 8192、context 24576、5 次尝试，请求体去 `response_format`、加 `model`），配方 `q3-names-v1`（hash `d3317926…`，嵌套 `build`／`model`／`runtime`／`request`），`build_document` 接共享 `strata.Session`，`count_tokens` 预算检查与退路照 v13；names 的 llama-server 代码（`Session`、`NAMES_SPEC`、`NAMES_SERVER`、`model_asset`）提前删除（理由见 map）。测试：用产品配方四块拼回 v13 `s1_recipe("v4")`，hash 等于 ADR-0021 的 `38cb7bcd…`；伪服务测试 12 项；与 v13 `NamesClient`＋`build_one` 的请求体与 seed 序列逐字节对照 5 项。`just test` 607 过、`just check` 过、`docs-check` 44 条均为已有。04 之前 `job.py` 的 names 阶段不可运行。
 - 2026-11-09 票据 04（编排共用 session）：`job._run` 建一个 `kototoki.strata.Session` 包住 names 与 translate（退出即 `--stop`，之后才放 GPU 锁），两阶段按需传入（names 有 cue、translate `needs_model`），整批只启动一次、都不需要时不启动；`kototoki.translate` 不再导出 `Session`。`test_job.py`／`test_job_ffmpeg.py` 改用伪 `kototoki.strata` 模块，新增整批一个 session、`StrataRefused` 两阶段都失败、Ctrl+C 仍 stop 的用例。`just test` 609 过、full 层 ffmpeg 3 过、`just check` 过、`docs-check` 44 条均为已有。
 - 2026-11-09 票据 05（删除与配置）：删 `[paths] llama_server`、`[names] model`／`port`（`Paths`／`Models`／`NamesConfig` 同步，旧键按未知键报错），`[names] seed` 与翻译一样校验为正整数；`kototoki.toml.example`、config 与资产清单测试同步；`scripts/smoke/names_product.py` 重写为走共享 `strata.Session`（通过条件含专家区在内存、`released`、`status == ok`、≥1 person、全程无 llama-server）；`scripts/upgrade.py` 与依赖布局、技术选型、开发工作流文档改为“llama.cpp 与 27B 只供研究侧”。`just test` 609 过、full 层 ffmpeg 3 过、`just check` 过、`docs-check` 44 条均为已有；smoke 只做了导入检查，真实运行在票据 06。
+- 2026-11-09 票据 06（GPU 验证）：**未执行，GPU 门未过**。开跑前核对：无 llama-server、无 Strata、无其他 GPU 作业（`Get-Process`），`.local/gpu.lock` 不存在，空闲显存 15089 MiB，`strata launch --status` 为空，`--plan` 无下载；可用内存 50.5 GiB（< 52 GiB），按 §5 每分钟采样等满 10 分钟仍 50.5–50.6 GiB（进程 working set 合计 8.4 GiB、committed 13.9 GiB、内核池 4.2 GiB；11-08 两次通过时启动前可用 54.2／54.3 GiB）。按“不关用户的程序”与“仍不够就停下”未启动 Strata，`just smoke names_product` 与 HF-II 整片都没有跑；见 §8 第 2 条。
+- 2026-11-09 票据 07（收尾）：待填标记只剩 `docs/development/workflow.md:57`（按需，时机未到，保留）；`kototoki/` 无 `NAMES_SERVER`／`NAMES_SPEC`／`model_asset`／27B 路径残留，“llama-server”只在说明文字里；计划状态改为“停在票据 06”；`docs/INDEX.md` 条目同步。
+
+### 完成报告（2026-11-09）
+
+提交（均在 `main`，ssh 签名）：01 `052b065`、02 `f21b1bf`、03 `f9a14cc`、04 `8410d90`、05 `e702cf4`、07 见本行所在提交。
+
+**已实现**
+- 中间层 `kototoki/strata.py`：`StrataServer`、`StrataRefused`、身份常量、共享 `Session`（第一次需要模型时启动，整批一个，启动失败累计 3 次或 `StrataRefused` 后本批不可用，退出即 `--stop` 并核实显存释放）；`kototoki/translate/strata.py` 只作研究侧再导出（§8 第 1 条）。
+- `kototoki/names/`：建表在共享 Strata session 上按 Q3 规则做——配方 `q3-names-v1`（`BUILD_RECIPE_HASH` `d3317926…`），建表块、模型、运行时身份、请求形状与 `names-strata-v4` 相同，请求体与 seed 序列与 v13 逐字节一致，最多 5 次尝试取第一张合格的表；`count_tokens` 预算检查与退路照 v13；删除 names 的 llama-server session、`NAMES_SERVER`／`NAMES_SPEC`／`model_asset`。
+- 编排 `job._run` 持有一个 Strata session 包住 names 与 translate，两阶段按需传入，都不需要时不启动，中断也 stop，pid 进 GPU 锁；`kototoki.translate` 不再导出 `Session`。
+- 配置：删 `[paths] llama_server`、`[names] model`／`port`（旧键按未知键报错），`[names] seed` 校验为正整数；`kototoki.toml.example` 同步。
+- `scripts/smoke/names_product.py` 改走 Strata；`scripts/upgrade.py` 的 llama.cpp 说明改为研究侧。
+- 文档：ADR-0022 与决定索引、AGENTS.md、GLOSSARY、README、模块边界、七个模块页、技术设计规格、依赖布局、技术选型、开发工作流、调研索引。
+
+**自动检查**（最后一次，票据 05 后）：`just test` 609 过；`tests.full.test_job_ffmpeg` 3 过；`tests.core.test_upgrade_script` 过；`just check` 过；`docs-check` 44 条均为 main 上已有；§5 列的行为各有测试（v13 逐字节对照 5 项与 hash 重构、5 次尝试与空表、共享 session 只启动一次、中断 stop、`StrataRefused` 两阶段都失败、不需要模型不启动、改表使翻译失效、禁止导入守门）。`just test-full` 的其他用例未跑（需要 ffmpeg 以外的真实资产）。
+
+**GPU 结果**：无。票据 06 因可用内存 50.5 GiB < 52 GiB 未开跑（见上及 §8 第 2 条）。
+
+**未验证项**
+- Strata 路径的产品真实运行：`just smoke names_product`、HF-II 整片（建表耗时、尝试次数、翻译每包耗时、内存与显存峰值、`--stop` 后释放）。
+- 产品写出的表未经人工抽看；`count_tokens` 退路、5 次都失败写空表、Strata 起不来等失败路径只经伪服务测试。
+- 模块页“未验证”小节（专名一致性、批次编排、翻译子系统）与 ADR-0022“未验证”保持原文，待 06 重跑后填写。
 
 ## 8. 待用户裁定
 
 （执行者追加。）
 
 1. **`kototoki/translate/strata.py` 的去留**：研究侧 `experiments/translation_v3/strata.py`（`drafting_from_log`）与 `experiments/scene_batching_v6/v13.py`（`StrataServer`、`ResourceSampler`、`http_get`、模块本身）从 `kototoki.translate.strata` 导入，而 `experiments/` 不在本次改动范围。执行者把生命周期移到 `kototoki/strata.py` 后，保留 `kototoki/translate/strata.py` 作只做再导出的研究侧导入路径（产品内不使用，模块边界已写明）。是否改研究侧导入并删掉这个再导出模块，请用户裁定。
+2. **GPU 验证的内存门未过（票据 06 未执行）**：2026-11-09 12:04–12:14 开跑前核对，除可用内存外全部通过（无 llama-server／Strata／GPU 作业，空闲显存 15089 MiB，status 为空，`--plan` 无下载）；可用内存 50.5 GiB，低于 §5 的 52 GiB，等满 10 分钟仍为 50.5–50.6 GiB。占用来自桌面程序与内核（进程 working set 合计 8.4 GiB、committed 13.9 GiB、内核池 4.2 GiB、Hyper-V 在运行），执行者按规则不关用户的程序。2026-11-08 两次通过时启动前可用 54.2／54.3 GiB，差 1.26 GiB 即退到 mmap，故不能以 50.5 GiB 开跑。请用户决定：腾出约 2 GiB 内存后重跑票据 06（`just smoke names_product`，再 HF-II 整片，命令与通过条件见 §4／§5），或另定门。
