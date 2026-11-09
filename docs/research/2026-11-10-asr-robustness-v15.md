@@ -118,6 +118,7 @@
 
 - 2026-11-10 **01**（A3 离线＋Opus）：盘点 101 个 w0 样本／5618 窗（产品 HF II／III、VAD 变体、整片 demo、窗口 demo、国会；ATKD-089 的 `asr.json` 已不在盘上），无触顶、无失败窗。重复检测器＝规范化文本上的相邻重复 tandem（周期 ≥2；同一字符连写以周期 2 计）与非相邻复现 recurring（≥3 字子串不重叠出现），按规则参数各算一份（README）。规则标记窗数：doc-default 25、whisper-or 186、repeat 46、repeat-or-cr2.4 46、repeat-loose 91、repeat-strict 17，全部拦住 HF III 第 51 窗。并集 241 窗／124 个唯一文字交 Opus 判读（两批，≈$2.5）：幻觉 78／正常 45／无法判断 118。**安全网**：只有 **repeat-strict**（≥10 份或 ≥3 字子串 ≥10 次、覆盖 ≥0.5）零正常标记——17 窗＝16 幻觉＋1 无法判断（20 字拖长音），召回 16/78，**选中**；doc-default 误报 1（HF II VAD 变体一窗歌词，压缩比 2.82），repeat 误报 13（歌词、连呼人名、三连台词），repeat-loose 误报 40；whisper-or 召回 1.0 但误报 6，其独有的 58 个幻觉是 ≤11 字、压缩比 ≤1.26 的插入套话（バイバイ、ありがとうございました 类），重复与压缩比规则都拦不住。阈值敏感性（`01/sensitivity.json`）：份数 ≥9 零误报，8 份出现第一个正常窗（27 字拖长音）。产品样本上 repeat-strict 只标 HF III 第 51 窗（HF II 0 窗），02 的动作比较因此只有一窗可比。离线测试 17 项通过（`.venv` 与 legacy）。
 - 2026-11-10 **03**（B1 实跑，GPU 2 run）：v14 `fill` 入口，只补时长 ≥1 s 的空子段（II 8／III 8；<1 s 的空子段 II 49／III 39 只记数，v14 B0）。**doc-default**：II 补解 8／守卫拦 0／空输出 0，采纳 65 字，官方 CER 16.8073% → 17.0114%（S +19、D −26、I +29，净 +22 编辑）；III 补解 8／拦 0／空 0，采纳 37 字，13.7673% → 13.9082%（S +5、D −10、I +21，净 +16）；墙钟 176.9 s（补解 31.4＋1.4 s 含模型加载，align 批 125.6 s），显存峰值 7959 MiB。**whisper-or**：II 补解 8／拦 1，采纳 61 字，→ 16.9836%（S +13、D −23、I +29，净 +19）；III 补解 8／拦 1，采纳 34 字，→ 13.8906%（S +5、D −10、I +19，净 +14）；墙钟 121.2 s（补解 9.1＋1.3 s，align 104.5 s）。两条规则、两部都是**净变差**：删除确实降了（II −26／−23，III −10），但补进来的字里插入与替换涨得更多；对照 v14 B0 的上限 110 参考字（0.5 pp），实际只收回约四分之一的删除。代价每部约 1–30 s 补解＋整部 align 重跑（≈50–60 s／部）。产物 `.local/asr-robustness-v14/03/fill-{doc-default,whisper-or}.json`。
+- 2026-11-10 **02**（A4 三种动作，GPU 1 run：补解 8.5 s＋六路 align 批 251.1 s，墙钟 264.9 s，显存峰值 7959 MiB）：repeat-strict 在产品样本上只标 HF III 第 51 窗（HF II 0 窗，三种变体 CER 与对照逐项相同）。HF III 第 51 窗（94 字，压缩比 3.83，参考 11 字）：**置空** 13.7673% → 13.4150%（S −20、D +22、I −42，净 −40）；**折叠**（周期 2 × 22 份，删 63 原文字符，留 31 字，折叠后压缩比 1.26 不再命中）→ 13.3973%（S −8、D +4、I −38，净 **−42**）；**补解＋折叠**（`no_repeat_ngram_size=5` 单次补解得 38 字、压缩比 1.46，未再命中无需折叠）→ 13.4414%（S −8、D +4、I −33，净 −37）。Opus 读感（`02/opus-notes.json`）：折叠 > 补解 > 置空——折叠保住了参考里的全部真实台词、只多几个参考省略的呻吟，补解尾部仍留几个呻吟，置空把真实台词一起扔掉。**选折叠**（CER 不劣于置空且文字更可读）。产品化草案写入 §8 第 8 项。
 
 ### 7.1 结论
 
@@ -139,6 +140,15 @@
 7. A 是否进产品（配方 id、ADR-0023、验收片）；B 是否进产品；C3 是否进产品（阶段位置应在 `names` 建表之后、`translate` 之前，是新阶段还是并入 `names`）。
 
 执行中产生的裁定项由执行者追加在下面（第 0 项留给提交签名问题）。
+
+8. **A 守卫产品化草案（票据 02 产出，只写不实现；供第 7 项裁定）**：
+   - **规则与动作**：`repeat-strict`——规范化文本上周期 ≥2 的相邻重复 ≥10 份、或 ≥3 字子串不重叠出现 ≥10 次，且覆盖 ≥50%（`experiments/asr_robustness_v15/repeat.py` 的定义）；动作取**折叠**（02：净 −42 编辑，优于置空 −40 与补解 −37，Opus 读感也最好；折叠后仍命中规则的窗口置空）。
+   - **阶段位置**：`kototoki/workers/asr.py` 的 `compute()` 里，`asr.transcribe()` 返回 `segments, traces, failures` 之后、`transcript_document()` 之前：对每个未失败窗口算守卫信号，命中即追加 `(index, "guard:repeat-strict")` 到 `failures`（走现有 `protocol.fail_window`：原文字移入 `failed_windows[].text`、`original_segments[i].text` 置空）；若采用折叠动作则改写 `segments[i]["text"]` 并在 `asr_traces[i]` 记 `guard: {rule, period, copies, removed_raw_chars}`。纯函数放 `kototoki/asr_whisper.py` 旁的新模块（例如 `kototoki/guard.py`），worker 壳只调用；不改解码、不碰 VAD。
+   - **配方**：`recipes.W0` 新增 `"guard": {"rule": "repeat-strict", "min_period": 2, "min_copies": 10, "min_count": 10, "min_length": 3, "min_coverage": 0.5, "action": "collapse, blank if still flagged", "normalize": "kototoki.judge.normalize"}`，id 改为 `w0-faster-whisper-large-v3-guard-v2`（研究侧标签同名）。W0 的 hash 变化会级联到 `CROSS`（嵌套子配方）与所有下游身份：`tests/core/test_recipes.py::test_pinned_asr_recipe_hashes` 的 W0、CROSS 两个常量要重钉，`test_hash_is_canonical_sha256_of_recipe` 的去重计数不变；`tests/core/test_plan.py` 若钉了 asr／align 身份也要更新；`docs/specs/bilingual-subtitle-pipeline.md` 与 `docs/architecture/modules/` 的 ASR 模块页同步写守卫位置。既有工作目录的 `asr.json` 身份失效、整批重算（按"只针对当前代码"的约束，不做迁移）。
+   - **`cross` 规则**：`CROSS["rules"]["w0_failed_window"] = "stays failed"` 已覆盖守卫置空的窗口（置空走同一 `failures` 列表，`compute_cross` 里 `index in failed_w` 分支不以 x0 替代）；折叠动作改的是 w0 文字，cross 照常拿 w0／x0 打分，无需新规则。守卫只在 w0 路径上做，x0 的 `token_limit` 置空规则不变。
+   - **ADR-0023 要点**：(1) 幻觉守卫属于 ASR 阶段、规则为 repeat-strict、动作为折叠（仍命中则置空）；(2) 判据来源：v15 安全网（全部 w0 样本上零正常语音标记、召回 16/78，低压缩比套话不在守卫范围）；(3) 置空的窗口按 `failed_windows` 协议记录、`align` 分配时间（`MMS["failed_window"]` 已有规则）；(4) 不做的事：不以压缩比／`avg_logprob` 单独置空（doc-default 有歌词误报）、不重解码、不温度回退；(5) 与 ADR-0003／W0 契约的关系：解码器与特征不变，仅后处理，基线身份不变但产品配方 id 变。
+   - **验收**：HF III 第 51 窗被折叠（trace 记 `guard`，文字 31 字）、官方 CER 13.3973%（S 769／D 448／I 304）逐项复现；HF II 全量回归 CER 与对照逐项相同（守卫零命中）；`just test` 全绿（重钉 hash）；`just smoke` 一次。
+   - **建议**：进产品的收益是每部最多一窗、HF III −0.37 pp（折叠），代价是 W0 配方 id 变、全部 asr 身份失效重算。若用户认为"幻觉循环出现在字幕里"是必须堵的产品缺陷，建议进（折叠；不接受折叠就置空，−0.35 pp）；若只看 CER，收益不足以独立立项，可并入下一次必然改 W0 配方的变更一起做。
 
 ## 附：执行提示词（粘贴到新 session）
 
