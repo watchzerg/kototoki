@@ -3,9 +3,10 @@
 路径解析规则：
 
 - 用户写出的相对路径按**配置文件所在目录**解析；省略的键用默认值，默认值里的相对路径按**仓库根**解析
-  （配置文件放仓库外时默认模型目录与 llama-server 仍可用）。
-- `[vad]`、`[asr.*]`、`[align]`、`[names]` 的模型路径为相对路径时相对于 `paths.models_root`。翻译模型由 Strata
-  自己管理（ADR-0019），`[translate]` 只有 `seed`（Strata 只接受正整数）。
+  （配置文件放仓库外时默认模型目录与 ffmpeg 仍可用）。
+- `[vad]`、`[asr.*]`、`[align]` 的模型路径为相对路径时相对于 `paths.models_root`。翻译与专名建表的模型由 Strata
+  自己管理（ADR-0019、ADR-0022），`[translate]` 与 `[names]` 都只有 `seed`（Strata 只接受正整数）；产品不起
+  llama-server，没有 `[paths] llama_server`。
 - `paths.input_dir` 没有默认值，必须写出；`paths.work_dir`（中间产物）默认仓库内 `.local/work`（ADR-0020）。
 
 不进配置文件的两项：GPU 锁路径固定为仓库内 `.local/gpu.lock`；破除死锁只认环境变量
@@ -36,7 +37,6 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "models_root": ".local/models",
         "ffmpeg": ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe",
         "ffprobe": ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe",
-        "llama_server": ".local/tools/llama.cpp/b11669-cuda13.4/llama-server.exe",
     },
     "input": {
         # 视频与音频；是否有视频流由 ffprobe 判定，不看扩展名（ADR-0020）。
@@ -55,13 +55,13 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "sentence_endings": "。！？!?", "soft_breaks": "、，,", "lead_out_s": 0.3,
     },
     "translate": {"seed": 20261008},
-    "names": {"model": "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf", "port": 8081, "seed": 20261019},
+    "names": {"seed": 20261019},
 }
 # 按配置文件目录（用户值）或仓库根（默认值）解析的键。
-PATH_KEYS = {("paths", key) for key in ("input_dir", "work_dir", "models_root", "ffmpeg", "ffprobe", "llama_server")}
+PATH_KEYS = {("paths", key) for key in ("input_dir", "work_dir", "models_root", "ffmpeg", "ffprobe")}
 # 相对于 models_root 的模型键。
 MODEL_KEYS = {("vad", "model"), ("asr.w0", "model"), ("asr.w0", "mel_assets"), ("asr.x0", "model"),
-              ("align", "model"), ("names", "model")}
+              ("align", "model")}
 
 
 class ConfigError(ValueError):
@@ -75,7 +75,6 @@ class Paths:
     models_root: Path
     ffmpeg: Path
     ffprobe: Path
-    llama_server: Path
 
 
 @dataclass(frozen=True)
@@ -97,7 +96,6 @@ class Models:
     w0_mel_assets: Path
     x0: Path
     align: Path
-    names: Path
 
 
 @dataclass(frozen=True)
@@ -118,7 +116,6 @@ class TranslateConfig:
 
 @dataclass(frozen=True)
 class NamesConfig:
-    port: int
     seed: int
 
 
@@ -219,8 +216,9 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
         raise ConfigError(f"[stt] engine must be one of {', '.join(ENGINES)}, got {engine!r}")
     if values["run", "extract_workers"] < 1:
         raise ConfigError("[run] extract_workers must be at least 1")
-    if not 0 < values["translate", "seed"] < 2**31:
-        raise ConfigError("[translate] seed must be a positive integer below 2**31")
+    for section in ("translate", "names"):  # Strata 只接受正整数 seed
+        if not 0 < values[section, "seed"] < 2**31:
+            raise ConfigError(f"[{section}] seed must be a positive integer below 2**31")
 
     return Config(
         source=source,
@@ -231,10 +229,10 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
         engine=engine,
         models=Models(vad=values["vad", "model"], w0=values["asr.w0", "model"],
                       w0_mel_assets=values["asr.w0", "mel_assets"], x0=values["asr.x0", "model"],
-                      align=values["align", "model"], names=values["names", "model"]),
+                      align=values["align", "model"]),
         cues=CueRules(**{key: values["cues", key] for key in DEFAULTS["cues"]}),
         translate=TranslateConfig(seed=values["translate", "seed"]),
-        names=NamesConfig(port=values["names", "port"], seed=values["names", "seed"]),
+        names=NamesConfig(seed=values["names", "seed"]),
         gpu_lock=GPU_LOCK,
         break_stale_lock=environ.get(BREAK_STALE_LOCK_ENV) == "1",
     )

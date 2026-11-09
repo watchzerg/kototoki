@@ -1,19 +1,21 @@
-"""真实模型验证：产品专名一致性模块 `kototoki.names` 在真实 Qwen llama-server 上建一张表（占 GPU、加载
-12 GB 模型，每次运行前须经用户批准；不属于任何 gate）。
+"""真实模型验证：产品专名一致性模块 `kototoki.names` 在产品自动启停的 Strata 上建一张表（占 GPU、加载
+Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）。这是 ADR-0022 要求的 Strata 建表首用 smoke。
 
 入口：`just smoke names_product`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
 `python scripts/smoke/names_product.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。
-与 `translate_product` 同形，走产品代码：`plan.names_identity` → `names.Session`（`ManagedServer`：引擎与模型身份核对、
-空闲显存轮询、驻留校验）→ `names.build_document`（`/tokenize` 计数与 chat completions、`name-table-v2` JSON schema 输出）
-→ `artifacts.write_artifact` → 按 Q2 规则取注入行（`translate.recipes.name_rows`，ADR-0019：产品只注入、不替换）；
-模型、引擎、端口与 seed 取 `config.load` 的默认值。
+与 `translate_product` 同形，走产品代码：`plan.names_identity` → 共享 `strata.Session`（`StrataServer`：`--status` 为空才
+启动、`strata launch --no-tui --model iq3_s`、ADR-0017 接入检查、专家区检查、结束 `--stop` 并核实显存释放）→
+`names.build_document`（`/v1/messages/count_tokens` 预算检查、`/v1/chat/completions` 建表，配方 `q3-names-v1`，最多 5 次
+尝试）→ `artifacts.write_artifact` → 按 Q2 规则取注入行（`translate.recipes.name_rows`，ADR-0019：产品只注入、不替换）；
+seed 取 `config.load` 的默认值。开始前若已有 Strata launch 在服务，产品拒绝运行，本脚本照实记为失败。
 
 输入是下面内置的 12 条合成日语短句（不含任何真实字幕）：同一人名エミリア的两种写法（正确写法与一处 ASR 式误写エミリヤ）、
-一个职阶名セイバー，其余为中性句。产物写入 `<out>/names_product/`（临时配置、工作目录与 server 日志），
-结果写 `<out>/names_product.json`：只含计数、哈希、耗时与引擎元数据，不含条目文字与原文。
+一个职阶名セイバー，其余为中性句。产物写入 `<out>/names_product/`（临时配置、工作目录、Strata session 证据与交换目录），
+结果写 `<out>/names_product.json`：只含计数、哈希、耗时、资源峰值与 Strata 身份，不含条目文字与原文。
 
-通过条件：server 驻留校验通过、`build.status == ok`、表至少一条 kind 为 person 的条目、写回的表对其身份为 current、
-无异常。注入行数（high 条目的写法）只记录：置信度由模型给出，合成输入不保证有 high 条目。
+通过条件：Strata 接入检查通过且专家区在内存（`expert_arena == "ram"`）、`build.status == ok`、表至少一条 kind 为 person 的
+条目、写回的表对其身份为 current、全程没有 llama-server 进程、`--stop` 后 status 为空且显存释放、无异常。注入行数
+（high 条目的写法）与 `count_tokens` 是否可用只记录：置信度由模型给出，合成输入不保证有 high 条目。
 """
 
 from __future__ import annotations
@@ -27,7 +29,9 @@ import smokelib
 
 sys.path.insert(0, str(smokelib.REPO))
 
-from kototoki import artifacts, config, names, plan, srt  # noqa: E402
+from kototoki import artifacts, config, names, plan, srt, strata  # noqa: E402
+from kototoki.llama_server import list_llama_servers  # noqa: E402
+from kototoki.names import recipes as names_recipes  # noqa: E402
 from kototoki.translate import recipes as translate_recipes  # noqa: E402
 
 NAME = "names_product"
@@ -65,6 +69,10 @@ def write_config(root: Path) -> config.Config:
     return config.load(path)
 
 
+def read(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
 def main() -> int:
     args = smokelib.parse_args(__doc__)
     if not GPU_LOCK.is_file():
@@ -75,35 +83,43 @@ def main() -> int:
     root = args.out.resolve() / NAME
     cfg = write_config(root)
     ja_text = synthetic_srt()
-    work_dir = cfg.paths.work_dir / "doc"  # 单部影片的工作目录；server 运行日志落在 work_dir 下的目标目录键子目录
+    work_dir = cfg.paths.work_dir / "doc"  # 单部影片的工作目录；Strata session 证据落在工作根的 strata-sessions/
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "ja.srt").write_text(ja_text, encoding="utf-8", newline="\n")
     document = srt.read_srt(work_dir / "ja.srt")
     identity = plan.names_identity(document.source_sha256, cfg)
     result: dict[str, Any] = {
-        "recipe_hash": names.BUILD_RECIPE_HASH, "seed": cfg.names.seed,
-        "engine": str(cfg.paths.llama_server), "model": str(cfg.models.names),
+        "recipe": names_recipes.RECIPE_NAME, "recipe_hash": names.BUILD_RECIPE_HASH, "seed": cfg.names.seed,
+        "model": strata.MODEL, "llama_servers_before": len(list_llama_servers()),
         "input": {"cues": len(document.cues), "source_sha256": document.source_sha256, "synthetic": True}}
+    if result["llama_servers_before"]:
+        failures.append("a llama-server process was already running before the smoke")
 
     built = None
     try:
-        with names.Session(cfg) as session:
+        with strata.Session(cfg) as session:
             built = names.build_document(work_dir, document, session, cfg.names.seed)
+            result["llama_servers_during"] = len(list_llama_servers())
     except Exception as error:  # 记录失败类别后照常写结果
         failures.append(f"build {type(error).__name__}: {str(error)[:500]}")
     timer.mark("build")
+    if result.get("llama_servers_during"):
+        failures.append("a llama-server process appeared while building the table")
 
-    finals = sorted(cfg.paths.work_dir.rglob("engine-final.json"))
-    engines = [json.loads(path.read_text(encoding="utf-8")) for path in finals]
-    result["engine_sessions"] = [{"cold_load_seconds": e.get("cold_load_seconds"),
-                                  "free_vram_mib_before_start": e.get("free_vram_mib_before_start"),
-                                  "peak_device_memory_mib": e.get("peak_device_memory_mib"),
-                                  "server_stop": e.get("server_stop"), "residency": e.get("residency")}
-                                 for e in engines]
-    residency = (engines[0].get("residency") if engines else None) or {}
-    result["residency_ok"] = bool(residency.get("gpu_layers_offloaded")) and not residency.get("partial_layer_offload")
-    if not result["residency_ok"]:
-        failures.append("residency evidence missing or partial")
+    sessions_root = artifacts.work_root(cfg.paths.work_dir, cfg.paths.input_dir) / strata.SESSIONS_DIR
+    result["strata"] = [{k: (s or {}).get(k) for k in ("version", "drafting", "expert_arena", "kv", "spec", "models",
+                                                        "cold_load_seconds")} | {
+        "launch": ((s or {}).get("launch") or {}).get("name"),
+        "status_context": (((s or {}).get("status") or {}).get("context"))}
+                        for s in (read(p) for p in sorted(sessions_root.rglob("strata.json")))]
+    result["resources"] = [read(p) for p in sorted(sessions_root.rglob("resources.json"))]
+    result["strata_final"] = [read(p) for p in sorted(sessions_root.rglob("strata-final.json"))]
+    if not result["strata"]:
+        failures.append("Strata never attached (no strata.json)")
+    if any(s.get("expert_arena") != "ram" for s in result["strata"]):
+        failures.append(f"Strata experts not held in RAM: {[s.get('expert_arena') for s in result['strata']]!r}")
+    if not result["strata_final"] or not all(f.get("released") for f in result["strata_final"]):
+        failures.append("Strata stop / GPU memory release not confirmed")
 
     if built is not None:
         meta = built.payload.get("meta") or {}
@@ -112,6 +128,9 @@ def main() -> int:
         for entry in entries:
             kinds[entry.get("kind", "?")] = kinds.get(entry.get("kind", "?"), 0) + 1
         result["build"] = {"status": built.status, "attempts": built.attempts, "seconds": round(built.seconds, 2),
+                           "reason": built.payload.get("build", {}).get("reason"),
+                           "prompt_check": built.payload.get("build", {}).get("prompt_check"),
+                           "over_budget_by_usage": built.payload.get("build", {}).get("over_budget_by_usage"),
                            "prompt_tokens": meta.get("prompt_tokens"), "completion_tokens": meta.get("completion_tokens"),
                            "entries": len(entries), "kinds": kinds,
                            "dropped": {key: len(meta.get(key) or [])

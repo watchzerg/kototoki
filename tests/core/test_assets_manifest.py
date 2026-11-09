@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
 import tomllib
 import unittest
 
@@ -41,23 +40,22 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(defaults["asr.w0"]["mel_assets"], MODELS["w0-assets"]["dir"])
         self.assertEqual(defaults["asr.x0"]["model"], MODELS["qwen3-asr-1.7b-hf"]["dir"])
         self.assertEqual(defaults["align"]["model"], MODELS["mms-1b-all"]["dir"])
-        names = MODELS["qwen3.8-27b-ud-iq3_s"]
-        self.assertEqual(list(names["files"]), [PurePosixPath(defaults["names"]["model"]).name])
-        self.assertEqual(defaults["names"]["model"], f"{names['dir']}/{PurePosixPath(defaults['names']['model']).name}")
+        self.assertNotIn("model", defaults["names"])  # 建表模型由 Strata 管理（ADR-0022）；27B 条目只供研究侧
+        self.assertIn("qwen3.8-27b-ud-iq3_s", MODELS)
         self.assertEqual(defaults["paths"]["models_root"], ".local/models")
 
 
 class ToolPathTests(unittest.TestCase):
     def test_default_binary_paths_carry_manifest_versions(self) -> None:
         paths = config.DEFAULTS["paths"]
-        ffmpeg, llama = TOOLS["ffmpeg"]["version"], TOOLS["llama.cpp"]["version"]
+        ffmpeg = TOOLS["ffmpeg"]["version"]
         self.assertEqual(paths["ffmpeg"], f".local/tools/ffmpeg/{ffmpeg}/bin/ffmpeg.exe")
         self.assertEqual(paths["ffprobe"], f".local/tools/ffmpeg/{ffmpeg}/bin/ffprobe.exe")
-        self.assertEqual(paths["llama_server"], f".local/tools/llama.cpp/{llama}/llama-server.exe")
+        self.assertNotIn("llama_server", paths)  # 产品不起 llama-server（ADR-0022）；清单里的 llama.cpp 只供研究侧
 
     def test_manifest_locks_the_files_the_product_runs(self) -> None:
         self.assertLessEqual({"bin/ffmpeg.exe", "bin/ffprobe.exe"}, set(TOOLS["ffmpeg"]["files"]))
-        self.assertIn("llama-server.exe", TOOLS["llama.cpp"]["files"])
+        self.assertIn("llama-server.exe", TOOLS["llama.cpp"]["files"])  # 研究侧条目保留
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ class LoadTests(unittest.TestCase):
                                                 ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"))
         self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 1.0, "。！？!?", "、，,", 0.3))
         self.assertEqual(cfg.translate, config.TranslateConfig(seed=20261008))
-        self.assertEqual(cfg.names, config.NamesConfig(port=8081, seed=20261019))
+        self.assertEqual(cfg.names, config.NamesConfig(seed=20261019))
         self.assertEqual(cfg.source, self.root / "kototoki.toml")
 
     def test_cue_rules_have_the_shape_build_cues_expects(self) -> None:
@@ -55,7 +55,7 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(cfg.paths.models_root, config.REPO_ROOT / ".local" / "models")
         self.assertEqual(cfg.paths.work_dir, config.REPO_ROOT / ".local" / "work")
         # 默认路径里的版本号由 test_assets_manifest 钉住与 assets.toml 一致；这里只核对相对仓库根解析。
-        for key in ("ffmpeg", "ffprobe", "llama_server"):
+        for key in ("ffmpeg", "ffprobe"):
             self.assertEqual(getattr(cfg.paths, key), config.REPO_ROOT / config.DEFAULTS["paths"][key])
 
     def test_model_paths_are_relative_to_models_root(self) -> None:
@@ -80,18 +80,19 @@ class LoadTests(unittest.TestCase):
         with self.assertRaisesRegex(config.ConfigError, r"one of w0, x0, cross, got 'w1'"):
             config.load(self.write(MINIMAL + '[stt]\nengine = "w1"\n'), environ={})
 
-    def test_names_model_is_relative_to_models_root(self) -> None:
-        default = config.load(self.write(MINIMAL), environ={})
-        self.assertEqual(default.models.names,
-                         config.REPO_ROOT / ".local/models/glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf")
-        cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[names]\nmodel = "g/x.gguf"\nport = 9\nseed = 1\n'), environ={})
-        self.assertEqual(cfg.models.names, self.root / "m" / "g" / "x.gguf")
-        self.assertEqual(cfg.names, config.NamesConfig(port=9, seed=1))
+    def test_names_has_only_a_seed(self) -> None:
+        cfg = config.load(self.write(MINIMAL + "[names]\nseed = 1\n"), environ={})
+        self.assertEqual(cfg.names, config.NamesConfig(seed=1))
+        self.assertFalse(hasattr(cfg.models, "names"))  # 建表模型由 Strata 管理（ADR-0022）
+        self.assertFalse(hasattr(cfg.paths, "llama_server"))
 
     def test_unknown_keys_and_sections_are_errors(self) -> None:
         for text, needle in ((MINIMAL + "bogus = 1\n", "bogus"),
                              (MINIMAL + "[names]\nthink = true\n", "think"),
                              (MINIMAL + "[names]\nenabled = true\n", "enabled"),  # ADR-0019 删除，建表必开
+                             (MINIMAL + "[names]\nmodel = \"g/x.gguf\"\n", "model"),  # ADR-0022 删除，建表走 Strata
+                             (MINIMAL + "[names]\nport = 8081\n", "port"),
+                             (MINIMAL + 'llama_server = "x.exe"\n', "llama_server"),  # ADR-0022 删除
                              (MINIMAL + "[translate]\nmodel = \"x.gguf\"\n", "model"),
                              (MINIMAL + "[translate]\nport = 8080\n", "port"),
                              (MINIMAL + "[vad]\ndevice = \"cpu\"\n", "device"),
@@ -109,6 +110,8 @@ class LoadTests(unittest.TestCase):
                (MINIMAL + "[run]\nextract_workers = \"4\"\n", "must be an integer"),
                (MINIMAL + "[translate]\nseed = 0\n", r"\[translate\] seed"),  # Strata 不接受 0
                (MINIMAL + "[translate]\nseed = 2147483648\n", r"\[translate\] seed"),
+               (MINIMAL + "[names]\nseed = 0\n", r"\[names\] seed"),  # 建表也在 Strata 上，同样只接受正整数
+               (MINIMAL + "[names]\nseed = -3\n", r"\[names\] seed"),
                (MINIMAL + "[stt]\nengine = \"w1\"\n", "engine must be one of"),
                (MINIMAL + "[input]\nextensions = \".mkv\"\n", "list of nonempty strings"),
                (MINIMAL + "[run]\nextract_workers = 0\n", "at least 1"))

@@ -44,7 +44,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 要点：
 
-- 代码里的模型 SHA 常量保留，用于运行时自校验（`kototoki/plan.py` 的逐文件表、`kototoki/names/recipes.py` 的建表模型资产 `BUILD["model_asset"]`）；core 测试断言"代码常量 == 清单"，并核对 `kototoki/config.py` 默认路径里的 ffmpeg 与 llama.cpp 版本号，防止三处漂移。
+- 代码里的模型 SHA 常量保留，用于运行时自校验（`kototoki/plan.py` 的逐文件表）；core 测试断言"代码常量 == 清单"，并核对 `kototoki/config.py` 默认路径里的 ffmpeg 版本号，防止三处漂移。专名建表与翻译的模型由 Strata 管理，不在清单里（[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)）。
 - 清单是模型与二进制身份的唯一权威；其他文档链接清单，不再重列 SHA 表。
 - 执行逻辑放 `scripts/assets.py`（只用标准库），recipe 保持薄。
 
@@ -65,7 +65,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 `just upgrade [python] [llama.cpp] [ffmpeg]`（省略即全部；`scripts/upgrade.py`）按选版规则把可升级的组件升到最新稳定版，`just upgrade-check` 只报告。规则与 2026-10-19 那次手动升级相同：
 
 - **Python**：CUDA 12 锚点 torch、torchaudio、torchcodec、ctranslate2 保持原钉版，升级须人工决定；其余 `==` 钉住的直接依赖先去钉、由 uv 解析出最新稳定版后重新钉版；传递依赖一起升，但跳过主版本升级（首个数字段变化，0.x 看次版本，日历版本号除外），被跳过的列在报告里。上游约束（如 sympy 对 mpmath、torch 对 setuptools 的上限）由 uv 自然遵守。之后 `uv sync --locked`；任何一步失败都还原 `pyproject.toml` 与 `uv.lock`。
-- **llama.cpp**：GitHub 最新稳定版（`releases/latest`，如 v0.7.0）的 `nightly-tag.txt` 指向的构建；CUDA 主版本与清单现有记录相同，取其中最高的 `win-cuda-*-x64` 与同版本 cudart。默认路径直接切换；llama.cpp 只剩专名建表使用，真实模型验证 `just smoke names_product` 另行批准后跑。
+- **llama.cpp**：GitHub 最新稳定版（`releases/latest`，如 v0.7.0）的 `nightly-tag.txt` 指向的构建；CUDA 主版本与清单现有记录相同，取其中最高的 `win-cuda-*-x64` 与同版本 cudart。产品不再用 llama.cpp（[ADR-0022](../adr/0022-product-names-on-strata.md)），产品配置里没有它的默认路径，升级只改清单与安装目录，供研究侧使用。
 - **ffmpeg**：BtbN 最新带日期 tag 的 autobuild 中最高维护分支的 win64 gpl 构建（上游不打正式发布点的包）。按下文 [ffmpeg](#ffmpeg) 的升级步骤，用产品 extract 代码在 `--films` 目录（默认 `.local/bilingual-fullfilm-08/input/`）的每部 `.mkv` 上与当前默认构建对照派生 WAV，样本数、PCM SHA256、补偿记录与告警全部相同才切换默认路径；否则清单还原，新版本目录留在 `.local/tools/ffmpeg/` 不用。
 - 两种二进制都用 GitHub asset digest 作为压缩包 SHA256（缺失即拒绝），清单块由脚本重写，逐文件 SHA256 从压缩包算出；默认路径改 `kototoki/config.py` 与 `kototoki.toml.example`。
 - 脚本不写文档：结束时提示同步[技术选型](technology-stack.md#已选依赖)、本页当前实现与规格 §7.2 的配置示例，ffmpeg 升级补验收记录，并按报告的 `pending` 申请 smoke。
@@ -89,8 +89,8 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 ## 当前实现
 
-- `assets.toml` 登记 `tools.ffmpeg`（`n9.0.2-28-g669f5ab083`，压缩包 SHA256 与 GitHub digest 一致，只装 `bin/ffmpeg.exe`、`bin/ffprobe.exe`）、`tools."llama.cpp"`（`b11669-cuda13.4`，稳定版 v0.7.0 的 `nightly-tag.txt` 指向的构建；两个 zip 的 SHA256 与 GitHub digest 一致，55 个文件即两个 zip 的全部成员；cudart 包与 b11583 的同一 SHA256。2026-10-19 由 b11583 升级；2026-11-08 起产品只有 names 建表用它，翻译已换 Strata；旧版本目录 `b11583-cuda13.4` 保留，`llama_stock` smoke 仍指向它）与产品用到的七个模型目录：`pyannote-segmentation-3.0`（门控）、`faster-whisper-large-v3`、`w0-assets`（只含 `mel_filters.npz`，来自 whisperx 3.8.6 包内 assets，没有 HF 来源，`fetch-models` 不负责）、`qwen3-asr-1.7b-hf`、`mms-1b-all`、`qwen3.8-27b-ud-iq3_s`（names 阶段建表模型，见下一条）。`hy-mt2-30b-a3b-apex-i-compact` 的条目已于 2026-11-08 删除（产品翻译不再用它，[ADR-0019](../adr/0019-product-translation-q2.md)）；研究侧 H0 仍用 `.local/models/translation/` 下已有的文件，路径由各 demo 自己管理，不在清单里。
-- `qwen3.8-27b-ud-iq3_s`：目录 `glossary-v1`，来源 `unsloth/Qwen3.8-27B-GGUF`（revision `4ca72078…`），单个 gguf（12040883104 字节），默认路径 `[names] model = "glossary-v1/Qwen3.8-27B-UD-IQ3_S.gguf"`。清单已登记，尚未在本机经 `fetch-models`／`verify-assets` 核对；清单文件名与默认路径文件名的一致性由 `tests/core/test_assets_manifest.py` 钉住，模型常量的钉子随编排接入补。
+- `assets.toml` 登记 `tools.ffmpeg`（`n9.0.2-28-g669f5ab083`，压缩包 SHA256 与 GitHub digest 一致，只装 `bin/ffmpeg.exe`、`bin/ffprobe.exe`）、`tools."llama.cpp"`（`b11669-cuda13.4`，稳定版 v0.7.0 的 `nightly-tag.txt` 指向的构建；两个 zip 的 SHA256 与 GitHub digest 一致，55 个文件即两个 zip 的全部成员；cudart 包与 b11583 的同一 SHA256。2026-10-19 由 b11583 升级；2026-11-08 起产品只有 names 建表用它，2026-11-09 起建表也换 Strata、**产品不再用 llama.cpp**（[ADR-0022](../adr/0022-product-names-on-strata.md)），条目只供研究侧；旧版本目录 `b11583-cuda13.4` 保留，`llama_stock` smoke 仍指向它）、产品用到的五个模型目录：`pyannote-segmentation-3.0`（门控）、`faster-whisper-large-v3`、`w0-assets`（只含 `mel_filters.npz`，来自 whisperx 3.8.6 包内 assets，没有 HF 来源，`fetch-models` 不负责）、`qwen3-asr-1.7b-hf`、`mms-1b-all`，以及只供研究侧的 `qwen3.8-27b-ud-iq3_s`（见下一条）。`hy-mt2-30b-a3b-apex-i-compact` 的条目已于 2026-11-08 删除（产品翻译不再用它，[ADR-0019](../adr/0019-product-translation-q2.md)）；研究侧 H0 仍用 `.local/models/translation/` 下已有的文件，路径由各 demo 自己管理，不在清单里。
+- `qwen3.8-27b-ud-iq3_s`：目录 `glossary-v1`，来源 `unsloth/Qwen3.8-27B-GGUF`（revision `4ca72078…`），单个 gguf（12040883104 字节）。2026-11-09 前是产品 names 阶段的建表模型（配置键 `[names] model`，已删除，[ADR-0022](../adr/0022-product-names-on-strata.md)）；现只供研究侧（Q0 翻译、v13 前的建表对照），条目与 `fetch-models` 行为保留，产品代码不再引用它。
 - `scripts/assets.py`：`install-tools`、`fetch-models`、`verify` 三个子命令，压缩包只支持 zip，下载先写 `.partial` 并边下边算 SHA256，一致才改名；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
 - 测试（core）：`tests/core/test_assets_manifest.py` 钉住代码常量与默认路径版本号 == 清单；`tests/core/test_assets_script.py` 用本地 `file://` URL 与临时 zip 覆盖下载、`strip`、只解清单文件、`identity.json`、压缩包缓存复用、无 SHA 与非 zip 拒绝、SHA 不符清理、门控令牌、无来源模型与离线核对。
 - **外部前置：Strata**（产品翻译，[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)）：Strata 0.2.12／engine build 0.1.58 安装在 `%LOCALAPPDATA%\Strata`（`terminal\current\bin\strata.cmd`），翻译模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录；两者都**不在 `assets.toml` 里**，`install`／`fetch-models`／`verify-assets` 不管它们，由用户安装与维护。产品启动翻译时按 ADR-0017 核对版本、端口 8080、run config 与上下文，不符即拒绝运行；升级 Strata 或换模型等于换翻译身份，须新决定。运行前须没有别的 Strata launch 在服务，且空闲显存 ≥14000 MiB。
