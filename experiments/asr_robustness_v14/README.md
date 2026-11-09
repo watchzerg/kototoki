@@ -11,9 +11,10 @@
 | `inputs.py` | 01 | HF II 对照产物身份与官方 CER 核实；HF III 用产品 worker 重算（1 次 GPU run）；产品默认规则建 `ja.srt` | `verify-hf-ii` 离线；`reproduce-hf-iii` GPU |
 | `signals.py` | 01 | A0：每个窗口的压缩比、触顶、`avg_logprob`，对参考的逐窗 CER 与置空收益估计，按阈值规则统计被标记窗口 | 离线 |
 | `gaps.py` | 01 | B0：VAD 子段落字统计、空子段与参考覆盖、对照删除项按位置分类 | 离线 |
-| `guard.py` | 02 | A1／A2：幻觉守卫（被标记窗口置空模拟与单次补解） | 待交付 |
-| `fill.py` | 03 | B1：空子段补窗重解码 | 待交付 |
-| `correct.py` | 04 | C1／C2：Strata 日文后校正与评估 | 待交付 |
+| `guard.py` | 02 | A1／A2：幻觉守卫。A1 把被标记窗口的字符从 `align.json` 的 `text`／`units` 删掉（其余 unit 时间不变）并评官方 CER；A2 对同批窗口加 `no_repeat_ngram_size=5` 单次补解，仍触阈值即置空；`gate` 给出 §4.0 的门 | `blank` 离线；`redecode` GPU |
+| `fill.py` | 03 | B1：每个时长 ≥1 s 的空子段单独作窗口、w0 同配方解一次，过 A0 守卫后按时间插入所在窗口的段文字（`insert_position`／`merge_fill`），再经产品 `align` 评官方 CER | GPU |
+| `correct.py` | 04 | C1／C2：Strata 上 Flash-Next 只读前后文修正日文错字（C2 另注入 `confidence: high` 专名表），程序守卫编辑比 ≤0.5；单元口径评估与改动分类 | 校正 GPU（Strata）；评估离线 |
+| `decode.py` | 02／03 | GPU 公共部分：持有产品 `WhisperAsr` 单次解码、写研究侧产品形状 `asr.json`；`signal_of`、`models_sha256` 为纯函数 | 解码 GPU；纯函数离线 |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.asr_robustness_v14 <子命令>`。
 
@@ -23,12 +24,12 @@
 | `reproduce-hf-iii` | 01 | HF III 产品 STT 重算（GPU，先问） |
 | `signals [--film F]` | 01 | A0 守卫信号、逐窗 CER、阈值表 |
 | `gaps [--film F]` | 01 | B0 空子段统计与删除项定位 |
-| `blank --rule R` | 02 | A1 被标记窗口置空的离线模拟（待交付） |
-| `redecode --rule R` | 02 | A2 问题窗口单次补解（GPU，待交付） |
-| `fill --rule R` | 03 | B1 空子段补窗重解码（GPU，待交付） |
-| `correct --arms c1,c2 --prompt P` | 04 | C1／C2 Strata 后校正（GPU，待交付） |
-| `correct-eval --run R` | 04 | 校正结果的单元口径评估与改动分类（离线，待交付） |
-| `correct-sample --run R` | 04 | 抽 30 条改动供 Opus 抽看（离线，待交付） |
+| `blank --rule R` | 02 | A1 被标记窗口置空的离线模拟 |
+| `redecode --rule R` | 02 | A2 问题窗口单次补解（GPU） |
+| `fill --rule R` | 03 | B1 空子段补窗重解码（GPU） |
+| `correct --arms c1,c2 --prompt P` | 04 | C1／C2 Strata 后校正（GPU） |
+| `correct-eval --run R` | 04 | 校正结果的单元口径评估与改动分类（离线） |
+| `correct-sample --run R` | 04 | 抽 30 条改动供 Opus 抽看（离线） |
 
 ## 验证
 
