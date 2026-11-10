@@ -79,6 +79,8 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 `cross` 引擎新增的接口：`WhisperAsr.score(audio, chunk, texts, max_batch=16) -> list[float]`，对同一窗口音频编码一次、为每个候选文本返回 Σ log `text_token_probs`（不含结束符；`texts` 为空返回空列表；超过 `max_batch` 分批）；`kototoki.judge.judge_window(...)` 是纯函数，输入一个窗口的两路文本与打分函数，返回合并文本与该窗口的审计记录。`judge` 属基础层，不导入 torch、`experiments`、`kototoki_eval`，不导入任何推理模块；打分函数由 worker 壳传入。`cross` 不新增推理模块，壳 `workers/asr.py` 同时持有 `WhisperAsr` 与 `QwenAsr`。
 
+复读守卫的接口（[ADR-0023](../../adr/0023-asr-repeat-guard.md)）：`kototoki.guard` 属基础层，只导入 `recipes` 与 `judge.normalize`。`guard.RULE` 是规则名加五个参数（取自 `recipes.W0["guard"]`）；`guard.check(text) -> bool` 判断一个窗口的文字是否命中；`guard.apply(text) -> (new_text, record | None)`：未命中返回原文与 `None`，命中返回记录 `{rule, action, period, copies, removed_raw_chars}`——`action` 为 `collapse` 时 `new_text` 是折叠后的文字，为 `blank` 时调用方应把该窗置空（`new_text` 仍是原文；`period`／`copies`／`removed_raw_chars` 描述被放弃的折叠，没有可折叠区段时为 `null`／`null`／0）。守卫只处理字符串；改写段文字、写 trace 与失败窗口记账在壳 `workers/asr.py`。
+
 ## 代码与验证入口
 
 - 代码：`kototoki/vad.py`、`kototoki/asr_whisper.py`、`kototoki/asr_qwen.py`、`kototoki/align.py`、`kototoki/schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py`。

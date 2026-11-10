@@ -63,13 +63,16 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(len({recipes.recipe_hash(r) for r in every}), 7)
 
     def test_pinned_asr_recipe_hashes(self) -> None:
-        # 钉住 hash：改动任一值即得到新 hash 并使已有产物失效；W0/X0 的 hash 不因新增 CROSS 而变。
+        # 钉住 hash：改动任一值即得到新 hash 并使已有产物失效。W0 自 ADR-0023 起带 guard 块与新 id，
+        # CROSS 嵌套 W0 而随之改变；X0 不变。
+        self.assertEqual(recipes.W0["id"], "w0-faster-whisper-large-v3-guard-v2")
+        self.assertEqual(recipes.W0["baseline"], "w0-pyannote-current-mms-v1")  # 解码与特征仍是 W0 基线
         self.assertEqual(recipes.recipe_hash(recipes.W0),
-                         "127397b52558bbaab0f57a61bf55d1a446d90db1c3db933a07ef8a834fa1f7ba")
+                         "b73198fac0a1b8eb1ccc24d7d33479e3a42059989e4ef2a6820367efcb603e76")
         self.assertEqual(recipes.recipe_hash(recipes.X0),
                          "5d1bec25fbb4acae6d82a866620faf75e2c55498aa304c1dadd7dc401bfd057b")
         self.assertEqual(recipes.recipe_hash(recipes.CROSS),
-                         "ab9f453208a2ed5d684e3b399565b6e4b0d351ea65073ab6e7765bcf52069db7")
+                         "d29b138b492290b3c1fbf788c029472c97ecc1fb58aa7cdc4bb415c1cbec717f")
 
     def test_cross_nests_both_sub_recipes_and_judge_parameters(self) -> None:
         self.assertIs(recipes.CROSS["w0"], recipes.W0)
@@ -78,8 +81,8 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(recipes.CROSS["judge"]["length_weight"], 0.0)
         self.assertEqual(recipes.CROSS["judge"]["max_batch"], 16)
         base = recipes.recipe_hash(recipes.CROSS)
-        for path in (("w0", "decode_options", "beam_size"), ("x0", "generate", "max_new_tokens"),
-                     ("judge", "margin")):
+        for path in (("w0", "decode_options", "beam_size"), ("w0", "guard", "min_copies"),
+                     ("x0", "generate", "max_new_tokens"), ("judge", "margin")):
             changed = copy.deepcopy(recipes.CROSS)
             node = changed
             for key in path[:-1]:

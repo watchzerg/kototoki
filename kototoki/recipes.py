@@ -80,9 +80,11 @@ VAD: dict[str, Any] = {
 }
 
 # --- ASR w0（来源 experiments/w0_demo/asr.py；W0 契约 w0-pyannote-current-mms-v1） -------------------------
+# 解码与特征同 W0 基线（`baseline` 不变）；`guard` 是产品在解码之后加的整窗复读守卫（ADR-0023），
+# 规则来源 experiments/asr_robustness_v15/repeat.py 的 `repeat-strict`，实现在 kototoki/guard.py。
 
 W0: dict[str, Any] = {
-    "id": "w0-faster-whisper-large-v3-v1",
+    "id": "w0-faster-whisper-large-v3-guard-v2",
     "baseline": "w0-pyannote-current-mms-v1",
     "model": "faster-whisper large-v3 (CTranslate2)",
     "device": "cuda:0",
@@ -103,6 +105,12 @@ W0: dict[str, Any] = {
         "suppress_tokens": [-1], "no_repeat_ngram_size": 0, "repetition_penalty": 1,
         "initial_prompt": None, "without_timestamps": True, "prefix": None, "hotwords": None,
         "max_length": "model.max_length",
+    },
+    "guard": {
+        "rule": "repeat-strict", "min_period": 2, "min_copies": 10, "min_count": 10, "min_length": 3,
+        "min_coverage": 0.5,
+        "action": "collapse tandem run to its first unit; blank via failed_windows if still flagged",
+        "normalize": "kototoki.judge.normalize",
     },
 }
 

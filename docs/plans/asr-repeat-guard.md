@@ -1,6 +1,6 @@
 # ASR 整窗复读守卫进产品（ADR-0023 的实现）
 
-状态：**planned**（2026-11-11 起草；用户 2026-11-10 裁定 v15 的 A 进产品，决定已记为 [ADR-0023](../adr/0023-asr-repeat-guard.md)，本文是它的实现计划，尚未开工）。  
+状态：**in progress**（2026-11-11 起草、同日开工，进度见 §7；用户 2026-11-10 裁定 v15 的 A 进产品，决定已记为 [ADR-0023](../adr/0023-asr-repeat-guard.md)，本文是它的实现计划）。  
 目标：产品 `kototoki/` 的 w0 路径在 `asr` 阶段解码之后加一步后处理——规则 `repeat-strict` 命中的窗口折叠相邻重复，折叠后仍命中则置空。不改解码、VAD、对齐，不改 x0 路径，不改 W0 基线身份。  
 执行载体：tracker `.scratch/asr-repeat-guard/`（spec、map、票据，Git 忽略）。本文是唯一进 Git 的计划与完成记录：完成后在 §7 填结果，状态改为 done。  
 先读：[ADR-0023](../adr/0023-asr-repeat-guard.md)；[v15 研究文档](../research/2026-11-10-asr-robustness-v15.md) §7 的 01、02 两行与 §8 第 8 项；[模块边界](../architecture/module-boundaries.md)；模块页 [STT worker](../architecture/modules/stt-workers.md)、[产物契约](../architecture/modules/artifact-contract.md)、[阶段计划](../architecture/modules/stage-plan.md)；[技术设计](../specs/bilingual-subtitle-pipeline.md)；[测试设计与验收](../agents/testing.md)、[验证边界](../testing/validation.md)；[CODING_STANDARDS](../../CODING_STANDARDS.md)；代码 `kototoki/workers/{asr,protocol}.py`、`kototoki/recipes.py`、`kototoki/judge.py`（`normalize`）、`experiments/asr_robustness_v15/{repeat,actions}.py`。
@@ -69,7 +69,9 @@
 
 ## 7. 进度与结果
 
-（执行者填写：每张票据一行，含日期、提交、测试结果；GPU 验收的数字；最后写完成报告。）
+| 票据 | 日期 | 结果 |
+| --- | --- | --- |
+| 01 | 2026-11-11 | `kototoki/guard.py`（`RULE`、`check`、`apply`）与 `tests/core/test_guard.py`；与研究侧 `repeat.py` 在 317 个构造文本上命中与折叠结果相同。配方块、新 id `w0-faster-whisper-large-v3-guard-v2` 与重钉 hash 提前到本票（`guard.RULE` 取自 `recipes.W0["guard"]`）：W0 `b73198fac0a1b8eb1ccc24d7d33479e3a42059989e4ef2a6820367efcb603e76`，CROSS `d29b138b492290b3c1fbf788c029472c97ecc1fb58aa7cdc4bb415c1cbec717f`。`just test` 623 项通过 |
 
 ## 8. 待用户裁定
 
