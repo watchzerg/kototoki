@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | 音频分离 | ① 视频：ffmpeg 流复制（`-c:a copy`）保留原始编码，不转码（音频文件不做 ①）；② 模型输入直接从输入容器按绝对流索引解码（不是从 ① 的裸码流），带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV | 用户要求无损保留原格式；两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；裸码流容器丢时间戳，见 §2.2 |
 | VAD 与分窗 | Pyannote `segmentation-3.0`（revision `e66f3d3b…`），powerset 原生检测，onset／offset 0.5，`source-span-merge-v1`：≤30 s、整数样本坐标、保留块内间隙 | [ADR-0003](../adr/0003-new-pyannote-baselines.md) |
-| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链 | [W0 契约](w0-reusable-demo.md) |
+| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗复读守卫（规则 `repeat-strict`：命中窗口折叠相邻重复，仍命中则置空，§6），解码与特征仍是 W0 基线，产品配方 id `w0-faster-whisper-large-v3-guard-v2` | [W0 契约](w0-reusable-demo.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md) |
 | ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](x0-reusable-demo.md) |
 | ASR `cross`（可选，默认仍为 `w0`） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0 转写、再 x0 转写，然后由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变。HF II／III 实测两部合计 CER 15.25% → 14.30%（−0.95 pp，低于预设 1.0 pp 验收线，用户裁定仍采用），asr 阶段墙钟 3.75 倍；译文层收益与新材料确认未测 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[交叉打分研究](../research/2026-10-19-asr-pair-cross-score.md) |
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
@@ -182,7 +182,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4][names 1 2 3 4][translate 1
       audio-16k.wav        模型输入（2 h ≈ 230 MB），保留
       extract.log          ffmpeg verbose 日志（补偿统计）
       vad.json             身份：PCM SHA256 + VAD 配方 hash
-      asr.json             最贵的 STT 阶段；每窗文字与 trace、failed_windows，不含音频
+      asr.json             最贵的 STT 阶段；每窗文字与 trace（含复读守卫记录）、failed_windows，不含音频
       asr-w0.json、asr-x0.json、asr-judge.json   仅 `engine = cross`：两路各自完整的 `asr.json` 结构与裁判审计记录（带 `offset_s`）；审计产物，不参与身份与跳过判定
       align.json           权威 STT 证据：全文、units、text_only、对齐记录
       ja-cues.json         cue ↔ unit 映射、时间回填记账、未渲染文字记账
@@ -228,6 +228,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 - 文件级隔离：一个文件在某阶段失败，写 `failure.json`，该文件退出后续阶段，批次继续；最终汇总打印失败清单，退出码非零。
 - 无语音：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布零条目 `ja-zh.srt` 并告警（现有 SRT 解析器对空文件抛错，产品侧绕过它）。
 - x0 生成触顶（4096 token）：只把该窗口记为失败窗口，不让整部影片失败。表示方式由 worker 协议（票据 00）统一规定，w0／x0 相同：`asr.json` 中该窗的 `text` 置空，截断文字与原因记入 `failed_windows`（供诊断，不进对齐、cue 与翻译），"每个字符恰好一个 unit"的不变量按保留文本计算；窗口失败数进入汇总。现有 `x0_demo/pipeline.py::validate_asr` 拒绝 `token_limit_reached` 的行为不移植。
+- w0 整窗复读（[ADR-0023](../adr/0023-asr-repeat-guard.md)）：Whisper 偶尔在一个窗口里把同一短语复读几十遍。`asr` 阶段在 w0 解码之后、写 `asr.json` 之前对每个未失败的窗口按规则 `repeat-strict` 检查（规范化文本上周期 ≥2 字的单元相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖该窗规范化文字 ≥50%）：命中窗口折叠相邻重复，只留第一个单元；折叠后仍命中（含只有非相邻复现、没有可折叠区段）的窗口按上一条的失败窗口表示置空，原因 `guard:repeat-strict`。两种情况都在该窗的 `asr_traces[i].guard` 记规则名、动作、周期、份数与删去的字符数。只做后处理，不重解码；规则参数是 `W0` 配方常量，不是配置项；`cross` 引擎对 w0 那一路同样处理、裁判用守卫后的文字，x0 的输出不过守卫。
 - 阶段级终态与基础设施失败区分（沿用 v3，ADR-0019 起对象是 Strata）：OOM、服务崩溃／断开、传输错误、`server_error`、Strata 起不来是基础设施失败，同一调用内停掉 Strata 并重新启动，最多重启 2 次；每次重启是 v3 意义上的新 session（`sessions[]` 新增一项、`cache_state` 重置、`resumed=true`；首个请求的 `cache_n` 只记录，不据此判失败）。生成触顶、解析／校验失败、HTTP 报超出 context 是批次终态，进入下面的降级。**Strata 被拒绝**（`StrataRefused`：已有别的 launch 在服务、身份与 ADR-0017 不符）不重试，本批其余需要模型的影片直接失败；输入超过 Q1 预算（12224 token）只记录、不判失败。
 - 翻译降级（产品规则，区别于 v3 实验的"不缩批"与研究侧 Q2 的"只空出该包"；ADR-0019）：批次（≤10 条）两次尝试都失败 → 拆成前后两半（与原批次用同一条邻文规则与专名注入规则，seed 不变）→ 仍失败的半批拆成单条（10→5→1）→ 单条仍失败时该 cue 的中文位置保留日文原文。子批次 ID 为 `父ID.a`／`父ID.b`，场景文件记录降级树；降级清单写 `translate/report.json` 并在控制台汇总，发布日志行与汇总给出回退 cue 数。降级改变了研究侧配方的失败处理，产品配方另名、另算 hash（`q2-degrade-v1`）；译文校验在研究侧的 ID 集合／顺序／非空之外另拒绝含空行的译文。这与两次可靠性尝试都不是"翻译多次再挑选"（ADR-0008）。
 - 专名建表失败（ADR-0014、ADR-0019、ADR-0022）：提示超预算（`/v1/messages/count_tokens` 两段之和超过 24576 − 8192 − 512 = 15872）或依次换 seed 的 5 次回复都不合格，写 `build.status` 为 `too_long`／`failed` 的空表，运行日志一行 WARNING，影片照常翻译与发布（空表不注入）——表是观感优化，不该让整部影片没有字幕；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（`failure.json`），Strata 一直起不来或被拒绝时本批其余需要模型的影片直接失败，重跑同一命令对它们再建表。没有发布时替换，因而没有替换失败。
@@ -489,3 +490,5 @@ seed    = 20261019                      # 改 seed 即重建专名表（另起�
 2026-11-08（音频输入、工作目录外置、双语字幕发布到源文件旁，[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)）：用户裁定音频文件也是输入（`[input] extensions` 替代 `video_extensions`，ffprobe 判定视频／音频，音频不做流复制）；`[paths] output_dir` 删除、新增 `work_dir`，按目标目录分工作根并共用 `cache/`；只发布 `<stem>.ja-zh.srt` 到源文件旁，已存在即跳过，删除 `[run] force` 与按 `published.json` 判定覆盖（§1、§2、§3.3、§4、§6、§7.1、§10 已改，其余章节的 `.work/`、三份 SRT、`force` 描述是历史设计依据）；锁改为 `<work root>/lock`（退出码 3）。
 
 2026-11-09（产品建表切到 Strata，[ADR-0022](../adr/0022-product-names-on-strata.md)）：用户决定产品 `names` 阶段按基线 Q3 的规则在 Strata 上建表（配方 `q3-names-v1`，请求与 seed 序列与 `names-strata-v4` 逐字节一致，最多 5 次请求），names 与 translate 共用一个由编排持有的 Strata session（`kototoki/strata.py`，整批只启动一次），产品不再起 llama-server、不加载 27B；删除 `[names] model`／`port`、`[paths] llama_server`；本文 §1.2、§3、§4、§6、§7、§10 已按此改写，`names-sessions/` 改为共用的 `strata-sessions/`。
+
+2026-11-11（ASR 整窗复读守卫，[ADR-0023](../adr/0023-asr-repeat-guard.md)）：用户 2026-11-10 裁定 v15 的 A 进产品，2026-11-11 实现。w0 路径（含 `cross` 的 w0 那一路）在 `asr` 阶段解码之后按 `repeat-strict` 折叠复读窗、仍命中则按 `failed_windows` 置空；纯逻辑在 `kototoki/guard.py`。产品 W0 配方加 `guard` 块并换 id `w0-faster-whisper-large-v3-guard-v2`，W0、CROSS 的 `recipe_hash` 随之改变，旧工作目录的 `asr.json` 及其下游重算，不做迁移；W0 基线身份（解码、VAD、对齐）不变。本文 §1.1、§4、§6 已按交付行为改写。验收见[实现计划](../plans/asr-repeat-guard.md) §7。

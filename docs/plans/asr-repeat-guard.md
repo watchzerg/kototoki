@@ -73,6 +73,7 @@
 | --- | --- | --- |
 | 01 | 2026-11-11 | `kototoki/guard.py`（`RULE`、`check`、`apply`）与 `tests/core/test_guard.py`；与研究侧 `repeat.py` 在 317 个构造文本上命中与折叠结果相同。配方块、新 id `w0-faster-whisper-large-v3-guard-v2` 与重钉 hash 提前到本票（`guard.RULE` 取自 `recipes.W0["guard"]`）：W0 `b73198fac0a1b8eb1ccc24d7d33479e3a42059989e4ef2a6820367efcb603e76`，CROSS `d29b138b492290b3c1fbf788c029472c97ecc1fb58aa7cdc4bb415c1cbec717f`。`just test` 623 项通过 |
 | 02 | 2026-11-11 | `workers/asr.py` 的 `apply_guard` 接入 w0 引擎与 cross 的 w0 那一路（x0 不过守卫）；trace 记 `guard`，置空原因 `guard:repeat-strict`，进度行加 `guarded_windows`。`just check`、`just test`（627 项）、`just test-full`（14 项）通过 |
+| 03 | 2026-11-11 | 技术设计 §1.1／§4／§6、STT worker 模块页（新增"w0 复读守卫"一节）、产物契约（`asr_traces[].guard`、失败原因 `guard:repeat-strict`）、阶段计划页、架构总览分层图同步；`just docs-check` 无新增条目。ADR-0023 状态行与决定索引随 04 的验收结果一起改 |
 
 ## 8. 待用户裁定
 

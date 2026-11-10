@@ -87,7 +87,7 @@ flowchart TB
   VAD --> BASE
   ASR --> BASE
   ALIGN --> BASE
-  BASE["基础层：config · recipes · artifacts · srt · workers/protocol · schema · logs"]
+  BASE["基础层：config · recipes · artifacts · srt · workers/protocol · schema · logs · judge · guard"]
 ```
 
 依赖只允许向下；四条硬规则（编排不导入推理模块、推理模块互不导入、基础层不依赖 torch／ffmpeg／网络、产品包不导入 `experiments.*`）与责任边界见[模块边界](module-boundaries.md#依赖方向)。产品与研究入口之间没有导入关系：产品代码从实验代码复制而来，不引用。设计期的目标架构页（`bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入本页，依赖方向、责任边界与接缝并入模块边界；各产品模块的接口以其模块页"接口与依赖"节为准。

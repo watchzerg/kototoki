@@ -29,7 +29,9 @@
 
 **worker 协议**（`kototoki/workers/protocol.py`）：`--jobs <path>` 指向 `{"stage", "recipe_hash", "config", "files": [{"id", "work_dir", "inputs": {name: path}}]}`，键集合严格、id 唯一（`parse_jobs`／`read_jobs`／`write_jobs`）。`run_worker` 读 jobs、调用一次 `start(jobs)` 加载模型并得到逐文件处理函数；`run_jobs` 逐文件处理，结果由 worker 写进各自工作目录，每个文件结束在 stdout 打一行 UTF-8 JSON（`done`／`failed`／`fatal`／`startup_failed`，只含 id、状态与计数）。退出码：0 全部完成；1 有文件失败（该文件写 `failure.json`，继续下一文件）；2 启动失败或 `FatalWorkerError`（CUDA 粘性错误等，当前文件写 `failure.json` 后立即退出，编排器从下一文件重启）。
 
-**失败窗口**（w0／x0 共用）：`fail_window(asr, chunk_index, reason)` 把 `original_segments[i].text` 移入 `failed_windows`（`chunk_index`、`reason`、截断文字）并置空；`retained_text` 是保留文本，后续对齐、cue 与翻译只用它；`validate_failed_windows` 要求列表存在、索引唯一有效且对应窗口已置空。
+**失败窗口**（w0／x0 共用）：`fail_window(asr, chunk_index, reason)` 把 `original_segments[i].text` 移入 `failed_windows`（`chunk_index`、`reason`、截断文字）并置空；`retained_text` 是保留文本，后续对齐、cue 与翻译只用它；`validate_failed_windows` 要求列表存在、索引唯一有效且对应窗口已置空。`reason` 的现有取值：解码／生成抛错的 `RuntimeError: …`、x0 触顶的 `token_limit_reached: generated <n> tokens`、w0 复读守卫置空的 `guard:repeat-strict`（[ADR-0023](../../adr/0023-asr-repeat-guard.md)；此时 `text` 是该窗被置空前的完整原文）。
+
+**复读守卫记录**（w0 与 cross 的 `asr.json`、cross 的 `asr-w0.json`）：被守卫改动的窗口在 `asr_traces[i]` 里多一个键 `guard = {rule, action, period, copies, removed_raw_chars}`，`action` 为 `collapse`（`original_segments[i].text` 已是折叠后的文字）或 `blank`（该窗同时出现在 `failed_windows`）；没有被改动的窗口没有这个键。记录只有规则名与计数，不含文字。字段含义见 [STT worker](stt-workers.md#当前行为规格)。
 
 **cross 审计产物**：`engine = "cross"` 时 asr 阶段在 `<work root>/<id>/` 额外写三个审计文件，名称是 `artifacts.py` 的模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，engine 分别为 `w0`／`x0`，身份按单引擎计算）与 `asr-judge.json`（`offset_s`、每窗口两路原文、分歧区间、逐区间分数与决定，以及文件级计数汇总，身份同 cross 的 `asr.json`；字段见 [STT worker](stt-workers.md#cross-引擎)）。三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。它们**不是阶段产物**：不在 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游；asr 阶段的产物契约只认 `asr.json`。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。`asr.json` 本身的结构、`offset_s` 强制检查与失败窗口约定不变。
 
@@ -57,3 +59,5 @@
 2026-10-19 专名一致性进产品（[ADR-0014](../../adr/0014-name-consistency-in-product.md)）：票据 `.scratch/name-consistency-product/issues/05-config-assets-plan.md` 加 `NAME_TABLE`／`NAMES_APPLY` 两个常量，06 同步本页。
 
 2026-11-08 产品翻译切到 Q2（[ADR-0019](../../adr/0019-product-translation-q2.md)）：删除 `NAMES_APPLY` 常量与 `names_apply` 身份键；翻译 run 目录加 `__n<表sha12>`。
+
+2026-11-11 w0 复读守卫交付（[ADR-0023](../../adr/0023-asr-repeat-guard.md)）：`asr_traces[].guard` 与失败原因 `guard:repeat-strict`；`asr.json` 的结构、身份组成与失败窗口约定不变，W0／CROSS 配方 hash 改变使旧 `asr.json` 不再当前。
