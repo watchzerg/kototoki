@@ -11,7 +11,7 @@
 
 ## 当前有效决定
 
-更新于 2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
+更新于 2026-11-10（ADR-0023 采纳 ASR 复读守卫，尚未实现）。此前 2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
 
 | 主题 | 现行规则 | 权威出处 |
 | --- | --- | --- |
@@ -25,10 +25,13 @@
 | 翻译基线 Q2（前任）：身份 | Q1 的配方规则不变：`qwen-wide`，加产品 `names` 建表中 `confidence: high` 的专名注入，不做事后替换。模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（DFlash2）。配方带 `strata_launch: "default"`，不用 grammar。每个输入一个实例。质量证据来自 v12 F1；Q2 的启动配置本身未跑过翻译 | [0017](0017-q2-strata-default-launch-baseline.md)（含 Q1 规则）；Q0 身份见 [0015](0015-two-translation-baselines.md) |
 | 方法禁区 | 不自动选用"翻译多次再挑选"（MBR、best-of-N、多次投票及更省的变体）：不提议、不列候选、不在无人值守时执行。两次可靠性重试与 10→5→1 降级不算在内。边界情况先问 | [0008](0008-no-multi-translation-selection.md) |
 | 专名一致性 | 研究线已结题，不开新轮次，建表配置冻结（no-think、提示 v5；v13 由用户明确要求重开，产出 Q3 的 Strata 建表配方；2026-11-10 用户再次明确要求在 v15 重开，范围限日文转写侧的表内写法替换）。产品 `names` 阶段在与翻译共用的 Strata session 上用 Flash-Next 建表（配方 `q3-names-v1`，请求与 seed 序列与 Q3 的 `names-strata-v4` 逐字节一致，最多 5 次请求），必开，不起 llama-server；表只经翻译注入（high 条目）使用，没有发布时替换；表可手改，改到注入行即重译 | [0014](0014-name-consistency-in-product.md)；替换与开关的删除见 [0019](0019-product-translation-q2.md)；基线的建表见 [0021](0021-q3-strata-names-baseline.md)；产品建表与共享 session 见 [0022](0022-product-names-on-strata.md) |
+| ASR 复读守卫（已采纳、**尚未实现**） | w0 路径在 `asr` 阶段解码后加守卫：规则 `repeat-strict`（规范化文本上周期 ≥2 的相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖 ≥50%），动作折叠（保留第一个单元），折叠后仍命中则按 `failed_windows` 置空。只做后处理，不重解码；W0 基线身份不变，产品 W0 配方实现时换新 id、旧 `asr.json` 重算。实现前产品行为不变 | [0023](0023-asr-repeat-guard.md) |
 
 ### 未关闭项
 
 合并时已把各 ADR 的过时措辞改为现行事实。仍然成立的未关闭项：
+
+- **0023 尚未实现**：ASR 复读守卫已采纳（2026-11-10），产品代码、配方 id／hash 与验收都还没有；用户安排与后续改动一起做（[0023](0023-asr-repeat-guard.md)）。
 
 - **引擎并存**：H0 研究侧仍用 compat loader b11429，产品用官方 llama.cpp（现行 b11669，以[技术选型](../development/technology-stack.md)为准）。研究侧是否同步升级，未裁定（[0005](0005-apex-i-compact-translation-baseline.md)）。
 - **W0／X0 demo 的 CLI 旧默认**：省略参数时仍落到旧 PyanNet／fixed30，须显式选择新 Pyannote（[0003](0003-new-pyannote-baselines.md)）。
@@ -49,6 +52,7 @@
   3. → [0003](0003-new-pyannote-baselines.md)（10-05）：两路统一改用新 Pyannote。
   4. → [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13／14）：进产品，VAD 固定 `cuda:0`。
   5. → [0012](0012-cross-asr-judge.md)（10-19）：增加可选引擎 `cross`，默认仍 w0。
+  6. → [0023](0023-asr-repeat-guard.md)（11-10）：产品 w0 路径加整窗复读守卫（`repeat-strict`＋折叠），已采纳、尚未实现；基线身份不变。
 - **翻译模型与采样（H0）**：
   1. [0004](0004-hy-mt2-translation-baseline.md)（已合并）（10-06）：Q3_K_M，greedy，上下文 4096。
   2. → [0005](0005-apex-i-compact-translation-baseline.md)（10-07）：APEX-I-Compact；10-08 改为 `official30b-cached-v1`。
@@ -102,8 +106,9 @@
 | [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) | 音频输入、工作目录移出目标目录、双语字幕发布到源文件旁 | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 唯一翻译基线 Q3（Q2 规则＋Strata 建表，最多 5 次请求） | 有效 |
 | [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效 |
+| [0023](0023-asr-repeat-guard.md) | ASR 阶段整窗复读守卫（`repeat-strict`＋折叠） | 已接受，尚未实现 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0023 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0024 起。
 
 ## 记录新决定
 
