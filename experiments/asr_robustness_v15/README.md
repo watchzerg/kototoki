@@ -42,7 +42,7 @@
 
 ## 结论（2026-11-10 结题）
 
-A 选中 `repeat-strict`＋折叠并建议进产品；B1 两部都净变差；C3a 在 §4.3 的频次规则下 HF II Δ0、改取表头写法（附录 `c3a-entity`）后 −26 编辑；C3b 与 HF III Q3 建表因可用内存 <52 GiB 未跑（`names-build` 待补跑）。数字、口径与待裁定项见[研究文档](../../docs/research/2026-11-10-asr-robustness-v15.md) §7、§7.1、§8。产物在 `.local/asr-robustness-v15/`（不进 Git）。
+A 选中 `repeat-strict`＋折叠并建议进产品；B1 两部都净变差；C3a 在 §4.3 的频次规则下 HF II Δ0、改取表头写法（附录 `c3a-entity`）后 −26 编辑；C3b 与 HF III Q3 建表首次因可用内存 <52 GiB 未跑，重启后同日用 `names-build` 补跑：HF III Q3 表一次建成（23 条／high 19），其上 C3a −28、头写法 −51；C3b 两部无收益（HF II Δ0、HF III +4，有害率 34%）；05 按条件不触发。数字、口径与待裁定项见[研究文档](../../docs/research/2026-11-10-asr-robustness-v15.md) §7、§7.1、§8。产物在 `.local/asr-robustness-v15/`（不进 Git）。
 
 ## 验证
 
