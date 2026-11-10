@@ -116,7 +116,7 @@ def main() -> int:
     out = args.out.resolve() / NAME
     work_dir = artifacts.register_work_dir(out, audio.name)
     model_cache = str(artifacts.model_cache_path(out))
-    env = child_env(artifacts.work_root(out) / artifacts.CACHE_DIR)
+    env = child_env(artifacts.cache_dir(out))
 
     stages: dict[str, Any] = {}
     chain = (

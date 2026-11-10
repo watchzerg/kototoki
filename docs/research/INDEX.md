@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；本节只摘要并链接。当前有效的决定及其演进链以[决定索引](../adr/INDEX.md)为准，新决定按其"记录新决定"步骤同步。
 
+2026-11-11：[ADR-0023](../adr/0023-asr-repeat-guard.md) 的 ASR 整窗复读守卫**已实现并验收**（`kototoki/guard.py`＋`workers/asr.py`，产品 W0 配方 id `w0-faster-whisper-large-v3-guard-v2`）：HF III 第 51 窗折叠 94 → 31 字、官方 CER 13.3973% 逐项复现，HF II 零命中、CER 不变；过程与未跑项见[实现计划](../plans/asr-repeat-guard.md) §7、§8。
+
 2026-11-11：用户裁定 v15 收尾——**只有 A 进产品**（[ADR-0023](../adr/0023-asr-repeat-guard.md)，实现计划 [`docs/plans/asr-repeat-guard.md`](../plans/asr-repeat-guard.md)，尚未开工）；**B（空子段补窗）不进**；**C3（按专名表替换日文人名）不进**，ADR-0014 研究线的这次局部重开结束。W0 基线身份不变。
 2026-11-11：v15 票据 05 实跑完成（C3 纯规则头写法变体对翻译的影响；12 次产品翻译＋1728 单元配对裁判，GPU 1 run、裁判 $5.98）：**非劣、无可测改善**——Δ罚分 +0.016（CI90 −0.035～+0.067），人名错误 54 对 55，交付失败 0；只有整片不一致率 3.78% → 1.37%。含被改写 cue 的单元近半译文一字不差：翻译注入的专名表已覆盖这部分作用。执行者建议 C3 不进产品，待用户裁定（[v15](2026-11-10-asr-robustness-v15.md) §8 第 11 项）。GPU 5／12 run、Opus 与裁判 ≈$11。
 2026-11-10：用户裁定 v15 的 **A 进产品**——ASR 整窗复读守卫（`repeat-strict`＋折叠），记为 [ADR-0023](../adr/0023-asr-repeat-guard.md)（已接受、尚未实现，实现与后续改动一起做）；并要求不按有害率条件、直接跑 v15 票据 05（C3 头写法变体对翻译的影响），C3 看结果再定。
