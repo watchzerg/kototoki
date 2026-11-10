@@ -1,6 +1,6 @@
 # ADR-0023：ASR 阶段加整窗复读守卫（`repeat-strict`＋折叠）
 
-状态：已接受、**尚未实现**（2026-11-10，用户裁定 [v15](../research/2026-11-10-asr-robustness-v15.md) §8 第 7 项的 A：进产品；实现留待后续与其他改动一起做，届时在本行补实现日期、配方 hash 与验收结果）。不替代任何 ADR：[ADR-0003](0003-new-pyannote-baselines.md) 的 W0 基线身份（解码器、VAD、对齐）不变，本 ADR 只在产品 ASR 阶段加一步后处理；[ADR-0012](0012-cross-asr-judge.md) 的 `cross` 规则不变。  
+状态：已接受、**尚未实现**（2026-11-10，用户裁定 [v15](../research/2026-11-10-asr-robustness-v15.md) §8 第 7 项的 A：进产品；实现计划见 [`docs/plans/asr-repeat-guard.md`](../plans/asr-repeat-guard.md)，完成时在本行补实现日期、配方 hash 与验收结果）。不替代任何 ADR：[ADR-0003](0003-new-pyannote-baselines.md) 的 W0 基线身份（解码器、VAD、对齐）不变，本 ADR 只在产品 ASR 阶段加一步后处理；[ADR-0012](0012-cross-asr-judge.md) 的 `cross` 规则不变。  
 范围：产品包 `kototoki/` 的 w0 路径。不改解码参数、VAD 参数、MMS 对齐，不改 x0 路径，不改研究侧 demo。
 
 ## 决定
