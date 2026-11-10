@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("names-eval", help="票据 04：C3a／C3b 的单元口径评估、人名命中率、有害率（离线）")
     p.add_argument("--film", choices=("hf-ii", "hf-iii"), action="append")
     p = sub.add_parser("names-sample", help="票据 04：抽 30 条改动供 Opus 抽看（离线）")
+    sub.add_parser("impact-translate", help="票据 05：两臂 × 两部 × 3 seed 的产品翻译（GPU：一个 Strata session）")
+    sub.add_parser("impact-plan", help="票据 05：写配对裁判计划（离线；只写一次）")
+    sub.add_parser("impact-judge", help="票据 05：配对裁判 v5-asr-pairwise-v1（Opus 经 claude CLI；可续跑）")
+    sub.add_parser("impact-report", help="票据 05：裁判估计、不一致率、交付失败、成本（离线）")
     args = parser.parse_args(argv)
     films = tuple(getattr(args, "film", None) or ("hf-ii", "hf-iii"))
 
@@ -54,6 +58,13 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "names-sample":
         from experiments.asr_robustness_v15 import names_replace
         print(dumps(names_replace.sample_changes()))
+    elif args.command.startswith("impact-"):
+        from experiments.asr_robustness_v15 import translate_impact
+        if args.command == "impact-judge":
+            return translate_impact.judge()
+        action = {"impact-translate": translate_impact.run_translate, "impact-plan": translate_impact.judge_plan,
+                  "impact-report": translate_impact.report}[args.command]
+        print(dumps(action()))
     return 0
 
 

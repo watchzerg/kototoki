@@ -12,6 +12,7 @@
 | `scan.py` | 01 | A3：逐窗四信号（压缩比、触顶、`avg_logprob`、重复检测），规则候选 `doc-default`／`whisper-or`／`repeat`／`repeat-or-cr2.4`／`repeat-loose`／`repeat-strict` 的标记统计；被标记窗口文字与重叠参考写 `01/flagged/`（供 Opus）；`judge_rules` 合并判读算安全网判据 | 离线 |
 | `actions.py` | 02 | A4：对选中规则标记的窗口做置空／折叠／`no_repeat_ngram_size=5` 单次补解＋折叠三种动作，写产品形状 `asr.json`，一次产品 `align` 批，官方 CER（S／D／I） | GPU（补解＋align） |
 | `names_replace.py` | 04 | C3：按 `zh` 分组的专名表（规范写法＝对照转写里出现最多的写法）；C3a 纯规则整串替换（最长优先、更长表内写法内部不替换、单字与歧义写法不用）；C3b Flash-Next 提示 `ja-names-v1` ＋表内 diff 守卫（`table_guard`）；HF III 在同一 Strata session 内用产品 `kototoki.names.build_document` 建 Q3 表；单元口径评估、人名命中率、有害率、Opus 抽样 | 建表与 C3b GPU（Strata）；C3a 与评估离线 |
+| `translate_impact.py` | 05 | C3 翻译影响：对照与候选（04 的 `c3a-entity`）`ja.srt` 各用产品路径 `kototoki.translate`（`q2-degrade-v1`＋同一张 Q3 表）翻 seed 20261054–56；配对裁判与估计直接复用 `experiments.scene_batching_v6.asr10`（`v5-asr-pairwise-v1`，两侧相同的单元不判）；不一致率每臂配自己的日文 | 翻译 GPU（Strata）；裁判 Opus（`claude` CLI）；报告离线 |
 
 从仓库根目录运行：`.venv/Scripts/python.exe -X utf8 -m experiments.asr_robustness_v15 <子命令>`。
 
@@ -24,6 +25,10 @@
 | `names-rules [--film F]` | 04 | C3a 纯规则替换（离线；HF III 另出 27B 旧表对照 `c3a-oldtable`） |
 | `names-eval [--film F]` | 04 | C3a／C3b 单元口径评估、人名命中率、有害率、05 触发判断（离线） |
 | `names-sample` | 04 | 抽 30 条改动（改好／改坏各半）供 Opus 抽看（离线） |
+| `impact-translate` | 05 | 两臂 × 两部 × 3 seed 共 12 次产品翻译（GPU：一个 Strata session，先问；已有中文 SRT 的跳过） |
+| `impact-plan` | 05 | 写配对裁判计划（离线；只写一次） |
+| `impact-judge` | 05 | 配对裁判（Opus 经 `claude` CLI，花钱，先问；可续跑） |
+| `impact-report` | 05 | 裁判估计（各桶 Δ、CI90、人名错误）、不一致率、交付失败、成本（离线） |
 
 ## 重复检测器（票据 01 定义）
 
@@ -42,7 +47,7 @@
 
 ## 结论（2026-11-10 结题）
 
-A 选中 `repeat-strict`＋折叠并建议进产品；B1 两部都净变差；C3a 在 §4.3 的频次规则下 HF II Δ0、改取表头写法（附录 `c3a-entity`）后 −26 编辑；C3b 与 HF III Q3 建表首次因可用内存 <52 GiB 未跑，重启后同日用 `names-build` 补跑：HF III Q3 表一次建成（23 条／high 19），其上 C3a −28、头写法 −51；C3b 两部无收益（HF II Δ0、HF III +4，有害率 34%）；05 按条件不触发。数字、口径与待裁定项见[研究文档](../../docs/research/2026-11-10-asr-robustness-v15.md) §7、§7.1、§8。产物在 `.local/asr-robustness-v15/`（不进 Git）。
+A 选中 `repeat-strict`＋折叠并建议进产品；B1 两部都净变差；C3a 在 §4.3 的频次规则下 HF II Δ0、改取表头写法（附录 `c3a-entity`）后 −26 编辑；C3b 与 HF III Q3 建表首次因可用内存 <52 GiB 未跑，重启后同日用 `names-build` 补跑：HF III Q3 表一次建成（23 条／high 19），其上 C3a −28、头写法 −51；C3b 两部无收益（HF II Δ0、HF III +4，有害率 34%）；05 按条件不触发，用户裁定直接跑后（2026-11-11）：头写法变体对翻译非劣、无可测改善（Δ罚分 +0.016，CI90 −0.035～+0.067；人名错误 54 对 55；不一致率 3.78% → 1.37%）。A 已裁定进产品（ADR-0023，待实现）。数字、口径与待裁定项见[研究文档](../../docs/research/2026-11-10-asr-robustness-v15.md) §7、§7.1、§8。产物在 `.local/asr-robustness-v15/`（不进 Git）。
 
 ## 验证
 
