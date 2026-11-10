@@ -72,10 +72,11 @@
 | 票据 | 日期 | 结果 |
 | --- | --- | --- |
 | 01 | 2026-11-11 | `kototoki/guard.py`（`RULE`、`check`、`apply`）与 `tests/core/test_guard.py`；与研究侧 `repeat.py` 在 317 个构造文本上命中与折叠结果相同。配方块、新 id `w0-faster-whisper-large-v3-guard-v2` 与重钉 hash 提前到本票（`guard.RULE` 取自 `recipes.W0["guard"]`）：W0 `b73198fac0a1b8eb1ccc24d7d33479e3a42059989e4ef2a6820367efcb603e76`，CROSS `d29b138b492290b3c1fbf788c029472c97ecc1fb58aa7cdc4bb415c1cbec717f`。`just test` 623 项通过 |
+| 02 | 2026-11-11 | `workers/asr.py` 的 `apply_guard` 接入 w0 引擎与 cross 的 w0 那一路（x0 不过守卫）；trace 记 `guard`，置空原因 `guard:repeat-strict`，进度行加 `guarded_windows`。`just check`、`just test`（627 项）、`just test-full`（14 项）通过 |
 
 ## 8. 待用户裁定
 
-（执行中产生的裁定项由执行者追加。）
+1. **研究期 v14 测试钉着产品 W0 的旧 hash。** `experiments/asr_robustness_v14/test_offline.py::Identity::test_w0_recipe_hash_is_pinned` 断言 `plan.recipe_hash("asr", engine="w0")` 等于旧值 `127397b5…f7ba`，W0 配方换 id 后这一项失败（v14 其余 49 项与 v15 的 32 项通过）。它只在 `just experiments-test` 里，不属于任何门禁；本次按"不改 experiments/ 下既有脚本"没有动它。待裁定：保持失败（冻结证据）、还是允许把该断言改成新 hash 或删除。另：v15 的 `inventory.W0_RECIPE_HASH` 在导入时取产品当前 hash，所以重跑 v15 扫描时旧工作目录的 `asr.json` 不再被认作 `recipe_is_w0`——只影响重跑研究脚本，不影响已写出的报告。
 
 ## 附：执行提示词（粘贴到新 session）
 

@@ -41,6 +41,9 @@ SAMPLES = 3 * 16000
 REPO = Path(__file__).resolve().parents[2]
 LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z \[ *\d+\.\ds\] (\w+) +(.*)$")
 SECRET = "ひみつの窓"
+REPEATED = "まって、" + "うっ…" * 22 + "だめ。"   # 相邻重复 22 份：守卫折叠
+COLLAPSED = "まって、うっ…だめ。"
+RECURRING = "".join(f"たすけ{index}" for index in range(10))  # 只有非相邻复现：守卫置空
 
 
 def write_wav(path: Path, samples: np.ndarray, *, channels: int = 1) -> str:
@@ -176,8 +179,8 @@ class WorkerTestCase(unittest.TestCase):
     def run_vad(self) -> int:
         return self.run_stage(vad_worker.compute(FakeVad(), MODELS, 1.5), {"wav": self.wav})
 
-    def run_asr(self, asr=None) -> int:
-        return self.run_stage(asr_worker.compute(asr or FakeAsr(), "w0", MODELS, 2.0),
+    def run_asr(self, asr=None, engine="w0") -> int:
+        return self.run_stage(asr_worker.compute(asr or FakeAsr(), engine, MODELS, 2.0),
                               {"wav": self.wav, "vad": self.work_dir / artifacts.VAD})
 
     def run_cross(self, whisper, qwen) -> int:
@@ -237,6 +240,58 @@ class AsrWorkerTest(WorkerTestCase):
         self.assertEqual(document["failed_windows"], [{"chunk_index": 1, "reason": "RuntimeError: boom", "text": ""}])
         self.assertEqual(document["text"], "こんにちは。はい")
         self.assertEqual(self.progress()[-1]["failed_windows"], 1)
+        self.assertEqual(self.progress()[-1]["guarded_windows"], 0)
+
+    def test_guard_collapses_a_repeated_window_and_records_the_trace(self):
+        self.run_vad()
+        with self.assertLogs("kototoki.workers", "INFO") as logs:
+            self.assertEqual(self.run_asr(FakeEngine("w0", ("こんにちは。", REPEATED, "はい"))), EXIT_OK)
+        document = artifacts.read_json(self.work_dir / artifacts.ASR)
+        validate_transcript(document)
+        self.assertEqual([s["text"] for s in document["original_segments"]], ["こんにちは。", COLLAPSED, "はい"])
+        self.assertEqual(document["text"], "こんにちは。" + COLLAPSED + "はい")
+        self.assertEqual(document["failed_windows"], [])
+        self.assertEqual(document["asr_traces"], [
+            {"window": 0},
+            {"window": 1, "guard": {"rule": "repeat-strict", "action": "collapse", "period": 2, "copies": 22,
+                                    "removed_raw_chars": 63}},
+            {"window": 2}])
+        self.assertEqual(self.progress()[-1], {"windows": 3, "failed_windows": 0, "guarded_windows": 1,
+                                               "event": "done", "id": "0123456789ab"})
+        output = "\n".join(logs.output)
+        self.assertIn("WARNING:kototoki.workers.asr:[asr] 0123456789ab: window 1 guard repeat-strict collapsed: "
+                      "period 2, copies 22, removed 63 chars", output)
+        self.assertIn("3 window(s), 0 failed, 1 guarded, inference ", output)
+        for text in ("うっ", "まって", "だめ"):
+            self.assertNotIn(text, output)
+
+    def test_guard_blanks_a_window_it_cannot_collapse(self):
+        self.run_vad()
+        asr = FakeEngine("w0", (REPEATED, RECURRING, "はい"), [(0, "RuntimeError: boom")])
+        with self.assertLogs("kototoki.workers", "INFO") as logs:
+            self.assertEqual(self.run_asr(asr), EXIT_OK)
+        document = artifacts.read_json(self.work_dir / artifacts.ASR)
+        validate_transcript(document)
+        self.assertEqual(document["text"], "はい")
+        self.assertEqual(document["failed_windows"], [  # 已失败的窗口不过守卫，保留原因与原文
+            {"chunk_index": 0, "reason": "RuntimeError: boom", "text": REPEATED},
+            {"chunk_index": 1, "reason": "guard:repeat-strict", "text": RECURRING}])
+        self.assertEqual(document["asr_traces"][0], {"window": 0})
+        self.assertEqual(document["asr_traces"][1]["guard"], {"rule": "repeat-strict", "action": "blank",
+                                                              "period": None, "copies": None, "removed_raw_chars": 0})
+        self.assertEqual((self.progress()[-1]["failed_windows"], self.progress()[-1]["guarded_windows"]), (2, 1))
+        output = "\n".join(logs.output)
+        self.assertIn("[asr] 0123456789ab: window 1 failed: guard:repeat-strict", output)
+        self.assertNotIn("たすけ", output)
+
+    def test_x0_engine_is_not_guarded(self):
+        self.run_vad()
+        self.assertEqual(self.run_asr(FakeEngine("x0", (REPEATED, RECURRING, "はい")), engine="x0"), EXIT_OK)
+        document = artifacts.read_json(self.work_dir / artifacts.ASR)
+        self.assertEqual(document["text"], REPEATED + RECURRING + "はい")
+        self.assertEqual(document["asr_traces"], [{"window": 0}, {"window": 1}, {"window": 2}])
+        self.assertEqual(document["failed_windows"], [])
+        self.assertEqual(self.progress()[-1]["guarded_windows"], 0)
 
     def test_vad_from_other_audio_fails_the_file(self):
         self.run_vad()
@@ -318,7 +373,8 @@ class CrossAsrWorkerTest(WorkerTestCase):
         self.assertEqual(judged["intervals"], [{"w": "元気", "x": "げんき", "kind": "substitution", "score_w": -10.0,
                                                 "score_x": -9.5, "d": 0.5, "switched": True}])
         self.assertEqual(audit["summary"]["switched"], 1)
-        self.assertEqual(self.progress()[-1], {"windows": 3, "failed_windows": 0, "identical": 1, "intervals": 1,
+        self.assertEqual(self.progress()[-1], {"windows": 3, "failed_windows": 0, "guarded_windows": 0,
+                                               "identical": 1, "intervals": 1,
                                                "switched": 1, "x0_failed": 1, "score_error": 0,
                                                "event": "done", "id": "0123456789ab"})
 
@@ -342,6 +398,39 @@ class CrossAsrWorkerTest(WorkerTestCase):
         self.assertEqual([w["decision"] for w in audit["windows"]], ["identical", "w0_failed", "identical"])
         self.assertEqual(audit["summary"]["w0_failed"], 1)
 
+    def test_guard_runs_on_the_w0_path_only_and_the_judge_sees_guarded_text(self):
+        # 窗口 0：w0 复读被折叠，x0 给出另一种写法并被裁判选中；窗口 1：w0 置空，不以 x0 替代；
+        # 窗口 2：x0 自己复读，x0 那一路不过守卫（裁判照常比较）。
+        other = COLLAPSED.replace("だめ", "ダメ")
+        whisper = FakeWhisper((REPEATED, RECURRING, "はい"), scores={other: -9.5, "はい": 0.0})
+        qwen = self.qwen(texts=(other, "たすけて", "はい" + "うっ" * 22), failures=())
+        with self.assertLogs("kototoki.workers", "INFO") as logs:
+            self.assertEqual(self.run_cross(whisper, qwen), EXIT_OK)
+        w0 = self.read(artifacts.ASR_W0)
+        self.assertEqual([s["text"] for s in w0["original_segments"]], [COLLAPSED, "", "はい"])
+        self.assertEqual(w0["asr_traces"][0]["guard"]["action"], "collapse")
+        self.assertEqual(w0["failed_windows"], [{"chunk_index": 1, "reason": "guard:repeat-strict",
+                                                 "text": RECURRING}])
+        x0 = self.read(artifacts.ASR_X0)
+        self.assertEqual(x0["original_segments"][2]["text"], "はい" + "うっ" * 22)
+        self.assertEqual(x0["asr_traces"], [{"window": 0}, {"window": 1}, {"window": 2}])
+        self.assertEqual(whisper.calls[0], (0, [COLLAPSED, other], 16))  # hyp_w 是守卫后的 w0 文字
+        audit = self.read(artifacts.ASR_JUDGE)
+        self.assertEqual([w["decision"] for w in audit["windows"]], ["judged", "w0_failed", "judged"])
+        self.assertEqual(audit["windows"][0]["w0_text"], COLLAPSED)
+        document = self.read(artifacts.ASR)
+        validate_transcript(document)
+        self.assertEqual([s["text"] for s in document["original_segments"]], [other, "", "はい"])
+        self.assertEqual(document["failed_windows"], w0["failed_windows"])
+        self.assertEqual(document["asr_traces"], w0["asr_traces"])
+        self.assertEqual((self.progress()[-1]["failed_windows"], self.progress()[-1]["guarded_windows"]), (1, 2))
+        output = "\n".join(logs.output)
+        self.assertIn("window 0 guard repeat-strict collapsed: period 2, copies 22, removed 63 chars", output)
+        self.assertIn("w0 window 1 failed: guard:repeat-strict", output)
+        self.assertIn("score_error 0, guarded 2, w0 ", output)
+        for text in ("うっ", "たすけ", "だめ", "ダメ"):
+            self.assertNotIn(text, output)
+
     def test_score_error_keeps_w0_and_logs_no_text(self):
         whisper = FakeWhisper(("こんにちは。", SECRET, "はい"),
                               error="align returned a different number of results than texts")
@@ -351,7 +440,7 @@ class CrossAsrWorkerTest(WorkerTestCase):
         output = "\n".join(logs.output)
         self.assertIn("[asr] 0123456789ab: window 1 score error, keeping w0: RuntimeError: align returned", output)
         self.assertIn("[asr] 0123456789ab: cross windows 3, identical 2, intervals 0, switched 0, x0_failed 0, "
-                      "score_error 1, w0 ", output)
+                      "score_error 1, guarded 0, w0 ", output)
         for text in (SECRET, "ひみつのまど", "こんにちは", "はい"):
             self.assertNotIn(text, output)
         document = self.read(artifacts.ASR)
@@ -537,7 +626,7 @@ class WorkerLogTest(WorkerTestCase):
         entries = [(m[1], m[2]) for m in map(LOG_LINE.match, stderr) if m]
         self.assertIn(("WARNING", "[asr] 0123456789ab: window 1 failed: RuntimeError: boom"), entries)
         self.assertTrue(any(level == "INFO" and message.startswith("[asr] 0123456789ab: 3 window(s), 1 failed, "
-                                                                   "inference ")
+                                                                   "0 guarded, inference ")
                             for level, message in entries), entries)
         self.assertIn(("ERROR", "[asr] FAILED ba9876543210: FileNotFoundError"), entries)
         self.assertIn("Traceback (most recent call last):", stderr)

@@ -11,6 +11,10 @@ payload 为 `schema_version`、`engine`、`offset_s`、`input`、`chunks`（照�
 `original_segments`（与窗口一一对应）、`asr_traces`、`failed_windows`（协议 `fail_window` 写法）、
 保留文本 `text`、`metadata`、`stages`。cross 的 `asr.json` 取 w0 的段结构、trace 与失败窗口，段文字换成合并文本；
 三个审计产物不参与 `is_current`，窗口文字只写进 `.work/` 产物，不进日志。
+
+w0 的转写（w0 引擎，以及 cross 的 w0 那一路）在解码之后过一遍整窗复读守卫（`kototoki.guard`，ADR-0023）：命中窗口
+折叠后改写段文字，折叠后仍命中的作为失败窗口（原因 `guard:repeat-strict`）置空，两种情况都在该窗 trace 里记 `guard`；
+x0 的转写不过守卫。
 本模块导入时不加载 torch／CT2，适配器在 `start` 里才导入。
 """
 
@@ -24,7 +28,7 @@ import sys
 import time
 from typing import Any
 
-from kototoki import artifacts, judge, plan, recipes
+from kototoki import artifacts, guard, judge, plan, recipes
 from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, fail_window, retained_text, validate_failed_windows
 
@@ -56,6 +60,33 @@ def log_failures(job_id: str, failures: list[tuple[int, str]], label: str = "") 
         logger.warning("[%s] %s: %swindow %d failed: %s", STAGE, job_id, label, index, reason)
 
 
+def apply_guard(job_id: str, segments: list[dict[str, Any]], traces: list[Any],
+                failures: list[tuple[int, str]]) -> int:
+    """对未失败的 w0 窗口逐个过复读守卫，就地改 `segments`／`traces`／`failures`，返回被守卫改动的窗口数。
+
+    折叠：换掉该段文字；置空：文字不动，追加一条失败（之后由 `fail_window` 移入 `failed_windows`）。
+    两者都把守卫记录写进该窗 trace 的 `guard`。日志只记窗口号、动作与计数。
+    """
+    failed = {index for index, _ in failures}
+    guarded = 0
+    for index, segment in enumerate(segments):
+        if index in failed:
+            continue
+        text, record = guard.apply(segment["text"])
+        if record is None:
+            continue
+        guarded += 1
+        traces[index] = {**(traces[index] or {}), "guard": record}
+        if record["action"] == "blank":
+            failures.append((index, f"guard:{record['rule']}"))
+        else:
+            segments[index] = {**segment, "text": text}
+            logger.warning("[%s] %s: window %d guard %s collapsed: period %d, copies %d, removed %d chars",
+                           STAGE, job_id, index, record["rule"], record["period"], record["copies"],
+                           record["removed_raw_chars"])
+    return guarded
+
+
 def compute(asr: Any, engine: str, model_sha256: Mapping[str, str], load_s: float) -> gpu.Compute:
     def run(job: FileJob) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
         audio, pcm_sha256 = gpu.read_wav(job.inputs["wav"])
@@ -63,12 +94,13 @@ def compute(asr: Any, engine: str, model_sha256: Mapping[str, str], load_s: floa
         started = time.perf_counter()
         segments, traces, failures = asr.transcribe(audio, vad["chunks"])
         inference_s = time.perf_counter() - started
+        guarded = apply_guard(job.id, segments, traces, failures) if engine == "w0" else 0  # x0 不过守卫
         log_failures(job.id, failures)
         document = transcript_document(engine, vad, segments, traces, failures, asr.metadata,
                                        {"load_s": load_s, "inference_s": inference_s})
-        fields = {"windows": len(segments), "failed_windows": len(failures)}
-        logger.info("[%s] %s: %d window(s), %d failed, inference %.1fs",
-                    STAGE, job.id, len(segments), len(failures), inference_s)
+        fields = {"windows": len(segments), "failed_windows": len(failures), "guarded_windows": guarded}
+        logger.info("[%s] %s: %d window(s), %d failed, %d guarded, inference %.1fs",
+                    STAGE, job.id, len(segments), len(failures), guarded, inference_s)
         return (job.work_dir / artifacts.ASR, plan.asr_identity(engine, pcm_sha256, vad_sha256, model_sha256),
                 document, fields)
     return run
@@ -116,6 +148,7 @@ def compute_cross(whisper: Any, qwen: Any, model_sha256: Mapping[str, str], w0_s
         started = time.perf_counter()
         segments_w, traces_w, failures_w = whisper.transcribe(audio, chunks)
         inference_w0_s = time.perf_counter() - started
+        guarded = apply_guard(job.id, segments_w, traces_w, failures_w)  # 裁判与合并用守卫后的 w0 文字
         log_failures(job.id, failures_w, "w0 ")
         document_w = transcript_document("w0", vad, segments_w, traces_w, failures_w, whisper.metadata,
                                          {"load_s": loads["load_w0_s"], "inference_s": inference_w0_s})
@@ -183,13 +216,14 @@ def compute_cross(whisper: Any, qwen: Any, model_sha256: Mapping[str, str], w0_s
         artifacts.write_artifact(job.work_dir / artifacts.ASR_JUDGE, identity,
                                  {"offset_s": vad["offset_s"], "windows": records, "summary": summary})
 
-        fields = {"windows": len(chunks), "failed_windows": len(failures_w), "identical": summary["identical"],
+        fields = {"windows": len(chunks), "failed_windows": len(failures_w), "guarded_windows": guarded,
+                  "identical": summary["identical"],
                   "intervals": summary["intervals"], "switched": summary["switched"],
                   "x0_failed": counts["x0_failed"], "score_error": counts["score_error"]}
         logger.info("[%s] %s: cross windows %d, identical %d, intervals %d, switched %d, x0_failed %d, "
-                    "score_error %d, w0 %.1fs, x0 %.1fs, score %.1fs",
+                    "score_error %d, guarded %d, w0 %.1fs, x0 %.1fs, score %.1fs",
                     STAGE, job.id, len(chunks), summary["identical"], summary["intervals"], summary["switched"],
-                    counts["x0_failed"], counts["score_error"], inference_w0_s, inference_x0_s, score_s)
+                    counts["x0_failed"], counts["score_error"], guarded, inference_w0_s, inference_x0_s, score_s)
         return job.work_dir / artifacts.ASR, identity, document, fields
     return run
 
