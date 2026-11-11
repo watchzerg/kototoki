@@ -41,9 +41,9 @@
 
 **日志**（经编排写进运行日志，[批次编排：运行日志](batch-orchestration.md#运行日志)）：
 
-- `[names] start: N file(s)`；`[names] end: … s`。
+- `[names] start: N file(s)`；`[names] end: N done, M failed, T.Ts`。
 - Strata 的启动、等显存与内存、接入检查、停止来自 `kototoki.strata`，前缀 `[strata]`。
-- 每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T s`，第 2 次及以后的尝试才成功时追加 `, attempt n/5`（上限取包顶层导出的 `ATTEMPTS`）；零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`。
+- 每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T.Ts`，第 2 次及以后的尝试才成功时追加 `, attempt n/5`（上限取包顶层导出的 `ATTEMPTS`）；零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`。
 - 每次不合格的尝试（回复被截断、非 JSON、无有效条目）在该行之前各记一行 WARNING `[names] attempt n/5 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）。
 - `count_tokens` 不可用时一行 WARNING。
 - 传输失败、HTTP 错误或 OOM 停掉 Strata 前一行 WARNING `[names] stopping Strata after <HTTP 状态 (类别) | 传输异常类型>`（来自包顶层）。

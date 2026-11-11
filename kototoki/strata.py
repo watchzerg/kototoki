@@ -138,7 +138,7 @@ def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS,
         seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
         if not warned and clock() - started > FREE_VRAM_WARN_SECONDS:
             warned = True
-            log.warning("[%s] waiting for free GPU memory: %s < %d MiB after %.0f s", stage, seen, min_mib,
+            log.warning("[%s] waiting for free GPU memory: %s < %d MiB after %.0fs", stage, seen, min_mib,
                         clock() - started)
         if clock() >= deadline:
             raise InfraFailure(f"Free GPU memory {seen} stayed below {min_mib} MiB for {timeout:.0f} s; "
@@ -348,7 +348,7 @@ class StrataServer:
             if free is None or free >= MIN_AVAILABLE_RAM_GIB:
                 return free
             if self.clock() >= deadline:
-                log.warning("[strata] only %.1f GiB RAM available after %.0f s (want %.0f GiB): Strata may read its "
+                log.warning("[strata] only %.1f GiB RAM available after %.0fs (want %.0f GiB): Strata may read its "
                             "experts from the SSD and run several times slower; close other programs",
                             free, RAM_WAIT_S, MIN_AVAILABLE_RAM_GIB)
                 return free
@@ -396,7 +396,7 @@ class StrataServer:
                     + f"; see {engine_log}); free RAM (about {MIN_AVAILABLE_RAM_GIB:.0f} GiB available) and run again")
             self.sampler = ResourceSampler(self.url, self.get)
             self.sampler.start()
-            log.info("[strata] Strata ready in %.1f s (%s, %s, experts in %s)", self.identity["cold_load_seconds"],
+            log.info("[strata] Strata ready in %.1fs (%s, %s, experts in %s)", self.identity["cold_load_seconds"],
                      observed["launch"].get("name"), observed["drafting"], observed["expert_arena"])
             if type(launch.get("pid")) is int:
                 self.on_pid(launch["pid"])

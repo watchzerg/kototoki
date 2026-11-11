@@ -354,6 +354,17 @@ class TranslateDocumentTests(unittest.TestCase):
             R.strict_json('{"a": 1, "a": 2}')
         self.assertEqual(str(caught.exception), "Duplicate JSON key")
 
+    def test_failed_attempt_line_names_the_exchange_relative_to_the_work_root(self) -> None:
+        from kototoki.translate.generate import _log_failed_attempts
+        base = self.h.root / "work"
+        exchange = base / "abc" / "translate" / "srt-x" / "run" / "transport" / "session-01" / "chat-03"
+        request = {"attempts": [{"status": "failed", "attempt": 1, "seed": SEED, "error_kind": "parse",
+                                 "error": "validation: Duplicate JSON key", "exchange": str(exchange)}]}
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            _log_failed_attempts("srt-x-b0001", request, base)
+        self.assertTrue(logs.records[0].getMessage().endswith(
+            f"seed {SEED}, exchange abc/translate/srt-x/run/transport/session-01/chat-03"), logs.records[0].getMessage())
+
     def test_length_stop_is_a_limit_failure(self) -> None:
         doc = document(5)
         self.h.plans = [{1: "length", 2: "length"}]

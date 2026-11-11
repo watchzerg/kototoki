@@ -558,7 +558,7 @@ def _names_line(relative: str, result: BuildResult) -> str:
     meta = result.payload["meta"]
     dropped = sum(len(meta[key]) for key in ("dropped_shape", "dropped_honorific", "dropped_ja_shape"))
     return (f"[names] done {relative}: {len(result.payload['entries'])} entries ({dropped} dropped), "
-            f"{meta['prompt_tokens']} prompt tok, {meta['completion_tokens']} completion tok, {result.seconds:.1f} s"
+            f"{meta['prompt_tokens']} prompt tok, {meta['completion_tokens']} completion tok, {result.seconds:.1f}s"
             + (f", attempt {result.attempts}/{names.ATTEMPTS}" if result.attempts > 1 else ""))
 
 
@@ -572,6 +572,7 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) 
         return
     started = time.perf_counter()
     logger.info(f"[names] start: {len(batch)} file(s)")
+    done = 0
     documents: dict[str, srt.SourceDocument] = {}
     for video in batch:
         try:
@@ -596,8 +597,8 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) 
             continue
         line = _names_line(video.relative, result)
         (logger.info if result.status == "ok" else logger.warning)(line)
-        advance_or_fail(ctx, video, "names")
-    logger.info(f"[names] end: {time.perf_counter() - started:.1f}s")
+        done += advance_or_fail(ctx, video, "names")
+    logger.info(f"[names] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
 
 
 def translate_batch(ctx: _Context, batch: list[VideoFile],
@@ -632,7 +633,8 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
         (logger.warning if result.fallback_count else logger.info)(
             f"[translate] done {video.relative}{resumed}: {len(tplan.document.cues)} cue(s), "
             f"{result.fallback_count} fallback, {time.perf_counter() - file_started:.1f}s")
-    logger.info(f"[translate] end: {time.perf_counter() - started:.1f}s")
+    logger.info(f"[translate] end: {len(results)} done, {len(batch) - len(results)} failed, "
+                f"{time.perf_counter() - started:.1f}s")
     return results
 
 
@@ -657,7 +659,7 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, fall
     if video.embedded is not None:
         ctx.summary.embedded.append(video.relative)
     ctx.summary.fallback_cues += fallback
-    logger.info(f"[publish] {video.relative}" + (" (no speech)" if video.no_speech else "")
+    logger.info(f"[publish] done {video.relative}" + (" (no speech)" if video.no_speech else "")
                 + (" (embedded subtitles)" if video.embedded is not None else "")
                 + (f", {fallback} fallback cue(s)" if fallback else ""))
     return True
@@ -731,7 +733,8 @@ def _run(ctx: _Context) -> None:
         claimed[key] = rel
         ctx.files.append(video)
     logger.info(f"[scan] {summary.total} file(s): {len(ctx.files)} to process, {len(summary.existing)} with "
-                f"subtitles, {len(summary.unstable)} unstable")
+                f"subtitles, {len(summary.unstable)} unstable, "
+                f"{sum(stage == 'scan' for stage in summary.failed.values())} failed")
 
     started = time.perf_counter()
     logger.info(f"[extract] start: {len(ctx.files)} file(s)")
@@ -751,7 +754,8 @@ def _run(ctx: _Context) -> None:
         except BaseException:  # Ctrl+C：排队中的文件不再提取，只等正在跑的 ffmpeg 结束
             pool.shutdown(wait=True, cancel_futures=True)
             raise
-    logger.info(f"[extract] end: {sum(1 for v in ctx.files if not v.failed)} ok, {time.perf_counter() - started:.1f}s")
+    ok = sum(1 for video in ctx.files if not video.failed)
+    logger.info(f"[extract] end: {ok} done, {len(ctx.files) - ok} failed, {time.perf_counter() - started:.1f}s")
 
     def live() -> list[VideoFile]:
         return [video for video in ctx.files if not video.failed]

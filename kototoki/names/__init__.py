@@ -69,7 +69,7 @@ class _TokenCounter:
         except (HTTPError, URLError, KeyError, ValueError, TypeError) as exc:
             self.ok, self.error = False, f"{type(exc).__name__}: {exc}"[:300]
             log.warning("[names] count_tokens unavailable (%s): no prompt budget precheck for this document",
-                        self.error)
+                        self.error[:200])  # build 块的 `prompt_check` 仍记 300 字符
             return 0
         self.ok = True
         return n

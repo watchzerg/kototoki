@@ -1185,7 +1185,7 @@ class EmbeddedSubtitleTests(JobCase):
         log = console.getvalue()
         self.assertIn("[extract] done a.mkv: embedded subtitle stream 2 (subrip), 2 cue(s), skipping speech recognition",
                       log)
-        self.assertIn("[publish] a.mkv (embedded subtitles)", log)
+        self.assertIn("[publish] done a.mkv (embedded subtitles)", log)
         self.assertIn("2 published (0 no speech, 1 from embedded subtitles)", log)
         self.assertNotIn("字幕の", log)  # 字幕文字不进日志
 
@@ -1421,7 +1421,7 @@ class RunLogTests(JobCase):
         extract = [entry for entry in self.entries_at(file, "INFO") if entry.startswith("[extract]")]
         self.assertEqual(extract[0], "[extract] start: 3 file(s)")
         self.assertEqual(sorted(extract[1:-1]), ["[extract] done a.mkv", "[extract] done c.mkv"])
-        self.assertRegex(extract[-1], r"^\[extract\] end: 2 ok, \d+\.\ds$")
+        self.assertRegex(extract[-1], r"^\[extract\] end: 2 done, 1 failed, \d+\.\ds$")
 
     def test_media_warnings_are_logged_per_file(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
@@ -1660,13 +1660,13 @@ class RunLogTests(JobCase):
     def test_names_done_line_shows_the_attempt_only_after_retries(self) -> None:
         self.make_inputs("a.mkv")
         _, file = self.run_logged()
-        self.assertIn("[names] done a.mkv: 0 entries (1 dropped), 100 prompt tok, 20 completion tok, 1.5 s",
+        self.assertIn("[names] done a.mkv: 0 entries (1 dropped), 100 prompt tok, 20 completion tok, 1.5s",
                       self.entries_at(file, "INFO"))
         self.final("a.mkv").unlink()
         self.names_attempts = 3
         (self.work_dir("a.mkv") / artifacts.NAME_TABLE).unlink()
         _, file = self.run_logged()
-        self.assertIn("[names] done a.mkv: 0 entries (1 dropped), 100 prompt tok, 20 completion tok, 1.5 s, "
+        self.assertIn("[names] done a.mkv: 0 entries (1 dropped), 100 prompt tok, 20 completion tok, 1.5s, "
                       "attempt 3/5", self.entries_at(file, "INFO"))
 
     def test_failures_after_strata_became_unavailable_carry_no_traceback(self) -> None:
@@ -1696,6 +1696,19 @@ class RunLogTests(JobCase):
     def test_plan_line_with_nothing_to_plan(self) -> None:
         _, file = self.run_logged()
         self.assertIn("[plan] 0 file(s) resume at: none", self.entries_at(file, "INFO"))
+
+    def test_scan_counts_add_up_and_stage_end_lines_share_one_shape(self) -> None:
+        self.make_inputs("S1/ep.mkv", "S1/ep.mp4", "b.mkv")  # ep.mp4 与 ep.mkv 争用同一份字幕：scan 失败
+        self.translate_errors = set(self.ids("b.mkv"))
+        _, file = self.run_logged()
+        info = self.entries_at(file, "INFO")
+        self.assertIn("[scan] 3 file(s): 2 to process, 0 with subtitles, 0 unstable, 1 failed", info)
+        ends = {entry.split("]")[0][1:]: entry for entry in info if re.match(r"^\[\w+\] end: ", entry)}
+        self.assertEqual(set(ends), {"extract", "vad", "asr", "align", "cues", "names", "translate"})
+        for stage, entry in ends.items():
+            self.assertRegex(entry, rf"^\[{stage}\] end: \d+ done, \d+ failed, \d+\.\ds$")
+        self.assertTrue(ends["translate"].startswith("[translate] end: 1 done, 1 failed, "))
+        self.assertIn("[publish] done S1/ep.mkv", info)
 
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")

@@ -49,7 +49,7 @@ Status: in-progress
 | 05 | 翻译：固定校验消息、行内文件归属、降级批次字段 | — | resolved |
 | 06 | Strata 与专名：故障行与启停行 | — | resolved |
 | 07 | 续跑计数行 | 01 | resolved |
-| 08 | 格式统一与文档对齐 | 01–07 | ready-for-agent |
+| 08 | 格式统一与文档对齐 | 01–07 | resolved |
 | 09 | smoke runner 的编码与子进程回收 | — | ready-for-agent |
 | 10 | 补测试缺口并结题 | 01–09 | ready-for-agent |
 
@@ -182,6 +182,8 @@ Status: in-progress
 7. README 的日志说明补 `run-<戳>-<stage>.stderr.log` 与指针行的读法。
 
 验收：受影响测试的断言更新；`just test` 通过；文档链接检查通过。
+
+执行差异：第 4 项写"唯一日志"，但票 06 已给该包加了 `[names] stopping Strata after …` WARNING，故模块页与模块边界登记的是两条顶层 WARNING；300→200 只改日志行，`build.prompt_check` 载荷仍记 300 字符（载荷属产物，不在本轮改）。
 
 ### 09 smoke runner 的编码与子进程回收
 

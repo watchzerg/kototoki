@@ -215,10 +215,10 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
     raise last
 
 
-def _log_failed_attempts(batch_id: str, request: dict[str, Any]) -> None:
+def _log_failed_attempts(batch_id: str, request: dict[str, Any], base: Path) -> None:
     """每次被拒绝（HTTP 错误、超出 context、server 报错）或格式不合格（非 JSON、ID 不符、空译文、触顶）的尝试记一行
-    WARNING：分类、seed、错误首行、停止原因、输出 token、回复字符数与交换目录。回复正文不进日志，在交换目录的
-    `response.raw` 里。"""
+    WARNING：分类、seed、错误首行、停止原因、输出 token、回复字符数与交换目录（相对工作根 `base`）。回复正文不进日志，
+    在交换目录的 `response.raw` 里。"""
     attempts = request.get("attempts") or []
     for attempt in attempts:
         if attempt.get("status") != "failed":
@@ -231,14 +231,14 @@ def _log_failed_attempts(batch_id: str, request: dict[str, Any]) -> None:
         if attempt.get("content_chars") is not None:
             parts.append(f"reply {attempt['content_chars']} char(s)")
         if attempt.get("exchange"):
-            parts.append(f"exchange {attempt['exchange']}")
+            parts.append(f"exchange {Path(attempt['exchange']).relative_to(base).as_posix()}")
         error = (str(attempt.get("error") or "").splitlines() or [""])[0][:200]
         log.warning("[translate] batch %s attempt %d/%d failed (%s): %s; %s", batch_id, attempt.get("attempt"),
                     R.MAX_ATTEMPTS, attempt.get("error_kind"), error, ", ".join(parts))
 
 
 def translate_batch(client: Any, scene: Scene, batch: Batch, rows: list[dict[str, str]], seed: int,
-                    cache_state: dict[str, Any]) -> dict[str, Any]:
+                    cache_state: dict[str, Any], base: Path) -> dict[str, Any]:
     ids = list(batch.target_ids)
     window = batch.to_window(scene)
     request: dict[str, Any] = {"stage": "translation", "batch_index": batch.index,
@@ -249,7 +249,7 @@ def translate_batch(client: Any, scene: Scene, batch: Batch, rows: list[dict[str
         exc.record = {**batch.record(), "request": request}
         raise
     finally:
-        _log_failed_attempts(batch.batch_id, request)
+        _log_failed_attempts(batch.batch_id, request, base)
     return {**batch.record(), "translations": result, "request": request}
 
 
@@ -462,7 +462,7 @@ def translate_document(plan: TranslatePlan, session: Session | None, *, relative
 
             def attempt(node: Batch) -> dict[str, Any]:
                 try:
-                    return (translate_batch(client, scene, node, plan.names, seed, cache_state)
+                    return (translate_batch(client, scene, node, plan.names, seed, cache_state, plan.work_dir.parent)
                             | {"session": number})
                 except StepFailed as exc:
                     if exc.kind in INFRA_KINDS:
@@ -520,7 +520,7 @@ def translate_document(plan: TranslatePlan, session: Session | None, *, relative
             if entry is not None:
                 entry.update(ended_at_utc=utc_now(), wall_seconds=time.perf_counter() - started,
                              cache_reset=dict(_cache_state(session)))
-                log.info("[translate] session %d end: %d batch(es) written in %.1f s", entry["index"],
+                log.info("[translate] session %d end: %d batch(es) written in %.1fs", entry["index"],
                          entry["batches_written"], entry["wall_seconds"])
             _finish(root, run, batches, done, restarts)
     completion = _finish(root, run, batches, done, restarts)
