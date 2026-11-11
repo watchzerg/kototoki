@@ -37,14 +37,20 @@
 - 没有任何词汇字符（空输入、纯标点、纯 ♪）时零条目，`srt_text == ""`；不产出空 cue 或纯标点 cue。
 - `payload`（`ja-cues.json` 的内容，身份由编排器包装）：`cues[]`（`index`、`start_ms`、`end_ms`、`text`、`char_start/char_end`、`unit_start/unit_end`（一字符一 unit，与字符范围相同）、`time_sources` 计数、`backfilled_units`）；全文 `time_sources` 计数；`backfilled_units`（回填 unit 的连续区间与来源）；`fallback_windows`（整窗回退的窗口序号）；`unrendered_chars`（不在任何 cue 内的字符数，有 cue 时为 0）。编排写出时另在 payload 里加 `ja_srt_sha256`（写出的 `ja.srt` 的 SHA256），供阶段计划判定 `ja.srt` 是否仍是本阶段的输出；本模块不算它。
 
+**运行日志**（本模块不发日志，由编排 `job._run` 的 cues 循环按 payload 写，只报数、不设阈值）：
+
+- `[cues] start: N file(s)`；每文件 `[cues] done <相对路径>: N cue(s), I interpolated unit(s), F fallback unit(s), W fallback window(s), U unrendered char(s)`，计数取 payload 的 `cues` 条数、全文 `time_sources` 的 `interpolated`／`fallback`、`fallback_windows` 条数与 `unrendered_chars`；
+- cue 数为 0 时 done 行用 WARNING（走到 cues 阶段的文件 VAD 有语音，0 条会发布成近乎空的字幕）；
+- `[cues] end: N done, M failed, T.Ts`。
+
 ## 接口与依赖
 
 只依赖标准库、`kototoki.srt`（整数毫秒渲染入口 `format_srt_ms`、`milliseconds`）与 `kototoki.recipes`（`CUES["fallback_max_char_s"]`）；属基础层之上的纯函数模块，编排器直接调用（[模块边界](../module-boundaries.md#依赖方向)）。cue 规则的取值与默认由配置模块提供；整窗回退的每字符时长上限是会改变输出的值，只在 `recipes.CUES` 里（进 cue 配方 hash），本模块直接读，没有自己的常量。
 
 ## 代码与验证入口
 
-- 代码：`kototoki/cues.py`（`build_cues`、`is_lexical`）。
-- 测试（core，`just test`）：`tests/core/test_cues.py`——插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、句末与全文末单个超限字符不再切、lead-out 不重叠、min-duration、间隔断句（跨子段切、同一子段内不切、子段相接与跨窗口照切）、空输入、全 `text_only` 窗、纯标点、♪ 附着、非零 `offset_s` 对窗口、子段与 units 各只加一次（另有一条 `align.map_records` → `build_cues` 整链用例，期望值取自 offset 挪到 cue 之前的代码，证明结果不变）、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。
+- 代码：`kototoki/cues.py`（`build_cues`、`is_lexical`）；日志行在 `kototoki/job.py`（`cues_batch`、`build_ja_cues`）。
+- 测试（core，`just test`）：`tests/core/test_cues.py`——插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、句末与全文末单个超限字符不再切、lead-out 不重叠、min-duration、间隔断句（跨子段切、同一子段内不切、子段相接与跨窗口照切）、空输入、全 `text_only` 窗、纯标点、♪ 附着、非零 `offset_s` 对窗口、子段与 units 各只加一次（另有一条 `align.map_records` → `build_cues` 整链用例，期望值取自 offset 挪到 cue 之前的代码，证明结果不变）、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。`tests/core/test_job.py` 的 `RunLogTests`：cues 三件套、done 行计数、0 条 cue 为 WARNING。
 - 离线观感（2026-10-14，当时的 `[cues]` 初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（现行默认值见[配置参考](config-reference.md)）。记录见票据 04 Comments。
 - x0 标点密度离线对照（2026-10-14，票据 07；现有同窗 X0／W0 研究期 `result.json`，hf-ii／hf-iii 各 6 个冻结窗口中两引擎都有结果的 11 个，同一组 101 个 VAD 窗口，默认 `[cues]`）：x0 每 100 个词汇字符有 7.7 个句末标点、2.5 个逗号，w0 为 2.3 与 0.6；cue 数 626 对 591，平均每条 9.9 对 9.8 字、p90 均为 18、触及 24 字上限 4 对 3 条，平均时长 1.84 s 对 1.99 s；以句末标点收尾的 cue 占 69% 对 20%，w0 其余多在时间间隔或硬切处断开。结论：x0 的标点主要改变断点位置（更多落在句末），不改变条目长度，现有初值无需按引擎区分。
 - 票据 12 离线重算（2026-10-15，整片验收 `align.json`，初值 `[cues]`）：跨 VAD 子段才断句后，cue 数 w0／II 1056→1048、w0／III 1188→1181、x0／II 1154→1150、x0／III 1263→1257，≤2 字条目 113→110、124→118、115→114、95→90，重叠与 >6 s 条目数不变。建票样本（HF II w0 约 1969 s 的两字词）仍为两条：两字都落在 VAD 子段之外（Pyannote 漏检了约 2.4 s 的拖长音），本规则无法判定；词边界方案由票据 13 调研，结论见下一条。

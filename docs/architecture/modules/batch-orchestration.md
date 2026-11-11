@@ -35,7 +35,7 @@
    - Ctrl+C（任何 `BaseException`）时 `shutdown(cancel_futures=True)`：排队中的文件不再提取，只等正在跑的 ffmpeg 结束，然后沿 `finally` 释放两把锁。
 4. 计划：CPU 阶段之后对每个文件调用一次 `plan.next_stage`，从 vad 起（采用内嵌字幕的文件从 names 起）逐阶段核对产物身份，得到第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`names`／`translate`）或终态 `publish`（无语音）；没有 `done` 状态——是否已发布由扫描按源文件旁的字幕判定。
 5. vad → asr → align：计划落在本阶段的文件组成一批，交给一个 worker 子进程；没有文件需要 GPU 时不取 GPU 锁。worker 结束后对每个文件 `plan.advance`：产物缺失或身份不符即记该阶段失败（`ArtifactMissing`），否则推进到下一个需要运行的阶段。
-6. ja-cues（进程内，`build_ja_cues`）：`cues.build_cues(align, [cues] 规则)`，写 `ja.srt` 后写 `ja-cues.json`（payload 另记 `ja.srt` 的 SHA256 `ja_srt_sha256`，供阶段计划核对 `ja.srt` 的新鲜度），随后 `plan.advance`。
+6. ja-cues（进程内，`build_ja_cues`）：`cues.build_cues(align, [cues] 规则)`，写 `ja.srt` 后写 `ja-cues.json`（payload 另记 `ja.srt` 的 SHA256 `ja_srt_sha256`，供阶段计划核对 `ja.srt` 的新鲜度），随后 `plan.advance`；三件套日志行见[日文 cue](japanese-cues.md#当前行为规格)。
 7. 共享 Strata session：进入 names 之前建一个 `strata.Session(config, on_server_pid=写 GPU 锁)`，包住 names 与 translate 两个阶段；正常结束、出错或被中断都 `strata launch --stop` 并核实显存释放，之后才放 GPU 锁。Strata 在第一次真正请求模型时才启动，两阶段之间不停；两阶段都不需要模型时整批不启动。启动失败整批累计 `strata.MAX_START_FAILURES`（3）次或被拒绝（`StrataRefused`）后 session 不可用，此后两阶段需要模型的文件直接失败。
 8. names（进程内，恒在链上，`names_batch`）：
    - 读每个文件的 `ja.srt`，读出错记该文件 `names` 阶段失败；只有某个文件有 cue 时才取 GPU 锁。
@@ -82,7 +82,7 @@
 
 ### 运行日志
 
-编排持有运行日志的目的地：`job.run` 经 `_run_logging` 把 root logger 接到 `<work root>/run-<UTC戳>.log` 与控制台，worker 的 stderr 存到 `<work root>/run-<戳>-<stage>.stderr.log`。行格式、级别与内容规则见[运行日志与进程原语](run-logging-and-processes.md#运行日志)。
+编排持有运行日志的目的地（`<work root>/run-<UTC戳>.log`、控制台、`run-<戳>-<stage>.stderr.log`）；挂接、行格式、级别与内容规则见[运行日志与进程原语](run-logging-and-processes.md#运行日志)。
 
 ## 接口与依赖
 
@@ -99,7 +99,7 @@
 
 ## 代码与验证入口
 
-- 代码：`kototoki/__main__.py`（`main`、`check_input_dir`、`check_work_dir`）、`kototoki/job.py`（`run`、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`advance_or_fail`、`build_ja_cues`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。`kototoki/logs.py`、`kototoki/procs.py`、`kototoki/workers/protocol.py` 与 worker 启动见[运行日志与进程原语](run-logging-and-processes.md)。
+- 代码：`kototoki/__main__.py`（`main`、`check_input_dir`、`check_work_dir`）、`kototoki/job.py`（`run`、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`advance_or_fail`、`build_ja_cues`、`cues_batch`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。`kototoki/logs.py`、`kototoki/procs.py`、`kototoki/workers/protocol.py` 与 worker 启动见[运行日志与进程原语](run-logging-and-processes.md)。
 - 测试（core，`just test`）：
   - `tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`（经 `plan` 取身份）、属性 patch 的专名、翻译与 Strata 函数（`merge` 用真的）、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖：扫描与跳过、字幕路径碰撞、`register_work_dir` 异常、大小采样稳定性、发布期同名字幕已出现不覆盖、残留 `failure.json`、阶段顺序、extract 期间中断、临时文件清理、续跑、两把锁的冲突退出码（含首个需要 GPU 的阶段是 names）、收尾不变量、无语音、子进程环境、禁止导入清单、输入与工作目录检查、按需取锁、共享 Strata session 的启动次数与 stop、`StrataRefused`、每文件 `next_stage` 恰一次与每阶段 `advance` 恰一次。
   - 同文件的 `NamesTests`（见[专名一致性](name-consistency.md#代码与验证入口)）、`EmbeddedSubtitleTests`（采用后不提取音频、不起 worker、`sources` 与日志行、字幕文字不进日志、GPU 锁到 names 才取、开关关掉走 STT、抽取失败与零条目回退、续跑跳过与 `ja.srt` 被改写后重抽、两条路径来回切换）；`RunLogTests`、`IsolationTests` 的 worker 部分见[运行日志与进程原语](run-logging-and-processes.md#代码与验证入口)。

@@ -89,7 +89,7 @@
 - 测试（core，`just test`）：
   - `tests/core/test_protocol.py`：`classify_launch`（正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件）。
   - `tests/core/test_procs.py`：锁内容、空锁文件与不可解析、无 `pid_created` 的外部锁、死 pid 与破锁、非整数 pid、并发创建、`update` 只改自己的锁、`release` 只删自己的锁。
-  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志且运行后 `captureWarnings` 复原、告警与失败的级别、extract 三件套、媒体告警逐条 WARNING（含续跑跳过 extract）、补偿告警的阈值与续跑、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
+  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、cues 三件套（0 条为 WARNING）、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志且运行后 `captureWarnings` 复原、告警与失败的级别、extract 三件套、媒体告警逐条 WARNING（含续跑跳过 extract）、补偿告警的阈值与续跑、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
   - 同文件的 `LockTests`（锁冲突退出码、残留锁、空的／无法解析的锁、锁内 pid 记录）、`ScanTests`（Job Object 建立失败时释放工作根锁）、`IsolationTests`（崩溃文件隔离、按文件重启、`_launch` 异常时回收 worker）。
 - 测试（full，`just test-full`）：`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙断言 `job.compensation_warnings` 给出一行补入告警。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。

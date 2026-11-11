@@ -509,8 +509,8 @@ def advance_or_fail(ctx: _Context, video: VideoFile, stage: str) -> bool:
 
 # --- ja-cues、专名建表、翻译与发布 ----------------------------------------------------------------
 
-def build_ja_cues(config: Config, video: VideoFile) -> None:
-    """写 `ja.srt`，再写 `ja-cues.json`；payload 另记写出的 `ja.srt` 的 SHA256，供阶段计划核对 `ja.srt` 的新鲜度。"""
+def build_ja_cues(config: Config, video: VideoFile) -> Mapping[str, Any]:
+    """写 `ja.srt`，再写 `ja-cues.json`（返回其 payload）；payload 另记写出的 `ja.srt` 的 SHA256，供阶段计划核对新鲜度。"""
     align = artifacts.read_json(video.work_dir / artifacts.ALIGN)
     payload, text = cues.build_cues(align, asdict(config.cues))
     ja_path = video.work_dir / JA_SRT
@@ -518,6 +518,33 @@ def build_ja_cues(config: Config, video: VideoFile) -> None:
     assert video.plan is not None
     artifacts.write_artifact(video.work_dir / artifacts.JA_CUES, video.plan.identities["ja_cues"],
                              {**payload, "ja_srt_sha256": artifacts.sha256_file(ja_path)})
+    return payload
+
+
+def _cues_line(relative: str, payload: Mapping[str, Any]) -> str:
+    """一个文件 cue 阶段的结果行：条数与回填、回退计数，不含 cue 文字。"""
+    sources = payload["time_sources"]
+    return (f"[cues] done {relative}: {len(payload['cues'])} cue(s), "
+            f"{sources.get('interpolated', 0)} interpolated unit(s), {sources.get('fallback', 0)} fallback unit(s), "
+            f"{len(payload['fallback_windows'])} fallback window(s), {payload['unrendered_chars']} unrendered char(s)")
+
+
+def cues_batch(ctx: _Context, batch: list[VideoFile]) -> None:
+    """进程内为 `batch` 建日文 cue；0 条 cue 的 done 行用 WARNING（有语音却渲染不出字幕），单文件异常只让该文件失败。"""
+    if not batch:
+        return
+    started = time.perf_counter()
+    logger.info(f"[cues] start: {len(batch)} file(s)")
+    done = 0
+    for video in batch:
+        try:
+            payload = build_ja_cues(ctx.config, video)
+        except Exception as error:
+            ctx.fail(video, "cues", error)
+            continue
+        (logger.info if payload["cues"] else logger.warning)(_cues_line(video.relative, payload))
+        done += advance_or_fail(ctx, video, "cues")
+    logger.info(f"[cues] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
 
 
 def _names_line(relative: str, result: BuildResult) -> str:
@@ -734,13 +761,7 @@ def _run(ctx: _Context) -> None:
             ctx.ensure_gpu_lock()
             run_gpu_stage(ctx, stage, batch)
 
-    for video in planned("cues"):
-        try:
-            build_ja_cues(config, video)
-        except Exception as error:
-            ctx.fail(video, "cues", error)
-            continue
-        advance_or_fail(ctx, video, "cues")
+    cues_batch(ctx, planned("cues"))
 
     # names 与 translate 共用一个 Strata session：第一次需要模型时启动，退出上下文（正常、出错、中断）即 `--stop` 并核实
     # 显存释放，之后才放 GPU 锁；两阶段都不需要模型时整批不启动。pid 经回调写进 GPU 锁（未取锁时 update 是空操作）。

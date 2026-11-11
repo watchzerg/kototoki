@@ -41,6 +41,14 @@ DEAD_PID = 999999999
 FAKE_SERVER_PID = 12345   # 伪 Strata 的 pid（names 与翻译共用同一个 session）
 
 
+def fake_cue_payload(cues: int, *, interpolated: int = 0, fallback: int = 0, fallback_windows: int = 0,
+                     unrendered: int = 0) -> dict:
+    """伪 `cues.build_cues` 的 payload：编排只读条数与回填、回退计数。"""
+    return {"cues": [{"index": k + 1} for k in range(cues)],
+            "time_sources": {"native": 5, "interpolated": interpolated, "fallback": fallback},
+            "backfilled_units": [], "fallback_windows": list(range(fallback_windows)), "unrendered_chars": unrendered}
+
+
 def fake_worker_command(stage: str, jobs_path: Path) -> list[str]:
     return [sys.executable, str(FAKE_WORKER), stage, "--jobs", str(jobs_path)]
 
@@ -200,7 +208,7 @@ class JobCase(unittest.TestCase):
         """`empty_cues` 里的文件给零条目 SRT；按 align 身份里的 PCM SHA 认出文件（伪 extract 每个文件不同）。"""
         pcm = align["identity"]["upstream"][artifacts.AUDIO_16K]
         empty = {hashlib.sha256(hashlib.sha256(rel.encode()).digest()).hexdigest() for rel in self.empty_cues}
-        return {"cues": []}, "" if pcm in empty else SRT_JA
+        return fake_cue_payload(0 if pcm in empty else 1), "" if pcm in empty else SRT_JA
 
     def _build_document(self, work_dir, document, session, seed):
         identifier = Path(work_dir).name
@@ -937,7 +945,7 @@ class TranslatePlanTests(JobCase):
 
     def test_zero_cue_documents_never_take_the_gpu_lock_for_translation(self) -> None:
         self.make_inputs("a.mkv")
-        self.enterContext(mock.patch("kototoki.job.cues.build_cues", return_value=({"cues": []}, "")))
+        self.enterContext(mock.patch("kototoki.job.cues.build_cues", return_value=(fake_cue_payload(0), "")))
         self.run_job()
         self.final("a.mkv").unlink()
         self.calls.clear()
@@ -1483,7 +1491,7 @@ class RunLogTests(JobCase):
             logging.getLogger("transformers.modeling_utils").warning("third-party note")
             logging.getLogger("transformers.modeling_utils").info("below root level, dropped")
             logging.getLogger("kototoki.translate").info("own note")
-            return {"cues": []}, SRT_JA
+            return fake_cue_payload(1), SRT_JA
 
         with mock.patch("kototoki.job.cues.build_cues", side_effect=build_cues):
             _, file = self.run_logged()
@@ -1552,7 +1560,7 @@ class RunLogTests(JobCase):
 
         def build_cues(align, options):
             warnings.warn("third-party deprecation", UserWarning)
-            return {"cues": []}, SRT_JA
+            return fake_cue_payload(1), SRT_JA
 
         with mock.patch("kototoki.job.cues.build_cues", side_effect=build_cues), warnings.catch_warnings():
             warnings.simplefilter("always")
@@ -1604,6 +1612,33 @@ class RunLogTests(JobCase):
         _, file = self.run_logged()
         self.assertEqual(self.entries_at(file, "ERROR"), ["[vad] FAILED a.mkv: PlanError", "[vad] FAILED b.mkv: PlanError"])
         self.assertEqual("\n".join(file).count("kototoki.plan.PlanError: FileNotFoundError: model missing"), 1)  # 链式 traceback 只出现一份
+
+    def test_cues_log_start_done_end_with_counts(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+
+        def build_cues(align, options):
+            pcm = align["identity"]["upstream"][artifacts.AUDIO_16K]
+            rel = next(r for r in ("a.mkv", "b.mkv", "c.mkv")
+                       if hashlib.sha256(hashlib.sha256(r.encode()).digest()).hexdigest() == pcm)
+            if rel == "b.mkv":
+                return fake_cue_payload(0, unrendered=7), ""
+            if rel == "c.mkv":
+                raise ValueError("broken align")
+            return fake_cue_payload(3, interpolated=4, fallback=2, fallback_windows=1), SRT_JA
+
+        with mock.patch("kototoki.job.cues.build_cues", side_effect=build_cues):
+            _, file = self.run_logged()
+        cue_lines = [LOG_LINE.match(line).group(1, 2) for line in file
+                     if LOG_LINE.match(line) and LOG_LINE.match(line)[2].startswith("[cues]")]
+        self.assertEqual(cue_lines[:4], [
+            ("INFO", "[cues] start: 3 file(s)"),
+            ("INFO", "[cues] done a.mkv: 3 cue(s), 4 interpolated unit(s), 2 fallback unit(s), 1 fallback window(s), "
+                     "0 unrendered char(s)"),
+            ("WARNING", "[cues] done b.mkv: 0 cue(s), 0 interpolated unit(s), 0 fallback unit(s), 0 fallback window(s), "
+                        "7 unrendered char(s)"),
+            ("ERROR", "[cues] FAILED c.mkv: ValueError")])
+        self.assertEqual(cue_lines[-1][0], "INFO")
+        self.assertRegex(cue_lines[-1][1], r"^\[cues\] end: 2 done, 1 failed, \d+\.\ds$")
 
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")
