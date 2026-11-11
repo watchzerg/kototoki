@@ -1,6 +1,6 @@
 # ASR 整窗复读守卫进产品（ADR-0023 的实现）
 
-状态：**done**（2026-11-11 起草、同日完成；两部整片验收通过，smoke 九项全部跑过、八项通过，`x0_frozen_window` 仍是 2026-10-14 已接受的窗口 0 差异，见 §7 与 §8 第 4 项；用户 2026-11-10 裁定 v15 的 A 进产品，决定已记为 [ADR-0023](../adr/0023-asr-repeat-guard.md)，本文是它的实现计划）。  
+状态：**实现与两部整片验收已完成；§5 第 3 项（`just smoke`）未通过，等用户裁定**（2026-11-11 起草、同日实现；smoke 九项全部跑过、八项通过，`x0_frozen_window` 因 2026-10-14 已接受的窗口 0 差异仍报失败，是否把该差异写进脚本判定见 §8 第 4 项，裁定前不标 done；用户 2026-11-10 裁定 v15 的 A 进产品，决定已记为 [ADR-0023](../adr/0023-asr-repeat-guard.md)，本文是它的实现计划）。  
 目标：产品 `kototoki/` 的 w0 路径在 `asr` 阶段解码之后加一步后处理——规则 `repeat-strict` 命中的窗口折叠相邻重复，折叠后仍命中则置空。不改解码、VAD、对齐，不改 x0 路径，不改 W0 基线身份。  
 执行载体：tracker `.scratch/asr-repeat-guard/`（spec、map、票据，Git 忽略）。本文是唯一进 Git 的计划与完成记录：完成后在 §7 填结果，状态改为 done。  
 先读：[ADR-0023](../adr/0023-asr-repeat-guard.md)；[v15 研究文档](../research/2026-11-10-asr-robustness-v15.md) §7 的 01、02 两行与 §8 第 8 项；[模块边界](../architecture/module-boundaries.md)；模块页 [STT worker](../architecture/modules/stt-workers.md)、[产物契约](../architecture/modules/artifact-contract.md)、[阶段计划](../architecture/modules/stage-plan.md)；[技术设计](../specs/bilingual-subtitle-pipeline.md)；[测试设计与验收](../agents/testing.md)、[验证边界](../testing/validation.md)；[CODING_STANDARDS](../../CODING_STANDARDS.md)；代码 `kototoki/workers/{asr,protocol}.py`、`kototoki/recipes.py`、`kototoki/judge.py`（`normalize`）、`experiments/asr_robustness_v15/{repeat,actions}.py`。
