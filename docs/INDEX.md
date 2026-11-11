@@ -54,7 +54,7 @@
 
 - ADR: [决定索引](adr/INDEX.md) — 当前有效决定（按主题，标权威 ADR 条款）、演进链、全部 ADR 状态、已知不一致与记录新决定的步骤；单篇 ADR 冻结，只追加状态行。
 - Specs: [中日双语字幕批量生产流水线：技术设计](specs/bilingual-subtitle-pipeline.md) — implemented（2026-10-14；2026-11-08 起翻译为 Q2、取消发布时专名替换，ADR-0019）；第一个正式产品形态（配置文件驱动）：固定配方、八阶段分解、CPU 流水线＋GPU 分阶段批处理、产物与续跑、统一 CUDA 12.8 环境、配置边界与里程碑。
-- Plans: [产品包架构整理](plans/architecture-cleanup.md) — in progress（2026-11-11 起草，同日开始执行）；2026-11-11 架构 review 的落地计划：GPU 锁冲突统一成退出码 4、worker 协议读侧收进 `protocol.py`、身份 hash 补洞、Strata 额度只归 `Session`、拆 `llama_server.py`、`cross` 路径改组合、`job.py` 瘦身、核心测试不再导入研究代码；不改输出，除 `MEDIA` 外配方 hash 不变；10 张票据与待裁定项见该文 §4、§8。
+- Plans: [产品包架构整理](plans/architecture-cleanup.md) — done（2026-11-11 起草、同日完成；`just smoke` 九项通过，结果见该文 §7，待裁定项见 §8）；2026-11-11 架构 review 的落地（[ADR-0025](adr/0025-product-package-boundaries.md)）：GPU 锁冲突统一成退出码 4、worker 协议读侧收进 `protocol.py`、身份 hash 补洞、Strata 额度只归 `Session`、拆 `llama_server.py`、`cross` 路径改组合、`job.py` 瘦身、核心测试不再导入研究代码；不改输出，除 `MEDIA` 外配方 hash 不变；10 张票据与待裁定项见该文 §4、§8。
 - Plans: [ASR 整窗复读守卫进产品](plans/asr-repeat-guard.md) — done（2026-11-11 起草、同日完成；验收数字见该文 §7，剩余待裁定项见 §8）；[ADR-0023](adr/0023-asr-repeat-guard.md) 的实现计划：w0 路径解码后按 `repeat-strict` 折叠复读窗、仍命中则置空，W0 配方换新 id；附执行提示词。
 - Plans: [产品建表切到 Strata（对齐基线 Q3）](plans/product-names-on-strata.md) — done（2026-11-09，smoke 与 HF-II 整片 GPU 验证通过）；names 与 translate 共用一个 Strata session，建表与 Q3 的 `names-strata-v4` 逐字节一致，产品不再起 llama-server；结果与待裁定事项见其 §7、§8。
 - Plans: [Hy30 四种量化大规模比较](plans/hy30-four-quantization-comparison.md) — 实测与评估完成；原 83 窗口及新增 1,200 窗口、完整自动评估、四轮性能与正式长跑，失败和缺分完整保留；[结果报告](research/2026-10-07-hy30-four-quantization-results.md)。

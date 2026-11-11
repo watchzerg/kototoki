@@ -1,6 +1,6 @@
 # 产品包架构整理（2026-11-11 review 的落地）
 
-状态：**in progress**（2026-11-11 起草，同日开始执行，分支 `architecture-cleanup`）。  
+状态：**done**（2026-11-11 起草，同日完成，分支 `architecture-cleanup`；结果见 §7，待裁定项见 §8）。  
 目标：修掉 2026-11-11 架构 review 在产品包 `kototoki/` 里找到的问题：规则有两个归属的地方收成一个，身份 hash 的漏洞补上，产品不再为研究代码保留死代码。不加功能，不改任何转写、对齐、建表与翻译的输出。  
 执行载体：tracker `.scratch/architecture-cleanup/`（spec、map、票据，Git 忽略）。本文是唯一进 Git 的计划与完成记录：完成后在 §7 填结果，状态改为 done。  
 先读：[模块边界](../architecture/module-boundaries.md)、[架构总览](../architecture/INDEX.md)；模块页 [批次编排](../architecture/modules/batch-orchestration.md)、[阶段计划](../architecture/modules/stage-plan.md)、[产物契约](../architecture/modules/artifact-contract.md)、[STT worker](../architecture/modules/stt-workers.md)、[配置与媒体](../architecture/modules/config-and-media.md)、[日文 cue](../architecture/modules/japanese-cues.md)、[翻译子系统](../architecture/modules/translation-subsystem.md)、[专名一致性](../architecture/modules/name-consistency.md)；[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0012](../adr/0012-cross-asr-judge.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)；[决定索引·记录新决定](../adr/INDEX.md#记录新决定)；[测试设计与验收](../agents/testing.md)、[验证边界](../testing/validation.md)；[CODING_STANDARDS](../../CODING_STANDARDS.md)。
@@ -236,6 +236,44 @@
 - 2026-11-11 **票据 07**：进程原语（`pid_alive`、`process_created`、`process_matches`、`contain_children`、`ProcessLock`、`LockError`）原样搬到基础层 `kototoki/procs.py`，`job.py` 按名导入（`mock.patch("kototoki.job.contain_children")` 继续有效），研究侧 `quality_v5/coresidency_probe.py` 只改导入行；`strata`、`names`、`translate`、`merge` 改为普通导入，四个 `_xxx_module()` 与 `importlib` 删除，`session`、`result` 换成真实类型；`job.py` 与 `translate/__init__.py` 的 docstring 改正。`test_job.py`、`test_plan.py` 不再往 `sys.modules` 塞伪模块，改用属性 patch，`merge` 用真的；`test_job.py` 的伪翻译身份取整张表的不透明 hash，原来断言伪模块注入规则的三条测试里两条改名并改为"表身份变了 → 需要模型 → 用 session、不重建表"，一条（只改 medium／low 不重译）删除，其规则改在 `test_translate.py` 对真实的 `translate.plan` 断言。新增 `tests/core/test_procs.py` 8 项。core 699 项全过，`quality_v5` 101 项全过，禁止导入测试通过，`job.py` 无 `importlib`。遗留：`test_plan.py` 的伪 `translate.plan` 仍自带一份"只取 high"的规则（计划只点了 `test_job.py`，未动）。
 - 2026-11-11 **票据 09**：`tests/core` 的 5 个文件（`test_guard.py`、`test_judge.py`、`test_names_recipes.py`、`test_names_session.py`、`test_translate_recipes.py`）不再导入 `experiments.*`：等价断言改成钉字面量或 sha256（先用当前研究实现算出值、确认与产品结果相同再钉，注释写明来源与 2026-11-11）；实时对照搬到 `tests/equivalence/`（guard ↔ `asr_robustness_v15.repeat`、judge ↔ `quality_v5`、names ↔ `scene_batching_v6.v13`、翻译配方 ↔ `translation_v3`／`scene_batching_v6`，共 14 项，断言原样搬）；`justfile` 加 `test-equivalence` 并入 `gate-full`；新增 `tests/core/test_boundaries.py`（AST 扫描：`kototoki/` 不得导入 `experiments`、`kototoki_eval`，`tests/core` 不得导入 `experiments`）。
 - 2026-11-11 01–09 全部合入后的离线验收：core 701 项、`tests/equivalence` 14 项、`tests/full` 17 项全过（用根 `.venv` 解释器直接跑 `unittest discover`，与 `just test`／`test-equivalence`／`test-full` 同一命令；`just` 本身因 `check-toolchain` 的 uv 版本问题未作为门）；`docs-check` 失败清单与基线逐行相同（44 处）；研究侧 `translation_v3` 105、`quality_v5` 101、`asr_robustness_v14` 49、`asr_robustness_v15` 32 项全过，`scene_batching_v6` 仍只有基线已有的 `test_v13` 4 项失败；`git grep llama_server -- kototoki tests scripts` 只剩历史说明、已删配置键的测试与 smoke 结果字段名。全部配方 hash 的钉子测试通过，只有 MEDIA 变了。
+- 2026-11-11 **票据 10**：技术设计规格（移植来源表、坐标约定、GPU 锁冲突的失败级别）、README（测试命令）与架构总览（`procs.py`）按随交付同步核对并改正；各模块页点名的符号、文件与测试文件逐个对照代码，均存在。待填标记只剩 `docs/development/workflow.md` 的发布流程一处（条件未到，保留）。`just smoke` 九项全部通过，见下。
+
+### 完成报告（2026-11-11）
+
+**已实现**（§4 的 10 张票据全部 resolved，逐票据提交在分支 `architecture-cleanup`，未推送、未开 PR）
+
+- GPU 锁冲突任何阶段都是退出码 4，不写逐文件 `failure.json`（ADR-0025）。
+- worker 协议读侧收进 `protocol.classify_launch`；`_launch` 异常时回收 worker；`_run` 收尾不变量；`model_sha_lookup` 缓存失败。
+- 身份补洞：`MEDIA` 含声道布局回退与音轨选择规则；`ja-cues.json` 记 `ja_srt_sha256`，`ja.srt` 新鲜度归 `plan`。
+- Strata 启动额度只归 `Session`；names 与翻译经 `Session.label`／`Session.client()`；`cache_state` 归翻译子系统。
+- `kototoki/llama_server.py` 拆掉：产品留 `local_client.py`，生命周期搬到 `experiments/translation_v3/llama_server.py`。
+- `workers/asr.py` 的 `cross` 路径改为组合：`plan.ENGINE_PARTS`、壳内 `transcribe()`、`judge.judge_file`、`Compute` 多产物。
+- `job.py` 瘦身：进程原语在 `kototoki/procs.py`，四个子模块普通导入，编排测试改用属性 patch。
+- offset 只在 cue 加；`SAMPLE_RATE`／`MAX_WINDOW_SAMPLES` 只在 `recipes.py`；SRT 整数毫秒入口。
+- `tests/core` 不再导入 `experiments.*`；实时对照在 `tests/equivalence/`（`just test-equivalence`，并入 `gate-full`）；全仓库导入边界测试。
+- 配方 hash：只有 `MEDIA` 变了（`58892e0a…` → `0d19d8d8…`，`id` 不变，现有工作目录各重抽一次音频）；W0、X0、CROSS、VAD、MMS、CUES、EMBEDDED、翻译 `RECIPE_HASH`、建表 `BUILD_RECIPE_HASH` 未变，均有钉子测试。
+
+**自动检查**（最终提交上）
+
+- core 701 项、`tests/equivalence` 14 项、`tests/full` 17 项全过。
+- 字节不变由测试证明：`AsrArtifactBytesTest`（`asr.json` 与三个 cross 审计产物）、`CueChainBytesTest`（offset 为 0 时的 `align.json`、`ja-cues.json`、`ja.srt`）、`NonzeroOffsetChainTests`，钉住的值都取自改动前的代码；翻译 run 目录的 trace 布局、`server_session`、`cache_reset` 与建表请求体各有钉子测试。
+- `docs-check`：失败清单与基线逐行相同（44 处冻结外链），无新增。`check-toolchain`：与基线一样失败（uv 版本，见 §8）。`lint`、`typecheck` 未接入。
+- 研究侧离线测试：`translation_v3` 105（含搬来的 15 项）、`quality_v5` 101、`asr_robustness_v14` 49、`asr_robustness_v15` 32 项全过；`scene_batching_v6` 只有基线已有的 `test_v13` 4 项失败，无新增。
+
+**GPU 结果**（`just smoke`，结果目录 `.local/smoke/20261111T084414Z`）
+
+- 九项全部通过：`forced_align` 19.6 s、`vad_pyannote` 25.1 s、`ct2_after_torch` 58.2 s、`llama_stock` 67.6 s、`stt_frozen_window` 79.6 s、`x0_frozen_window` 101.5 s（判定与改动前相同，含记录在案的已接受差异）、`translate_product` 87.9 s、`names_product` 80.2 s、`whisper_score` 34.7 s。没有重跑任何一项。
+- 运行前：无 llama-server、无 Strata、无其他 GPU 作业，`.local/gpu.lock` 不存在，可用内存 54.0 GiB，`strata launch --model iq3_s --plan` 显示无需下载。运行后：`strata launch --status` 为空，显存占用 593 MiB（与运行前相同），无 llama-server 进程，`.local/gpu.lock` 已删除。
+- **启动了两次**：第一次（结果目录 `.local/smoke/20261111T084321Z`）在第一项加载模型时约 10 秒即崩溃，原因是执行者把输出重定向到文件、runner 的 stdout 成了 cp1252，打印进度条字符时 `UnicodeEncodeError`；没有任何一项跑完，崩溃后核实无残留 GPU 占用。第二次加 `PYTHONUTF8=1` 后完整跑完，即上面的结果。授权写的是"只运行一次"，这次中止的启动请知悉。
+- `llama_stock` 这一项由 smoke 自己用研究侧的 `ManagedServer` 起 llama-server（compat 与 stock 各一次），是 `just smoke` 全部项的一部分；执行者没有另外启动 llama-server。
+
+**未验证**
+
+- 没有跑 `python -m kototoki` 整片：新的 `MEDIA` hash 让现有工作目录重抽音频、PCM 不变下游仍当前，只由离线测试证明；撞 GPU 锁退出码 4、`_launch` 异常回收 worker、收尾不变量也只经伪 worker 与伪 session 测试。
+- `cross` 引擎的真实模型路径不在 smoke 里（smoke 的 STT 冻结窗口走 w0 与 x0），`judge_file` 与多产物写出只有离线夹具的字节钉子。
+- 内嵌日文字幕路径与 `ja_srt_sha256` 的新鲜度判定只用伪媒体测过。
+- Windows Job Object 与 `process_created` 的真实路径没有直接测试（与改动前相同）。
+- `just test-equivalence`、`just gate-full` 没有经 `just` 运行（同一条 `unittest discover` 命令用根 `.venv` 解释器直接跑过）。
 
 ## 8. 待用户裁定
 
