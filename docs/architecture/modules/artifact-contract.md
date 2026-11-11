@@ -37,6 +37,8 @@
 
 **专名产物**（[专名一致性](name-consistency.md)）：`NAME_TABLE = "name-table.json"` 是 names 阶段的阶段产物（在 `STAGE_ARTIFACTS`，参与 `is_current`，由编排经 `write_artifact` 写出，payload 为 `name-table-v2` 表与 `meta`／`build`）。身份由[阶段计划](stage-plan.md)给出，以 `names` 键进 `published.json` 的 `sources`（审计）；表含转写内容，只写在工作目录。ADR-0019 删除了发布时替换的审计产物 `NAMES_APPLY = "names-apply.json"` 与 `names_apply` 身份键：旧版本发布的记录里若有该键，`sources` 比较时视为不匹配，影片下次运行重新翻译并发布；工作目录里遗留的 `names-apply.json` 不再读取。
 
+**内嵌日文字幕记录**（[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)）：`JA_EMBEDDED = "ja-embedded.json"` 在 `STAGE_ARTIFACTS`（`failure.json` 的 `completed` 会列出），由编排在 CPU 阶段经 `write_artifact` 写出，只有采用内嵌字幕的文件才有。身份由[阶段计划](stage-plan.md)的 `embedded_identity` 给出（`derived_identity`：上游为输入文件身份的 `object_hash`、`EMBEDDED` 配方 hash、配置键 `stream_index`），以 `ja_embedded` 键进 `published.json` 的 `sources`。payload：`stream`（所用字幕流的索引、编码、语言、default、forced）、清洗计数（`source_cues`、`cues`、`dropped_*`）、`ja_srt_sha256`。是否当前除身份外还要求 `ja_srt_sha256` 等于工作目录里 `ja.srt` 的 SHA256，这一步由编排核对（`is_current` 只比身份）。这类文件的 `probe.json` 里 `extract` 为 null（没有提取音频），工作目录里没有 `audio-16k.wav`、`vad.json`、`asr.json`、`align.json`、`ja-cues.json`。
+
 **SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。`write_srt` 原子写出、拒绝覆盖源文件；是否发布由编排按源文件旁字幕是否存在判定。
 
 ## 接口与依赖

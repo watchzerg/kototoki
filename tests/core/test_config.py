@@ -32,6 +32,11 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(cfg.run.extract_workers, 4)
         self.assertEqual(cfg.run.stable_check_s, 10.0)
         self.assertEqual(cfg.input.audio_language, "jpn")
+        self.assertIs(cfg.input.use_embedded_subtitles, True)  # ADR-0024：默认采用内嵌日文字幕
+        off = config.load(self.write(MINIMAL + "[input]\nuse_embedded_subtitles = false\n"), environ={})
+        self.assertIs(off.input.use_embedded_subtitles, False)
+        with self.assertRaisesRegex(config.ConfigError, "use_embedded_subtitles must be true or false"):
+            config.load(self.write(MINIMAL + '[input]\nuse_embedded_subtitles = "yes"\n'), environ={})
         self.assertEqual(cfg.input.extensions, (".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi", ".wav", ".flac",
                                                 ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"))
         self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 1.0, "。！？!?", "、，,", 0.3))

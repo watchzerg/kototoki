@@ -85,7 +85,7 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 
 | 阶段 | 做什么 | 输入 → 产物 | 设备 | 单片成本（2 h 电影，来自整片证据） |
 | --- | --- | --- | --- | --- |
-| probe | ffprobe 读取全部流：音轨按 `language=jpn` 且非 `disposition.comment` 优先，再按 `disposition.default`，多条匹配告警并记录；没有匹配选第一条音轨并告警；记录绝对流索引、编码、声道布局、`start_time`、时长，以及字幕流清单（只记录，第一版不使用）；`has_video`（除封面图 `attached_pic` 外没有视频流即为音频文件）、`duration_s` 与 `duration_source` | 视频／音频 → `probe.json` | CPU | <1 s |
+| probe | ffprobe 读取全部流：音轨按 `language=jpn` 且非 `disposition.comment` 优先，再按 `disposition.default`，多条匹配告警并记录；没有匹配选第一条音轨并告警；记录绝对流索引、编码、声道布局、`start_time`、时长，以及字幕流清单（供内嵌日文字幕选轨，见下方"内嵌日文字幕"）；`has_video`（除封面图 `attached_pic` 外没有视频流即为音频文件）、`duration_s` 与 `duration_source` | 视频／音频 → `probe.json` | CPU | <1 s |
 | extract | ① （仅视频）ffmpeg `-c:a copy` 把选中音轨原样写出，容器按 §2.1 选；音频文件跳过 ①，`extract.audio_copy` 为 null；② 从输入容器按绝对流索引解码该音轨，`aresample=async=1:first_pts=0` 保留时间轴（起始静音补齐、间隙补零，sample 0 即输入 0 秒），按 §2.2 下混，重采样 16 kHz，PCM16 WAV；ffmpeg verbose 日志写入工作目录；校验解码时长对所选音轨时长（§2.2）；记录 PCM SHA256、样本数、`offset_s = 0` | 输入 → `audio.<ext>`（仅视频）、`audio-16k.wav`、`extract.log` | CPU | ① 秒级 ② 约 10–30 s |
 | vad | Pyannote 检测 → 源跨度合并 → manifest | `audio-16k.wav` → `vad.json` | GPU（VAD 允许 CPU） | 加载 28 s，推理 20 s |
 | asr | 逐窗识别，纯文字 | `audio-16k.wav`+`vad.json` → `asr.json`（`cross` 另写审计文件 `asr-w0.json`、`asr-x0.json`、`asr-judge.json`） | GPU | w0：加载 7 s，推理 150–170 s；x0：加载 19 s，推理 365–395 s；`cross`：两部电影 asr 阶段 1211.6 s，为 w0 阶段（323.4 s）的 3.75 倍（w0 转写 286.0 s＋x0 转写 863.7 s＋Whisper 打分 40.7 s＋加载与启动，[验收记录](../research/acceptance/2026-10-19-cross-asr-acceptance.md)） |
@@ -95,6 +95,17 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 | translate | 产品配方 `q2-degrade-v1` 整片翻译（ADR-0019；之前为 `dp10-cut-degrade-v1`，ADR-0011），续跑语义沿用 v3；Strata 由产品自动启停（§3.3） | `ja.srt`＋`name-table.json` → `zh.srt`+翻译 run 目录 | GPU（独占） | Q2：HF-II 1099 条、149 包约 2498 s（每包约 16 s），另加 Strata 加载约 98 s（2026-11-08）；此前 H0 为 1993 条约 270 s、387 条约 66 s |
 | ~~替换~~ | 已删除（ADR-0019）：不再有发布时替换、`names-apply.json` 与 `names_apply` 身份键；专名译法只经翻译注入 | — | — | — |
 | merge | 按 cue 编号合并 | `ja.srt`+`zh` → `ja-zh.srt`（发布到源文件旁） | CPU | <1 s |
+
+**内嵌日文字幕**（[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)，2026-11-11）：`[input] use_embedded_subtitles`（默认 `true`）开着，且文件有可用的日文文本字幕轨时，该文件不经上表的 extract、vad、asr、align、ja-cues，改走：
+
+```
+probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──► names ──► translate ──► merge
+```
+
+- 可用的字幕轨：语言标签与 `[input] audio_language` 归一后相同、`codec_name` 为 `subrip`／`ass`／`ssa`／`mov_text`／`webvtt`、非 `disposition.forced`；多条可用时取 `disposition.default` 的，再取流索引最小的，并告警。位图字幕（PGS、VobSub、DVB）视为没有。只看流的元数据，不看内容。
+- 抽取：`ffmpeg -map 0:<index> -c:s srt -f srt`（要读完整个容器，数十秒量级）。清洗：去掉 `<i>`／`<b>`／`<u>`／`<s>`／`<font>` 标签与 `{\...}` 覆盖块，字面的 `\h`、`\N` 换成空格，一条多行并成一行，丢掉清洗后为空、是 ASS 绘图指令、时长非正的条目与起止和文字都相同的重复条目，按（起、止）稳定排序后从 1 重新编号。不改写时间；听障字幕的音效说明原样保留、照常翻译。规则是配方常量 `recipes.EMBEDDED`（id `embedded-ja-subtitle-v1`），不是配置项。
+- 抽取失败或清洗后零条目：记 WARNING，该文件回到上表的 STT 链（§6）。
+- 不做：外挂字幕文件、位图字幕 OCR、按内容判断语言、假名注音处理、按 ASS 样式过滤卡拉 OK 行与屏幕字。
 
 ### 2.1 流复制的容器映射
 
@@ -186,6 +197,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4][names 1 2 3 4][translate 1
       asr-w0.json、asr-x0.json、asr-judge.json   仅 `engine = cross`：两路各自完整的 `asr.json` 结构与裁判审计记录（带 `offset_s`）；审计产物，不参与身份与跳过判定
       align.json           权威 STT 证据：全文、units、text_only、对齐记录
       ja-cues.json         cue ↔ unit 映射、时间回填记账、未渲染文字记账
+      ja-embedded.json     仅采用内嵌日文字幕的文件（ADR-0024，此时没有 audio-16k.wav、vad／asr／align／ja-cues）：所用字幕流、清洗计数、`ja.srt` 的 SHA256；身份：输入文件身份＋`EMBEDDED` 配方 hash＋字幕流索引
       name-table.json      专名表（`name-table-v2`，含 `build.status`）；身份：`ja.srt` SHA256＋`BUILD` 配方 hash＋`[names] seed`；用户可改 `entries`（见下）
       names/transport/<UTC戳>-<pid>/session-NN/   建表请求的原始交换，供复查
       （ADR-0019 已删除 `names-apply.json`；工作目录里的遗留文件不再读取）
@@ -226,6 +238,7 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 ## 6. 失败、部分结果与续跑
 
 - 文件级隔离：一个文件在某阶段失败，写 `failure.json`，该文件退出后续阶段，批次继续；最终汇总打印失败清单，退出码非零。
+- 内嵌日文字幕不可用（ADR-0024）：选中的字幕轨 ffmpeg 抽取失败，或清洗后没有任何条目，记一行 WARNING（`[extract] <相对路径>: Embedded subtitle stream N is unusable (…); falling back to speech recognition`），该文件照常提取音频走 STT，不写 `failure.json`；这个结果不缓存，下次运行再试一次。
 - 无语音：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布零条目 `ja-zh.srt` 并告警（现有 SRT 解析器对空文件抛错，产品侧绕过它）。
 - x0 生成触顶（4096 token）：只把该窗口记为失败窗口，不让整部影片失败。表示方式由 worker 协议（票据 00）统一规定，w0／x0 相同：`asr.json` 中该窗的 `text` 置空，截断文字与原因记入 `failed_windows`（供诊断，不进对齐、cue 与翻译），"每个字符恰好一个 unit"的不变量按保留文本计算；窗口失败数进入汇总。现有 `x0_demo/pipeline.py::validate_asr` 拒绝 `token_limit_reached` 的行为不移植。
 - w0 整窗复读（[ADR-0023](../adr/0023-asr-repeat-guard.md)）：Whisper 偶尔在一个窗口里把同一短语复读几十遍。`asr` 阶段在 w0 解码之后、写 `asr.json` 之前对每个未失败的窗口按规则 `repeat-strict` 检查（规范化文本上周期 ≥2 字的单元相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖该窗规范化文字 ≥50%）：命中窗口折叠相邻重复，只留第一个单元；折叠后仍命中（含只有非相邻复现、没有可折叠区段）的窗口按上一条的失败窗口表示置空，原因 `guard:repeat-strict`。两种情况都在该窗的 `asr_traces[i].guard` 记规则名、动作、周期、份数与删去的字符数。只做后处理，不重解码；规则参数是 `W0` 配方常量，不是配置项；`cross` 引擎对 w0 那一路同样处理、裁判用守卫后的文字，x0 的输出不过守卫。
@@ -361,6 +374,7 @@ ffprobe     = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe"
 [input]
 extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi", ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"]   # 视频还是音频由 ffprobe 判定
 audio_language   = "jpn"                # 优先选此语言标签的音轨（jpn／ja／jp 视为同一语言），没有则第一条并告警
+use_embedded_subtitles = true           # 有该语言的文本字幕轨（非 forced）时跳过 STT、直接翻译字幕轨（ADR-0024）；false 一律走 STT
 
 [run]
 extract_workers = 4                     # ffmpeg 并发数
@@ -430,7 +444,7 @@ seed    = 20261019                      # 改 seed 即重建专名表（另起�
 - **跨文件术语一致**：同一剧集多集之间的人名、专名统一。v3 的 `terms` 配方未采纳，产品暂无跨文件记忆。**单片内一致已由 names 阶段覆盖**（2026-10-20，ADR-0014）：每部影片自己建表，不合并多张表、不跨文件共享。
 - **用 HF transformers Whisper 替换 CTranslate2**，解除 CUDA 12 锁定（§7.2）。
 - **重复／幻觉守卫**：W0 移植的 WhisperX 路径没有温度回退与压缩比检查，长重复输出目前只能靠 VAD 过滤减少；后续可加 n-gram 重复检测并标记。
-- **利用视频内嵌日文字幕**：probe 已记录字幕流；检测到可用的日文字幕轨时跳过 STT 直接翻译，是 1.1 版最值得做的功能。
+- ~~利用视频内嵌日文字幕~~：已实现（2026-11-11，[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)，§2"内嵌日文字幕"）。仍未做的相邻项：同目录外挂字幕、位图字幕 OCR。
 - **双单声道（主／副音声）识别**、**粗回退按 VAD 子段分配时间**。
 - **VAD 跑 CPU** 以让出显存；**升级后的回归与容差**；**单阶段子命令与 CLI**。
 
@@ -492,3 +506,5 @@ seed    = 20261019                      # 改 seed 即重建专名表（另起�
 2026-11-09（产品建表切到 Strata，[ADR-0022](../adr/0022-product-names-on-strata.md)）：用户决定产品 `names` 阶段按基线 Q3 的规则在 Strata 上建表（配方 `q3-names-v1`，请求与 seed 序列与 `names-strata-v4` 逐字节一致，最多 5 次请求），names 与 translate 共用一个由编排持有的 Strata session（`kototoki/strata.py`，整批只启动一次），产品不再起 llama-server、不加载 27B；删除 `[names] model`／`port`、`[paths] llama_server`；本文 §1.2、§3、§4、§6、§7、§10 已按此改写，`names-sessions/` 改为共用的 `strata-sessions/`。
 
 2026-11-11（ASR 整窗复读守卫，[ADR-0023](../adr/0023-asr-repeat-guard.md)）：用户 2026-11-10 裁定 v15 的 A 进产品，2026-11-11 实现。w0 路径（含 `cross` 的 w0 那一路）在 `asr` 阶段解码之后按 `repeat-strict` 折叠复读窗、仍命中则按 `failed_windows` 置空；纯逻辑在 `kototoki/guard.py`。产品 W0 配方加 `guard` 块并换 id `w0-faster-whisper-large-v3-guard-v2`，W0、CROSS 的 `recipe_hash` 随之改变，旧工作目录的 `asr.json` 及其下游重算，不做迁移；W0 基线身份（解码、VAD、对齐）不变。本文 §1.1、§4、§6 已按交付行为改写。验收见[实现计划](../plans/asr-repeat-guard.md) §7。
+
+2026-11-11（内嵌日文字幕，[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)）：用户裁定实现 §11 登记的"利用视频内嵌日文字幕"：默认开启（`[input] use_embedded_subtitles`）、ASS 进第一版、听障说明原样保留、外挂字幕不做。有可用日文文本字幕轨的文件由 CPU 阶段抽轨并清洗成 `ja.srt`（新产物 `ja-embedded.json`，配方 `embedded-ja-subtitle-v1`），不提取音频、不经 vad／asr／align／ja-cues，从 names 起走原链；`published.json.sources` 在这条路径下为 `probe`、`ja_embedded`、`names`、`translate`；抽取失败或零条目回到 STT 链并告警。本文 §2、§4、§6、§10.1、§11 已按交付行为改写。验证只用了 ffmpeg 合成片段（core＋full 测试），真实片源与真实模型验证未做。

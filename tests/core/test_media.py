@@ -232,9 +232,63 @@ class PanSelectionTests(unittest.TestCase):
             media.pan_filter(track(channels=3, channel_layout=""))
 
 
+def subtitle(index: int, codec: str = "subrip", language: str | None = "jpn", *, default: bool = False,
+             forced: bool = False) -> dict[str, object]:
+    return {"index": index, "codec_name": codec, "language": language, "default": default, "forced": forced}
+
+
+class SubtitleSelectionTests(unittest.TestCase):
+    """内嵌日文字幕的选轨（ADR-0024）：语言相符、文本编码、非 forced。"""
+
+    def test_text_codecs_in_the_language_are_usable(self) -> None:
+        for codec in ("subrip", "ass", "ssa", "mov_text", "webvtt"):
+            chosen, warnings = media.select_subtitle([subtitle(3, codec, "ja")], "jpn")
+            self.assertEqual((chosen, warnings), (subtitle(3, codec, "ja"), []))
+
+    def test_bitmap_forced_and_other_languages_are_not_usable(self) -> None:
+        streams = [subtitle(2, "hdmv_pgs_subtitle"), subtitle(3, "dvd_subtitle"), subtitle(4, "dvb_subtitle"),
+                   subtitle(5, "ass", forced=True), subtitle(6, "subrip", "chi"), subtitle(7, "subrip", None)]
+        self.assertEqual(media.select_subtitle(streams, "jpn"), (None, []))
+        self.assertEqual(media.select_subtitle([], "jpn"), (None, []))
+
+    def test_multiple_matches_prefer_default_then_lowest_index_and_warn(self) -> None:
+        chosen, warnings = media.select_subtitle([subtitle(5), subtitle(3, "ass"), subtitle(4, default=True)], "jpn")
+        self.assertEqual(chosen["index"], 4)
+        self.assertEqual(warnings, ["3 text subtitle streams tagged 'jpn' (indices 3, 4, 5); using index 4"])
+        chosen, _ = media.select_subtitle([subtitle(5), subtitle(3, "ass")], "jpn")
+        self.assertEqual(chosen["index"], 3)
+
+    def test_configured_language_decides(self) -> None:
+        streams = [subtitle(2, language="jpn"), subtitle(3, language="ENG")]
+        self.assertEqual(media.select_subtitle(streams, "eng")[0]["index"], 3)
+
+    def test_parse_probe_output_feeds_the_selection(self) -> None:
+        probe = media.parse_probe({"streams": [
+            VIDEO, audio(1, "jpn"),
+            stream(2, "subtitle", codec_name="hdmv_pgs_subtitle", tags={"language": "jpn"}, disposition={"default": 1}),
+            stream(3, "subtitle", codec_name="subrip", tags={"language": "jpn"}, disposition={})],
+            "format": {"duration": "100.5"}}, "jpn")
+        self.assertEqual(media.select_subtitle(probe.subtitles, "jpn")[0]["index"], 3)
+
+
 class CommandTests(unittest.TestCase):
     ffmpeg = Path("D:/tools dir/ffmpeg.exe")
     video = Path("D:/影片 dir/第1話.mkv")
+
+    def test_subtitle_command_converts_one_stream_to_srt_on_stdout(self) -> None:
+        command = media.subtitle_command(self.ffmpeg, self.video, 4)
+        self.assertEqual(command[0], str(self.ffmpeg))
+        self.assertIn("-nostdin", command)
+        self.assertEqual(command[command.index("-i") + 1], str(self.video))
+        self.assertEqual(command[command.index("-map") + 1], "0:4")
+        self.assertEqual(command[-5:], ["-c:s", "srt", "-f", "srt", "pipe:1"])
+
+    def test_extract_subtitle_returns_stdout_and_raises_on_failure(self) -> None:
+        with mock.patch("kototoki.media._run", return_value=SimpleNamespace(returncode=0, stdout="SRT", stderr="")):
+            self.assertEqual(media.extract_subtitle(self.video, 4, self.ffmpeg), "SRT")
+        with mock.patch("kototoki.media._run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="boom")), \
+                self.assertRaisesRegex(media.MediaError, "subtitle extraction failed"):
+            media.extract_subtitle(self.video, 4, self.ffmpeg)
 
     def test_derive_command_decodes_from_container_by_absolute_index(self) -> None:
         command = media.derive_command(self.ffmpeg, self.video, track(index=3), Path("out/.a.partial.wav"))

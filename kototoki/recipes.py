@@ -1,4 +1,4 @@
-"""STT／cue／媒体的配方常量与 `recipe_hash`（规格 §1.1、§10.2）；翻译配方只在 `kototoki/translate/recipes.py`。
+"""STT／cue／媒体／内嵌字幕的配方常量与 `recipe_hash`（规格 §1.1、§10.2）；翻译配方只在 `kototoki/translate/recipes.py`。
 
 这里的值改变模型输入或输出，因此不进配置文件：改动任何一项即得到新的 `recipe_hash`，
 已有产物按产物契约失效重算。各值取自已验证的 demo 实现（来源写在每节注释里）。
@@ -196,6 +196,21 @@ CUES: dict[str, Any] = {
     "fallback_max_char_s": 0.25,
     "lead_out": "extend end by lead_out_s without crossing the next cue start",
     "millisecond_rounding": "floor(x * 1000 + 0.5)",
+}
+
+# --- 内嵌日文字幕（ADR-0024；有可用文本字幕轨的文件跳过 STT，`ja.srt` 直接取自字幕轨） ------------------------
+
+EMBEDDED: dict[str, Any] = {
+    "id": "embedded-ja-subtitle-v1",
+    # 文本字幕编码白名单（ffprobe `codec_name`）；位图字幕（PGS、VobSub、DVB）不在其中，视为没有字幕轨
+    "codecs": ["ass", "mov_text", "ssa", "subrip", "webvtt"],
+    "select": "language matches, codec listed, not forced; default disposition first, then lowest stream index",
+    "convert": "ffmpeg -map 0:<index> -c:s srt -f srt",
+    # 实现在 kototoki/embedded.py；规则按 ffmpeg n9.0.2 对 ASS／SubRip／mov_text 的实际输出定
+    "clean": ["strip <i>/<b>/<u>/<s>/<font> tags and {\\...} override blocks", "literal \\h and \\N become spaces",
+              "join the lines of a cue with one space and collapse whitespace",
+              "drop cues that are empty, are ASS drawing commands, or have a non-positive duration",
+              "drop repeats of the same (start, end, text)", "stable sort by (start, end)", "renumber from 1"],
 }
 
 

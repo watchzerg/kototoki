@@ -11,7 +11,10 @@ names 阶段的身份由本模块自己算，只经 `kototoki.names.recipes` 延
 
     probe/extract ─► vad ─► asr ─► align ─► cues ─► names ─► translate ─► publish
                       vad.json 无语音时直接 ──────────────────────────────► publish
+    probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）─► names ─► translate ─► publish   （ADR-0024）
 
+采用内嵌字幕的文件（`Target.embedded` 不为 None）从 names 起核对；是否采用、`ja-embedded.json` 是否当前由编排在
+CPU 阶段判定（与 `probe.json` 同一做法），本模块只给出它的期望身份 `embedded_identity`。
 names 恒在链上（建表必开）；`sources` 含 `names`（表的身份），表的内容经翻译身份的 `names_sha256` 体现。
 `next_stage` 对一个文件从 vad 起逐阶段核对，返回第一个需要运行的阶段与此前各阶段的期望身份；
 某阶段跑完后用 `advance` 从该阶段继续核对，不再从头重算。
@@ -46,6 +49,8 @@ STAGE_INPUTS = {"vad": (("wav", artifacts.AUDIO_16K),),
 # `published.json` 的 `sources` 里各阶段身份的键（`cues` 阶段的产物是 `ja-cues.json`）。
 IDENTITY_KEY = {"vad": "vad", "asr": "asr", "align": "align", "cues": "ja_cues", "names": "names",
                 "translate": "translate"}
+# 采用内嵌日文字幕的文件在 `sources` 里代替 vad／asr／align／ja_cues 的键（`ja-embedded.json` 的身份，ADR-0024）。
+EMBEDDED_KEY = "ja_embedded"
 
 ASR_RECIPES = {"w0": recipes.W0, "x0": recipes.X0, "cross": recipes.CROSS}
 
@@ -153,6 +158,13 @@ def cues_identity(align_sha256: str, config: Config) -> dict[str, Any]:
                                       recipe_hash=recipes.recipe_hash(recipes.CUES), config=asdict(config.cues))
 
 
+def embedded_identity(probe: Mapping[str, Any], stream_index: int) -> dict[str, Any]:
+    """`ja-embedded.json` 的期望身份（ADR-0024）：输入文件身份（`probe.json` 的身份）＋ `EMBEDDED` 配方 hash ＋ 字幕流索引。"""
+    return artifacts.derived_identity(upstream={artifacts.PROBE: artifacts.object_hash(probe)},
+                                      recipe_hash=recipes.recipe_hash(recipes.EMBEDDED),
+                                      config={"stream_index": stream_index})
+
+
 def names_identity(ja_srt_sha256: str, config: Config) -> dict[str, Any]:
     """`name-table.json` 的期望身份；模型 SHA256 在建表配方里，故不进身份。"""
     recipe = importlib.import_module("kototoki.names.recipes").BUILD_RECIPE_HASH
@@ -181,10 +193,15 @@ class PlanError(RuntimeError):
 
 @dataclass(frozen=True)
 class Target:
-    """一个文件的计划输入：CPU 阶段之后已知的常量。"""
+    """一个文件的计划输入：CPU 阶段之后已知的常量。
+
+    `embedded` 不为 None 即该文件采用内嵌日文字幕（ADR-0024）：`ja.srt` 已由 CPU 阶段从字幕轨写出，计划从 names
+    起核对，不经 vad／asr／align／cues，此时没有派生 WAV，`pcm_sha256` 为 None。
+    """
     work_dir: Path
     probe: Mapping[str, Any]          # `probe.json` 的期望身份（已当前）
-    pcm_sha256: str
+    pcm_sha256: str | None
+    embedded: Mapping[str, Any] | None = None  # `ja-embedded.json` 的身份（已当前）
 
 
 @dataclass(frozen=True)
@@ -193,6 +210,7 @@ class Plan:
     `publish`（无语音，直接发布零条目字幕）。翻译阶段总要经过（run 已完成时只读回译文）；是否已发布不归本模块，
     编排在扫描时按源文件旁的字幕是否存在判定（ADR-0020）。
     `identities` 是 `probe` 与从 vad 起到 `stage`（含）各阶段的期望身份，键同 `published.json` 的 `sources`；
+    采用内嵌字幕的文件没有 vad／asr／align／ja_cues，代之以 `ja_embedded`；
     `translate` 是核对到翻译阶段后翻译子系统给出的计划（run 目录、是否需要模型），此前为 None。
     """
     stage: str
@@ -205,14 +223,21 @@ class Plan:
         """`published.json` 的 `sources`（审计记录）：已核对的全部身份与 `no_speech`。"""
         if self.no_speech:
             keys = ("probe", "vad")
+        elif EMBEDDED_KEY in self.identities:
+            keys = ("probe", EMBEDDED_KEY, "names", "translate")
         else:
             keys = ("probe", "vad", "asr", "align", "ja_cues", "names", "translate")
         return {key: self.identities[key] for key in keys} | {"no_speech": self.no_speech}
 
 
 def next_stage(target: Target, config: Config, models: ModelSha) -> Plan:
-    """从 vad 起逐阶段核对，返回第一个需要运行的阶段；每文件每次运行调用一次。出错抛 `PlanError`。"""
-    return _check_from(target, config, models, Plan("vad", {"probe": target.probe}, False))
+    """从 vad 起（采用内嵌字幕的文件从 names 起）逐阶段核对，返回第一个需要运行的阶段；每文件每次运行调用一次。
+    出错抛 `PlanError`。"""
+    if target.embedded is not None:
+        start = Plan("names", {"probe": target.probe, EMBEDDED_KEY: target.embedded}, False)
+    else:
+        start = Plan("vad", {"probe": target.probe}, False)
+    return _check_from(target, config, models, start)
 
 
 def advance(previous: Plan, target: Target, config: Config, models: ModelSha) -> Plan:

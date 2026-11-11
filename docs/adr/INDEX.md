@@ -11,7 +11,7 @@
 
 ## 当前有效决定
 
-更新于 2026-11-11（ADR-0023 的 ASR 复读守卫已实现并验收）。此前 2026-11-10（ADR-0023 采纳）、2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
+更新于 2026-11-11（ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT，同日采纳并实现；同日 ADR-0023 的 ASR 复读守卫已实现并验收）。此前 2026-11-10（ADR-0023 采纳）、2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
 
 | 主题 | 现行规则 | 权威出处 |
 | --- | --- | --- |
@@ -26,6 +26,7 @@
 | 方法禁区 | 不自动选用"翻译多次再挑选"（MBR、best-of-N、多次投票及更省的变体）：不提议、不列候选、不在无人值守时执行。两次可靠性重试与 10→5→1 降级不算在内。边界情况先问 | [0008](0008-no-multi-translation-selection.md) |
 | 专名一致性 | 研究线已结题，不开新轮次，建表配置冻结（no-think、提示 v5；v13 由用户明确要求重开，产出 Q3 的 Strata 建表配方；2026-11-10 用户再次明确要求在 v15 重开，范围限日文转写侧的表内写法替换；2026-11-11 用户裁定该替换不进产品，这次重开结束）。产品 `names` 阶段在与翻译共用的 Strata session 上用 Flash-Next 建表（配方 `q3-names-v1`，请求与 seed 序列与 Q3 的 `names-strata-v4` 逐字节一致，最多 5 次请求），必开，不起 llama-server；表只经翻译注入（high 条目）使用，没有发布时替换；表可手改，改到注入行即重译 | [0014](0014-name-consistency-in-product.md)；替换与开关的删除见 [0019](0019-product-translation-q2.md)；基线的建表见 [0021](0021-q3-strata-names-baseline.md)；产品建表与共享 session 见 [0022](0022-product-names-on-strata.md) |
 | ASR 复读守卫 | 产品 w0 路径（含 `cross` 的 w0 那一路；x0 不过守卫）在 `asr` 阶段解码后过守卫：规则 `repeat-strict`（规范化文本上周期 ≥2 的相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖 ≥50%），动作折叠（保留第一个单元），折叠后仍命中则按 `failed_windows` 置空（原因 `guard:repeat-strict`），trace 记 `guard`。只做后处理，不重解码；W0 基线身份不变，产品 W0 配方 id `w0-faster-whisper-large-v3-guard-v2`（2026-11-11 实现，旧 `asr.json` 重算） | [0023](0023-asr-repeat-guard.md) |
+| 内嵌日文字幕 | `[input] use_embedded_subtitles`（默认 `true`）开着且文件有可用的日文文本字幕轨（语言相符、`subrip`／`ass`／`ssa`／`mov_text`／`webvtt`、非 forced；多条取 default 再取索引最小）时，该文件不做 STT：probe → ffmpeg 抽轨转 SRT＋清洗（去标签、多行并一行、丢空条目／绘图指令／重复、按时间排序）写 `ja.srt` 与 `ja-embedded.json` → `names` → `translate` → publish，不提取音频。抽取失败或零条目回到 STT 链并告警。配方 `embedded-ja-subtitle-v1`。不读外挂字幕、不做位图 OCR、不检测内容语言、不过滤听障说明 | [0024](0024-embedded-japanese-subtitles.md) |
 
 ### 未关闭项
 
@@ -38,7 +39,8 @@
   - Q2 在产品里曾每包约 16 s（v12 F1 的 6 倍），原因是启动时整机内存不够放下专家区、引擎退到 mmap；专家锁进内存后整片重跑每包约 3.1 s（2026-11-08，[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)）；产品已改为启动前等可用内存、ready 后确认专家全部锁进内存、退到 mmap 即拒绝（[0019](0019-product-translation-q2.md)），因此需要约 52 GiB 可用内存；同 seed 跨 Strata 启动不可复现；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
   - 给新 SRT 生成 Q1／Q2／Q3 翻译配方已有 `v13.write_q2`；用 Q3 规则建表的通用入口自 0022 起是产品的 names 阶段（研究侧 v13 仍只覆盖固定输入）；Q3 的产品结果只来自一次建表，同一部片两次建表写法 Jaccard 只有 0.56／0.48（[0021](0021-q3-strata-names-baseline.md)）；
   - `cross` 尚未在新素材上确认（[0012](0012-cross-asr-judge.md)）；
-  - 音频输入未用真实音频文件跑过整条链；音频时长偏短只告警，损坏的音频文件会出不完整字幕（[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)）。
+  - 音频输入未用真实音频文件跑过整条链；音频时长偏短只告警，损坏的音频文件会出不完整字幕（[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)）；
+  - 内嵌日文字幕路径只用合成片段验证过：没有用真实片源跑过，ASS 的卡拉 OK／屏幕字噪声未知，Strata 对人工字幕输入的建表与翻译未做真实模型验证（[0024](0024-embedded-japanese-subtitles.md)）。
 
 ## 演进链
 
@@ -71,6 +73,7 @@
 - **产品输入、工作目录与发布**：
   1. [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13）：只扫视频；`<output_dir>/.work/`；三份 SRT 镜像发布到 `output_dir`，按 `published.json` 判定覆盖、`force`。
   2. → [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)（11-08）：音频也作输入；`[paths] work_dir`（默认 `.local/work/`）按目标目录分子目录；只发布 `ja-zh.srt` 到源文件旁，已存在即跳过；删 `output_dir` 与 `force`。
+  3. → [0024](0024-embedded-japanese-subtitles.md)（11-11）：有可用的内嵌日文文本字幕轨的文件不做 STT，`ja.srt` 取自字幕轨，从 `names` 起走原链；其余文件不变。
 - **方法禁区**：[0008](0008-no-multi-translation-selection.md)（10-16），放弃 v4 `mbr8c` 与 v5 `mbr8s`。0012、0014–0017 都确认它仍适用。
 - **专名一致性**：
   1. [0013](0013-name-consistency-closed.md)（已合并）（10-19）：结题，冻结配置，不进产品。
@@ -105,8 +108,9 @@
 | [0021](0021-q3-strata-names-baseline.md) | 唯一翻译基线 Q3（Q2 规则＋Strata 建表，最多 5 次请求） | 有效 |
 | [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效 |
 | [0023](0023-asr-repeat-guard.md) | ASR 阶段整窗复读守卫（`repeat-strict`＋折叠） | 已接受，2026-11-11 已实现 |
+| [0024](0024-embedded-japanese-subtitles.md) | 有内嵌日文文本字幕轨的文件跳过 STT | 已接受，2026-11-11 已实现（真实片源与真实模型验证未做） |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0024 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0025 起。
 
 ## 记录新决定
 

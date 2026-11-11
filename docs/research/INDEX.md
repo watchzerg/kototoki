@@ -14,6 +14,8 @@ attributed to the original investigation dates, not newly verified by migration.
 
 按时间倒序记录用户采纳的决定与探索轮次结论；本节只摘要并链接。当前有效的决定及其演进链以[决定索引](../adr/INDEX.md)为准，新决定按其"记录新决定"步骤同步。
 
+2026-11-11：用户裁定实现"利用视频内嵌日文字幕"，记为 [ADR-0024](../adr/0024-embedded-japanese-subtitles.md)（已接受、同日实现）：有可用日文文本字幕轨的文件默认跳过 STT，`ja.srt` 取自字幕轨（ffmpeg 转 SRT＋清洗），从 names 起走原链；默认开启、ASS 进第一版、听障说明原样保留、外挂字幕不做。没有立研究轮次；验证只用 ffmpeg 合成片段，真实片源与真实模型验证未做。
+
 2026-11-11：[ADR-0023](../adr/0023-asr-repeat-guard.md) 的 ASR 整窗复读守卫**已实现并验收**（`kototoki/guard.py`＋`workers/asr.py`，产品 W0 配方 id `w0-faster-whisper-large-v3-guard-v2`）：HF III 第 51 窗折叠 94 → 31 字、官方 CER 13.3973% 逐项复现，HF II 零命中、CER 不变；过程与待裁定项见[实现计划](../plans/asr-repeat-guard.md) §7、§8。
 
 2026-11-11：用户裁定 v15 收尾——**只有 A 进产品**（[ADR-0023](../adr/0023-asr-repeat-guard.md)，实现计划 [`docs/plans/asr-repeat-guard.md`](../plans/asr-repeat-guard.md)，尚未开工）；**B（空子段补窗）不进**；**C3（按专名表替换日文人名）不进**，ADR-0014 研究线的这次局部重开结束。W0 基线身份不变。

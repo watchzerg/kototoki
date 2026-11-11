@@ -3,7 +3,8 @@
 对外只有 `run(config) -> Summary`。流程按"阶段 × 整批"推进::
 
     扫描（视频与音频；大小采样稳定性、源文件旁字幕已存在即跳过、主名冲突、短 id）
-    → probe/extract（线程池，整批完成）
+    → probe/extract（线程池，整批完成；有可用的内嵌日文文本字幕轨的文件在这里抽轨写 `ja.srt`，不提取音频，
+      此后直接进 names，不经 vad／asr／align／ja-cues，ADR-0024）
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
     → ja-cues（进程内）
     → names 与 translate 共用一个 Strata session（`kototoki.strata.Session`，编排持有，ADR-0022）：第一次真正需要模型时
@@ -14,7 +15,7 @@
 
 阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
 某阶段跑完再 `advance` 继续核对；产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。GPU 阶段产物
-（`vad.json`、`asr.json`、`align.json`）由 worker 写出；CPU 阶段产物（`probe.json`、`ja-cues.json`）由本模块
+（`vad.json`、`asr.json`、`align.json`）由 worker 写出；CPU 阶段产物（`probe.json`、`ja-embedded.json`、`ja-cues.json`）由本模块
 写出。模型文件 SHA256 的核对（size+mtime 缓存，每次运行每阶段最多一次）在本模块经 `workers/gpu.verify_models`
 完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）。
 
@@ -41,7 +42,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, TextIO
 
-from kototoki import artifacts, cues, media, plan, srt
+from kototoki import artifacts, cues, embedded, media, plan, srt
 from kototoki.config import REPO_ROOT, Config
 from kototoki.logs import RunFormatter
 from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
@@ -327,12 +328,14 @@ class VideoFile:
     probe: media.Probe | None = None
     probe_identity: dict[str, Any] | None = None
     pcm_sha256: str | None = None
+    embedded: dict[str, Any] | None = None  # 采用内嵌日文字幕时 `ja-embedded.json` 的身份（此时不提取音频）
+    embedded_note: str = ""       # 采用内嵌字幕时的日志说明（流索引、编码、条数）
     plan: Plan | None = None      # CPU 阶段之后由阶段计划模块给出，某阶段跑完后推进
     failed: str | None = None     # 本次运行中失败的阶段
 
     def target(self) -> plan.Target:
-        assert self.probe_identity is not None and self.pcm_sha256 is not None
-        return plan.Target(self.work_dir, self.probe_identity, self.pcm_sha256)
+        assert self.probe_identity is not None and (self.pcm_sha256 is not None or self.embedded is not None)
+        return plan.Target(self.work_dir, self.probe_identity, self.pcm_sha256, self.embedded)
 
     @property
     def no_speech(self) -> bool:
@@ -352,6 +355,7 @@ class Summary:
     existing: list[str] = field(default_factory=list)      # 源文件旁已有双语字幕，跳过
     unstable: list[str] = field(default_factory=list)      # 大小仍在变化（写入中），跳过
     no_speech: list[str] = field(default_factory=list)     # VAD 为空，发布零条目字幕
+    embedded: list[str] = field(default_factory=list)      # 本次发布中日文取自内嵌字幕轨、未经 STT 的文件
     failed: dict[str, str] = field(default_factory=dict)   # 相对路径 → 失败阶段
     fallback_cues: int = 0                                 # 译文回退为日文的 cue 数
 
@@ -442,25 +446,77 @@ def clean_leftovers(work_dir: Path) -> None:
             path.unlink(missing_ok=True)
 
 
+def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str, Any]) -> str | None:
+    """采用内嵌日文字幕轨 `stream`（ADR-0024）：抽取、清洗，写 `ja.srt` 与 `ja-embedded.json`，置 `video.embedded`。
+
+    返回 None 即已采用；否则是不可用的原因（ffmpeg 抽取失败、清洗后零条目），调用方回到 STT 链。
+    `ja-embedded.json` 身份匹配且它记下的 `ja.srt` SHA256 与文件相符时跳过抽取。写出 `ja.srt` 时删掉 `ja-cues.json`：
+    cues 阶段只核对 `ja-cues.json` 的身份与 `ja.srt` 是否存在，留着它会让以后改走 STT 时把字幕轨的 `ja.srt` 当成
+    cue 阶段的输出。
+    """
+    assert video.probe is not None and video.probe_identity is not None
+    work = video.work_dir
+    identity = plan.embedded_identity(video.probe_identity, int(stream["index"]))
+    record_path, ja_path = work / artifacts.JA_EMBEDDED, work / JA_SRT
+    cue_count = None
+    if artifacts.is_current(record_path, identity) and ja_path.is_file():
+        record = artifacts.read_json(record_path)
+        if record.get("ja_srt_sha256") == artifacts.sha256_file(ja_path):
+            cue_count = record["cues"]
+    if cue_count is None:
+        try:
+            text, stats = embedded.clean(media.extract_subtitle(video.path, int(stream["index"]), config.paths.ffmpeg))
+        except (media.MediaError, ValueError) as error:
+            return f"{type(error).__name__}: {(str(error).splitlines() or [''])[0]}"
+        if not text:
+            return f"no usable cue among {stats['source_cues']}"
+        work.mkdir(parents=True, exist_ok=True)
+        clean_leftovers(work)
+        (work / artifacts.JA_CUES).unlink(missing_ok=True)
+        srt.write_srt(text, ja_path)
+        artifacts.write_artifact(record_path, identity, {"stream": dict(stream), **stats,
+                                                         "ja_srt_sha256": artifacts.sha256_file(ja_path)})
+        cue_count = stats["cues"]
+    probe_path = work / artifacts.PROBE
+    if not artifacts.is_current(probe_path, video.probe_identity):  # 没有提取音频：`extract` 为 null
+        artifacts.write_artifact(probe_path, video.probe_identity, {**video.probe.payload(), "extract": None})
+    video.embedded = identity
+    video.embedded_note = f"embedded subtitle stream {stream['index']} ({stream['codec_name']}), {cue_count} cue(s)"
+    return None
+
+
 def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
     """ffprobe 每次都跑（<1 s）以得到视频身份；`probe.json` 当前且 WAV 在时跳过 extract。
 
+    `[input] use_embedded_subtitles` 开着且有可用的日文文本字幕轨时先试 `use_embedded_subtitle`：采用后不提取音频，
+    只返回选轨告警（音轨告警与该文件无关）；不可用时加一条告警，照常提取音频走 STT。
     `probe.json` 在 extract 完成后写出，内容为 probe payload 加 `extract` 记录（PCM SHA256 等）。
     返回 probe 与 extract 的告警（跳过 extract 时取 `probe.json` 里记下的）以及补偿告警，由调用方写进运行日志。
     """
     video.probe = media.probe(video.path, config)
     video.probe_identity = plan.probe_identity(config, video.relative, video.probe.ffprobe)
+    fallback: tuple[str, ...] = ()
+    if config.input.use_embedded_subtitles:
+        stream, notes = media.select_subtitle(video.probe.subtitles, config.input.audio_language)
+        if stream is not None:
+            reason = use_embedded_subtitle(config, video, stream)
+            if reason is None:
+                return tuple(notes)
+            fallback = (*notes, f"Embedded subtitle stream {stream['index']} is unusable ({reason}); "
+                                "falling back to speech recognition")
     path = video.work_dir / artifacts.PROBE
+    # `extract` 为 null 的 `probe.json` 是采用内嵌字幕时写的，没有 WAV 记录
     if artifacts.is_current(path, video.probe_identity) and (video.work_dir / artifacts.AUDIO_16K).is_file():
         record = artifacts.read_json(path)["extract"]
-        video.pcm_sha256 = record["pcm_sha256"]
-        return (video.probe.warnings + tuple(record["warnings"])
-                + tuple(compensation_warnings(record["compensation"], video.probe.audio.sample_rate)))
+        if record is not None:
+            video.pcm_sha256 = record["pcm_sha256"]
+            return (fallback + video.probe.warnings + tuple(record["warnings"])
+                    + tuple(compensation_warnings(record["compensation"], video.probe.audio.sample_rate)))
     clean_leftovers(video.work_dir)
     result = media.extract(video.path, video.work_dir, video.probe, config)
     artifacts.write_artifact(path, video.probe_identity, {**video.probe.payload(), "extract": result.payload()})
     video.pcm_sha256 = result.pcm_sha256
-    return (video.probe.warnings + result.warnings
+    return (fallback + video.probe.warnings + result.warnings
             + tuple(compensation_warnings(result.compensation, video.probe.audio.sample_rate)))
 
 
@@ -723,8 +779,11 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, fall
     artifacts.replace_with_retry(staged, video.final)
     (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
     ctx.summary.published.append(video.relative)
+    if video.embedded is not None:
+        ctx.summary.embedded.append(video.relative)
     ctx.summary.fallback_cues += fallback
     logger.info(f"[publish] {video.relative}" + (" (no speech)" if video.no_speech else "")
+                + (" (embedded subtitles)" if video.embedded is not None else "")
                 + (f", {fallback} fallback cue(s)" if fallback else ""))
     return True
 
@@ -803,7 +862,8 @@ def _run(ctx: _Context) -> None:
                     continue
                 for warning in future.result():
                     logger.warning(f"[extract] {video.relative}: {warning}")
-                logger.info(f"[extract] done {video.relative}")
+                logger.info(f"[extract] done {video.relative}"
+                            + (f": {video.embedded_note}, skipping speech recognition" if video.embedded else ""))
         except BaseException:  # Ctrl+C：排队中的文件不再提取，只等正在跑的 ffmpeg 结束
             pool.shutdown(wait=True, cancel_futures=True)
             raise
@@ -857,7 +917,8 @@ def _run(ctx: _Context) -> None:
             ctx.fail(video, "publish", error)
 
     logger.info(f"[summary] {summary.total} file(s): {len(summary.published)} published "
-                f"({len(summary.no_speech)} no speech), {len(summary.existing)} with subtitles, "
+                f"({len(summary.no_speech)} no speech, {len(summary.embedded)} from embedded subtitles), "
+                f"{len(summary.existing)} with subtitles, "
                 f"{len(summary.failed)} failed, {len(summary.unstable)} unstable, "
                 f"{summary.fallback_cues} fallback cue(s)")
     for rel, stage in summary.failed.items():

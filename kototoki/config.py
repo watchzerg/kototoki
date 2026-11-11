@@ -43,6 +43,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "extensions": [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi",
                        ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"],
         "audio_language": "jpn",
+        # 有可用的日文文本字幕轨时跳过 STT，直接翻译字幕轨（ADR-0024）；false 时一律走 STT。
+        "use_embedded_subtitles": True,
     },
     "run": {"extract_workers": 4, "stable_check_s": 10.0},
     "stt": {"engine": "w0"},
@@ -81,6 +83,7 @@ class Paths:
 class InputConfig:
     extensions: tuple[str, ...]
     audio_language: str
+    use_embedded_subtitles: bool
 
 
 @dataclass(frozen=True)
@@ -224,7 +227,8 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
         source=source,
         paths=Paths(**{key: values["paths", key] for key in DEFAULTS["paths"]}),
         input=InputConfig(extensions=tuple(ext.lower() for ext in values["input", "extensions"]),
-                          audio_language=values["input", "audio_language"]),
+                          audio_language=values["input", "audio_language"],
+                          use_embedded_subtitles=values["input", "use_embedded_subtitles"]),
         run=RunConfig(**{key: values["run", key] for key in DEFAULTS["run"]}),
         engine=engine,
         models=Models(vad=values["vad", "model"], w0=values["asr.w0", "model"],

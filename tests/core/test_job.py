@@ -68,9 +68,13 @@ class JobCase(unittest.TestCase):
         self.media_warnings: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}  # rel → (probe, extract) 告警
         self.compensation: dict[str, dict] = {}  # rel → 伪 extract 记进 probe.json 的补偿统计
         self.probe_delay_s = 0.0                 # 伪 probe 的耗时，供线程池取消测试
+        self.subtitles: dict[str, tuple[dict, ...]] = {}   # rel → 伪 probe 给出的字幕流清单
+        self.subtitle_text: dict[str, object] = {}         # rel → 伪抽轨给出的 SRT 文本，或要抛的异常
+        self.subtitle_extracted: list[str] = []
         if self.FAKE_MEDIA:
             self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
             self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
+            self.enterContext(mock.patch("kototoki.job.media.extract_subtitle", side_effect=self._extract_subtitle))
         self.empty_cues: set[str] = set()  # 相对路径：伪 cue 构建给出零条目 `ja.srt`
         self.enterContext(mock.patch("kototoki.job.cues.build_cues", side_effect=self._build_cues))
         self.enterContext(mock.patch("kototoki.job.gpu.verify_models", return_value=FAKE_MODELS))
@@ -176,7 +180,16 @@ class JobCase(unittest.TestCase):
         return media.Probe(
             ffprobe={"streams": [{"index": 0, "codec_name": "aac"}], "format": {"duration": "10"}},
             audio=track, audio_tracks=(track,), has_video=True, duration_s=10.0, duration_source="stream.duration",
-            container_start_time=0.0, subtitles=(), warnings=self.media_warnings.get(self._rel(path), ((), ()))[0])
+            container_start_time=0.0, subtitles=self.subtitles.get(self._rel(path), ()),
+            warnings=self.media_warnings.get(self._rel(path), ((), ()))[0])
+
+    def _extract_subtitle(self, path: Path, index: int, ffmpeg: Path) -> str:
+        rel = self._rel(path)
+        self.subtitle_extracted.append(rel)
+        text = self.subtitle_text.get(rel, SRT_JA)
+        if isinstance(text, Exception):
+            raise text
+        return text
 
     def _extract(self, path: Path, work_dir: Path, probe: media.Probe, config) -> media.Extract:
         rel = self._rel(path)
@@ -1064,6 +1077,128 @@ class NamesTests(JobCase):
         self.assertEqual(self.table("a.mkv")["entries"], [])
 
 
+JPN_SRT_TRACK = ({"index": 2, "codec_name": "subrip", "language": "jpn", "default": True, "forced": False},)
+SRT_EMBEDDED = ("1\n00:00:03,000 --> 00:00:04,000\n<i>字幕の</i>\n台詞\n\n"
+                "2\n00:00:05,000 --> 00:00:06,000\n次の台詞\n")
+SRT_EMBEDDED_CLEAN = ("1\n00:00:03,000 --> 00:00:04,000\n字幕の 台詞\n\n"
+                      "2\n00:00:05,000 --> 00:00:06,000\n次の台詞\n")
+
+
+class EmbeddedSubtitleTests(JobCase):
+    """有可用的内嵌日文文本字幕轨的文件跳过 STT：不提取音频、不起 worker，`ja.srt` 取自字幕轨（ADR-0024）。"""
+
+    def with_track(self, rel: str, text: object = SRT_EMBEDDED) -> None:
+        self.subtitles[rel] = JPN_SRT_TRACK
+        self.subtitle_text[rel] = text
+
+    def test_embedded_track_skips_extract_and_gpu_stages(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.with_track("a.mkv")
+        console = io.StringIO()
+        summary = self.run_job(console=console)
+        self.assertEqual((summary.published, summary.embedded, summary.exit_code), (["a.mkv", "b.mkv"], ["a.mkv"], 0))
+        self.assertEqual((self.extracted, self.subtitle_extracted), (["b.mkv"], ["a.mkv"]))
+        for stage in ("vad", "asr", "align"):  # 只有 b 进 GPU 阶段
+            self.assertEqual([launch["ids"] for launch in self.launches(stage)], [self.ids("b.mkv")])
+        work = self.work_dir("a.mkv")
+        self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_EMBEDDED_CLEAN)
+        for name in (artifacts.AUDIO_16K, artifacts.VAD, artifacts.ASR, artifacts.ALIGN, artifacts.JA_CUES):
+            self.assertFalse((work / name).exists(), name)
+        record = artifacts.read_json(work / artifacts.JA_EMBEDDED)
+        self.assertEqual((record["stream"], record["source_cues"], record["cues"]), (JPN_SRT_TRACK[0], 2, 2))
+        self.assertEqual(record["ja_srt_sha256"], artifacts.sha256_file(work / "ja.srt"))
+        self.assertIsNone(artifacts.read_json(work / artifacts.PROBE)["extract"])
+        self.assertEqual(self.final("a.mkv").read_text(encoding="utf-8"),
+                         "1\n00:00:03,000 --> 00:00:04,000\n你好\n字幕の 台詞\n\n"
+                         "2\n00:00:05,000 --> 00:00:06,000\n你好\n次の台詞\n")
+        sources = self.published("a.mkv")["sources"]
+        self.assertEqual(set(sources), {"probe", "ja_embedded", "names", "translate", "no_speech",
+                                        "translate_fallback_cues"})
+        self.assertEqual(sources["ja_embedded"], record["identity"])
+        self.assertIn("vad", self.published("b.mkv")["sources"])
+        log = console.getvalue()
+        self.assertIn("[extract] done a.mkv: embedded subtitle stream 2 (subrip), 2 cue(s), skipping speech recognition",
+                      log)
+        self.assertIn("[publish] a.mkv (embedded subtitles)", log)
+        self.assertIn("2 published (0 no speech, 1 from embedded subtitles)", log)
+        self.assertNotIn("字幕の", log)  # 字幕文字不进日志
+
+    def test_batch_of_embedded_files_takes_the_gpu_lock_only_for_strata(self) -> None:
+        self.make_inputs("a.mkv")
+        self.with_track("a.mkv")
+        self.run_job()
+        self.assertEqual(self.launches(), [])
+        identifier = self.ids("a.mkv")[0]
+        self.assertEqual(self.calls, ["session_enter", f"names:{identifier}", f"translate:{identifier}",
+                                      "session_exit", "merge"])
+        self.assertEqual(self.names_snapshots[0]["lock"]["pid"], os.getpid())  # 建表需要模型：此时才取 GPU 锁
+
+    def test_switch_off_goes_through_speech_recognition(self) -> None:
+        self.make_inputs("a.mkv")
+        self.with_track("a.mkv")
+        config = replace(self.config, input=replace(self.config.input, use_embedded_subtitles=False))
+        summary = self.run_job(config)
+        self.assertEqual((summary.published, summary.embedded), (["a.mkv"], []))
+        self.assertEqual((self.extracted, self.subtitle_extracted), (["a.mkv"], []))
+        self.assertEqual(len(self.launches()), 3)
+        self.assertFalse((self.work_dir("a.mkv") / artifacts.JA_EMBEDDED).exists())
+
+    def test_unusable_track_falls_back_to_speech_recognition_with_a_warning(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.with_track("a.mkv", media.MediaError("ffmpeg subtitle extraction failed (1): boom\nmore"))
+        self.with_track("b.mkv", "1\n00:00:01,000 --> 00:00:02,000\n<i></i>\n")  # 清洗后零条目
+        console = io.StringIO()
+        summary = self.run_job(console=console)
+        self.assertEqual((summary.published, summary.embedded, summary.failed), (["a.mkv", "b.mkv"], [], {}))
+        self.assertEqual(sorted(self.extracted), ["a.mkv", "b.mkv"])
+        self.assertEqual(self.launches("vad")[0]["ids"], self.ids("a.mkv", "b.mkv"))
+        warnings = sorted(m[2] for m in map(LOG_LINE.match, console.getvalue().splitlines()) if m and m[1] == "WARNING")
+        self.assertEqual(warnings, [
+            "[extract] a.mkv: Embedded subtitle stream 2 is unusable (MediaError: ffmpeg subtitle extraction failed "
+            "(1): boom); falling back to speech recognition",
+            "[extract] b.mkv: Embedded subtitle stream 2 is unusable (no usable cue among 1); "
+            "falling back to speech recognition"])
+        for rel in ("a.mkv", "b.mkv"):
+            self.assertFalse((self.work_dir(rel) / artifacts.JA_EMBEDDED).exists())
+            self.assertEqual(self.final(rel).read_text(encoding="utf-8"), MERGED)
+
+    def test_rerun_reuses_the_extracted_subtitle(self) -> None:
+        self.make_inputs("a.mkv")
+        self.with_track("a.mkv")
+        self.translate_errors.add(self.ids("a.mkv")[0])
+        self.assertEqual(self.run_job().failed, {"a.mkv": "translate"})
+        self.translate_errors.clear()
+        summary = self.run_job()
+        self.assertEqual((summary.published, summary.embedded), (["a.mkv"], ["a.mkv"]))
+        self.assertEqual(self.subtitle_extracted, ["a.mkv"])  # 第二次运行按身份跳过抽轨
+        (self.work_dir("a.mkv") / "ja.srt").write_text(SRT_JA, encoding="utf-8")  # ja.srt 被别的路径改写：重新抽轨
+        self.final("a.mkv").unlink()
+        self.run_job()
+        self.assertEqual(self.subtitle_extracted, ["a.mkv", "a.mkv"])
+        self.assertEqual((self.work_dir("a.mkv") / "ja.srt").read_text(encoding="utf-8"), SRT_EMBEDDED_CLEAN)
+
+    def test_switching_paths_never_reuses_the_other_path_s_ja_srt(self) -> None:
+        self.make_inputs("a.mkv")
+        stt = replace(self.config, input=replace(self.config.input, use_embedded_subtitles=False))
+        self.with_track("a.mkv")
+        work = self.work_dir("a.mkv")
+
+        self.run_job(stt)                                   # 先走 STT：ja.srt 来自 cue 阶段
+        self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_JA)
+        self.final("a.mkv").unlink()
+        self.run_job()                                      # 改走内嵌字幕：ja.srt 换成字幕轨，ja-cues.json 删除
+        self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_EMBEDDED_CLEAN)
+        self.assertFalse((work / artifacts.JA_CUES).exists())
+        self.assertIn("ja_embedded", self.published("a.mkv")["sources"])
+        self.final("a.mkv").unlink()
+        launches = len(self.launches())
+        self.run_job(stt)                                   # 再回 STT：GPU 产物仍当前，只重做 cue 阶段
+        self.assertEqual(len(self.launches()), launches)
+        self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_JA)
+        self.assertEqual(self.final("a.mkv").read_text(encoding="utf-8"), MERGED)
+        self.assertIn("ja_cues", self.published("a.mkv")["sources"])
+
+
 class ImportAndDirTests(JobCase):
     def test_job_and_main_import_no_inference_stack(self) -> None:
         # 编排器在进程内延迟导入的专名与翻译子系统同样不得带进推理栈或 experiments。
@@ -1151,7 +1286,7 @@ class RunLogTests(JobCase):
         self.assertTrue(file)
         for line in file:
             self.assertRegex(line, LOG_LINE)
-        self.assertIn("[summary] 2 file(s): 2 published (0 no speech), 0 with subtitles, 0 failed, "
+        self.assertIn("[summary] 2 file(s): 2 published (0 no speech, 0 from embedded subtitles), 0 with subtitles, 0 failed, "
                       "0 unstable, 0 fallback cue(s)", self.entries_at(file, "INFO"))
 
     def test_warnings_use_level_not_wording(self) -> None:

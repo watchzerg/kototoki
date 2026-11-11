@@ -51,6 +51,7 @@ VAD = "vad.json"
 ASR = "asr.json"
 ALIGN = "align.json"
 JA_CUES = "ja-cues.json"
+JA_EMBEDDED = "ja-embedded.json"  # 内嵌日文字幕轨的抽取记录（ADR-0024）：采用字幕轨的文件以它代替 vad／asr／align／ja-cues
 NAME_TABLE = "name-table.json"  # names 阶段产物（阶段产物，参与 is_current）
 PUBLISHED = "published.json"
 FAILURE = "failure.json"
@@ -61,7 +62,7 @@ ASR_X0 = "asr-x0.json"
 ASR_JUDGE = "asr-judge.json"
 
 # failure.json 记录"已完成产物"时按此顺序检查是否存在。
-STAGE_ARTIFACTS = (PROBE, AUDIO_16K, VAD, ASR, ALIGN, JA_CUES, NAME_TABLE, PUBLISHED)
+STAGE_ARTIFACTS = (PROBE, AUDIO_16K, VAD, ASR, ALIGN, JA_CUES, JA_EMBEDDED, NAME_TABLE, PUBLISHED)
 # 顶层必须带 offset_s 的本地坐标产物。
 LOCAL_TIME_ARTIFACTS = frozenset({VAD, ASR, ALIGN})
 

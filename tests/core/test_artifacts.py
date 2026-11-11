@@ -215,6 +215,12 @@ class ArtifactTests(TempCase):
         self.assertEqual((failure["stage"], failure["error_type"], failure["message"]), ("asr", "RuntimeError", "boom"))
         self.assertEqual(failure["completed"], [a.PROBE, a.VAD])
 
+    def test_embedded_subtitle_record_is_listed_as_completed(self) -> None:
+        self.assertEqual(a.JA_EMBEDDED, "ja-embedded.json")
+        a.write_artifact(self.root / a.JA_EMBEDDED, self.identity(), {"cues": 1})
+        a.write_failure(self.root, "names", RuntimeError("boom"))
+        self.assertEqual(a.read_json(self.root / a.FAILURE)["completed"], [a.JA_EMBEDDED])
+
     def test_name_artifacts_are_named_and_the_table_is_listed_as_completed(self) -> None:
         self.assertEqual(a.NAME_TABLE, "name-table.json")
         self.assertFalse(hasattr(a, "NAMES_APPLY"))  # ADR-0019：发布时替换已删除

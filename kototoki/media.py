@@ -6,6 +6,9 @@
 本模块是唯一定义时间轴零点的地方：派生 WAV 用 `aresample=async=1:first_pts=0` 补齐起始静音与
 中途间隙，sample 0 即视频 0 秒，`offset_s` 恒为 0；音轨与容器的 `start_time` 只作诊断。
 
+内嵌日文字幕（ADR-0024）：`select_subtitle` 按 `recipes.EMBEDDED` 选可用的文本字幕轨，`extract_subtitle` 让
+ffmpeg 把它转成 SRT 文本返回；是否采用、清洗与落盘归编排。字幕时间与派生 WAV 一样以 ffmpeg 的输入零点为准。
+
 只产生 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），返回结果对象；
 `probe.json` 等 JSON 产物的身份包装、写入与是否跳过由编排经产物契约完成。
 """
@@ -233,6 +236,34 @@ def parse_probe(ffprobe: dict[str, Any], language: str) -> Probe:
                  subtitles=subtitles, warnings=tuple(warnings))
 
 
+def select_subtitle(subtitles: Sequence[Mapping[str, Any]], language: str) -> tuple[dict[str, Any] | None, list[str]]:
+    """可用的内嵌字幕轨（`Probe.subtitles` 的一项）与告警；没有时为 None（规则见 `recipes.EMBEDDED`，ADR-0024）。
+
+    可用 = 语言标签与 `language` 归一后相同、编码是文本字幕、不是 forced（只有屏幕字与外语对白的部分字幕）。
+    多条可用时取 default 的，再取流索引最小的，并告警。只看流的元数据，不看内容。
+    """
+    wanted = normalize_language(language)
+    matches = sorted((stream for stream in subtitles
+                      if normalize_language(stream.get("language")) == wanted and not stream.get("forced")
+                      and stream.get("codec_name") in recipes.EMBEDDED["codecs"]),
+                     key=lambda stream: (not stream.get("default"), stream["index"]))
+    if not matches:
+        return None, []
+    chosen = dict(matches[0])
+    warnings = []
+    if len(matches) > 1:
+        warnings.append(f"{len(matches)} text subtitle streams tagged {wanted!r} "
+                        f"(indices {', '.join(str(s['index']) for s in sorted(matches, key=lambda s: s['index']))}); "
+                        f"using index {chosen['index']}")
+    return chosen, warnings
+
+
+def subtitle_command(ffmpeg: Path, video: Path, index: int) -> list[str]:
+    """把绝对流索引 `index` 的文本字幕轨转成 SRT 写到 stdout。"""
+    return [str(ffmpeg), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(video),
+            "-map", f"0:{index}", "-c:s", "srt", "-f", "srt", "pipe:1"]
+
+
 def container_suffix(codec_name: str) -> str:
     return CONTAINERS.get(codec_name, FALLBACK_CONTAINER)
 
@@ -319,6 +350,14 @@ def probe(path: Path, config: Config) -> Probe:
     if result.returncode != 0:
         raise MediaError(f"ffprobe failed ({result.returncode}): {result.stderr.strip()}")
     return parse_probe(json.loads(result.stdout), config.input.audio_language)
+
+
+def extract_subtitle(video: Path, index: int, ffmpeg: Path) -> str:
+    """内嵌文本字幕轨经 ffmpeg 转出的 SRT 文本（UTF-8，未清洗；清洗在 `kototoki.embedded.clean`）。不写任何文件。"""
+    result = _run(subtitle_command(ffmpeg, Path(video), index))
+    if result.returncode != 0:
+        raise MediaError(f"ffmpeg subtitle extraction failed ({result.returncode}): {result.stderr.strip()[-2000:]}")
+    return result.stdout
 
 
 def _wav_pcm(path: Path) -> tuple[int, int, str]:

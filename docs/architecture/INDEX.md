@@ -19,7 +19,7 @@
 | [逐窗翻译运行时](modules/translation-runtime.md) | 托管一个本地 llama.cpp server（loopback），按冻结窗口 JSONL 生成并机械校验译文；ADR-0005 模型／采样基线入口 | `experiments/translation_demo_runtime.py`、`experiments/translation_demo/`、`experiments/translation_monitor.py` |
 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) | v3 配方、批次、可续跑生成与 `translate-srt` 整片交付；ADR-0010 `dp10-cut` 基线（前任 ADR-0009 `dp6-grp`、ADR-0006 `b10-joint`）；拥有 v3 格式 `.local/gpu.lock` 与 v3 产物根目录 | `experiments/translation_v3/` |
 | [产物契约](modules/artifact-contract.md) | 双语字幕流水线共用的工作目录与产物身份、匹配跳过与原子替换、`failure.json`／`published.json`（审计记录）、worker `--jobs` 协议与 `failed_windows`、SRT 读写 | `kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py` |
-| [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py` |
+| [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0）；内嵌日文文本字幕轨的选轨、抽取与清洗（ADR-0024，有字幕轨的文件跳过 STT） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py` |
 | [日文 cue](modules/japanese-cues.md) | 双语字幕流水线中把 `align.json` 字符时间回填（插值、外推、整窗 `fallback`）并切成日文 cue 的纯函数，产出 `ja-cues.json` payload 与 `ja.srt` 文本；时间轴上唯一加 `offset_s` 的地方 | `kototoki/cues.py` |
 | [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0／x0／cross 逐窗转写（`asr.json`，窗口级 `failed_windows`，x0 触顶窗口置空；`cross` 为可选引擎，w0 与 x0 共驻、Whisper 交叉打分裁判，另写三个审计产物）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
 | [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／专名建表／翻译）、续跑与按文件重启、工作根锁与 `.local/gpu.lock`、Job Object、双语字幕发布到源文件旁（已存在即跳过）；拥有 `<work_dir>/<目标目录键>/` 的锁、运行日志（目的地与格式）与发布记录 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/logs.py` |
@@ -57,6 +57,7 @@ flowchart TB
   MAIN["python -m kototoki"] --> JOB["job（编排）"]
   JOB -->|线程池直接调用| MEDIA["media（ffmpeg）"]
   JOB -->|直接调用| CUES["cues（纯函数）"]
+  JOB -->|直接调用| EMB["embedded（纯函数，内嵌字幕清洗）"]
   JOB -->|直接调用| MERGE["merge（纯函数）"]
   JOB -->|next_stage / advance，期望身份| PLAN["plan（阶段计划）"]
   JOB -->|持有共享 session| ST["strata（中间层）"]
@@ -77,6 +78,7 @@ flowchart TB
   ST -->|strata CLI 与 HTTP| STRATA["Strata（外部服务）"]
   MEDIA --> BASE
   CUES --> BASE
+  EMB --> BASE
   MERGE --> BASE
   PLAN --> BASE
   TR --> BASE

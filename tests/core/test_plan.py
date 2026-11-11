@@ -316,6 +316,44 @@ class NamesChainTests(PlanCase):
         self.assertEqual((current.stage, set(current.sources)), ("publish", {"probe", "vad", "no_speech"}))
 
 
+class EmbeddedChainTests(PlanCase):
+    """采用内嵌日文字幕的文件（ADR-0024）：`ja.srt` 已由 CPU 阶段写出，计划从 names 起，不经 vad／asr／align／cues。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.embedded = plan.embedded_identity(PROBE_IDENTITY, 3)
+        self.target = plan.Target(self.work, PROBE_IDENTITY, None, self.embedded)
+        srt.write_srt(SRT_JA, self.work / plan.JA_SRT)
+
+    def test_identity_follows_the_input_the_recipe_and_the_stream(self) -> None:
+        self.assertEqual(self.embedded, {
+            "upstream": {artifacts.PROBE: artifacts.object_hash(PROBE_IDENTITY)},
+            "recipe_hash": recipes.recipe_hash(recipes.EMBEDDED), "models": {}, "config": {"stream_index": 3}})
+        self.assertNotEqual(plan.embedded_identity(PROBE_IDENTITY, 4), self.embedded)
+        other = copy.deepcopy(PROBE_IDENTITY)
+        other["video"]["size"] = 2
+        self.assertNotEqual(plan.embedded_identity(other, 3), self.embedded)
+
+    def test_chain_starts_at_names_and_never_asks_for_gpu_models(self) -> None:
+        def no_models(stage: str) -> dict[str, str]:
+            raise AssertionError(f"embedded path must not verify {stage} models")
+
+        current = plan.next_stage(self.target, self.config, no_models)
+        self.assertEqual(current.stage, "names")
+        self.assertEqual(set(current.identities), {"probe", "ja_embedded", "names"})
+        self.write_names()
+        current = plan.advance(current, self.target, self.config, no_models)
+        self.assertEqual((current.stage, current.no_speech), ("translate", False))
+        self.assertEqual(current.sources, {
+            "probe": PROBE_IDENTITY, "ja_embedded": self.embedded,
+            "names": plan.names_identity(artifacts.sha256_file(self.work / plan.JA_SRT), self.config),
+            "translate": current.identities["translate"], "no_speech": False})
+
+    def test_stt_artifacts_in_the_same_directory_are_ignored(self) -> None:
+        self.write_vad(chunks=[])  # 以前走 STT 时留下的无语音 vad.json 不影响内嵌路径
+        self.assertEqual(self.next().stage, "names")
+
+
 class PurityTests(PlanCase):
     def test_repeated_calls_agree_and_leave_inputs_untouched(self) -> None:
         self.write_vad()
