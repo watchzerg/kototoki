@@ -350,8 +350,7 @@ class SessionTests(unittest.TestCase):
             first = session.ensure_started()   # names 阶段
             second = session.ensure_started()  # 翻译阶段
             self.assertIs(first, second)
-            self.assertEqual(session.ordinal, 1)
-            self.assertEqual(session.cache_state, {"checked": False})
+            self.assertEqual(session.label, f"{session.runtime_root.name}/session-01")
         self.assertEqual(self.events, ["start:1:session-01", "stop:1"])
         self.assertEqual(self.pids, [1001, None])
         self.assertEqual(session.runtime_root.parent,
@@ -360,12 +359,10 @@ class SessionTests(unittest.TestCase):
     def test_stop_then_restart_is_a_new_session(self) -> None:
         session = self.session()
         session.ensure_started()
-        session.cache_state["checked"] = True
         session.stop()
         session.stop()  # 幂等
         session.ensure_started()
-        self.assertEqual(session.ordinal, 2)
-        self.assertEqual(session.cache_state, {"checked": False})
+        self.assertEqual(session.label, f"{session.runtime_root.name}/session-02")
         self.assertEqual(self.events, ["start:1:session-01", "stop:1", "start:2:session-02"])
         session.stop()
         self.assertEqual(self.pids, [1001, None, 1002, None])
@@ -387,7 +384,8 @@ class SessionTests(unittest.TestCase):
             self.assertIsNone(session.unavailable)
         with self.assertRaises(InfraFailure):
             session.ensure_started()
-        self.assertIn(f"failed to start {S.MAX_START_FAILURES} times", session.unavailable)
+        self.assertIn(f"failed to start {S.MAX_START_FAILURES} times in this batch (start budget exhausted): "
+                      f"launch {S.MAX_START_FAILURES} exploded", session.unavailable)
         with self.assertRaisesRegex(StrataRefused, "unavailable for the rest of this batch"):
             session.ensure_started()
         self.assertEqual(self.events, ["start:1:session-01", "start:2:session-02", "start:3:session-03"])  # 第 4 次没有碰工厂
@@ -418,6 +416,32 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.events, ["start:1:session-01", "start:2:session-02"])  # 失败的启动也占用一个 session 序号
         session.stop()
         self.assertEqual(self.pids, [None, 1002, None])
+
+    def test_client_is_built_for_the_running_server_with_the_callers_trace_dir(self) -> None:
+        made: list[tuple[str, float, Path]] = []
+
+        def client_factory(url: str, *, timeout: float, trace_dir: Path) -> str:
+            made.append((url, timeout, trace_dir))
+            return "client"
+
+        session = Session(self.config, on_server_pid=self.pids.append, server_factory=self.factory,
+                          client_factory=client_factory)
+        with self.assertRaisesRegex(RuntimeError, "ensure_started"):
+            session.client(self.root / "t", timeout=1.0)  # 没有运行中的服务
+        session.ensure_started()
+        self.assertEqual(session.client(self.root / "t", timeout=600.0), "client")
+        self.assertEqual(made, [("http://127.0.0.1:8080", 600.0, self.root / "t")])  # 目录由调用方定，不另加子目录
+        session.stop()
+
+    def test_label_follows_the_attempted_start_ordinal(self) -> None:
+        self.infra_on = {1}
+        session = self.session()
+        self.assertRegex(session.label, r"^\d{8}T\d{6}Z-\d+/session-00$")
+        with self.assertRaises(InfraFailure):
+            session.ensure_started()
+        session.ensure_started()
+        self.assertEqual(session.label, f"{session.runtime_root.name}/session-02")  # 失败的启动也占一个序号
+        session.stop()
 
     def test_old_translate_strata_path_is_gone(self) -> None:
         # ADR-0022：再导出模块已删除，研究侧改为直接导入 kototoki.strata

@@ -423,8 +423,10 @@ class Session:
 
     `on_server_pid(pid)` 在服务 ready 后以 pid、停止后以 None 回调，供编排器写进 GPU 锁。启动失败（`InfraFailure`）整批累计
     `MAX_START_FAILURES` 次，或 Strata 被拒绝（`StrataRefused`），即 `unavailable`，此后 `ensure_started` 直接抛 `StrataRefused`，
-    调用方不再等待。`server_factory`／`client_factory` 是只供测试的内部接缝（伪服务须有 `url`、`identity` 与上下文管理器协议；
-    伪客户端替换 `LlamaClient`）。`cache_state` 供翻译在每个 session 记一次首个请求的 `cache_n`，每次启动重置。
+    调用方不再等待。`unavailable` 只由本类写，调用方只读。names 与翻译经 `label`（当前 session 名）与
+    `client(trace_dir, timeout=…)`（对运行中的服务建客户端）使用本类，不碰 `ordinal`、`runtime_root`、`client_factory`。
+    `server_factory`／`client_factory` 是只供测试的内部接缝（伪服务须有 `url`、`identity` 与上下文管理器协议；
+    伪客户端替换 `LlamaClient`，只经 `client()` 生效）。
     """
 
     def __init__(self, config: Config, *, on_server_pid: Callable[[int | None], None] | None = None,
@@ -440,13 +442,24 @@ class Session:
         self.server: Any = None
         self.ordinal = 0      # 尝试启动的次数（也是 `session-NN` 目录的序号），含失败的启动
         self.start_failures = 0
-        self.cache_state: dict[str, Any] = {}
         # 被拒绝或启动额度用尽后，本批其余需要模型的影片不再等待，直接失败。
         self.unavailable: str | None = None
 
     @staticmethod
     def _managed_server(runtime_dir: Path, on_pid: Callable[[int | None], None]) -> StrataServer:
         return StrataServer(runtime_dir, on_pid=on_pid)
+
+    @property
+    def label(self) -> str:
+        """当前 session 名 `<runtime_root.name>/session-NN`（NN 为最近一次尝试启动的序号）：翻译记进 `run.json` 的
+        `server_session`，names 用作交换目录的相对路径。"""
+        return f"{self.runtime_root.name}/session-{self.ordinal:02d}"
+
+    def client(self, trace_dir: Path, *, timeout: float) -> Any:
+        """对运行中的服务建本机客户端，逐请求 trace 写进调用方给的 `trace_dir`；须先 `ensure_started()`。"""
+        if self.server is None:
+            raise RuntimeError("Session.client() needs a running Strata; call ensure_started() first")
+        return self.client_factory(self.server.url, timeout=timeout, trace_dir=trace_dir)
 
     def __enter__(self) -> "Session":
         return self
@@ -461,7 +474,6 @@ class Session:
             raise StrataRefused(f"Strata is unavailable for the rest of this batch: {self.unavailable}")
         if self.server is None:
             self.ordinal += 1
-            self.cache_state = {"checked": False}
             server = self.server_factory(self.runtime_root / f"session-{self.ordinal:02d}", self.on_server_pid)
             try:
                 server.__enter__()  # ready 后以 pid 回调；启动或核对失败时自行停掉并以 None 回调
@@ -471,7 +483,8 @@ class Session:
             except InfraFailure as exc:
                 self.start_failures += 1
                 if self.start_failures >= MAX_START_FAILURES:
-                    self.unavailable = f"Strata failed to start {self.start_failures} times in this batch: {exc}"
+                    self.unavailable = (f"Strata failed to start {self.start_failures} times in this batch "
+                                        f"(start budget exhausted): {exc}")
                 raise
             self.server = server
         return self.server

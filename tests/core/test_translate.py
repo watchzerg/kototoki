@@ -82,7 +82,7 @@ class FakeClient:
         if behaviour == "oom":
             raise HTTPError("http://127.0.0.1:8080/v1/chat/completions", 500, "CUDA error: out of memory", {}, None)
         user = body["messages"][1]["content"]
-        cache_n = 0 if self.server.completions == 1 else 5
+        cache_n = 0 if self.server.completions == 1 and not self.server.harness.warm_cache else 5
         base = {"usage": {"prompt_tokens": len(user), "completion_tokens": 12}, "timings": {"cache_n": cache_n}}
 
         def reply(content: str, finish: str = "stop") -> dict[str, Any]:
@@ -112,6 +112,8 @@ class Harness:
         self.start_failures: list[Any] = []    # 依次用于每次服务启动；None 表示正常
         self.poison: set[str] = set()
         self.max_targets: int | None = None
+        self.warm_cache = False                # True：服务的首个请求也报 cache_n 5（前缀缓存未清空）
+        self.trace_dirs: list[Path] = []       # 依次给每个新客户端的 trace 目录
         self.table: dict[str, Any] = EMPTY_TABLE
         self.servers: dict[str, FakeServer] = {}
         self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=root / "work", input_dir=root / "in"),
@@ -124,6 +126,7 @@ class Harness:
             return server
 
         def client_factory(url: str, *, timeout: float, trace_dir: Path) -> FakeClient:
+            self.trace_dirs.append(trace_dir)
             return FakeClient(self.servers[url], self.plans.pop(0) if self.plans else {})
 
         return Session(self.config, on_server_pid=self.pids.append, server_factory=server_factory,
@@ -221,13 +224,42 @@ class TranslateDocumentTests(unittest.TestCase):
 
     def test_first_cache_reuse_is_recorded_not_failed(self) -> None:
         doc = document(5)
-        with self.h.session() as session:
-            self.h.translate(document(3, "前"), session)
-            session.cache_state = {"checked": False}  # 新 session 视角：首个请求看到 cache_n 5
-            self.h.translate(doc, session)
+        self.h.warm_cache = True  # 新 session 的首个请求就看到 cache_n 5
+        self.h.translate(doc)
         cache = self.run_json(doc)["sessions"][0]["cache_reset"]
         self.assertEqual((cache["first_cache_n"], cache["verified"], cache["recorded_only"]), (5, False, True))
         self.assertEqual(self.run_json(doc)["completion"]["state"], "complete")
+
+    def test_cache_reset_is_checked_once_per_strata_session(self) -> None:
+        a, b = document(12), document(5, "別")
+        with self.h.session() as session:
+            self.h.translate(a, session)
+            self.h.translate(b, session)  # 同一 Strata session：沿用 a 记下的首个请求
+            self.h.plans = [{1: "oom"}]
+            c = document(5, "変")
+            self.h.translate(c, session)  # OOM 后重启即新 session：重新记一次
+        first = {"checked": True, "first_cache_n": 0, "verified": True, "recorded_only": True, "exchange": None}
+        self.assertEqual(self.run_json(a)["sessions"][0]["cache_reset"], first)
+        self.assertEqual(self.run_json(b)["sessions"][0]["cache_reset"], first)
+        broken, fresh = self.run_json(c)["sessions"]
+        self.assertEqual(broken["cache_reset"], first)  # 仍是 session-01 的记录
+        self.assertEqual(fresh["cache_reset"], first)    # session-02 的首个请求 cache_n 0
+        self.assertEqual([broken["server_session"][-10:], fresh["server_session"][-10:]], ["session-01", "session-02"])
+        # 另一个 Session 对象（哪怕同一秒构造、session 名相同）从头记录
+        self.h.warm_cache = True
+        d = document(5, "又")
+        self.h.translate(d)
+        self.assertEqual(self.run_json(d)["sessions"][0]["cache_reset"]["first_cache_n"], 5)
+
+    def test_trace_dirs_and_server_session_layout_are_unchanged(self) -> None:
+        doc = document(23)
+        self.h.plans = [{2: "oom"}]
+        with self.h.session() as session:
+            self.h.translate(doc, session)
+        root = self.h.run_root(doc)
+        self.assertEqual(self.h.trace_dirs, [root / "transport" / "session-01", root / "transport" / "session-02"])
+        self.assertEqual([entry["server_session"] for entry in self.run_json(doc)["sessions"]],
+                         [f"{session.runtime_root.name}/session-01", f"{session.runtime_root.name}/session-02"])
 
     def test_resume_continues_from_the_first_unwritten_batch(self) -> None:
         doc = document(23)
@@ -421,7 +453,7 @@ class TranslateDocumentTests(unittest.TestCase):
         with self.h.session() as session:
             with self.assertRaisesRegex(TranslateError, "Strata refused.*drafting 'mtp'"):
                 self.h.translate(a, session)
-            with self.assertRaisesRegex(TranslateError, "earlier in this batch.*drafting"):
+            with self.assertRaisesRegex(TranslateError, "unavailable for the rest of this batch: .*drafting 'mtp'"):
                 self.h.translate(b, session)
         self.assertEqual(self.h.start_failures, [None, None])  # 没有重试，第二部也没有再启动
         self.assertEqual(self.h.events, [])
@@ -481,10 +513,32 @@ class TranslateDocumentTests(unittest.TestCase):
         with self.h.session() as session:
             with self.assertRaises(TranslateError):
                 self.h.translate(a, session)
-            with self.assertRaisesRegex(TranslateError, "earlier in this batch.*ready"):
+            self.assertIn("failed to start 3 times in this batch (start budget exhausted): Strata did not become ready",
+                          session.unavailable)  # 由 Session 写，翻译不覆盖
+            with self.assertRaisesRegex(TranslateError, "unavailable for the rest of this batch: .*start budget "
+                                                        "exhausted.*ready") as caught:
                 self.h.translate(b, session)
+            self.assertNotIn("refused", str(caught.exception))
         self.assertEqual(self.h.start_failures, [])
         self.assertEqual(self.run_json(b)["server_start_failures"], [])
+
+    def test_start_budget_used_by_an_earlier_film_is_reported_as_exhausted(self) -> None:
+        def crash() -> None:
+            raise InfraFailure("strata launch exited with 1")
+
+        a, b = document(5), document(5, "別")
+        self.h.start_failures = [crash, None, crash, crash]  # a 用掉 1 次额度；b 再失败 2 次即耗尽（整批 3 次）
+        with self.h.session() as session:
+            self.assertEqual(len(self.h.translate(a, session).translations), 5)
+            session.stop()  # 例如 a 之后的影片遇到 OOM 停掉了 Strata
+            with self.assertRaises(TranslateError) as caught:
+                self.h.translate(b, session)
+        message = str(caught.exception)
+        self.assertIn("start budget exhausted", message)
+        self.assertIn("failed to start 3 times", message)
+        self.assertNotIn("refused", message)
+        self.assertEqual(len(self.run_json(b)["server_start_failures"]), 2)
+        self.assertEqual(self.h.start_failures, [])
 
     def test_mixed_failures_do_not_mark_strata_unavailable(self) -> None:
         def crash() -> None:

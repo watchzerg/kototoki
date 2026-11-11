@@ -9,7 +9,9 @@
   末尾不完整的一行视为未写入并截掉；`scene.json` 只在全部批次完成后写出。
 - 基础设施失败（OOM、传输／连接断开、server 错误、服务起不来）在同一次调用内停掉服务、重新启动新 session 重做，
   最多重启 `MAX_RESTARTS` 次；每次重启在 `run.json` 的 `sessions[]` 新增一项。身份不符（`StrataRefused`）不重试；共享
-  session 的启动失败整批累计 `strata.MAX_START_FAILURES` 次后也不再尝试。
+  session 的启动失败整批累计 `strata.MAX_START_FAILURES` 次后也不再尝试（`unavailable` 只由 `Session` 写，这里只读）。
+- 每个 Strata session 首个 completion 的 `cache_n` 只记一次（`run.json` 的 `cache_reset`）；记录状态归本模块，
+  按共享 session 与 `session.label` 分开记（`_cache_state`）。
 - 两次尝试都失败的批次（生成触顶、解析失败、HTTP 报超出 context）按 `degrade.py` 拆批降级，单条仍失败保留日文；
   研究侧只空出该包的 cue。降级完成的批次照常写入 `batches.jsonl`，回退对该身份是终态，重跑不再尝试。
 
@@ -30,6 +32,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any
+import weakref
 from urllib.error import HTTPError, URLError
 
 from kototoki import artifacts
@@ -58,6 +61,14 @@ INFRA_KINDS = ("oom", "server", "server_error")
 CONTEXT_ERROR = re.compile(r"exceed[s]? the available context|context size|n_ctx|context length", re.IGNORECASE)
 
 log = logging.getLogger(__name__)
+
+# 共享 session → (session 名 → 首个 completion 的 cache 记录)。一次 Strata 启动即一个 `session.label`，记录随之重新开始；
+# 同一 session 上的后续影片沿用同一份记录（首个请求已记过）。按对象分开，同一秒内构造的两个 `Session` 互不串。
+_CACHE_STATES: "weakref.WeakKeyDictionary[Session, dict[str, dict[str, Any]]]" = weakref.WeakKeyDictionary()
+
+
+def _cache_state(session: Session) -> dict[str, Any]:
+    return _CACHE_STATES.setdefault(session, {}).setdefault(session.label, {"checked": False})
 
 
 class StepFailed(RuntimeError):
@@ -427,16 +438,16 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
         _append_line(root / DEGRADE, row)
         recorded.setdefault(row["parent_index"], {})[row["batch_id"]] = row
     restarts = 0
-    failure_kinds: list[str] = []
     while len(done) < len(batches):
         entry: dict[str, Any] | None = None
         started = time.perf_counter()
         if session.unavailable is not None:
-            raise TranslateError(f"Strata could not start earlier in this batch: {session.unavailable}")
+            # 原因由 `Session` 写：启动额度耗尽（"failed to start N times … (start budget exhausted)"）或被拒（身份不符等）。
+            raise TranslateError(f"Strata is unavailable for the rest of this batch: {session.unavailable}")
         try:
             server = session.ensure_started()
-            entry = {"index": len(run["sessions"]) + 1, "server_session": str(session.runtime_root.name)
-                     + f"/session-{session.ordinal:02d}", "started_at_utc": utc_now(),
+            cache_state = _cache_state(session)
+            entry = {"index": len(run["sessions"]) + 1, "server_session": session.label, "started_at_utc": utc_now(),
                      "engine": {key: server.identity.get(key) for key in SESSION_ENGINE_KEYS},
                      "pending_at_start": len(batches) - len(done), "batches_written": 0,
                      "stop_reason": None, "infra_failure": None}
@@ -444,13 +455,13 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
             atomic_write_json(root / "run.json", run)
             log.info("[translate] session %d start (%s): %d of %d batch(es) pending", entry["index"],
                      entry["server_session"], entry["pending_at_start"], len(batches))
-            client = session.client_factory(server.url, timeout=CLIENT_TIMEOUT_SECONDS,
-                                            trace_dir=root / "transport" / f"session-{entry['index']:02d}")
+            client = session.client(root / "transport" / f"session-{entry['index']:02d}",
+                                    timeout=CLIENT_TIMEOUT_SECONDS)
             number = entry["index"]
 
             def attempt(node: Batch) -> dict[str, Any]:
                 try:
-                    return (translate_batch(client, scene, node, plan.names, seed, session.cache_state)
+                    return (translate_batch(client, scene, node, plan.names, seed, cache_state)
                             | {"session": number})
                 except StepFailed as exc:
                     if exc.kind in INFRA_KINDS:
@@ -483,18 +494,14 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
                 entry.update(stop_reason=kind, infra_failure=failure)
             session.stop()
             restarts += 1
-            failure_kinds.append(kind)
             if restarts > MAX_RESTARTS:
                 log.error("[translate] giving up after %d Strata restart(s): %s: %s", MAX_RESTARTS, kind,
                           _first_line(exc))
-                if set(failure_kinds) == {"server_start"}:
-                    session.unavailable = failure["error"]
                 raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} Strata restarts "
                                      f"({kind}): {exc}") from exc
             log.warning("[translate] Strata restart %d/%d: %s: %s", restarts, MAX_RESTARTS, kind, _first_line(exc))
         except StrataRefused as exc:
-            # 身份不符或已有别的 launch 在服务：重启无济于事，本批其余需要模型的影片也不再尝试。
-            session.unavailable = str(exc)
+            # 身份不符或已有别的 launch 在服务：重启无济于事；`Session` 已置 unavailable，本批其余需要模型的影片也不再尝试。
             session.stop()
             log.error("[translate] Strata refused: %s", _first_line(exc))
             raise TranslateError(f"Strata refused: {exc}") from exc
@@ -509,7 +516,7 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
         finally:
             if entry is not None:
                 entry.update(ended_at_utc=utc_now(), wall_seconds=time.perf_counter() - started,
-                             cache_reset=dict(session.cache_state))
+                             cache_reset=dict(_cache_state(session)))
                 log.info("[translate] session %d end: %d batch(es) written in %.1f s", entry["index"],
                          entry["batches_written"], entry["wall_seconds"])
             _finish(root, run, batches, done, restarts)

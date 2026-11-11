@@ -7,8 +7,8 @@
 - 配方（`recipes`）：建表配方 `q3-names-v1` 的字典与 hash，与基线 Q3 的 `names-strata-v4` 同一建表块。
 
 Strata 的生命周期归中间层 `kototoki.strata`：编排器持有共享 `Session` 传进来，本模块只 `ensure_started()`／`stop()`，
-不启停、不核对身份。每部影片一个客户端（`session.client_factory`），原始交换在
-`<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`（`count-NN` 计数、`chat-NN` 建表）。预算检查用
+不启停、不核对身份。每部影片一个客户端（`session.client()`），原始交换在
+`<work_dir>/names/transport/<session.label>/`，即 `<UTC戳>-<pid>/session-NN/`（`count-NN` 计数、`chat-NN` 建表）。预算检查用
 `/v1/messages/count_tokens`（Strata 没有 `/tokenize`），端点不可用时该影片不再预检、计数按 0（v13 的退路）。
 不做同调用内重启：传输失败、HTTP 错误、OOM 停掉 Strata（下一部需要模型的影片再启动）并抛 `NamesError`。
 
@@ -88,13 +88,13 @@ def build_document(work_dir: Path, document: SourceDocument, session: Session | 
         return build_table(document, _no_server, _no_server, seed)
     assert session is not None
     try:
-        server = session.ensure_started()
+        session.ensure_started()
     except StrataRefused as exc:
         raise NamesError(f"Strata unavailable: {exc}") from exc
     except InfraFailure as exc:
         raise NamesError(f"Strata failed to start: {exc}") from exc
-    trace_dir = Path(work_dir) / TRANSPORT_DIR / session.runtime_root.name / f"session-{session.ordinal:02d}"
-    client = session.client_factory(server.url, timeout=CLIENT_TIMEOUT_SECONDS, trace_dir=trace_dir)
+    trace_dir = Path(work_dir) / TRANSPORT_DIR / session.label
+    client = session.client(trace_dir, timeout=CLIENT_TIMEOUT_SECONDS)
     counter = _TokenCounter(client)
     try:
         result = build_table(document, client.chat_completion, counter, seed)

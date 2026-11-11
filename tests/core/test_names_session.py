@@ -149,8 +149,10 @@ class BuildDocumentTests(Case):
                          {"status": "ok", "reason": None, "prompt_check": "count_tokens", "over_budget_by_usage": False})
         (client,) = self.h.clients
         self.assertEqual((client["url"], client["timeout"]), ("http://127.0.0.1:8080", 1800.0))
+        # 交换目录布局不变：`<work_dir>/names/transport/<UTC戳>-<pid>/session-NN`（即 `session.label`）
         self.assertEqual(client["trace_dir"],
                          self.work / "names" / "transport" / session.runtime_root.name / "session-01")
+        self.assertEqual(session.label, f"{session.runtime_root.name}/session-01")
         self.assertEqual(self.h.events, ["start:1", "stop:1"])
         self.assertEqual(self.h.pids, [1001, None])
         # 预算检查：system 与 user 两段各作一条 user 消息计数
