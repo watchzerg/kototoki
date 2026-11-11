@@ -33,7 +33,7 @@
 - **文件**：`<work root>/run-<UTC戳>.log` 与控制台逐行相同。`<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后编排只读本次启动追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计。Strata session 的证据（接入身份、资源峰值、停止核实）另在 `<work root>/strata-sessions/`（[翻译子系统](translation-subsystem.md)）。
 - **内容**：
   1. 转写、cue 与窗口文字、译文、专名表条目与 `work_guess`、提示词、grammar、模型响应正文不进任何日志；失败窗口只记序号与 reason。
-  2. 失败行只记异常类型，traceback 随后（只含源码行；异常消息可能含文件路径，不含转写）；异常消息不做通用截断。翻译子系统的"意外异常"行不带 traceback，由编排的 FAILED 行带。
+  2. 失败行只记异常类型，traceback 随后（只含源码行；异常消息可能含文件路径，不含转写）；异常消息不做通用截断；只有把异常首行嵌进一行日志的地方截到 200 字符：翻译的批次尝试失败行、Strata 重启行、放弃行与 `Strata refused` 行（`kototoki/translate/generate.py`），以及 names 的尝试失败行（`kototoki/names/table.py`）。翻译子系统的"意外异常"行不带 traceback，由编排的 FAILED 行带。
   3. 文件名用输入目录内相对路径，只有锁与日志文件的指向写绝对路径。
   4. 一事一行、每阶段三件套、结尾汇总；`end` 行带墙钟，翻译批次行带输出 token 数、tok/s 与 cache（取不到的字段省略）。
   5. 告警是级别不是措辞：消息里不写 `WARNING`。

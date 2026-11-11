@@ -48,7 +48,7 @@ REPORT_ROOT = REPO / ".local" / "upgrade"
 DEFAULT_FILMS = REPO / ".local" / "bilingual-fullfilm-08" / "input"
 # 默认路径里带工具版本号的文件；版本号由 tests/core/test_assets_manifest.py 钉住与清单一致。
 DEFAULT_PATH_FILES = ("kototoki/config.py", "kototoki.toml.example")
-# CUDA 12 锚点：torch 系取 cu128 索引、CTranslate2 只有 CUDA 12 wheel；升级须人工决定（规格 §7.2 选版规则）。
+# CUDA 12 锚点：torch 系取 cu128 索引、CTranslate2 只有 CUDA 12 wheel；升级须人工决定（docs/development/technology-stack.md 选版规则）。
 ANCHORS = frozenset({"torch", "torchaudio", "torchcodec", "ctranslate2"})
 GITHUB_API = "https://api.github.com/repos"
 COMPONENTS = ("python", "llama.cpp", "ffmpeg")
@@ -393,8 +393,8 @@ def main(argv: list[str] | None = None) -> int:
         out.mkdir(parents=True, exist_ok=True)
         (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if any(report.get(n, {}).get("status") == "upgraded" for n in COMPONENTS):
-            print(f"report: {out / 'report.json'}\n待办：同步 docs/development/technology-stack.md、dependencies.md 与规格 §7.2 的"
-                  "配置示例；ffmpeg 升级补验收记录；按报告的 pending 申请真实模型验证（smoke）。", flush=True)
+            print(f"report: {out / 'report.json'}\n待办：同步 docs/development/technology-stack.md 与 dependencies.md；"
+                  "ffmpeg 升级补验收记录；按报告的 pending 申请真实模型验证（smoke）。", flush=True)
     return 1 if failed else 0
 
 

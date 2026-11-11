@@ -1,6 +1,6 @@
 # ADR-0008：不自动选用"翻译多次再挑选"的方法
 
-状态：已接受。合并整理于 2026-11-08（保留现行规则；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。  
+状态：已接受。合并整理于 2026-11-08（保留现行规则；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。"约束"一节提到的产品配方 `dp10-cut-degrade-v1` 已由 [ADR-0019](0019-product-translation-q2.md) 的 `q2-degrade-v1` 替代；规则本身不变（2026-11-11 标注，用户委托 agent 裁定）。  
 范围：翻译质量探索与产品的取舍规则。H0 基线见 [ADR-0005](0005-apex-i-compact-translation-baseline.md)、[ADR-0010](0010-dp10-cut-translation-flow-baseline.md)，两条基线的关系见 [ADR-0015](0015-two-translation-baselines.md)。
 
 ## 决定

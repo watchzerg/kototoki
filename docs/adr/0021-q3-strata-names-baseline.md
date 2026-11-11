@@ -1,6 +1,6 @@
 # ADR-0021：翻译基线 Q3（Q2 规则，专名表改由 Strata Flash-Next 建，最多 5 次尝试）
 
-状态：已接受（2026-11-09，用户决定）。替代 [ADR-0017](0017-q2-strata-default-launch-baseline.md) 第 1 点（当前基线为 Q2）、[ADR-0018](0018-q2-sole-translation-baseline.md) 第 1 点（唯一基线为 Q2）；ADR-0018 第 2、4 点的规则改为针对 Q3。[ADR-0014](0014-name-consistency-in-product.md) 第 10 点中"Q 线用产品 `names` 建表注入"对基线不再成立：Q3 的表由 Strata 建。产品已于 2026-11-09 按 [ADR-0022](0022-product-names-on-strata.md) 切换：在与翻译共用的 Strata session 上按同一规则建表。  
+状态：已接受（2026-11-09，用户决定）。替代 [ADR-0017](0017-q2-strata-default-launch-baseline.md) 第 1 点（当前基线为 Q2）、[ADR-0018](0018-q2-sole-translation-baseline.md) 第 1 点（唯一基线为 Q2）；ADR-0018 第 2、4 点的规则改为针对 Q3。[ADR-0014](0014-name-consistency-in-product.md) 第 10 点中"Q 线用产品 `names` 建表注入"对基线不再成立：Q3 的表由 Strata 建。产品已于 2026-11-09 按 [ADR-0022](0022-product-names-on-strata.md) 切换：在与翻译共用的 Strata session 上按同一规则建表。正文"产品 `BUILD_RECIPE_HASH`（`5b8d1b76…`）不变"自 2026-11-09 [ADR-0022](0022-product-names-on-strata.md) 起不成立：产品建表配方改为 `q3-names-v1`，其 hash 由 `tests/core/test_names_recipes.py` 钉住（2026-11-11 标注，用户委托 agent 裁定）。  
 范围：研究与测试用哪条翻译基线、它的表怎么建。不改产品 `kototoki/`（产品仍是 `q2-degrade-v1`＋27B 建表，ADR-0014、ADR-0019），不决定产品何时切换，不开封确认集。
 
 ## 决定

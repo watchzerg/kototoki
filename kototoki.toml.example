@@ -24,7 +24,7 @@ extract_workers = 4                     # ffmpeg 并发数
 stable_check_s = 10                     # 两次采样文件大小不变才视为写入完成
 
 [stt]
-engine = "w0"                           # w0 | x0
+engine = "w0"                           # w0 | x0 | cross
 
 [vad]
 model = "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"   # 设备固定 cuda:0

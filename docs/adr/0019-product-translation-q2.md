@@ -1,6 +1,6 @@
 # ADR-0019：产品翻译切到 Q2（Strata 自动启停、只注入不替换、10→5→1 降级）
 
-状态：已接受（2026-11-08，用户决定）。替代 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 第 3 点中"翻译与建表用独立进程的官方 llama.cpp"里的翻译部分、[ADR-0010](0010-dp10-cut-translation-flow-baseline.md) 第 6、7 点（产品配方 `dp10-cut-degrade-v1` 与其 run 目录）、[ADR-0014](0014-name-consistency-in-product.md) 第 3 点中的"发布时替换"、第 5 点（`[names] enabled`）、第 6 点（`names_apply`）与第 7 点（手改表只重做替换）；[ADR-0018](0018-q2-sole-translation-baseline.md) 第 3 点"产品当前的翻译实现"一项随之失效。第 2 点中"names 阶段整批用 llama-server 建表、两者不同时驻留"自 2026-11-09 起由 [ADR-0022](0022-product-names-on-strata.md) 替代：建表与翻译共用一个 Strata session，产品不再起 llama-server。  
+状态：已接受（2026-11-08，用户决定）。替代 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 第 3 点中"翻译与建表用独立进程的官方 llama.cpp"里的翻译部分、[ADR-0010](0010-dp10-cut-translation-flow-baseline.md) 第 6、7 点（产品配方 `dp10-cut-degrade-v1` 与其 run 目录）、[ADR-0014](0014-name-consistency-in-product.md) 第 3 点中的"发布时替换"、第 5 点（`[names] enabled`）、第 6 点（`names_apply`）与第 7 点（手改表只重做替换）；[ADR-0018](0018-q2-sole-translation-baseline.md) 第 3 点"产品当前的翻译实现"一项随之失效。第 2 点中"names 阶段整批用 llama-server 建表、两者不同时驻留"自 2026-11-09 起由 [ADR-0022](0022-product-names-on-strata.md) 替代：建表与翻译共用一个 Strata session，产品不再起 llama-server。第 5 点末句"已发布影片……重新翻译并发布"不成立：发布规则以同日的 [ADR-0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 第 4 点为准，源文件旁已有字幕即跳过、不重新发布，要重做须先删掉该字幕（2026-11-11 标注，用户委托 agent 裁定）。  
 范围：产品包 `kototoki/` 的翻译实现与专名表的用法。不改 Q2 的身份（[ADR-0017](0017-q2-strata-default-launch-baseline.md)），不改建表配方，不开封确认集。
 
 ## 决定

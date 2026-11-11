@@ -83,6 +83,16 @@ v12、v13 两轮把两个 profile 并列写成“评测设施，不改 profile�
 - **Codex 时代的分数不可比**：`gpt-6.1-sol` 和 `sol-high-auto-v1` 的分数与 Claude 裁判分数不可比；换裁判后 C0 和所有候选都要重判（[v3 计划](../plans/hy-mt2-translation-flow-exploration-v3.md) §1、[v1/v2 教训](../research/2026-10-10-hy30-flow-v1-v2-lessons.md)）。
 - **改量尺就出新 profile**：裁判提示、模型、effort 或 schema 一变就是新的 profile 版本，旧分数不跨版本比较（[v3 计划](../plans/hy-mt2-translation-flow-exploration-v3.md) §4.2 说明了 `…-mqm-v2` 的触发条件）。
 
+## 版本身份与口径的补充规则
+
+2026-11-11 用户委托 agent 裁定，针对此前没有定论的五点；都不改代码。
+
+- **MQM profile 按 `profile_hash` 认身份**：`claude-opus-5-5-mqm-v1` 的提示曾从 prompt-v1 改到 prompt-v2 而名字没变，所以名字相同不代表量尺相同。比较前核对两侧结果的 `profile_hash` 相同，不同就重判。今后提示、模型、effort 或 schema 再变，必须同时改 profile 名。
+- **成对 profile 的身份＝名字＋`system_prompt_sha256`**：`v5-asr-pairwise-v1` 没有 profile hash 字段，以估计报告里记录的系统提示 sha256 为准；两份结果的 sha256 不同就不放在一起比。改提示即改名（`…-v2`）。
+- **备用执行面只用于筛选**：`export|ingest` 固定不了具体模型，结果不用于确认，也不作为采纳决定的依据；CLI 执行面可用时不用它。
+- **新轮次沿用"建新包、复用函数"**：像 v15 那样新建实验包，导入 `asr10` 或 v9 的函数；不为此抽通用入口，等出现第二个同形的使用者再说。
+- **人名错误口径跟着数据集走**：dev 集用 `experiments/scene_batching_v6/v9.py` 的 `NAME_ERROR`，产品 ASR 源用 `experiments/scene_batching_v6/asr10.py` 的 `NAME_ERROR`（前者多"名称""地名"两个词）。两个口径的计数互不比较；新轮次导入其中之一，不再写第三份。
+
 ## 冻结的 Codex 时代流程
 
 `sol-high-auto-v1` 的流程以 `gpt-6.1-sol / high / codex-cli` 为裁判身份，由 `experiments/translation_judge/`、`experiments/translation_eval/` 执行，见 [自动评估流程](subtitle-translation-evaluation.md) 和 [翻译评估入口](../testing/translation-model-evaluation.md)。
