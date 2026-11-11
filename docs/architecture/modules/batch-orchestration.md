@@ -92,7 +92,7 @@
 
 - `kototoki.strata`：共享 session，`Session(config, on_server_pid=...)` 上下文管理器。
 - `kototoki.names`：`build_document(work_dir, document, session | None, seed)` 返回带 `payload`／`status`／`attempts`／`seconds` 的结果；names 身份由阶段计划算。
-- `kototoki.translate`：`translate_document(plan, session | None)` 返回带 `translations`（cue id → 译文）与 `fallback_count` 的结果；`TranslatePlan` 由阶段计划经 `translate.plan` 取得。
+- `kototoki.translate`：`translate_document(plan, session | None, *, relative)` 返回带 `translations`（cue id → 译文）与 `fallback_count` 的结果；`TranslatePlan` 由阶段计划经 `translate.plan` 取得。
 - `kototoki.merge`：`merge(ja_document, translations) -> srt_text`。
 
 不导入任何推理模块与 `experiments.*`：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。

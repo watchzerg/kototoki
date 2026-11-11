@@ -23,6 +23,7 @@ from kototoki.translate import recipes as R
 
 SEED = 7
 EMPTY_TABLE: dict[str, Any] = {"entries": []}
+REL = "S1/ep01.mkv"  # 输入目录内的相对路径：只进 session start 日志行
 
 
 def document(n: int, word: str = "台詞"):
@@ -89,6 +90,8 @@ class FakeClient:
             return base | {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": finish}]}
         if behaviour == "bad_json":
             return reply("{not json")
+        if behaviour == "dup_key":  # 重复的键来自模型回复，不得进日志
+            return reply('{"translations": {"秘密キー": "甲", "秘密キー": "乙"}}')
         if behaviour == "length":
             return reply('{"translations": {', "length")
         target, _ = json.JSONDecoder().raw_decode(user.split("【待译 JSON】\n", 1)[1])
@@ -139,9 +142,9 @@ class Harness:
 
     def translate(self, doc, session: Session | None = None):
         if session is not None:
-            return translate_document(self.plan(doc), session)
+            return translate_document(self.plan(doc), session, relative=REL)
         with self.session() as own:
-            return translate_document(self.plan(doc), own)
+            return translate_document(self.plan(doc), own, relative=REL)
 
     def run_root(self, doc) -> Path:
         return self.plan(doc).run_dir
@@ -309,11 +312,14 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_unexpected_exception_is_recorded_and_stops_strata(self) -> None:
         doc = document(12)
         self.h.plans = [{2: ValueError("Expected server JSON object")}]
-        with self.assertRaises(ValueError):
+        with self.assertLogs("kototoki.translate", level="ERROR") as logs, self.assertRaises(ValueError):
             self.h.translate(doc)
         self.assertEqual(self.h.events, ["start:1", "stop:1"])
         reason = self.run_json(doc)["sessions"][0]["stop_reason"]
         self.assertTrue(reason.startswith("session_error: ValueError"), reason)
+        second = self.batch_lines(doc)[0]["batch_id"].replace("-b0001", "-b0002")  # 第 2 个请求属第 2 批
+        self.assertEqual([r.getMessage() for r in logs.records],
+                         [f"[translate] unexpected ValueError during translation (batch {second}); stopping Strata"])
 
     def test_blank_line_in_translation_is_a_parse_failure(self) -> None:
         doc = document(5)
@@ -336,6 +342,18 @@ class TranslateDocumentTests(unittest.TestCase):
                                f"seed {SEED}, finish stop, 12 tok, reply 9 char(s)")
         self.assertNotIn("{not json", line)  # 回复正文不进日志
 
+    def test_duplicate_key_failure_line_omits_the_key(self) -> None:
+        doc = document(5)
+        self.h.plans = [{1: "dup_key"}]
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            self.h.translate(doc)
+        (line,) = [r.getMessage() for r in logs.records]
+        self.assertIn("attempt 1/2 failed (parse): validation: Duplicate JSON key; seed", line)
+        self.assertNotIn("秘密", line)
+        with self.assertRaises(ValueError) as caught:
+            R.strict_json('{"a": 1, "a": 2}')
+        self.assertEqual(str(caught.exception), "Duplicate JSON key")
+
     def test_length_stop_is_a_limit_failure(self) -> None:
         doc = document(5)
         self.h.plans = [{1: "length", 2: "length"}]
@@ -350,7 +368,7 @@ class TranslateDocumentTests(unittest.TestCase):
         self.h.events.clear()
         plan = self.h.plan(doc)
         self.assertFalse(plan.needs_model)
-        result = translate_document(plan, None)
+        result = translate_document(plan, None, relative=REL)
         self.assertEqual(len(result.translations), 12)
         self.assertEqual(self.h.events, [])
 
@@ -421,7 +439,7 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertFalse(plan.needs_model)
         self.h.events.clear()
         with self.assertRaisesRegex(TranslateError, "recorded as complete"):
-            translate_document(plan, None)
+            translate_document(plan, None, relative=REL)
         self.assertEqual(self.h.events, [])
 
     def test_oom_restarts_strata_as_a_new_session(self) -> None:
@@ -585,7 +603,8 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual(batch_lines, ["INFO:kototoki.translate.generate:[translate] batch 1/3: 10 cue(s), 12 tok, cache 0",
                                        "INFO:kototoki.translate.generate:[translate] batch 2/3: 10 cue(s), 12 tok, cache 5",
                                        "INFO:kototoki.translate.generate:[translate] batch 3/3: 3 cue(s), 12 tok, cache 5"])
-        self.assertTrue(any("session 1 start" in line and "3 of 3 batch(es) pending" in line for line in logs.output))
+        self.assertTrue(any(f"session 1 start {REL} (" in line and "3 of 3 batch(es) pending" in line
+                            for line in logs.output))
         self.assertEqual({record.levelname for record in logs.records}, {"INFO"})
 
     def test_restart_logs_a_warning_and_giving_up_an_error(self) -> None:

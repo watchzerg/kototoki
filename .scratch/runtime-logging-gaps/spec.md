@@ -46,7 +46,7 @@ Status: in-progress
 | 02 | worker 事件字段进主日志，失败行去重，崩溃指针 | — | resolved |
 | 03 | 过滤 vad 的已知无害告警 | 02 | resolved |
 | 04 | cues 阶段三件套 | — | resolved |
-| 05 | 翻译：固定校验消息、行内文件归属、降级批次字段 | — | ready-for-agent |
+| 05 | 翻译：固定校验消息、行内文件归属、降级批次字段 | — | resolved |
 | 06 | Strata 与专名：故障行与启停行 | — | ready-for-agent |
 | 07 | 续跑计数行 | 01 | ready-for-agent |
 | 08 | 格式统一与文档对齐 | 01–07 | ready-for-agent |

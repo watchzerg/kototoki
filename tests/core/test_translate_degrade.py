@@ -132,7 +132,7 @@ class DegradeTests(unittest.TestCase):
         attempts = [w.split(" failed ")[0] for w in warnings if " attempt " in w]
         self.assertEqual(attempts, [f"[translate] batch {node} attempt {n}/2"
                                     for node in (b, b + ".a", b + ".a.4") for n in (1, 2)])
-        self.assertIn("[translate] batch 1/2: 10 cue(s), 12 tok, cache 5, degraded (8 request(s), 1 fallback)",
+        self.assertIn("[translate] batch 1/2: 10 cue(s), degraded (8 request(s), 1 fallback)",
                       [r.getMessage() for r in logs.records])
 
     def test_single_cue_batch_falls_back_without_splitting(self) -> None:
@@ -265,11 +265,11 @@ class PublishedFallbackCountTests(JobCase):
 
     _translate_plan = staticmethod(generate.plan)  # 真实计划：run 目录与 needs_model 由子系统决定
 
-    def _translate_document(self, plan, session):
+    def _translate_document(self, plan, session, *, relative):
         harness = Harness(self.root)
         harness.poison = {cue.id for cue in plan.document.cues}
         with harness.session() as own:
-            return generate.translate_document(plan, own)
+            return generate.translate_document(plan, own, relative=relative)
 
     def test_published_record_counts_fallback_cues(self) -> None:
         self.make_inputs("a.mkv")

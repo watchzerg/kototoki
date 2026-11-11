@@ -24,7 +24,7 @@
   - `needs_model`：零条目文档或 `run.json` 已记 `complete` 时为 False，编排器据此决定是否取 GPU 锁、启动 Strata；
   - `document` 与 `names`（注入行）。
   - `run.json` 已存在但配方 hash／seed／注入行／来源不符时抛 `ValueError`，消息提示删除该目录即可重译。
-- `translate_document(plan, session) -> TranslateResult`：`session` 是编排传入的共享 `kototoki.strata.Session`；`needs_model` 为 False 时可为 `None`，只读回已完成的 run（记为完成而批次文件缺失即抛 `TranslateError`，不启动 Strata）。返回：
+- `translate_document(plan, session, *, relative) -> TranslateResult`：`session` 是编排传入的共享 `kototoki.strata.Session`，`relative` 是输入目录内相对路径（只进日志）；`needs_model` 为 False 时可为 `None`，只读回已完成的 run（记为完成而批次文件缺失即抛 `TranslateError`，不启动 Strata）。返回：
   - `translations`：cue id → 译文，精确覆盖全部 cue，回退的 cue 为日文原文；
   - `fallback_count`：回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues`、发布日志行与控制台汇总；
   - `report`：即 `report.json` 的内容。
@@ -91,12 +91,12 @@
 
 零条目 `ja.srt`：写 `run.json`（完成）与 `report.json`，返回空译文，不启动 Strata、不请求模型。
 
-**日志**：logger `kototoki.translate.*`，写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）。Strata 的 ready、停止与核实由 `[strata]` 记（[Strata 服务与共享 session](strata-session.md)）。
+**日志**：logger `kototoki.translate.*`，写进运行日志（[运行日志](run-logging-and-processes.md#运行日志)）。Strata 启停与核实由 `[strata]` 记（[Strata session](strata-session.md)）。
 
-- INFO：session 起止；每批一行（cue 数、输出 token、tok/s、cache，取不到的字段省略；降级批次加请求数与回退数）。
+- INFO：session 起止（start 行带相对路径）；每批一行（cue 数、输出 token、tok/s、cache，取不到的省略；降级批次只有 cue 数、请求数与回退数）。编排的 done 行见[运行日志](run-logging-and-processes.md#运行日志)。
 - WARNING：Strata 重启；降级拆批；单条回退（列出回退的 cue ID 与原因）；每次失败的尝试各一行 `[translate] batch <ID> attempt n/2 failed (<kind>): <错误首行>; seed, finish, tok, reply 字符数, exchange <交换目录>`，第二次尝试被接受时也留下第一次的失败。
-- ERROR：用尽重启放弃、`StrataRefused`、意外异常。
-- HTTP 错误与 server error 的消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）。提示、译文与响应正文不进日志。
+- ERROR：用尽重启放弃、`StrataRefused`、意外异常（批次已知时带批次 ID）。
+- HTTP 错误与 server error 的消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）。校验消息为固定文本（`Duplicate JSON key` 不带键名）。提示、译文与响应正文不进日志。
 
 **合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格，保证每条恰好两行；回退为日文的条目两行相同，照常输出。译文须精确覆盖全部 cue（缺失、多余、空串抛 `IncompleteTranslationError`）；零条目文档得到空串。
 
@@ -104,10 +104,10 @@
 
 移植来源与取舍（产品包不导入 `experiments.*`，只复制）：
 
-- `recipes.py`：来自 `experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables` 与 v9 `wide-context-v1`。Q2 规则写成常量：提示、注入行与过滤、请求体、校验、配方字典与 hash；与研究侧的逐字节对照由测试钉住。产品新增的校验（拒绝空行）与降级字段使它另算 hash（`q2-degrade-v1`）。Strata 身份常量从 `kototoki.strata` 取。
+- `recipes.py`：来自 `experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables` 与 v9 `wide-context-v1`。Q2 规则写成常量（提示、注入、请求体、校验、配方 hash），与研究侧逐字节对照由测试钉住。产品新增的校验（拒绝空行）与降级字段使它另算 hash（`q2-degrade-v1`）。Strata 身份常量从 `kototoki.strata` 取。
 - `batching.py`：来自 `translation_v3/batching.py` 与 `data.py`。gap-pack-v2 切包只留 `group_gap=None` 分支；`Scene`／`Cue`（带秒）由 `ja.srt` 构造；`source_key` 是 `srt-<sha12>` 的唯一出处。
 - `degrade.py`：产品新增。拆分规则、降级树与回退、`report.json` 内容；不导入 `generate`，由其传入请求函数与降级日志写入函数；邻文经 `batching.neighbours`。
-- `generate.py`：来自 `translation_v3/strata.py::run_step` 与 `generate.py`。`run_step` 判定不变（去掉思考分支）；用编排传入的共享 `Session` 取代研究侧"执行者先启动服务"；按批次追加落盘；同调用内重启 Strata；按 session 记 `cache_state`。
+- `generate.py`：来自 `translation_v3/strata.py::run_step` 与 `generate.py`。`run_step` 判定不变（去掉思考分支）；共享 `Session` 取代研究侧"执行者先启动服务"；按批次追加落盘；同调用内重启 Strata；按 session 记 `cache_state`。
 
 ## 接口与依赖
 
@@ -120,7 +120,7 @@
 
 - 代码：`kototoki/translate/`（`__init__.py`、`recipes.py`、`generate.py`、`batching.py`、`degrade.py`）、`kototoki/merge.py`。Strata 与客户端见 [Strata 服务与共享 session](strata-session.md#代码与验证入口)。
 - 测试（core，`just test`）：
-  - `tests/core/test_translate.py`：伪服务／伪客户端走完整流程：正常、第二次尝试用 seed＋1、注入行只进匹配的包、续跑与截掉写了一半的行、中间行损坏即拒绝、全部完成不启动 Strata、基础设施失败重启即新 session 与放弃、`StrataRefused` 与启动额度耗尽不重试、`cache_n` 每 session 只记一次、注入行变化另起 run、空场景、日志不含台词与响应正文等。
+  - `tests/core/test_translate.py`：伪服务／伪客户端：正常、第二次尝试用 seed＋1、注入行只进匹配的包、续跑与截掉写了一半的行、中间行损坏即拒绝、全部完成不启动 Strata、基础设施失败重启即新 session 与放弃、`StrataRefused` 与启动额度耗尽不重试、`cache_n` 每 session 只记一次、注入行变化另起 run、空场景、日志不含台词与响应正文等。
   - `tests/core/test_translate_degrade.py`：拆分与邻文、10→5→1 降级与单条回退、超出 context 进入降级、续跑复用已记录节点、回退终态、经编排器写进 `published.json` 的回退计数。
   - `tests/core/test_translate_recipes.py`：`RECIPE_HASH` 钉子；提示、注入与请求体与研究侧输出逐字节相同的结果钉成字面量或 sha256；gap-pack-v2 规则；`confidence: high` 的注入规则对真实 `translate.plan` 断言。
   - `tests/core/test_merge.py`：中文在上日文在下、换行替换为空格、回退条目两行相同、零条目得空串、缺失／多余／空串抛错。

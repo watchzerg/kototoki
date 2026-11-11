@@ -252,7 +252,7 @@ class JobCase(unittest.TestCase):
                       "names_sha256": table_sha},
             relative=run_dir.relative_to(work_dir).as_posix())
 
-    def _translate_document(self, plan, session):
+    def _translate_document(self, plan, session, *, relative):
         identifier = plan.work_dir.name
         if plan.needs_model:  # 同真实子系统：要模型才向共享 session 要服务（names 没启动时在这里启动）
             if session is None:
@@ -450,9 +450,9 @@ class ExistingSubtitleTests(JobCase):
         artifacts.write_failure(self.work_dir("a.mkv"), "asr", RuntimeError("stale"))
         inner = self._translate_document
 
-        def write_then_translate(plan, session):  # 翻译期间用户（或别的工具）写了 a 的字幕
+        def write_then_translate(plan, session, *, relative):  # 翻译期间用户（或别的工具）写了 a 的字幕
             self.final("a.mkv").write_text("written meanwhile\n", encoding="utf-8")
-            return inner(plan, session)
+            return inner(plan, session, relative=relative)
 
         self.enterContext(mock.patch("kototoki.translate.translate_document", write_then_translate))
         console = io.StringIO()
@@ -471,9 +471,9 @@ class WorkRootTests(JobCase):
         seen: list[dict] = []
         inner = self._translate_document
 
-        def look_then_translate(plan, session):  # 运行中工作根里有锁
+        def look_then_translate(plan, session, *, relative):  # 运行中工作根里有锁
             seen.append({"lock": (self.work_root / artifacts.LOCK).is_file(), "work_dir": plan.work_dir})
-            return inner(plan, session)
+            return inner(plan, session, relative=relative)
 
         self.enterContext(mock.patch("kototoki.translate.translate_document", look_then_translate))
         self.run_job()
@@ -1639,6 +1639,21 @@ class RunLogTests(JobCase):
             ("ERROR", "[cues] FAILED c.mkv: ValueError")])
         self.assertEqual(cue_lines[-1][0], "INFO")
         self.assertRegex(cue_lines[-1][1], r"^\[cues\] end: 2 done, 1 failed, \d+\.\ds$")
+
+    def test_translate_done_line_carries_time_resume_and_fallback_level(self) -> None:
+        self.make_inputs("a.mkv")
+        self.fallback = 2
+        _, file = self.run_logged()
+        (done,) = [m.group(1, 2) for m in map(LOG_LINE.match, file) if m and m[2].startswith("[translate] done")]
+        self.assertEqual(done[0], "WARNING")
+        self.assertRegex(done[1], r"^\[translate\] done a\.mkv: 1 cue\(s\), 2 fallback, \d+\.\ds$")
+
+        self.fallback = 0
+        self.final("a.mkv").unlink()  # run 已完成：只读回译文，不需要模型
+        _, file = self.run_logged()
+        (done,) = [m.group(1, 2) for m in map(LOG_LINE.match, file) if m and m[2].startswith("[translate] done")]
+        self.assertEqual(done[0], "INFO")
+        self.assertRegex(done[1], r"^\[translate\] done a\.mkv \(resumed\): 1 cue\(s\), 0 fallback, \d+\.\ds$")
 
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")

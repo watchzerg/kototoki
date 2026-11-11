@@ -118,7 +118,7 @@ def main() -> int:
     translated = None
     try:
         with strata.Session(cfg) as session:
-            translated = translate.translate_document(plan, session)
+            translated = translate.translate_document(plan, session, relative="smoke")
     except Exception as error:  # 记录失败类别后照常写结果
         failures.append(f"{type(error).__name__}: {str(error)[:500]}")
     timer.mark("translate")

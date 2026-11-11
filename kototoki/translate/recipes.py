@@ -147,7 +147,7 @@ def strict_json(text: str) -> Any:
         result = {}
         for key, value in items:
             if key in result:
-                raise ValueError(f"Duplicate JSON key: {key}")
+                raise ValueError("Duplicate JSON key")  # 键来自模型回复，不进消息（消息会进运行日志）
             result[key] = value
         return result
     return json.loads(text.strip().lstrip("﻿"), object_pairs_hook=pairs)

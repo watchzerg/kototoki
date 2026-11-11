@@ -615,14 +615,18 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
         if video.failed:
             continue
         tplan = video.translate_plan
+        file_started = time.perf_counter()
         try:
-            result = translate.translate_document(tplan, session if tplan.needs_model else None)
+            result = translate.translate_document(tplan, session if tplan.needs_model else None,
+                                                  relative=video.relative)
         except Exception as error:
             ctx.fail(video, "translate", error)
             continue
         results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
-        logger.info(f"[translate] done {video.relative}: {len(tplan.document.cues)} cue(s), "
-                    f"{result.fallback_count} fallback")
+        resumed = " (resumed)" if tplan.document.cues and not tplan.needs_model else ""  # 全部批次已完成，未用模型
+        (logger.warning if result.fallback_count else logger.info)(
+            f"[translate] done {video.relative}{resumed}: {len(tplan.document.cues)} cue(s), "
+            f"{result.fallback_count} fallback, {time.perf_counter() - file_started:.1f}s")
     logger.info(f"[translate] end: {time.perf_counter() - started:.1f}s")
     return results
 

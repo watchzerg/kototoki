@@ -383,19 +383,18 @@ def _write_scene(root: Path, scene: Scene, batches: list[Batch], done: dict[int,
 
 
 def _batch_line(row: dict[str, Any], total: int) -> str:
-    """批次完成的一行进度；字段取自已有记录（降级批次取原批次请求的末次尝试），取不到的省略。"""
-    request = row["degrade"]["nodes"][0]["request"] if "degrade" in row else row["request"]
-    attempts = request.get("attempts") or [{}]
-    last = attempts[-1]
+    """批次完成的一行进度；字段取自已有记录，取不到的省略；降级批次只有 cue 数、请求数与回退数。"""
+    last = (row["request"].get("attempts") or [{}])[-1] if "degrade" not in row else {}
     timings = last.get("timings") or {}
     parts = [f"{len(row['target_ids'])} cue(s)"]
-    if last.get("output_tokens") is not None:
-        parts.append(f"{last['output_tokens']} tok")
-    if isinstance(timings.get("predicted_per_second"), (int, float)):
-        parts.append(f"{timings['predicted_per_second']:.1f} tok/s")
-    if timings.get("cache_n") is not None:
-        parts.append(f"cache {timings['cache_n']}")
-    if "degrade" in row:
+    if "degrade" not in row:  # 降级批次的 tok、tok/s、cache 属于失败的原始请求，不报
+        if last.get("output_tokens") is not None:
+            parts.append(f"{last['output_tokens']} tok")
+        if isinstance(timings.get("predicted_per_second"), (int, float)):
+            parts.append(f"{timings['predicted_per_second']:.1f} tok/s")
+        if timings.get("cache_n") is not None:
+            parts.append(f"cache {timings['cache_n']}")
+    else:
         parts.append(f"degraded ({len(row['degrade']['nodes'])} request(s), "
                      f"{len(row['degrade']['fallback'])} fallback)")
     return f"[translate] batch {row['index'] + 1}/{total}: " + ", ".join(parts)
@@ -409,8 +408,9 @@ SESSION_ENGINE_KEYS = ("candidate", "strata", "cold_load_seconds", "free_vram_mi
                        "available_ram_gib_before_start")
 
 
-def translate_document(plan: TranslatePlan, session: Session | None) -> TranslateResult:
-    """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文；零条目文档不请求模型。
+def translate_document(plan: TranslatePlan, session: Session | None, *, relative: str) -> TranslateResult:
+    """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文；零条目文档不请求模型。`relative` 是输入目录内的相对路径，
+    只进 session start 日志行，让多集批次里的批次与告警能归到某一集。
 
     已完成的批次（含降级完成的）直接复用；全部完成时不启动 Strata。`session` 只在 `plan.needs_model` 时使用，
     编排器在不需要模型时可传 None；计划说不需要而批次仍未完成（`run.json` 与 `batches.jsonl` 不一致）时抛
@@ -440,6 +440,7 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
     restarts = 0
     while len(done) < len(batches):
         entry: dict[str, Any] | None = None
+        current: Batch | None = None  # 正在翻译的批次（意外异常行带它的 ID）
         started = time.perf_counter()
         if session.unavailable is not None:
             # 原因由 `Session` 写：启动额度耗尽（"failed to start N times … (start budget exhausted)"）或被拒（身份不符等）。
@@ -453,7 +454,7 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
                      "stop_reason": None, "infra_failure": None}
             run["sessions"].append(entry)
             atomic_write_json(root / "run.json", run)
-            log.info("[translate] session %d start (%s): %d of %d batch(es) pending", entry["index"],
+            log.info("[translate] session %d start %s (%s): %d of %d batch(es) pending", entry["index"], relative,
                      entry["server_session"], entry["pending_at_start"], len(batches))
             client = session.client(root / "transport" / f"session-{entry['index']:02d}",
                                     timeout=CLIENT_TIMEOUT_SECONDS)
@@ -472,6 +473,7 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
             for batch in batches:
                 if batch.index in done:
                     continue
+                current = batch
                 row = degrade.translate_with_degrade(scene, batch, attempt, recorded.setdefault(batch.index, {}),
                                                      record)
                 row = row | {"session": number}
@@ -510,7 +512,8 @@ def translate_document(plan: TranslatePlan, session: Session | None) -> Translat
             if entry is not None:
                 entry["stop_reason"] = f"session_error: {type(exc).__name__}: {exc}"[:2000]
             # traceback 由编排器的 ctx.fail 记一次，这里不再附 exc_info，避免运行日志里出现两份。
-            log.error("[translate] unexpected %s during translation; stopping Strata", type(exc).__name__)
+            log.error("[translate] unexpected %s during translation%s; stopping Strata", type(exc).__name__,
+                      f" (batch {current.batch_id})" if current is not None else "")
             session.stop()
             raise
         finally:
