@@ -31,9 +31,9 @@ from kototoki.srt import SourceDocument
 from kototoki.strata import MODEL, Session, StrataRefused
 
 from .recipes import BUILD, BUILD_RECIPE_HASH
-from .table import PROMPT_BUDGET, BuildResult, build_table
+from .table import ATTEMPTS, PROMPT_BUDGET, BuildResult, build_table
 
-__all__ = ["BUILD_RECIPE_HASH", "BuildResult", "NamesError", "build_document"]
+__all__ = ["ATTEMPTS", "BUILD_RECIPE_HASH", "BuildResult", "NamesError", "build_document"]
 
 TRANSPORT_DIR = "names/transport"  # 工作目录内原始交换的根
 CLIENT_TIMEOUT_SECONDS = 1800.0
@@ -103,9 +103,11 @@ def build_document(work_dir: Path, document: SourceDocument, session: Session | 
     except HTTPError as exc:
         body = _response_body(client) + str(exc)
         kind = "oom" if explicit_oom(body) else "server_error"
+        log.warning("[names] stopping Strata after HTTP %s (%s)", exc.code, kind)
         session.stop()
         raise NamesError(f"HTTP {exc.code} ({kind}): response body {len(body)} char(s); see {trace_dir}") from exc
     except (URLError, ConnectionError, TimeoutError) as exc:
+        log.warning("[names] stopping Strata after %s", type(exc).__name__)
         session.stop()
         raise NamesError(f"transport failure: {type(exc).__name__}: {exc}") from exc
     # 预算检查的方式与"按 usage 看是否超预算"记进 build 块（计数不可用时提示仍照常发送，只记录、不失败）。

@@ -211,8 +211,10 @@ class BuildDocumentTests(Case):
         self.h.replies = [http_error(500)]
         self.h.error_raw = '{"error": "CUDA error: out of memory"}'
         with self.h.session() as session:
-            with self.assertRaisesRegex(names.NamesError, r"^HTTP 500 \(oom\)") as caught:
+            with self.assertRaisesRegex(names.NamesError, r"^HTTP 500 \(oom\)") as caught, \
+                    self.assertLogs("kototoki.names", level="WARNING") as logs:
                 names.build_document(self.work, self.doc, session, 7)
+            self.assertEqual(logs.records[-1].getMessage(), "[names] stopping Strata after HTTP 500 (oom)")
             self.assertIsNone(session.server)
             self.assertEqual(self.h.events, ["start:1", "stop:1"])
             self.assertNotIn("out of memory", str(caught.exception))  # 正文留在交换目录，不进消息
@@ -227,8 +229,10 @@ class BuildDocumentTests(Case):
     def test_transport_failure_raises_and_the_next_document_restarts(self) -> None:
         self.h.replies = [URLError(ConnectionRefusedError("refused")), reply()]
         with self.h.session() as session:
-            with self.assertRaisesRegex(names.NamesError, "transport failure: URLError"):
+            with self.assertRaisesRegex(names.NamesError, "transport failure: URLError"), \
+                    self.assertLogs("kototoki.names", level="WARNING") as logs:
                 names.build_document(self.work, self.doc, session, 7)
+            self.assertEqual(logs.records[-1].getMessage(), "[names] stopping Strata after URLError")
             result = names.build_document(self.work, self.doc, session, 7)
         self.assertEqual(result.status, "ok")
         self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])

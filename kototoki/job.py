@@ -556,7 +556,8 @@ def _names_line(relative: str, result: BuildResult) -> str:
     meta = result.payload["meta"]
     dropped = sum(len(meta[key]) for key in ("dropped_shape", "dropped_honorific", "dropped_ja_shape"))
     return (f"[names] done {relative}: {len(result.payload['entries'])} entries ({dropped} dropped), "
-            f"{meta['prompt_tokens']} prompt tok, {meta['completion_tokens']} completion tok, {result.seconds:.1f} s")
+            f"{meta['prompt_tokens']} prompt tok, {meta['completion_tokens']} completion tok, {result.seconds:.1f} s"
+            + (f", attempt {result.attempts}/{names.ATTEMPTS}" if result.attempts > 1 else ""))
 
 
 def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) -> None:
@@ -582,13 +583,14 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) 
             continue
         assert video.plan is not None
         document = documents[video.relative]
+        known = session.unavailable is not None  # 原因已由 `[strata]` ERROR 行记过：FAILED 行不再带 traceback
         try:
             result = names.build_document(video.work_dir, document, session if document.cues else None,
                                           ctx.config.names.seed)
             artifacts.write_artifact(video.work_dir / artifacts.NAME_TABLE, video.plan.identities["names"],
                                      result.payload)
         except Exception as error:
-            ctx.fail(video, "names", error)
+            ctx.fail(video, "names", error, traceback=not known)
             continue
         line = _names_line(video.relative, result)
         (logger.info if result.status == "ok" else logger.warning)(line)
@@ -616,11 +618,12 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
             continue
         tplan = video.translate_plan
         file_started = time.perf_counter()
+        known = session.unavailable is not None  # 同 names_batch
         try:
             result = translate.translate_document(tplan, session if tplan.needs_model else None,
                                                   relative=video.relative)
         except Exception as error:
-            ctx.fail(video, "translate", error)
+            ctx.fail(video, "translate", error, traceback=not known)
             continue
         results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
         resumed = " (resumed)" if tplan.document.cues and not tplan.needs_model else ""  # 全部批次已完成，未用模型

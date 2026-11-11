@@ -156,6 +156,9 @@ class StrataServerTests(unittest.TestCase):
         self.assertEqual((final["stop"], final["status_empty"], final["free_vram_mib"], final["released"]),
                          ("ok", True, 15000, True))
         self.assertEqual({r.levelname for r in logs.records}, {"INFO"})
+        messages = [r.getMessage() for r in logs.records]
+        self.assertEqual(messages[0], "[strata] launching (free VRAM 15000 MiB, available RAM 55.0 GiB)")
+        self.assertLess(messages.index("[strata] stopping"), len(messages) - 1)  # 停止核实行在其后
 
     def test_another_launch_serving_is_refused_and_left_alone(self) -> None:
         self.fake.others = [{"name": "someone", "state": "ready", "port": 8080, "host": "127.0.0.1"}]
@@ -196,11 +199,12 @@ class StrataServerTests(unittest.TestCase):
 
     def test_not_ready_in_time_is_an_infra_failure_and_stops(self) -> None:
         self.fake.ready_after = None
-        with self.assertRaisesRegex(InfraFailure, "did not become ready within 300 s"):
+        with self.assertRaisesRegex(InfraFailure, "did not become ready within 300 s") as caught:
             with self.server():
                 self.fail("must not enter")
         self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
         self.assertIsNone(self.fake.state)
+        self.assertTrue(str(caught.exception).endswith(f"; see {self.fake.log}"), str(caught.exception))
 
     def test_two_launches_are_refused(self) -> None:
         self.fake.extra_launch = True
@@ -212,9 +216,10 @@ class StrataServerTests(unittest.TestCase):
     def test_launch_command_failure_still_stops(self) -> None:
         self.fake.launch_error = subprocess.CalledProcessError(
             2, ["strata", "launch"], stderr="strata: `strata launch` with no choices opens screens.\n")
-        with self.assertRaisesRegex(InfraFailure, "exited with 2: strata: `strata launch` with no choices"):
+        with self.assertRaisesRegex(InfraFailure, "exited with 2: strata: `strata launch` with no choices") as caught:
             with self.server():
                 self.fail("must not enter")
+        self.assertTrue(str(caught.exception).endswith(f"; see {self.root / 'logs'}"))  # 没有新写的日志：给目录
         self.assertEqual(self.verbs(), ["launch --no-tui --model iq3_s", "launch --stop"])
 
     def test_interrupt_while_loading_still_stops(self) -> None:
@@ -246,6 +251,7 @@ class StrataServerTests(unittest.TestCase):
         self.assertEqual((final["stop"], final["status_empty"], final["released"]), ("ok", False, False))
         self.assertIn("free GPU memory", final["error"].replace("Free", "free"))
         self.assertIn("Strata stop not confirmed", logs.output[-1])
+        self.assertTrue(logs.output[-1].endswith(f"; see {self.root / 'strata-final.json'}"), logs.output[-1])
         self.assertEqual(self.pids, [4242, None])
 
     def test_vram_not_released_after_stop_is_recorded(self) -> None:
@@ -433,12 +439,21 @@ class SessionTests(unittest.TestCase):
     def test_repeated_start_failures_make_the_batch_unavailable(self) -> None:
         self.infra_on = {1, 2, 3, 4}
         session = self.session()
-        for _ in range(S.MAX_START_FAILURES - 1):
+        with self.assertLogs("kototoki.strata", level="WARNING") as logs:
+            for _ in range(S.MAX_START_FAILURES - 1):
+                with self.assertRaises(InfraFailure):
+                    session.ensure_started()
+                self.assertIsNone(session.unavailable)
             with self.assertRaises(InfraFailure):
                 session.ensure_started()
-            self.assertIsNone(session.unavailable)
-        with self.assertRaises(InfraFailure):
-            session.ensure_started()
+            with self.assertRaises(StrataRefused):
+                session.ensure_started()
+        self.assertEqual([(r.levelname, r.getMessage()) for r in logs.records], [
+            ("WARNING", "[strata] start failed 1/3: launch 1 exploded"),
+            ("WARNING", "[strata] start failed 2/3: launch 2 exploded"),
+            ("WARNING", "[strata] start failed 3/3: launch 3 exploded"),
+            ("ERROR", "[strata] unavailable for the rest of this batch: Strata failed to start 3 times in this batch "
+                      "(start budget exhausted): launch 3 exploded")])
         self.assertIn(f"failed to start {S.MAX_START_FAILURES} times in this batch (start budget exhausted): "
                       f"launch {S.MAX_START_FAILURES} exploded", session.unavailable)
         with self.assertRaisesRegex(StrataRefused, "unavailable for the rest of this batch"):
@@ -449,13 +464,15 @@ class SessionTests(unittest.TestCase):
 
     def test_refused_start_marks_the_batch_unavailable(self) -> None:
         self.refuse_on = {1}
-        with self.session() as session:
+        with self.session() as session, self.assertLogs("kototoki.strata", level="WARNING") as logs:
             with self.assertRaisesRegex(StrataRefused, "refused 1"):
                 session.ensure_started()
             self.assertEqual(session.unavailable, "refused 1")
             self.assertIsNone(session.server)
             with self.assertRaisesRegex(StrataRefused, "refused 1"):
                 session.ensure_started()
+        self.assertEqual([(r.levelname, r.getMessage()) for r in logs.records],
+                         [("ERROR", "[strata] unavailable for the rest of this batch: refused 1")])  # 只记一次
         self.assertEqual(self.events, ["start:1:session-01"])  # 被拒的服务已自行停掉，不再 stop
         self.assertEqual(self.pids, [None])
 

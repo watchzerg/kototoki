@@ -52,7 +52,12 @@
 - `resources.json`：显存／内存峰值、采样与出错次数、服务日志事件计数；
 - `strata-final.json`：停止、status 为空、空闲显存与 `released` 的核实结果。
 
-**日志**：logger `kototoki.strata`，前缀 `[strata]`，经编排写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）：ready 与停止为 INFO；等显存超时前的提示与内存不足为 WARNING；停止未核实为 ERROR。
+**日志**：logger `kototoki.strata`，前缀 `[strata]`，经编排写进运行日志（[运行日志](run-logging-and-processes.md#运行日志)）：
+
+- INFO：等完显存与内存、执行 `strata launch` 之前 `[strata] launching (free VRAM X MiB, available RAM Y GiB)`（取不到内存读数写 `unknown`）；ready；停止开始时 `[strata] stopping`；停止核实通过。
+- WARNING：等显存超过 30 s 的提示、内存不足；每次启动失败（`InfraFailure`）`[strata] start failed n/3: <首行>`。
+- ERROR：`Session` 置 `unavailable` 时一次 `[strata] unavailable for the rest of this batch: <首行>`（被拒绝或启动额度用尽）；停止未核实（行尾 `see <strata-final.json 路径>`）。首行截到 200 字符。
+- 启动失败（`strata launch` 退出码非 0）与就绪超时的异常消息带本次新写的服务日志的绝对路径（找不到唯一一份时给日志目录）。
 
 **本机客户端 `LlamaClient(url, timeout=180, trace_dir=None)`**：
 
@@ -83,7 +88,7 @@
 
 - 代码：`kototoki/strata.py`（`Session`、`StrataServer`、`StrataRefused`、`probe`、`expert_arena`、`drafting_from_log`、`ResourceSampler`、`wait_for_free_vram`、`nvidia_smi`、`available_ram_gib`、身份常量）；`kototoki/local_client.py`（`LlamaClient`、`InfraFailure`、`explicit_oom`）。
 - 测试（core，`just test`）：
-  - `tests/core/test_strata.py`：伪 CLI 下正常启动、核对与停止；已有 launch 时拒绝且不替别人停；等显存与超时；`probe` 各项不符即停并拒绝；未就绪、两个 launch、启动命令失败、被中断都 `--stop`；停止未确认或显存未释放只记录不抛出；启动前等内存、等不到只警告；`mmap` 或未确认锁定时停掉并拒绝；`--status` 只解析 JSON 行；显存轮询的告警与超时；共享 `Session` 首次才启动、`stop` 后再起为新 session、成功启动不限次、启动失败累计 3 次或被拒即不可用、`client()` 的 trace 目录、`label` 跟随启动序号；旧的 `translate/strata.py` 已不存在。
+  - `tests/core/test_strata.py`：伪 CLI 下正常启动、核对与停止；已有 launch 时拒绝且不替别人停；等显存与超时；`probe` 各项不符即停并拒绝；未就绪、两个 launch、启动命令失败、被中断都 `--stop`；停止未确认或显存未释放只记录不抛出（ERROR 行指向 `strata-final.json`）；launching 与 stopping 行；就绪超时与启动命令失败的消息带服务日志路径或目录；启动前等内存、等不到只警告；`mmap` 或未确认锁定时停掉并拒绝；`--status` 只解析 JSON 行；显存轮询的告警与超时；共享 `Session` 首次才启动、`stop` 后再起为新 session、成功启动不限次、启动失败累计 3 次或被拒即不可用（每次启动失败一行 WARNING、不可用一行 ERROR）、`client()` 的 trace 目录、`label` 跟随启动序号；旧的 `translate/strata.py` 已不存在。
   - `tests/core/test_local_client.py`：OOM 识别、`chat_completion` 的端点与 `chat-NN` trace、无标签请求的序号目录、研究专用方法不在产品客户端、非回环 URL 被拒、旧的 `llama_server` 模块已不存在。
   - 使用者侧的启动失败、被拒与重启见 `tests/core/test_translate.py`、`tests/core/test_names_session.py`，整批只启动一次见 `tests/core/test_job.py`。
 - 真实运行：经 `just smoke translate_product`、`just smoke names_product`（占 GPU，须用户批准，不属于任何 gate），见[翻译子系统](translation-subsystem.md#代码与验证入口)与[专名一致性](name-consistency.md#代码与验证入口)。

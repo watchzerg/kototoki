@@ -157,6 +157,7 @@ class JobCase(unittest.TestCase):
         self.names_status: dict[str, str] = {}      # work id → 伪建表终态（failed／too_long）
         self.names_errors: set[str] = set()         # work id：伪 build_document 抛 NamesError
         self.names_snapshots: list[dict] = []
+        self.names_attempts = 1                     # 伪建表成功前的请求次数
         self.planned_tables: list[dict] = []        # 伪 translate.plan 收到的专名表
         self.enterContext(mock.patch("kototoki.names.build_document", self._build_document))
         self.enterContext(mock.patch("kototoki.names.recipes.BUILD_RECIPE_HASH", "d" * 64))
@@ -230,7 +231,8 @@ class JobCase(unittest.TestCase):
                    "meta": {"seed": seed, "attempt": 1, "dropped_shape": [], "dropped_honorific": [{"ja": "x"}],
                             "dropped_ja_shape": [], "prompt_tokens": 100, "completion_tokens": 20, "seconds": 1.5},
                    "build": {"status": status, "reason": None if status == "ok" else f"fake {status}"}}
-        return types.SimpleNamespace(payload=payload, attempts=1 if document.cues else 0, seconds=1.5, status=status)
+        attempts = self.names_attempts if document.cues else 0
+        return types.SimpleNamespace(payload=payload, attempts=attempts, seconds=1.5, status=status)
 
     @staticmethod
     def table_sha256(table: dict) -> str:
@@ -1654,6 +1656,27 @@ class RunLogTests(JobCase):
         (done,) = [m.group(1, 2) for m in map(LOG_LINE.match, file) if m and m[2].startswith("[translate] done")]
         self.assertEqual(done[0], "INFO")
         self.assertRegex(done[1], r"^\[translate\] done a\.mkv \(resumed\): 1 cue\(s\), 0 fallback, \d+\.\ds$")
+
+    def test_names_done_line_shows_the_attempt_only_after_retries(self) -> None:
+        self.make_inputs("a.mkv")
+        _, file = self.run_logged()
+        self.assertIn("[names] done a.mkv: 0 entries (1 dropped), 100 prompt tok, 20 completion tok, 1.5 s",
+                      self.entries_at(file, "INFO"))
+        self.final("a.mkv").unlink()
+        self.names_attempts = 3
+        (self.work_dir("a.mkv") / artifacts.NAME_TABLE).unlink()
+        _, file = self.run_logged()
+        self.assertIn("[names] done a.mkv: 0 entries (1 dropped), 100 prompt tok, 20 completion tok, 1.5 s, "
+                      "attempt 3/5", self.entries_at(file, "INFO"))
+
+    def test_failures_after_strata_became_unavailable_carry_no_traceback(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.session_refused = "another Strata launch is serving"
+        _, file = self.run_logged()
+        errors = self.entries_at(file, "ERROR")
+        self.assertEqual([e for e in errors if "FAILED" in e],
+                         [f"[names] FAILED {rel}: StrataRefused" for rel in ("a.mkv", "b.mkv", "c.mkv")])
+        self.assertEqual("\n".join(file).count("Traceback (most recent call last):"), 1)  # 只有触发拒绝的第一部
 
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")

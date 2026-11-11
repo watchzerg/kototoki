@@ -121,7 +121,7 @@ def nvidia_smi(query: str) -> int | None:
     return int(first) if first.isdigit() else None
 
 
-def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS, *, stage: str = "llama-server",
+def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS, *, stage: str = "strata",
                        query: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
                        sleep: Callable[[float], None] = time.sleep,
                        clock: Callable[[], float] = time.monotonic) -> int:
@@ -138,7 +138,7 @@ def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS,
         seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
         if not warned and clock() - started > FREE_VRAM_WARN_SECONDS:
             warned = True
-            log.warning(f"[{stage}] waiting for free GPU memory: %s < %d MiB after %.0f s", seen, min_mib,
+            log.warning("[%s] waiting for free GPU memory: %s < %d MiB after %.0f s", stage, seen, min_mib,
                         clock() - started)
         if clock() >= deadline:
             raise InfraFailure(f"Free GPU memory {seen} stayed below {min_mib} MiB for {timeout:.0f} s; "
@@ -257,6 +257,10 @@ def expert_arena(engine_text: str) -> str | None:
     return "ram" if ARENA_LOCKED in engine_text else None
 
 
+def _first_line(error: BaseException | str) -> str:
+    return (str(error).splitlines() or [""])[0][:200]
+
+
 def read_from(path: Path, offset: int) -> str:
     if not path.is_file():
         return ""
@@ -360,7 +364,9 @@ class StrataServer:
             raise StrataRefused(f"another Strata launch is serving ({[r.get('name') for r in busy]!r}); this run does "
                                 "not stop it. Stop it with `strata launch --stop` and run again")
         self.identity["free_vram_mib_before_start"] = self._wait_free(120.0)
-        self.identity["available_ram_gib_before_start"] = self._wait_ram()
+        self.identity["available_ram_gib_before_start"] = ram = self._wait_ram()
+        log.info("[strata] launching (free VRAM %d MiB, available RAM %s GiB)",
+                 self.identity["free_vram_mib_before_start"], "unknown" if ram is None else f"{ram:.1f}")
         self.launched = True
         try:
             sizes = log_sizes(self.log_dir)
@@ -370,10 +376,11 @@ class StrataServer:
             except subprocess.CalledProcessError as exc:
                 # Strata 的 stderr 是它自己的说明文字（不含字幕内容），截尾写进消息便于诊断。
                 tail = " ".join((exc.stderr or "").split())[-300:]
-                raise InfraFailure(f"strata launch exited with {exc.returncode}" + (f": {tail}" if tail else "")) from exc
+                raise InfraFailure(f"strata launch exited with {exc.returncode}" + (f": {tail}" if tail else "")
+                                   + self._see_log(sizes)) from exc
             except (OSError, subprocess.SubprocessError) as exc:
                 raise InfraFailure(f"strata launch failed: {type(exc).__name__}: {exc}") from exc
-            launch = self._wait_ready()
+            launch = self._wait_ready(sizes)
             self.log_path = self.log_dir / f"launch-{launch.get('name')}.server.log"
             self.log_offset = sizes.get(self.log_path.name, 0)
             observed = probe(launch, cli=self.cli, get=self.get, log_text=read_from(self.log_path, self.log_offset))
@@ -398,7 +405,12 @@ class StrataServer:
             raise
         return self
 
-    def _wait_ready(self) -> dict[str, Any]:
+    def _see_log(self, sizes: dict[str, int]) -> str:
+        """`; see <路径>`：本次启动新写的服务日志（恰好一份时），否则日志目录。"""
+        grown = [name for name, size in log_sizes(self.log_dir).items() if sizes.get(name) != size]
+        return f"; see {self.log_dir / grown[0] if len(grown) == 1 else self.log_dir}"
+
+    def _wait_ready(self, sizes: dict[str, int]) -> dict[str, Any]:
         deadline = self.clock() + READY_TIMEOUT_S
         last: Any = None
         while True:
@@ -412,7 +424,8 @@ class StrataServer:
                 if last and last[0].get("state") == "ready":
                     return last[0]
             if self.clock() >= deadline:
-                raise InfraFailure(f"Strata did not become ready within {READY_TIMEOUT_S:.0f} s (last status {last!r})")
+                raise InfraFailure(f"Strata did not become ready within {READY_TIMEOUT_S:.0f} s (last status {last!r})"
+                                   + self._see_log(sizes))
             self.sleep(POLL_S)
 
     def __exit__(self, *exc: Any) -> None:
@@ -427,6 +440,7 @@ class StrataServer:
         if not self.launched:
             return
         self.launched = False
+        log.info("[strata] stopping")
         final: dict[str, Any] = {"stop": None, "status_empty": None, "free_vram_mib": None, "released": False}
         try:
             self.cli(*STOP_ARGS, timeout=STOP_TIMEOUT_S)
@@ -456,8 +470,8 @@ class StrataServer:
             log.info("[strata] Strata stopped; %s MiB GPU memory free", final["free_vram_mib"])
         else:
             log.error("[strata] Strata stop not confirmed (stop %s, status empty %s, free %s MiB); "
-                      "check `strata launch --status` and nvidia-smi", final["stop"], final["status_empty"],
-                      final["free_vram_mib"])
+                      "check `strata launch --status` and nvidia-smi; see %s", final["stop"], final["status_empty"],
+                      final["free_vram_mib"], self.runtime_dir / "strata-final.json")
         self.on_pid(None)
 
 
@@ -522,12 +536,16 @@ class Session:
                 server.__enter__()  # ready 后以 pid 回调；启动或核对失败时自行停掉并以 None 回调
             except StrataRefused as exc:
                 self.unavailable = str(exc)
+                log.error("[strata] unavailable for the rest of this batch: %s", _first_line(exc))
                 raise
             except InfraFailure as exc:
                 self.start_failures += 1
+                log.warning("[strata] start failed %d/%d: %s", self.start_failures, MAX_START_FAILURES,
+                            _first_line(exc))
                 if self.start_failures >= MAX_START_FAILURES:
                     self.unavailable = (f"Strata failed to start {self.start_failures} times in this batch "
                                         f"(start budget exhausted): {exc}")
+                    log.error("[strata] unavailable for the rest of this batch: %s", _first_line(self.unavailable))
                 raise
             self.server = server
         return self.server

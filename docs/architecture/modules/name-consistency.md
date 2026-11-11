@@ -43,9 +43,11 @@
 
 - `[names] start: N file(s)`；`[names] end: … s`。
 - Strata 的启动、等显存与内存、接入检查、停止来自 `kototoki.strata`，前缀 `[strata]`。
-- 每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T s`；零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`。
+- 每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T s`，第 2 次及以后的尝试才成功时追加 `, attempt n/5`（上限取包顶层导出的 `ATTEMPTS`）；零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`。
 - 每次不合格的尝试（回复被截断、非 JSON、无有效条目）在该行之前各记一行 WARNING `[names] attempt n/5 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）。
 - `count_tokens` 不可用时一行 WARNING。
+- 传输失败、HTTP 错误或 OOM 停掉 Strata 前一行 WARNING `[names] stopping Strata after <HTTP 状态 (类别) | 传输异常类型>`（来自包顶层）。
+- Strata 不可用之后其余影片的 FAILED 行不带 traceback（原因已由 `[strata]` ERROR 行记过一次）。
 - 条目文字、`work_guess`、提示与回复正文不进日志，只在工作目录。
 
 ## 实现设计
@@ -70,8 +72,8 @@
 - 测试（core，`just test`）：
   - `tests/core/test_names_table.py`：渲染（`USER_TEMPLATE` 的 sha256 与一个固定的 cue 渲染输出各钉一条）、解析与归一、上限、zh 形状、称呼词黑名单、提示 v5、日文写法形状、confidence 降级、`build_table` 的请求体、预算、5 次尝试与 `too_long`／`failed` 空表、零条目。
   - `tests/core/test_names_recipes.py`：提示与 schema 的 sha256、`BUILD` hash 钉子、改值即改 hash、与 v13 `s1_recipe("v4")` 的逐项对应钉成字面量、运行时身份等于翻译配方。
-  - `tests/core/test_names_session.py`：伪 Strata session／伪客户端：正常建表、首次不合格后换 seed 成功、5 次都失败写空表且恰好 5 个请求、`count_tokens` 退路、超预算不发送、传输失败与 HTTP 错误抛 `NamesError` 并停 Strata、被拒与启动失败抛 `NamesError`、零条目不碰 session；与 v13 一致的请求体与 seed 序列钉成 sha256。
-  - `tests/core/test_job.py` 的 `NamesTests`：阶段顺序与锁里的 Strata pid、表与 `sources` 的 `names` 键、终态失败空表照常发布并记 WARNING、session 不可用只让有 cue 的影片失败、建表异常只影响该影片且重跑恢复、零条目不取锁不启动。
+  - `tests/core/test_names_session.py`：伪 Strata session／伪客户端：正常建表、首次不合格后换 seed 成功、5 次都失败写空表且恰好 5 个请求、`count_tokens` 退路、超预算不发送、传输失败与 HTTP 错误抛 `NamesError` 并停 Strata（停之前一行 WARNING）、被拒与启动失败抛 `NamesError`、零条目不碰 session；与 v13 一致的请求体与 seed 序列钉成 sha256。
+  - `tests/core/test_job.py` 的 `NamesTests`：阶段顺序与锁里的 Strata pid、表与 `sources` 的 `names` 键、终态失败空表照常发布并记 WARNING、session 不可用只让有 cue 的影片失败、建表异常只影响该影片且重跑恢复、零条目不取锁不启动；`RunLogTests` 另测重试成功的 done 行带 attempt、Strata 不可用后其余 FAILED 行不带 traceback。
 - `tests/equivalence/test_names.py`：与 `experiments.scene_batching_v6.v13` 的实时逐字节对照（`just test-equivalence`）。
 - `tests/full/test_job_ffmpeg.py`：共享 session 在 names 阶段启动、翻译后退出，`sources` 含 `names`。
 - 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：`just smoke names_product`（`scripts/smoke/names_product.py`）在产品自动启停的 Strata 上走 `plan.names_identity` → 共享 `Session` → `build_document` → `write_artifact`（默认 seed）。
