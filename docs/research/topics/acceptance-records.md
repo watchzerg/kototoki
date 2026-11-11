@@ -4,6 +4,9 @@
 
 条目格式：`[主题 日期](../acceptance/文件.md)：验收范围与未覆盖项`
 
+- [模块页拆出的历史记录：翻译子系统与专名 2026-11-11](../acceptance/2026-11-11-module-page-history-translation-names.md)：重写模块页时原文移出的 Q2 首次 smoke 与整片记录（含 mmap 诊断）；不是新的验收
+- [模块页拆出的历史记录：STT worker、阶段计划与产物契约 2026-11-11](../acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md)：原文移出的冻结窗口首跑、cross 显存与共驻表、x0 在 transformers 5.19 下的全等记录；不是新的验收
+- [模块页拆出的历史记录：批次编排、配置与媒体、开发工作流 2026-11-11](../acceptance/2026-11-11-module-page-history-orchestration-config.md)：原文移出的状态行变更记录、真实运行核对、重采样削波实测、门禁耗时与用例数；不是新的验收
 - [专名一致性产品路径 2026-10-20](../acceptance/2026-10-20-name-consistency-product.md)：HF II／III 以 w0 整批运行 `python -m kototoki`（`[names]` 默认启用），STT 与翻译按身份跳过、Qwen3.8-27B-UD-IQ3_S 建表 2 部后重新发布；ADR-0014 四条判据：① 退出码 0、两表 `ok`、替换 55／32 个 cue；② `apply_table measure` 不一致率两部都下降（0.151 → 0.135、0.121 → 0.094，term 集合随替换缩小）；③ 研究脚本 `apply_table` 默认参数在产品表上的输出与发布 `zh.srt` 逐字节相同；④ 列出改动最密的 5 分钟片段待用户抽看。另记建表 tokens、秒数与显存峰值。未覆盖：改动逐行评审、表条目人工核对、x0 与其他作品、失败路径真实运行、建表可重复性
 - [cross 模式 T6 产品路径验收 2026-10-19](../acceptance/2026-10-19-cross-asr-acceptance.md)：HF II／III 以 `engine = cross` 整批运行 `python -m kototoki`（含 align、translate），`kototoki_eval` 评 cross `align.json` 与同次运行的 `asr-w0.json`／`asr-x0.json`：两部 CER 都低于 w0（−0.88／−1.01 pp），合计 −0.95 pp 未达 1.0 pp 线；裁判与 T0 探针逐区间相同；asr 峰值 10030 MiB、墙钟 1211.6 s；翻译降级与回退 0；附 15 个改为 x0 区间的抽查。未覆盖：译文层收益、听音核对、表记改动对 CER 的拆分、剧集与新材料
 - [cross 模式 T0 共驻显存探针 2026-10-19](../acceptance/2026-10-19-cross-coresidency-probe.md)：同一进程常驻产品 `WhisperAsr` 与 `QwenAsr`，HF II／III 全部窗口按 ①w0 转写 ②x0 转写 ③Whisper 分歧区间打分（d > −1 取 x0）运行，0.5 s 整卡采样与每阶段 torch 峰值：整卡峰值 10688 MiB，峰值＋1 GB ≤ 13.5 GB，判定共驻；DLL 与导入顺序无问题；PCM、VAD 与 13 个模型文件 SHA 核对通过。未覆盖：产品 worker 路径、重复性与桌面占用变化、三段式回退实测、CER 与听音核对

@@ -49,15 +49,7 @@ BUDGET_WHITELIST: dict[str, Budget] = {
     "docs/agents/subtitle-translation-evaluation.md": (25975, None, 1230),
     "docs/architecture/INDEX.md": (None, 150, 1321),
     "docs/architecture/module-boundaries.md": (19491, None, 1664),
-    "docs/architecture/modules/artifact-contract.md": (12000, None, 887),
-    "docs/architecture/modules/batch-orchestration.md": (20637, None, 1253),
-    "docs/architecture/modules/config-and-media.md": (13301, None, 895),
-    "docs/architecture/modules/name-consistency.md": (13318, None, 1150),
-    "docs/architecture/modules/stage-plan.md": (12000, None, 832),
-    "docs/architecture/modules/stt-workers.md": (22892, None, 1967),
-    "docs/architecture/modules/translation-subsystem.md": (21389, None, 2261),
     "docs/development/dependencies.md": (12000, None, 903),
-    "docs/development/workflow.md": (12000, None, 1313),
 }
 
 # 路径检查认的顶层目录；.local/ 等未跟踪目录不查。
@@ -70,12 +62,6 @@ REMOVED_PATHS: dict[str, str] = {
 }
 # 待修的失效路径：(文档, 路径)。
 KNOWN_MISSING_PATHS: set[tuple[str, str]] = {
-    ("docs/architecture/modules/batch-orchestration.md", "docs/changes/local-dependencies-and-test-layers.md"),
-    ("docs/architecture/modules/config-and-media.md", "docs/changes/local-dependencies-and-test-layers.md"),
-    ("docs/architecture/modules/corpus-and-assets.md", "docs/changes/local-dependencies-and-test-layers.md"),
-    ("docs/architecture/modules/name-consistency.md", "docs/changes/name-consistency-product.md"),
-    ("docs/architecture/modules/stt-workers.md", "docs/changes/local-dependencies-and-test-layers.md"),
-    ("docs/architecture/modules/translation-subsystem.md", "docs/changes/local-dependencies-and-test-layers.md"),
 }
 # 还没有模块页归属的产品模块。
 KNOWN_UNOWNED_MODULES: set[str] = {

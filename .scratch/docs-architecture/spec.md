@@ -298,6 +298,7 @@ Status: claimed
 | [07](issues/07-translation-evaluation.md) | resolved | 新增 `docs/agents/translation-evaluation.md`（5,875 字符）：现行是两个 Claude 裁判 profile；核实不了的 5 点记 §8 第 5 项 |
 | [08](issues/08-extend-check-docs.md) | resolved | `check_docs.py` 新增登记、预算、反引号路径、模块归属、ADR 编号 5 类错误检查与状态行告警，扫描 253 → 486 篇；15 个单元测试；`just gate-core` 通过 |
 | [09](issues/09-split-tech-design.md) | resolved | 技术设计 51,461 → 12,336 字符；配置参考拆成 `modules/config-reference.md`，历史原文存为冻结记录；与代码对不上的 7 处记在票据文件，需用户知道的记 §8 第 6 项 |
+| [10](issues/10-rewrite-module-pages.md) | resolved | 7 篇模块页重写到现状并进预算（如翻译子系统 21,389 → 11,858、STT worker 22,892 → 9,080、批次编排 20,637 → 11,993）；拆出 Strata session、STT ASR、运行日志与进程 3 篇新页；3 篇冻结记录保存移出的原文；与代码对不上的 12 处记在票据文件，§8 第 7 项 |
 
 ## 8. 待用户裁定
 
@@ -331,6 +332,11 @@ Status: claimed
    - `kototoki.toml.example` 的 `[stt] engine` 注释写 `# w0 | x0`，代码还接受 `cross`。
    - `scripts/upgrade.py` 的输出文字与 `docs/development/dependencies.md` 里写"规格 §7.2 的配置示例"；§7.2 已拆出，原来那里也没有配置示例。
      改脚本输出属于改代码，没有动；文档那一句是在描述脚本输出，也没有单独改。
-   - `docs/development/dependencies.md`、`docs/development/workflow.md` 各有一行超过 800 字符（表格里的长单元格），不在票据 09–11 的对象里，
-     现记在 `check_docs.py` 的白名单里封顶。
-   请裁定：是否另开一张小票据改示例文件注释、脚本输出文字，并把这两行长单元格拆开。
+   - `docs/development/dependencies.md` 有一行超过 800 字符（表格里的长单元格），不在票据 09–11 的对象里，
+     现记在 `check_docs.py` 的白名单里封顶（`workflow.md` 的长行已在票据 10 拆开）。
+   请裁定：是否另开一张小票据改示例文件注释、脚本输出文字，并把这行长单元格拆开。
+7. **模块页重写时发现的规则与代码不一致（票据 10）。** 页面都已按代码写或改成中立说法，全部 12 处见
+   [票据 10](issues/10-rewrite-module-pages.md#规则与代码对不上的地方)；其中两处是"旧文档写的规则代码没有做"，哪边算对需要裁定：
+   - 旧产物契约页写"判定为已有字幕而跳过时删除 `failure.json`"；`kototoki/job.py` 扫描到已有字幕时直接跳过，旧的 `failure.json` 留在工作目录。
+   - 旧批次编排页写"只有翻译重启与放弃两行把异常首行截到 200 字符"；代码在批次尝试失败行、`Strata refused` 行、names 尝试行也截断。
+   请裁定：这两处是按代码现状定规则（页面补写明），还是改代码。
