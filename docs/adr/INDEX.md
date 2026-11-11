@@ -31,17 +31,7 @@
 
 ### 未关闭项
 
-合并时已把各 ADR 的过时措辞改为现行事实。仍然成立的未关闭项：
-
-- **引擎并存**：H0 研究侧仍用 compat loader b11429，产品用官方 llama.cpp（现行 b11669，以[技术选型](../development/technology-stack.md)为准）。研究侧是否同步升级，未裁定（[0005](0005-apex-i-compact-translation-baseline.md)）。
-- **W0／X0 demo 的 CLI 旧默认**：省略参数时仍落到旧 PyanNet／fixed30，须显式选择新 Pyannote（[0003](0003-new-pyannote-baselines.md)）。
-- ~~产品与基线 Q3 不一致~~（2026-11-09 提出，同日由 [0022](0022-product-names-on-strata.md) 关闭：产品建表切到 Strata，规则与 Q3 逐字节一致；翻译仍是 `q2-degrade-v1`＝Q2 规则＋降级）。
-- **未裁定或未验证**：
-  - Q2 在产品里曾每包约 16 s（v12 F1 的 6 倍），原因是启动时整机内存不够放下专家区、引擎退到 mmap；专家锁进内存后整片重跑每包约 3.1 s（2026-11-08，[翻译子系统模块页](../architecture/modules/translation-subsystem.md#代码与验证入口)）；产品已改为启动前等可用内存、ready 后确认专家全部锁进内存、退到 mmap 即拒绝（[0019](0019-product-translation-q2.md)），因此需要约 52 GiB 可用内存；同 seed 跨 Strata 启动不可复现；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
-  - 给新 SRT 生成 Q1／Q2／Q3 翻译配方已有 `v13.write_q2`；用 Q3 规则建表的通用入口自 0022 起是产品的 names 阶段（研究侧 v13 仍只覆盖固定输入）；Q3 的产品结果只来自一次建表，同一部片两次建表写法 Jaccard 只有 0.56／0.48（[0021](0021-q3-strata-names-baseline.md)）；
-  - `cross` 尚未在新素材上确认（[0012](0012-cross-asr-judge.md)）；
-  - 音频输入未用真实音频文件跑过整条链；音频时长偏短只告警，损坏的音频文件会出不完整字幕（[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)）；
-  - 内嵌日文字幕路径只用合成片段验证过：没有用真实片源跑过，ASS 的卡拉 OK／屏幕字噪声未知，Strata 对人工字幕输入的建表与翻译未做真实模型验证（[0024](0024-embedded-japanese-subtitles.md)）。
+待用户裁定的事项、未验证项与已知限制统一汇总在[待用户裁定事项](../pending-decisions.md)（2026-11-11 起；本节原有条目原文移到那里）。新发现的不一致或未关闭项写到那一页，不写在本页。
 
 ## 演进链
 
@@ -129,7 +119,7 @@
    - 在"当前有效决定"里改对应行（一句话加权威链接），并在页尾"更新记录"加一行；
    - 在"演进链"的对应链末尾追加一环；
    - 在"全部 ADR"里加一行，并更新被替代那篇的状态；
-   - 新发现的不一致或未关闭项写进"未关闭项"。
+   - 新发现的不一致或未关闭项写进[待用户裁定事项](../pending-decisions.md)；裁定了其中某项时从那一页删行。
 4. **改 [CURRENT.md](CURRENT.md)**：把对应小节改写成新的完整现行定义（配方 id、hash、模型与启动方式、权威条款），并更新"部分被取代的 ADR 仍有效的条款"表；其中每个 hash 与配方 id 都要能在某篇 ADR 正文里逐字找到。
 5. **同步摘要入口**：
    - 基线变化时，改 [AGENTS.md](../../AGENTS.md)"冻结证据与现行决定"中的基线句（只写基线名，定义在 CURRENT.md）；

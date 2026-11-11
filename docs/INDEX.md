@@ -21,6 +21,7 @@
 | [模块边界](architecture/module-boundaries.md) | 规则归谁、依赖方向与状态所有权 |
 | `architecture/modules/` | 某个能力现在完整地怎样工作 |
 | `adr/` | 为什么做出重要决定；[决定索引](adr/INDEX.md)汇总当前有效决定与演进链 |
+| [待用户裁定事项](pending-decisions.md) | 哪些问题还在等用户裁定，哪些只是未验证 |
 | [调研索引](research/INDEX.md) | 比较与验证的证据和适用条件；[决定与探索时间线](research/timeline.md) |
 | [规格索引](specs/INDEX.md) | 已接受的行为契约（产品技术设计、W0／X0 demo）与已取代的草案 |
 | [开发工作流](development/workflow.md)、[技术选型](development/technology-stack.md) | 怎么开发、构建和验证 |

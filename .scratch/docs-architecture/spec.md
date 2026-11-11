@@ -294,6 +294,7 @@ Status: claimed
 | [03](issues/03-slim-agents-glossary.md) | resolved | `AGENTS.md` 7,621 → 4,317 字符，触发表 18 → 11 行；`GLOSSARY.md` 基线身份每条一句；"原条目 → 新位置"对照表在票据文件里 |
 | [04](issues/04-split-research-index.md) | resolved | 调研索引 47,341 → 4,979 字符；时间线移到 `timeline.md`，条目分到 `topics/` 7 篇子索引；117 篇报告各登记一次，14 篇附录补登记 |
 | [05](issues/05-guardrail-indexes.md) | resolved | 新增 `docs/context`、`docs/testing`、`docs/plans`、`docs/specs`、`experiments` 五个索引；5 篇翻译草案状态行标 superseded；`docs/INDEX.md` 9,566 → 2,980 字符 |
+| [06](issues/06-pending-decisions.md) | resolved | 新增 `docs/pending-decisions.md`：未裁定 2 项、待确认是否仍开放 9 行、已裁定对照 15 行；决定索引"未关闭项"改为指向该页 |
 
 ## 8. 待用户裁定
 
@@ -312,3 +313,6 @@ Status: claimed
    - ADR-0014 第 2 点的替换子项、第 4 点末句"替换阶段异常使该影片 publish 失败"、第 10 点前半句（随 0019 删除替换而失效）。
    - ADR-0017 第 2 点的对照对象（经 0018 第 2 点、0021 改为 Q3），状态行没说。
    请裁定：是否逐篇在状态行追加说明（只追加，不改正文）。
+4. **`docs/pending-decisions.md` 里 9 行"待用户确认是否仍开放"（票据 06）。** 来源报告写着待裁定，但没有 ADR 或决定索引的明确裁定：
+   v5 §8 第 1–2 项、v6 第 1–3 项、v7 第 3–4 项、v9 第 3 与 6 项、v10 第 5 项、v11 第 2 项与第 5 项、v14 第 11 项、声学裁判线后续。
+   请逐项确认是否仍开放；确认关闭的从该页删行。
