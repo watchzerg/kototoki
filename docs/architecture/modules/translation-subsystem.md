@@ -131,6 +131,6 @@
 ## 变更与决策来源
 
 - [ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0008](../../adr/0008-no-multi-translation-selection.md)、[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0011](../../adr/0011-dp10-cut-product-recipe.md)、[ADR-0017](../../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
-- `.scratch/bilingual-subtitle-pipeline/issues/`（05、09、15、16）、`.scratch/architecture-review/issues/01-small-fixes.md`、`.scratch/name-consistency-product/issues/02-shared-llama-server.md`、`.scratch/q2-product-switch/`、`.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`
-- [`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
+- `.scratch/bilingual-subtitle-pipeline/issues/`（05、09、15、16）、`.scratch/architecture-review/issues/01-small-fixes.md`、`.scratch/name-consistency-product/issues/02-shared-llama-server.md`、`.scratch/q2-product-switch/`、`.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`、`.scratch/runtime-logging-gaps/`
+- [`product-names-on-strata`](../../plans/product-names-on-strata.md)、[`architecture-cleanup`](../../plans/architecture-cleanup.md)
 - [技术设计历史原文](../../research/2026-11-11-bilingual-pipeline-spec-history.md)、[模块页拆出的历史记录](../../research/acceptance/2026-11-11-module-page-history-translation-names.md)

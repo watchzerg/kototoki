@@ -1697,6 +1697,30 @@ class RunLogTests(JobCase):
         _, file = self.run_logged()
         self.assertIn("[plan] 0 file(s) resume at: none", self.entries_at(file, "INFO"))
 
+    def test_non_ascii_percent_file_name_fails_cleanly(self) -> None:
+        rel = "日本語 100%.mkv"
+        self.make_inputs(rel, "b.mkv")
+        self.plan({"asr": {rel: "fail"}})
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):  # logging 的格式化异常会写到 stderr（"--- Logging error ---"）
+            _, file = self.run_logged()
+        self.assertEqual(err.getvalue(), "")
+        self.assertIn(f"[asr] FAILED {rel}: RuntimeError", self.entries_at(file, "ERROR"))
+        self.assertTrue(self.final("b.mkv").is_file())
+
+    def test_transcript_translation_and_name_text_never_reach_logs(self) -> None:
+        self.make_inputs("a.mkv")
+        self.name_entries = [GREETING, TOKYO]
+        _, file = self.run_logged()
+        self.assertEqual(self.final("a.mkv").read_text(encoding="utf-8"), MERGED)  # 文本确实走完了整条流水线
+        stderr_logs = sorted(self.work_root.glob("run-*-*.stderr.log"))
+        self.assertEqual({path.name.rsplit("-", 1)[1] for path in stderr_logs},
+                         {"vad.stderr.log", "asr.stderr.log", "align.stderr.log"})
+        texts = ["\n".join(file)] + [path.read_text(encoding="utf-8") for path in stderr_logs]
+        for secret in ("こんにちは", "你好", "您好", "東京", "东京"):
+            for text in texts:
+                self.assertNotIn(secret, text)
+
     def test_scan_counts_add_up_and_stage_end_lines_share_one_shape(self) -> None:
         self.make_inputs("S1/ep.mkv", "S1/ep.mp4", "b.mkv")  # ep.mp4 与 ep.mkv 争用同一份字幕：scan 失败
         self.translate_errors = set(self.ids("b.mkv"))

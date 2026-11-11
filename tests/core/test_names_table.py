@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
+from unittest import mock
 
 from kototoki.names import table as bt
 from kototoki.srt import parse_srt
@@ -522,6 +523,16 @@ class BuildTableTests(unittest.TestCase):
         self.assertTrue(lines[0].startswith("[names] attempt 1/5 failed (seed 100): reply truncated"), lines[0])
         self.assertTrue(lines[4].startswith("[names] attempt 5/5 failed (seed 104): "), lines[4])
         self.assertFalse(any("不是 JSON" in line or "第二行" in line for line in lines))
+
+    def test_failed_attempt_line_truncates_the_error_to_200_chars(self):
+        server = FakeServer(*[response(reply_text())] * 5)
+        with mock.patch.object(bt, "parse_reply", side_effect=ValueError("e" * 400 + "\nsecond line")), \
+                self.assertLogs("kototoki.names", level="WARNING") as logs:
+            bt.build_table(document(), server.chat, server.tokenize, 100)
+        message = logs.records[0].getMessage()
+        error = message.split("(seed 100): ", 1)[1].rsplit("; finish ", 1)[0]
+        self.assertEqual(error, "e" * 200)
+        self.assertNotIn("second line", message)
 
     def test_five_length_failures_reason(self):
         server = FakeServer(*[response(reply_text(), "length")] * 5)

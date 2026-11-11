@@ -85,6 +85,6 @@
 ## 变更与决策来源
 
 - [ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
-- `.scratch/name-consistency-product/`（01–09）、`.scratch/names-on-strata-v13/`、`.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`
+- `.scratch/name-consistency-product/`（01–09）、`.scratch/names-on-strata-v13/`、`.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`、`.scratch/runtime-logging-gaps/`
 - [`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
 - [2026-10-20 专名一致性进产品验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)

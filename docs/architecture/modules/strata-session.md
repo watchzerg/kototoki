@@ -98,5 +98,5 @@
 
 - [ADR-0017](../../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 - [`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
-- `.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`、`.scratch/architecture-review/`
+- `.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`、`.scratch/architecture-review/`、`.scratch/runtime-logging-gaps/`
 - [Q2 首用 smoke 与整片记录（含 mmap 诊断）](../../research/acceptance/2026-11-11-module-page-history-translation-names.md)

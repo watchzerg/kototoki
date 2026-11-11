@@ -1,6 +1,6 @@
 # 产品运行日志补缺
 
-Status: in-progress
+Status: resolved
 建票：2026-11-11。范围：产品包 `kototoki/` 的运行日志，外加 `scripts/smoke/run_all.py` 一处防护。
 前序：[产品运行日志规划](../runtime-logging/spec.md)（已结题，冻结）。现行规则正文在[运行日志、进程原语与 worker 子进程](../../docs/architecture/modules/run-logging-and-processes.md)。
 
@@ -51,7 +51,7 @@ Status: in-progress
 | 07 | 续跑计数行 | 01 | resolved |
 | 08 | 格式统一与文档对齐 | 01–07 | resolved |
 | 09 | smoke runner 的编码与子进程回收 | — | resolved |
-| 10 | 补测试缺口并结题 | 01–09 | ready-for-agent |
+| 10 | 补测试缺口并结题 | 01–09 | resolved |
 
 ### 01 运行头、异常退出收尾、破锁告警
 
@@ -221,4 +221,43 @@ Status: in-progress
 
 ## 7. 结果
 
-（结题时填写：每票的提交、自动检查结果、未验证项。）
+结题：2026-11-11。
+
+### 7.1 提交
+
+| 票 | 提交 | 要点 |
+| --- | --- | --- |
+| 01 | `d479e6e` | `[run] start` 运行头；`[lock] GPU acquired`；破除陈旧锁记一行 WARNING（kind、pid、worker_stage、server_pid）；未捕获异常记 `[run] ABORTED: <类型>` 后仍打印汇总再放锁；`captureWarnings` 运行期开启 |
+| 02 | `31803b9` | worker done 事件的数值字段进主日志；FAILED 行按 `error_type` 去重 traceback；启动失败一行 ERROR、逐文件不再重复 traceback；非 0/1 退出码记 WARNING 并指向 stderr 日志 |
+| 03 | `b94fa68` | `workers/gpu.py` 过滤 TF32 已知无害告警（`KNOWN_HARMLESS_WARNINGS`） |
+| 04 | `b585b85` | `[cues]` start／done／end 三件套，0 cue 记 WARNING |
+| 05 | `41ff76d` | `strict_json` 固定消息 `Duplicate JSON key`；翻译会话行带文件归属；降级批次省略取不到的字段；翻译 done 行带 fallback（>0 记 WARNING） |
+| 06 | `350e6a1` | Strata launching／stopping 行；启动失败 n/3 WARNING 与"本批不可用"一次性 ERROR；失败消息指向新服务器日志；names 停 Strata 的 WARNING；names done 行带 attempt；已知不可用时 FAILED 行不带 traceback |
+| 07 | `58cfa25` | `[plan] N file(s) resume at: …`；复用 WAV 的 extract done 行标 `(reused)` |
+| 08 | `aa75872` | 秒数格式、end 行形状、`[publish] done`、scan 失败计数、count_tokens 截断 200、exchange 相对工作根；模块页与 README 对齐 |
+| 09 | `377510d` | smoke runner：stdout `backslashreplace`、退出时回收子进程再删锁、逐项开始／结束行、汇总进 `finally`；`tests/core/test_smoke_runner.py` |
+| 10 | 本提交 | 截断（翻译与专名尝试失败行）、`日本語 100%.mkv` 失败路径、转写／译文／专名文本不进运行日志与 stderr 日志三组测试；7 个模块页的"变更与决策来源"登记本目录 |
+
+### 7.2 执行差异（已记在各票）
+
+- 05：先核对配方 hash 与内容断言——`RECIPE_HASH` 只覆盖 `RECIPE` 字典，测试未钉该字符串，故照做。`translate_document` 新增必填关键字参数 `relative`，`scripts/smoke/translate_product.py` 同步传 `relative="smoke"`。
+- 06：`kototoki.names` 新导出 `ATTEMPTS`；Strata 启动失败找不到唯一新日志时指向日志目录。
+- 08：第 4 项"唯一日志"改为登记两条顶层 WARNING；`build.prompt_check` 载荷仍记 300 字符。
+- 09：第 4 项无需改动（`docs/development/` 无"重定向须加 PYTHONUTF8"的说法）。
+- §5 的"重跑原因"未做；`artifacts.is_current` 返回形状、产物契约与 worker 协议未改；未动 `experiments/`；未引入框架或配置键。
+
+### 7.3 自动检查
+
+- `just test`：743 个测试通过（新增用例分布在 `test_job`、`test_translate`、`test_names_table`、`test_stt_workers`、`test_smoke_runner`）。
+- `just test-full`：17 个测试通过。
+- `just docs-check`：通过，0 条告警（501 篇，退出码 0）。
+
+### 7.4 未验证
+
+本轮不运行任何 GPU 重任务，以下只经假 worker、假 Strata 与单元测试覆盖：
+
+- 真实 `python -m kototoki` 运行下的全部新日志行（运行头、破锁、ABORTED 收尾、worker 数值字段、`[cues]`、`[plan]`、Strata 启停与故障行、names attempt、翻译 done 行）。
+- vad worker 真实运行中 TF32 告警确被过滤、stderr 告警计数随之下降。
+- 真实 Strata 启动失败或就绪超时时的日志指针是否指到正确的新服务器日志。
+- 真实 `just smoke` 输出重定向到非 UTF-8 时不崩溃，以及 Ctrl+C 时子进程被回收。
+- torch 自身 `W…` glog 行不计入 stderr 告警数（只按格式规则推断）。

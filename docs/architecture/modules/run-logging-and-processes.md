@@ -101,6 +101,7 @@
 
 - [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 - 运行日志设计与真实运行核对：`.scratch/runtime-logging/`（`spec.md` 及票据 01–04）
+- 运行日志补缺（运行头、异常收尾、worker 字段、cues 三件套、Strata 故障行、续跑计数、smoke runner）：`.scratch/runtime-logging-gaps/`
 - 小修集合（媒体告警、extract 三件套、空锁破除）：`.scratch/architecture-review/issues/01-small-fixes.md`
 - 进程原语移入基础层：计划 [`architecture-cleanup`](../../plans/architecture-cleanup.md)，`.scratch/architecture-cleanup/`
 - [技术选型](../../development/technology-stack.md)（`structlog` 未采用）

@@ -62,3 +62,5 @@
 票据 `.scratch/bilingual-subtitle-pipeline/issues/04-japanese-cues.md`、`12-cue-gap-split-inside-word.md`、`13-cue-word-boundary.md`（调研结论见[cue token 边界调研](../../research/2026-10-15-cue-token-boundary-study.md)）；[技术设计](../../specs/bilingual-subtitle-pipeline.md) §4、§5；§1.2 第三轮裁定表原文见[技术设计历史记录](../../research/2026-11-11-bilingual-pipeline-spec-history.md#12-已裁定2026-10-13)。非词汇字符判定参考 `experiments/display/replay.py`（只读，未导入），并把符号类别（♪）纳入。
 
 2026-11-11 产品包架构整理（计划 [`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md) 票据 03、08，[ADR-0025](../../adr/0025-product-package-boundaries.md)）：offset 改为在本模块对 units 也加一次（此前由对齐加，与"cue 是唯一加 offset 的地方"不符）；删除 `FALLBACK_MAX_CHAR_S` 与钉相等的测试；`ja-cues.json` 由编排加 `ja_srt_sha256`；CUES hash 不变。
+
+运行日志补缺（`.scratch/runtime-logging-gaps/` 票据 04）：`build_ja_cues` 返回载荷，编排据此记 `[cues]` 三件套。

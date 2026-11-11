@@ -122,7 +122,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 研究：[交叉打分](../../research/2026-10-19-asr-pair-cross-score.md)、[v15](../../research/2026-11-10-asr-robustness-v15.md)
 - 验收：[cross 共驻探针](../../research/acceptance/2026-10-19-cross-coresidency-probe.md)、[cross 产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)
-- 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、`.scratch/cross-asr-judge/`、`.scratch/asr-repeat-guard/`
+- 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、`.scratch/cross-asr-judge/`、`.scratch/asr-repeat-guard/`、`.scratch/runtime-logging-gaps/`
 - 计划：[`docs/plans/asr-repeat-guard.md`](../../plans/asr-repeat-guard.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
 - 历史记录：[模块页拆出的历史记录](../../research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md)
 - 来源代码：`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`、`experiments/asr_robustness_v15/repeat.py`、`experiments/quality_v5`
