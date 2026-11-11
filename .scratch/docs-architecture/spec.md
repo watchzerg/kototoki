@@ -296,6 +296,7 @@ Status: claimed
 | [05](issues/05-guardrail-indexes.md) | resolved | 新增 `docs/context`、`docs/testing`、`docs/plans`、`docs/specs`、`experiments` 五个索引；5 篇翻译草案状态行标 superseded；`docs/INDEX.md` 9,566 → 2,980 字符 |
 | [06](issues/06-pending-decisions.md) | resolved | 新增 `docs/pending-decisions.md`：未裁定 2 项、待确认是否仍开放 9 行、已裁定对照 15 行；决定索引"未关闭项"改为指向该页 |
 | [07](issues/07-translation-evaluation.md) | resolved | 新增 `docs/agents/translation-evaluation.md`（5,875 字符）：现行是两个 Claude 裁判 profile；核实不了的 5 点记 §8 第 5 项 |
+| [08](issues/08-extend-check-docs.md) | resolved | `check_docs.py` 新增登记、预算、反引号路径、模块归属、ADR 编号 5 类错误检查与状态行告警，扫描 253 → 486 篇；15 个单元测试；`just gate-core` 通过 |
 
 ## 8. 待用户裁定
 
