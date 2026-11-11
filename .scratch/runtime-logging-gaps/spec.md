@@ -43,7 +43,7 @@ Status: in-progress
 | # | 标题 | 依赖 | 状态 |
 | --- | --- | --- | --- |
 | 01 | 运行头、异常退出收尾、破锁告警 | — | resolved |
-| 02 | worker 事件字段进主日志，失败行去重，崩溃指针 | — | ready-for-agent |
+| 02 | worker 事件字段进主日志，失败行去重，崩溃指针 | — | resolved |
 | 03 | 过滤 vad 的已知无害告警 | 02 | ready-for-agent |
 | 04 | cues 阶段三件套 | — | ready-for-agent |
 | 05 | 翻译：固定校验消息、行内文件归属、降级批次字段 | — | ready-for-agent |

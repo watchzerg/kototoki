@@ -29,7 +29,7 @@
   2026-10-18 13:05:02Z [  3531.0s] ERROR    [translate] FAILED S1/ep01.mkv: TranslateError
   ```
 
-  文件级失败的 ERROR 行只带异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；失败由 worker 报告（`failure.json` 已由 worker 写出）时没有 traceback。
+  文件级失败的 ERROR 行只带异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`、没有 traceback。
 - **文件**：`<work root>/run-<UTC戳>.log` 与控制台逐行相同。`<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后编排只读本次启动追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计。Strata session 的证据（接入身份、资源峰值、停止核实）另在 `<work root>/strata-sessions/`（[翻译子系统](translation-subsystem.md)）。
 - **内容**：
   1. 转写、cue 与窗口文字、译文、专名表条目与 `work_guess`、提示词、grammar、模型响应正文不进任何日志；失败窗口只记序号与 reason。
@@ -63,7 +63,12 @@
 
 - jobs 按 [STT worker](stt-workers.md) 的约定：`recipe_hash` 为 `plan.recipe_hash(stage, engine=…)`，`config` 为 `{"engine", "models": plan.worker_models(config), "model_cache"}`，`inputs` 按 `plan.STAGE_INPUTS`（vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）；worker 用 `plan` 的身份函数写入身份，编排用同一函数核对。
 - 子进程环境（`child_env`）：当前环境加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<work_dir>/cache/`，以及关进度条的 `QUIET_ENV`。
-- stdout 逐行读进度 JSON 写入运行日志，stderr 追加到 `<work root>/run-<时间戳>-<stage>.stderr.log`。
+- stdout 逐行读进度 JSON，stderr 追加到 `<work root>/run-<时间戳>-<stage>.stderr.log`。进度事件进运行日志的方式：
+  - `done`：INFO `[stage] done <相对路径>`，事件里除 `event`、`id` 之外的数值字段按事件自身的字段名以 `key=value` 追加，例 `[align] done S1/ep01.mkv: windows=195 failed_alignment_windows=1 text_only_units=417`（不建映射表）。
+  - `failed`／`fatal`／`startup_failed` 不单独记行：`run_gpu_stage` 把事件的 `error_type` 交给 `ctx.fail`，失败只记一行 ERROR `[stage] FAILED <相对路径>: <类型>`（无 traceback，`failure.json` 已由 worker 写出）。
+  - 启动失败先记一行 ERROR `[stage] worker startup failed: <类型>`，随后逐文件的 FAILED 行不带 traceback。
+  - 退出码不是 0 或 1 时固定记 WARNING `[stage] worker exited with code <n>, see <stderr 文件名>`，与告警计数行互不替代：裸 traceback 与原生崩溃不按本格式、不计数，靠这一行指向。
+- 同一个异常对象（含 `PlanError` 包着的同一缓存异常，如模型核对失败）在多个文件的 FAILED 行里只在第一次带 traceback。
 
 **崩溃与重启**（`job.run_gpu_stage`，按文件计）：每次启动 worker 后，`run_gpu_stage` 把待跑 id、退出码与进度事件交给 `protocol.classify_launch(ids, exit_code, events) -> LaunchOutcome`（规则见[产物契约](artifact-contract.md)），自己只做循环与 `ctx.fail`：
 
@@ -84,7 +89,7 @@
 - 测试（core，`just test`）：
   - `tests/core/test_protocol.py`：`classify_launch`（正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件）。
   - `tests/core/test_procs.py`：锁内容、空锁文件与不可解析、无 `pid_created` 的外部锁、死 pid 与破锁、非整数 pid、并发创建、`update` 只改自己的锁、`release` 只删自己的锁。
-  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志且运行后 `captureWarnings` 复原、告警与失败的级别、extract 三件套、媒体告警逐条 WARNING（含续跑跳过 extract）、补偿告警的阈值与续跑、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
+  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志且运行后 `captureWarnings` 复原、告警与失败的级别、extract 三件套、媒体告警逐条 WARNING（含续跑跳过 extract）、补偿告警的阈值与续跑、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
   - 同文件的 `LockTests`（锁冲突退出码、残留锁、空的／无法解析的锁、锁内 pid 记录）、`ScanTests`（Job Object 建立失败时释放工作根锁）、`IsolationTests`（崩溃文件隔离、按文件重启、`_launch` 异常时回收 worker）。
 - 测试（full，`just test-full`）：`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙断言 `job.compensation_warnings` 给出一行补入告警。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。

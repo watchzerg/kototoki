@@ -43,7 +43,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - 置空（`action: blank`）：折叠后仍命中，或只有非相邻复现命中（没有可折叠的区段）时，该窗作为失败窗口追加，原因 `guard:repeat-strict`，经 `protocol.fail_window` 把原文移入 `failed_windows`、段文字置空，不进对齐、cue 与翻译。
 - 两种情况都在该窗 trace 写 `guard = {rule, action, period, copies, removed_raw_chars}`；置空时后三项描述被放弃的折叠，没有可折叠区段时为 `null`／`null`／0。
 - 只做后处理：不重解码、不温度回退，不看压缩比与 `avg_logprob`。解码抛错的失败窗口不过守卫。x0 引擎不过守卫。
-- 进度行与每文件 INFO 行带守卫改动的窗口数（`guarded_windows`／`N guarded`，折叠与置空都算）；每个被折叠的窗口一行 WARNING（窗口号、周期、份数、删去字符数），被置空的窗口走失败窗口的 WARNING 行；都不含文字。
+- 进度行与每文件 INFO 行带守卫改动的窗口数（`guarded_windows`／`N guarded`，折叠与置空都算；进度行的计数由编排抄进运行日志的 `[asr] done` 行）；每个被折叠的窗口一行 WARNING（窗口号、周期、份数、删去字符数），被置空的窗口走失败窗口的 WARNING 行；都不含文字。
 - 范围有限：低压缩比的插入套话不在守卫范围（ADR-0023）。
 
 ### cross 引擎
@@ -82,7 +82,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
   - `asr-judge.json`：身份同 cross 的 `asr.json`；`offset_s`（照抄 `vad.json`）、`windows`、`summary`。
   - `windows` 每窗口：`index`、`identical`、`text_form`、`guard`、`w0_text`、`x0_text`、逐区间的 `w`／`x`／`kind`／`score_w`／`score_x`／`d`／`switched`、`decision`（`identical`／`judged`／`w0_failed`／`x0_failed`／`score_error`）。
   - `summary`：`windows` 为全部窗口；`identical`／`scored`／`normalized_form`／`intervals`／`switched`／`guards`／`by_kind` 只统计进入裁判的窗口；另有 `w0_failed`／`x0_failed`／`score_error` 与打分墙钟 `score_s`。
-- **日志**：每文件一行 `[asr] <id>: cross windows N, identical K, intervals M, switched S, x0_failed X, score_error E, guarded G, w0 X.Xs, x0 X.Xs, score X.Xs`，不记窗口文字；两路各自的失败窗口另有 WARNING 行（前缀 `w0 `／`x0 `，只记序号与 reason）。
+- **日志**：进度行另带 `identical`、`intervals`、`switched`、`x0_failed`、`score_error` 计数，运行日志的 `[asr] done` 行照抄；stderr 每文件一行 `[asr] <id>: cross windows N, identical K, intervals M, switched S, x0_failed X, score_error E, guarded G, w0 X.Xs, x0 X.Xs, score X.Xs`，不记窗口文字；两路各自的失败窗口另有 WARNING 行（前缀 `w0 `／`x0 `，只记序号与 reason）。
 
 ## 实现设计
 

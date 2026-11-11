@@ -109,8 +109,8 @@ class RunTests(ProtocolCase):
             self.assertEqual(p.run_worker(path, start, stream=self.stream), p.EXIT_FATAL)
         self.assertEqual([e["event"] for e in self.events()], ["startup_failed", "startup_failed"])
         self.assertEqual([(r.getMessage(), r.exc_info[0]) for r in logs.records],
-                         [("startup failed: FileNotFoundError", FileNotFoundError),
-                          ("startup failed: RuntimeError", RuntimeError)])
+                         [("[worker] startup failed: FileNotFoundError", FileNotFoundError),
+                          ("[asr] startup failed: RuntimeError", RuntimeError)])
 
     def test_run_worker_loads_once(self) -> None:
         path = self.root / "batch.json"

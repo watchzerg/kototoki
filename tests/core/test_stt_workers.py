@@ -774,7 +774,7 @@ class WorkerLogTest(WorkerTestCase):
         self.assertEqual(status, EXIT_FATAL)
         self.assertEqual([event["event"] for event in stdout], ["startup_failed"])
         self.assertRegex(stderr[0], LOG_LINE)
-        self.assertEqual(LOG_LINE.match(stderr[0]).groups(), ("ERROR", "startup failed: ValueError"))
+        self.assertEqual(LOG_LINE.match(stderr[0]).groups(), ("ERROR", "[vad] startup failed: ValueError"))
         self.assertIn("Traceback (most recent call last):", stderr)
 
 

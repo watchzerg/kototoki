@@ -1561,6 +1561,50 @@ class RunLogTests(JobCase):
         self.assertTrue(any(entry.startswith("[py] ") and "UserWarning: third-party deprecation" in entry
                             for entry in self.entries_at(file, "WARNING")))
 
+    def test_worker_done_lines_carry_numeric_event_fields(self) -> None:
+        self.make_inputs("a.mkv")
+        _, file = self.run_logged()
+        info = self.entries_at(file, "INFO")
+        for stage in ("vad", "asr", "align"):
+            self.assertIn(f"[{stage}] done a.mkv: windows=1", info)  # 字符串字段 `stage` 不抄
+
+    def test_worker_reported_failure_is_one_error_line_with_its_type(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.plan({"asr": {"b.mkv": "fail", "c.mkv": "fatal"}})
+        _, file = self.run_logged()
+        self.assertEqual(self.entries_at(file, "ERROR"),
+                         ["[asr] FAILED b.mkv: RuntimeError", "[asr] FAILED c.mkv: FatalWorkerError"])
+        self.assertNotIn("Traceback", "\n".join(file))
+        self.assertFalse([entry for entry in self.entries_at(file, "INFO")
+                          if entry.startswith(("[asr] failed", "[asr] fatal"))])
+        warnings = self.entries_at(file, "WARNING")
+        self.assertTrue(any(re.fullmatch(r"\[asr\] worker exited with code 2, see run-\d{8}T\d{6}Z-asr\.stderr\.log", w)
+                            for w in warnings), warnings)
+
+    def test_crash_exit_code_points_to_the_stderr_file(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.plan({"vad": {"a.mkv": "crash"}})
+        _, file = self.run_logged()
+        self.assertTrue(any(re.fullmatch(r"\[vad\] worker exited with code 3, see run-\d{8}T\d{6}Z-vad\.stderr\.log", w)
+                            for w in self.entries_at(file, "WARNING")))
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[vad] FAILED a.mkv: WorkerCrashed"])
+
+    def test_startup_failure_is_logged_once(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.plan({"asr": {"a.mkv": "startup"}})
+        _, file = self.run_logged()
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[asr] worker startup failed: RuntimeError",
+                                                          "[asr] FAILED a.mkv: WorkerCrashed",
+                                                          "[asr] FAILED b.mkv: WorkerCrashed"])
+        self.assertNotIn("Traceback", "\n".join(file))
+
+    def test_one_cached_cause_gets_one_traceback(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.enterContext(mock.patch("kototoki.job.gpu.verify_models", side_effect=FileNotFoundError("model missing")))
+        _, file = self.run_logged()
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[vad] FAILED a.mkv: PlanError", "[vad] FAILED b.mkv: PlanError"])
+        self.assertEqual("\n".join(file).count("kototoki.plan.PlanError: FileNotFoundError: model missing"), 1)  # 链式 traceback 只出现一份
+
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")
 

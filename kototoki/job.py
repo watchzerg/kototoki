@@ -368,15 +368,26 @@ class _Context:
     sleep: Callable[[float], None]
     models: ModelSha
     files: list[VideoFile] = field(default_factory=list)
+    traced: list[BaseException] = field(default_factory=list)  # 已带 traceback 记过的异常（同一原因只记一次）
 
-    def fail(self, video: VideoFile, stage: str, error: BaseException | None = None) -> None:
-        """记该文件该阶段失败；`error` 为 None 时 failure.json 已由 worker 写出。"""
+    def fail(self, video: VideoFile, stage: str, error: BaseException | None = None, *,
+             error_type: str | None = None, traceback: bool = True) -> None:
+        """记该文件该阶段失败；`error` 为 None 时 failure.json 已由 worker 写出，类型取 worker 事件的 `error_type`。
+
+        同一个异常对象（含 `PlanError` 包着的同一缓存异常）只在第一次带 traceback。
+        """
         if error is not None:
             artifacts.write_failure(video.work_dir, stage, error)
+            error_type = type(error).__name__
         video.failed = stage
         self.summary.failed[video.relative] = stage
-        logger.error(f"[{stage}] FAILED {video.relative}" + (f": {type(error).__name__}" if error else ""),
-                     exc_info=error)
+        cause = error.__cause__ if isinstance(error, PlanError) and error.__cause__ is not None else error
+        if cause is not None and any(cause is seen for seen in self.traced):
+            traceback = False
+        elif cause is not None and traceback:
+            self.traced.append(cause)
+        logger.error(f"[{stage}] FAILED {video.relative}" + (f": {error_type}" if error_type else ""),
+                     exc_info=error if traceback else None)
 
     def ensure_gpu_lock(self) -> None:
         if self.gpu_lock.held:
@@ -422,6 +433,8 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
         problems = _count_stderr_problems(stream.read())
     if problems:
         logger.warning(f"[{stage}] {problems} warning/error line(s), see {stderr_path.name}")
+    if code not in (0, 1):  # 裸 traceback、原生崩溃不计数：退出码异常时固定给出指针
+        logger.warning(f"[{stage}] worker exited with code {code}, see {stderr_path.name}")
     return code, events
 
 
@@ -436,9 +449,14 @@ def _read_events(ctx: _Context, stage: str, stdout: Iterable[bytes],
         if not isinstance(event, dict):
             continue
         events.append(event)
+        name = event.get("event")
+        if name in ("failed", "fatal", "startup_failed"):  # 由 run_gpu_stage 记成带类型的 FAILED 行
+            continue
         video = by_id.get(event.get("id"))
-        label = video.relative if video else ""
-        logger.info(f"[{stage}] {event.get('event')} {label}".rstrip())
+        line = f"[{stage}] {name} {video.relative if video else ''}".rstrip()
+        counts = [f"{key}={value}" for key, value in event.items() if key not in ("event", "id")
+                  and isinstance(value, (int, float)) and not isinstance(value, bool)]
+        logger.info(line + (f": {' '.join(counts)}" if name == "done" and counts else ""))
     return events
 
 
@@ -451,17 +469,23 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
     while pending:
         code, events = _launch(ctx, stage, pending)
         outcome = classify_launch([video.work_dir.name for video in pending], code, events)
+        reported = {event.get("id"): str(event.get("error_type")) for event in events
+                    if event.get("event") in ("failed", "fatal")}
         for identifier in outcome.failed:
-            ctx.fail(by_id[identifier], stage)
+            ctx.fail(by_id[identifier], stage, error_type=reported[identifier])
         if outcome.startup_failed is not None:
-            # 模型加载失败与文件无关：本阶段剩余文件全部失败，不逐个重启。
+            # 模型加载失败与文件无关：本阶段剩余文件全部失败，不逐个重启；原因一行，逐文件行不带 traceback。
+            logger.error(f"[{stage}] worker startup failed: {outcome.startup_failed}")
             error = WorkerCrashed(f"{stage} worker startup failed: {outcome.startup_failed}")
             for video in pending:
-                ctx.fail(video, stage, error)
+                ctx.fail(video, stage, error, traceback=False)
             break
         if outcome.crashed is not None:
-            ctx.fail(by_id[outcome.crashed], stage,
-                     None if outcome.fatal else WorkerCrashed(f"{stage} worker exited with code {code}"))
+            if outcome.fatal:
+                ctx.fail(by_id[outcome.crashed], stage, error_type=reported[outcome.crashed])
+            else:
+                ctx.fail(by_id[outcome.crashed], stage, WorkerCrashed(f"{stage} worker exited with code {code}"),
+                         traceback=False)
         pending = [by_id[identifier] for identifier in outcome.remaining]
         if pending:
             logger.info(f"[{stage}] restarting worker for {len(pending)} remaining file(s)")

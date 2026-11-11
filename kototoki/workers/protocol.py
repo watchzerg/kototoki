@@ -125,11 +125,13 @@ def run_jobs(jobs: Jobs, process: Callable[[FileJob], Mapping[str, Any] | None],
 def run_worker(jobs_path: Path, start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]], *,
                stream: BinaryIO | None = None) -> int:
     """worker 主循环：读 jobs、`start` 加载一次模型并返回逐文件处理函数；启动阶段任何异常返回 2。"""
+    stage = "worker"  # 读 jobs 失败时还不知道阶段
     try:
         jobs = read_jobs(jobs_path)
+        stage = jobs.stage
         process = start(jobs)
     except Exception as error:
-        logger.error("startup failed: %s", type(error).__name__, exc_info=error)
+        logger.error("[%s] startup failed: %s", stage, type(error).__name__, exc_info=error)
         emit_progress({"event": "startup_failed", "error_type": type(error).__name__, "message": str(error)}, stream)
         return EXIT_FATAL
     return run_jobs(jobs, process, stream=stream)

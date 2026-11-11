@@ -94,8 +94,9 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - root 上一个写 stderr 的 handler（`kototoki.logs.RunFormatter`，与运行日志同格式），`kototoki` logger 为 INFO；第三方只有 WARNING 及以上；`logging.captureWarnings(True)` 把 Python warnings 收进同一流。
 - 三个壳的 logger 固定命名为 `kototoki.workers.<stage>`：以 `python -m kototoki.workers.<stage>` 运行时 `__name__` 是 `__main__`，不在 INFO 级的 `kototoki` 之下，每文件 INFO 行会被丢弃。
 - 壳记模型核对与加载耗时、每文件窗口数／失败数／推理秒数；每个失败窗口一行 WARNING（只记序号与 reason，不记文字）。
-- `protocol` 对单文件失败、`FatalWorkerError` 与启动失败记 ERROR（异常类型＋traceback）。
-- 推理模块不发日志；stdout 只留协议 JSON 行。stderr 的存放与告警计数见[批次编排：运行日志](batch-orchestration.md#运行日志)。
+- `protocol` 对单文件失败、`FatalWorkerError` 与启动失败记 ERROR（异常类型＋traceback）；启动失败行为 `[<stage>] startup failed: <类型>`，读 jobs 失败、还不知道阶段时为 `[worker] startup failed: <类型>`。
+- stderr 侧文件里的相对秒自 worker 进程启动起算，不是自本次 `run` 起。
+- 推理模块不发日志；stdout 只留协议 JSON 行，`done` 行的数值字段由编排抄进运行日志。stderr 的存放与告警计数见[运行日志](run-logging-and-processes.md#运行日志)。
 
 ## 代码与验证入口
 
