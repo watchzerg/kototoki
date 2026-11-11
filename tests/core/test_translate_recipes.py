@@ -300,5 +300,27 @@ class GapPackTests(unittest.TestCase):
         self.assertEqual(sorted(len(b.target_ids) for b in build_batches(scene)), [7, 8, 8])
 
 
+
+class PromptShapePinTests(unittest.TestCase):
+    """专名行格式与窗口 JSON 形状影响请求体却不在 `RECIPE` hash 里（计划 docs/plans/architecture-cleanup.md §6）：
+    用一个固定输出钉住，改动它们必须同时有意升级翻译配方。值取自 2026-11-11 的产品实现。"""
+
+    def test_window_shape_name_rows_and_user_message_are_pinned(self) -> None:
+        scene = scene_from_document(parse_srt(format_srt([(0.0, 1.5, "東坂が来た"), (2.0, 3.5, "ほう")])))
+        (batch,) = build_batches(scene)
+        window = batch.to_window(scene)
+        self.assertEqual(window, {
+            "id": "srt-818bf926ecef-b0001", "source_language": "ja", "target_language": "zh-Hans",
+            "context": [{"id": "818bf926-cue-1", "text": "東坂が来た"}, {"id": "818bf926-cue-2", "text": "ほう"}],
+            "translate_ids": ["818bf926-cue-1", "818bf926-cue-2"]})
+        rows = [{"source": "東坂", "translation": "东坂"}, {"source": "碇", "translation": "碇"}]
+        system, user = R.messages(window, rows)
+        self.assertEqual(system, {"role": "system", "content": (
+            R.SYSTEM_TEXT + "\n\n本作品专名的固定中文译法（日文写法 → 中文）。原文出现这些写法时使用对应译法：\n東坂 → 东坂")})
+        self.assertEqual(user, {"role": "user", "content": (
+            '【只读日文上下文】\n[{"id": "818bf926-cue-1", "text": "東坂が来た"}, {"id": "818bf926-cue-2", "text": "ほう"}]\n'
+            '【待译 JSON】\n{"translations": {"818bf926-cue-1": "東坂が来た", "818bf926-cue-2": "ほう"}}')})
+
+
 if __name__ == "__main__":
     unittest.main()

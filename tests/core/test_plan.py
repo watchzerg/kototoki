@@ -92,7 +92,8 @@ class PlanCase(unittest.TestCase):
     def write_cues(self, text: str = SRT_JA) -> None:
         align_sha = artifacts.sha256_file(self.work / artifacts.ALIGN)
         srt.write_srt(text, self.work / plan.JA_SRT)
-        artifacts.write_artifact(self.work / artifacts.JA_CUES, plan.cues_identity(align_sha, self.config), {"cues": []})
+        artifacts.write_artifact(self.work / artifacts.JA_CUES, plan.cues_identity(align_sha, self.config),
+                                 {"cues": [], "ja_srt_sha256": artifacts.sha256_file(self.work / plan.JA_SRT)})
 
     def write_names(self, entries: list | None = None) -> None:
         identity = plan.names_identity(artifacts.sha256_file(self.work / plan.JA_SRT), self.config)
@@ -164,6 +165,36 @@ class ChainTests(PlanCase):
         self.write_align()
         self.write_cues()
         (self.work / plan.JA_SRT).unlink()
+        self.assertEqual(self.next().stage, "cues")
+
+    def test_hand_edited_ja_srt_reruns_cues(self) -> None:
+        self.write_upstream()
+        self.assertEqual(self.next().stage, "translate")
+        srt.write_srt(SRT_JA.replace("こんにちは", "さようなら"), self.work / plan.JA_SRT)  # 用户手改 ja.srt
+        current = self.next()
+        self.assertEqual(current.stage, "cues")
+        self.assertNotIn("names", current.identities)
+
+    def test_media_hash_change_with_same_pcm_keeps_vad_and_later_stages_current(self) -> None:
+        # 票据 03：MEDIA hash 变 → probe 身份变（重抽音频）；PCM 不变时 vad 起的身份不含 probe，仍当前。
+        self.write_upstream()
+        relative, ffprobe = "a.mkv", {"streams": []}
+        (self.root / "in" / relative).write_bytes(b"video")
+        before = plan.probe_identity(self.config, relative, ffprobe)
+        with mock.patch.dict(recipes.MEDIA, {"layout_by_channels": {2: "mono"}}):
+            after = plan.probe_identity(self.config, relative, ffprobe)
+        self.assertNotEqual(after, before)
+        current = plan.next_stage(plan.Target(self.work, after, PCM), self.config, models)
+        self.assertEqual(current.stage, "translate")
+        self.assertEqual(current.identities["probe"], after)
+
+    def test_ja_cues_without_ja_srt_sha256_is_not_current(self) -> None:
+        # 票据 03 之前写的 ja-cues.json 没有该字段：不写兼容分支，自然重建一次。
+        self.write_upstream()
+        path = self.work / artifacts.JA_CUES
+        record = artifacts.read_json(path)
+        del record["ja_srt_sha256"]
+        path.write_text(artifacts.canonical(record), encoding="utf-8")
         self.assertEqual(self.next().stage, "cues")
 
     def test_advance_continues_from_the_finished_stage(self) -> None:
@@ -348,6 +379,36 @@ class EmbeddedChainTests(PlanCase):
             "probe": PROBE_IDENTITY, "ja_embedded": self.embedded,
             "names": plan.names_identity(artifacts.sha256_file(self.work / plan.JA_SRT), self.config),
             "translate": current.identities["translate"], "no_speech": False})
+
+    def write_record(self, identity: dict | None = None) -> None:
+        artifacts.write_artifact(self.work / artifacts.JA_EMBEDDED, identity or self.embedded,
+                                 {"cues": 1, "ja_srt_sha256": artifacts.sha256_file(self.work / plan.JA_SRT)})
+
+    def test_embedded_record_is_current_only_with_its_identity_and_its_ja_srt(self) -> None:
+        self.assertFalse(plan.embedded_current(self.work, self.embedded))  # 没有记录
+        self.write_record()
+        self.assertTrue(plan.embedded_current(self.work, self.embedded))
+        self.assertFalse(plan.embedded_current(self.work, plan.embedded_identity(PROBE_IDENTITY, 4)))
+        srt.write_srt(SRT_JA.replace("こんにちは", "さようなら"), self.work / plan.JA_SRT)  # 被 cue 阶段或用户改写
+        self.assertFalse(plan.embedded_current(self.work, self.embedded))
+        (self.work / plan.JA_SRT).unlink()
+        self.assertFalse(plan.embedded_current(self.work, self.embedded))
+
+    def test_one_path_rewriting_ja_srt_makes_the_other_path_stale(self) -> None:
+        # 两条路径共用一个 ja.srt 新鲜度判定：谁最后写 ja.srt，谁的记录才当前。
+        stt = plan.Target(self.work, PROBE_IDENTITY, PCM)
+        self.write_vad()
+        self.write_asr()
+        self.write_align()
+        self.write_cues()                                        # cue 阶段写 ja.srt
+        self.write_record()                                      # 内嵌路径记下同一份
+        srt.write_srt(SRT_JA.replace("こんにちは", "字幕"), self.work / plan.JA_SRT)
+        self.write_record()                                      # 内嵌路径改写 ja.srt
+        self.assertTrue(plan.embedded_current(self.work, self.embedded))
+        self.assertEqual(plan.next_stage(stt, self.config, models).stage, "cues")
+        self.write_cues()                                        # 再走 STT：cue 阶段改写 ja.srt
+        self.assertFalse(plan.embedded_current(self.work, self.embedded))
+        self.assertEqual(plan.next_stage(stt, self.config, models).stage, "names")
 
     def test_stt_artifacts_in_the_same_directory_are_ignored(self) -> None:
         self.write_vad(chunks=[])  # 以前走 STT 时留下的无语音 vad.json 不影响内嵌路径

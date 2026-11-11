@@ -30,8 +30,10 @@ PAN: dict[str, str] = {
     # FL FR FC LFE BL BR SL SR
     "7.1": "pan=mono|c0=0.180668*c0+0.180668*c1+0.127732*c2+0.127732*c4+0.127732*c5+0.127732*c6+0.127732*c7",
 }
-# ffprobe 没给 channel_layout 时按声道数选布局。
+# ffprobe 没给 channel_layout 时按声道数选布局（嵌在 MEDIA 里，进 hash）。
 LAYOUT_BY_CHANNELS = {1: "mono", 2: "stereo", 6: "5.1", 8: "7.1"}
+# 视为同一语言的标签（ffprobe `tags.language`，大小写不敏感，其余标签只转小写）；音轨与内嵌字幕选轨共用，进 MEDIA。
+LANGUAGE_ALIASES = {"ja": "jpn", "jp": "jpn", "jpn": "jpn"}
 
 MEDIA: dict[str, Any] = {
     "id": "media-pcm16k-v1",
@@ -39,6 +41,13 @@ MEDIA: dict[str, Any] = {
     # 起始静音补齐、间隙补零，sample 0 即视频 0 秒；offset_s 恒为 0
     "timeline_filter": "aresample=async=1:first_pts=0",
     "pan": PAN,
+    "layout_by_channels": LAYOUT_BY_CHANNELS,
+    # 音轨选择（media.select_audio）：所选音轨决定派生 WAV，规则因而进 hash
+    "audio_selection": {
+        "rule": "language tag normalized equals [input] audio_language normalized and not disposition.comment; "
+                "disposition.default first, else the first such stream; no match: the first audio stream",
+        "language_aliases": LANGUAGE_ALIASES,
+    },
     # 降采样用 ffmpeg 默认 swr，与基线证据（hf-ii-full.wav）逐字节一致。2026-10-14 曾改 soxr 28 bit，
     # 最终验收发现 soxr 使 Pyannote 少保留约 10% 语音、CER 高于基线，2026-10-15 用户裁定改回（票据 10）。
     "resample_filter": f"aresample={SAMPLE_RATE}",
@@ -192,7 +201,7 @@ CUES: dict[str, Any] = {
     "untimed_fill": {"inner": "linear interpolation between timed neighbours (time_source=interpolated)",
                      "edge": "extrapolate at the neighbour per-character duration, clipped to the window",
                      "failed_window": "distribute over the window's VAD segments (time_source=fallback)"},
-    # 整窗回退每字符时长上限（秒）；cues.FALLBACK_MAX_CHAR_S 是使用处，测试钉住两者相等（票据 04）
+    # 整窗回退每字符时长上限（秒）；cues 直接读这个值（票据 04）
     "fallback_max_char_s": 0.25,
     "lead_out": "extend end by lead_out_s without crossing the next cue start",
     "millisecond_rounding": "floor(x * 1000 + 0.5)",

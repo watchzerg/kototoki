@@ -22,13 +22,11 @@ import math
 import unicodedata
 from typing import Any, cast
 
+from kototoki import recipes
 from kototoki.srt import format_srt, milliseconds
 
 RULE_KEYS = frozenset({"max_chars", "max_duration_s", "min_duration_s", "max_gap_s",
                        "sentence_endings", "soft_breaks", "lead_out_s"})
-
-# 整窗回退时每字符时长上限（秒）：VAD 子段很长而文字很少时不把几个字摊满整段。
-FALLBACK_MAX_CHAR_S = 0.25
 
 Interval = tuple[float, float]
 
@@ -92,7 +90,8 @@ def _fallback(times: list[Interval | None], sources: list[str], lo: int, hi: int
     i = lo
     for (a, b), n in zip(spans, allotted):
         if n:
-            per_char = min((b - a) / n, FALLBACK_MAX_CHAR_S)
+            # 每字符时长上限（`CUES` 配方）：VAD 子段很长而文字很少时不把几个字摊满整段
+            per_char = min((b - a) / n, recipes.CUES["fallback_max_char_s"])
             for k in range(n):
                 times[i] = (a + k * per_char, a + (k + 1) * per_char)
                 sources[i] = "fallback"

@@ -45,9 +45,6 @@ CONTAINERS = {
 }
 FALLBACK_CONTAINER = ".mka"
 
-# 视为同一语言的标签（ffprobe `tags.language`，大小写不敏感）。
-LANGUAGE_ALIASES = {"ja": "jpn", "jp": "jpn", "jpn": "jpn"}
-
 # swr 在 -loglevel verbose 下报告的硬补偿（`async=1`）；样本数按输入采样率计。实测只报告一部分
 # （合成 2 s 间隙只报出约 0.63 s），因此另用 ffmpeg 结束统计的输入样本数算净补偿。
 _SWR_ADDED = re.compile(r"adding (\d+) audio samples of silence")
@@ -128,11 +125,11 @@ def _track_dict(track: AudioTrack) -> dict[str, Any]:
 # --- 纯函数：解析、选择、映射、命令行 ------------------------------------------------------------
 
 def normalize_language(tag: str | None) -> str | None:
-    """`jpn`／`ja`／`jp`（大小写不敏感）→ `jpn`；其余标签只转小写。"""
+    """`jpn`／`ja`／`jp`（大小写不敏感）→ `jpn`（`recipes.LANGUAGE_ALIASES`，在 `MEDIA` 里）；其余标签只转小写。"""
     if tag is None:
         return None
     lowered = tag.strip().lower()
-    return LANGUAGE_ALIASES.get(lowered, lowered) or None
+    return recipes.LANGUAGE_ALIASES.get(lowered, lowered) or None
 
 
 def _float(value: Any) -> float | None:
@@ -183,7 +180,8 @@ def _audio_track(stream: Mapping[str, Any]) -> AudioTrack:
 
 
 def select_audio(tracks: Sequence[AudioTrack], language: str) -> tuple[AudioTrack, list[str]]:
-    """语言匹配且非 commentary 的音轨优先，其中 `default` 优先；无匹配取第一条。返回所选音轨与告警。"""
+    """语言匹配且非 commentary 的音轨优先，其中 `default` 优先；无匹配取第一条（规则写在
+    `recipes.MEDIA["audio_selection"]`，改规则须同时改它）。返回所选音轨与告警。"""
     if not tracks:
         raise MediaError("No audio stream in the input")
     wanted = normalize_language(language)

@@ -5,7 +5,7 @@ from decimal import Decimal
 import re
 import unittest
 
-from kototoki import cues, recipes
+from kototoki import recipes
 from kototoki.artifacts import object_hash
 
 # ffmpeg 标准下混权重：前左右 1、中置 0.707、环绕 0.707、LFE 丢弃；按声道序号。
@@ -78,8 +78,11 @@ class RecipeHashTests(unittest.TestCase):
         # 2026-11-11 架构整理（docs/plans/architecture-cleanup.md 票据 03）钉住：值取自 c639b22 的配方。
         # 除 MEDIA 外，这次整理不得改变任何一个；翻译 RECIPE_HASH 与建表 BUILD_RECIPE_HASH 各在
         # test_translate_recipes.py、test_names_recipes.py 钉住。
+        # MEDIA 在票据 03 有意变一次：LAYOUT_BY_CHANNELS 与音轨选择规则（含 LANGUAGE_ALIASES）进 MEDIA，id 不变。
+        # 改之前：58892e0a96afe3a876ba90959ce19ef649d5cd1052910c132bcd92055f971e1e
+        self.assertEqual(recipes.MEDIA["id"], "media-pcm16k-v1")
         self.assertEqual(recipes.recipe_hash(recipes.MEDIA),
-                         "58892e0a96afe3a876ba90959ce19ef649d5cd1052910c132bcd92055f971e1e")
+                         "0d19d8d890e030abb42e9750dc1d3855b28554e2fe257a6ffd0f189cc7d731ad")
         self.assertEqual(recipes.recipe_hash(recipes.VAD),
                          "d940145d29b8bc4ba834d53fa2ac818fbf28aab8b2b9ce18af555c350733a60c")
         self.assertEqual(recipes.recipe_hash(recipes.MMS),
@@ -116,6 +119,21 @@ class RecipeHashTests(unittest.TestCase):
         self.assertNotEqual(recipes.recipe_hash(changed_rate), base)
         self.assertIs(recipes.MEDIA["pan"], recipes.PAN)
 
+    def test_layout_fallback_and_audio_selection_enter_the_media_hash(self) -> None:
+        self.assertIs(recipes.MEDIA["layout_by_channels"], recipes.LAYOUT_BY_CHANNELS)
+        self.assertIs(recipes.MEDIA["audio_selection"]["language_aliases"], recipes.LANGUAGE_ALIASES)
+        base = recipes.recipe_hash(recipes.MEDIA)
+        for path, value in ((("layout_by_channels", 6), "5.1(side)"),
+                            (("audio_selection", "language_aliases", "jp"), "x"),
+                            (("audio_selection", "rule"), "first stream")):
+            changed = copy.deepcopy(recipes.MEDIA)
+            node = changed
+            for key in path[:-1]:
+                node = node[key]
+            node[path[-1]] = value
+            with self.subTest(path=path):
+                self.assertNotEqual(recipes.recipe_hash(changed), base)
+
     def test_fixed_values_from_the_spec(self) -> None:
         self.assertEqual(recipes.VAD["device"], "cuda:0")
         self.assertEqual(recipes.VAD["model_revision"], "e66f3d3b9eb0873085418a7b813d3b369bf160bb")
@@ -125,7 +143,7 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(recipes.X0["generate"], {"max_new_tokens": 4096, "do_sample": False})
         self.assertEqual(recipes.MMS["dtype"], "float32")
         self.assertEqual(recipes.MEDIA["offset_s"], 0)
-        self.assertEqual(recipes.CUES["fallback_max_char_s"], cues.FALLBACK_MAX_CHAR_S)
+        self.assertEqual(recipes.CUES["fallback_max_char_s"], 0.25)
         self.assertEqual(recipes.MEDIA["timeline_filter"], "aresample=async=1:first_pts=0")
         self.assertEqual(recipes.MEDIA["resample_filter"], "aresample=16000")
 

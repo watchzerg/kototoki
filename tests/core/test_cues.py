@@ -2,7 +2,7 @@
 
 import unittest
 
-from kototoki.cues import FALLBACK_MAX_CHAR_S, build_cues
+from kototoki.cues import build_cues
 from kototoki.srt import parse_srt
 
 DEFAULT_RULES = {
@@ -135,7 +135,6 @@ class BackfillTests(CueTestCase):
     def test_fallback_char_duration_is_capped(self):
         win = window(0.0, 5.0, untimed("あい"), [[0.0, 5.0]])
         payload, _ = build_cues(make_align([win]), rules(**PLAIN))
-        self.assertEqual(FALLBACK_MAX_CHAR_S, 0.25)
         self.assertEqual(spans(payload), [(0, 500, "あい")])
 
     def test_fallback_largest_remainder_tie_goes_to_earlier_segment(self):

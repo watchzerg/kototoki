@@ -7,6 +7,7 @@ Render 与 BuildTable 针对产品接口 `build_messages(SourceDocument)`、`bui
 
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 
@@ -567,6 +568,21 @@ class BuildTableTests(unittest.TestCase):
 
     def test_budget_is_context_minus_output_minus_guard(self):
         self.assertEqual(bt.PROMPT_BUDGET, 20480 - 4096 - 512)
+
+
+
+class PromptPinTests(unittest.TestCase):
+    """`USER_TEMPLATE` 与 cue 渲染影响建表输出却不在 `BUILD` hash 里（保持与 `names-strata-v4` 逐字节一致，计划
+    docs/plans/architecture-cleanup.md §6）：用测试钉住，改动它们必须同时有意升级建表配方。值取自 2026-11-11 的产品实现。"""
+
+    def test_user_template_is_pinned(self):
+        self.assertEqual(hashlib.sha256(bt.USER_TEMPLATE.encode("utf-8")).hexdigest(),
+                         "1aea99d27d09c599dfb5855f44d5b4570cc311698b9d8c2e564c41173af3ec28")
+
+    def test_cue_rendering_is_pinned(self):
+        self.assertEqual(bt.build_messages(document())[1]["content"],
+                         "以下是全片的 ASR 转写稿（共 3 条）：\n\n1\tお主は分かっておるな\n2\t東坂が 来たのか\n3\tほう\n\n"
+                         "请按要求输出专名表 JSON。")
 
 
 if __name__ == "__main__":

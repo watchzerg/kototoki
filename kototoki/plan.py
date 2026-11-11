@@ -13,8 +13,10 @@ names 阶段的身份由本模块自己算，只经 `kototoki.names.recipes` 延
                       vad.json 无语音时直接 ──────────────────────────────► publish
     probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）─► names ─► translate ─► publish   （ADR-0024）
 
-采用内嵌字幕的文件（`Target.embedded` 不为 None）从 names 起核对；是否采用、`ja-embedded.json` 是否当前由编排在
-CPU 阶段判定（与 `probe.json` 同一做法），本模块只给出它的期望身份 `embedded_identity`。
+采用内嵌字幕的文件（`Target.embedded` 不为 None）从 names 起核对；是否采用由编排在 CPU 阶段判定，`ja-embedded.json`
+是否当前由本模块判定（`embedded_current`，编排在 CPU 阶段调用），期望身份为 `embedded_identity`。
+`ja.srt` 由两条路径之一写出：`ja-cues.json` 与 `ja-embedded.json` 都记下写出时的 `ja_srt_sha256`，两者是否当前
+都经同一个辅助函数 `_current_with_ja_srt` 比对它，因而一条路径改写 `ja.srt` 后另一条路径的记录自然不当前。
 names 恒在链上（建表必开）；`sources` 含 `names`（表的身份），表的内容经翻译身份的 `names_sha256` 体现。
 `next_stage` 对一个文件从 vad 起逐阶段核对，返回第一个需要运行的阶段与此前各阶段的期望身份；
 某阶段跑完后用 `advance` 从该阶段继续核对，不再从头重算。
@@ -165,6 +167,19 @@ def embedded_identity(probe: Mapping[str, Any], stream_index: int) -> dict[str, 
                                       config={"stream_index": stream_index})
 
 
+def _current_with_ja_srt(path: Path, identity: Mapping[str, Any]) -> bool:
+    """产物 `path`（`ja-cues.json` 或 `ja-embedded.json`）身份匹配，且它记下的 `ja_srt_sha256` 等于同目录 `ja.srt`
+    的 SHA256；`ja.srt` 缺失、被手改或被另一条路径改写即不当前。没有该字段的旧产物同样不当前（重建一次）。"""
+    ja_srt = path.parent / JA_SRT
+    return (artifacts.is_current(path, identity) and ja_srt.is_file()
+            and artifacts.read_json(path).get("ja_srt_sha256") == artifacts.sha256_file(ja_srt))
+
+
+def embedded_current(work_dir: Path, identity: Mapping[str, Any]) -> bool:
+    """`ja-embedded.json` 是否当前（ADR-0024）：身份等于 `identity`（`embedded_identity`），且 `ja.srt` 仍是它写出的那份。"""
+    return _current_with_ja_srt(Path(work_dir) / artifacts.JA_EMBEDDED, identity)
+
+
 def names_identity(ja_srt_sha256: str, config: Config) -> dict[str, Any]:
     """`name-table.json` 的期望身份；模型 SHA256 在建表配方里，故不进身份。"""
     recipe = importlib.import_module("kototoki.names.recipes").BUILD_RECIPE_HASH
@@ -271,9 +286,10 @@ def _check_from(target: Target, config: Config, models: ModelSha, plan: Plan) ->
                 ids[key] = align_identity(pcm, artifacts.sha256_file(work / artifacts.ASR), models("align"))
             else:
                 ids[key] = cues_identity(artifacts.sha256_file(work / artifacts.ALIGN), config)
-            current = artifacts.is_current(work / STAGE_OUTPUT[stage], ids[key])
-            if stage == "cues":
-                current = current and (work / JA_SRT).is_file()
+            if stage == "cues":  # `ja.srt` 必须仍是 cue 阶段写出的那份
+                current = _current_with_ja_srt(work / STAGE_OUTPUT[stage], ids[key])
+            else:
+                current = artifacts.is_current(work / STAGE_OUTPUT[stage], ids[key])
             if not current:
                 return Plan(stage, ids, False)
             if stage == "vad" and artifacts.read_json(work / artifacts.VAD).get("chunks") == []:

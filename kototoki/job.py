@@ -465,19 +465,15 @@ def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str,
     """采用内嵌日文字幕轨 `stream`（ADR-0024）：抽取、清洗，写 `ja.srt` 与 `ja-embedded.json`，置 `video.embedded`。
 
     返回 None 即已采用；否则是不可用的原因（ffmpeg 抽取失败、清洗后零条目），调用方回到 STT 链。
-    `ja-embedded.json` 身份匹配且它记下的 `ja.srt` SHA256 与文件相符时跳过抽取。写出 `ja.srt` 时删掉 `ja-cues.json`：
-    cues 阶段只核对 `ja-cues.json` 的身份与 `ja.srt` 是否存在，留着它会让以后改走 STT 时把字幕轨的 `ja.srt` 当成
-    cue 阶段的输出。
+    内嵌记录是否当前由阶段计划判定（`plan.embedded_current`：身份匹配且记下的 `ja_srt_sha256` 与 `ja.srt` 相符），
+    当前即跳过抽取。不删 `ja-cues.json`：它也记着 cue 阶段写出的 `ja.srt` 的 SHA256，这里改写 `ja.srt` 后它自然
+    不再当前，以后改走 STT 时 cues 阶段重建。
     """
     assert video.probe is not None and video.probe_identity is not None
     work = video.work_dir
     identity = plan.embedded_identity(video.probe_identity, int(stream["index"]))
     record_path, ja_path = work / artifacts.JA_EMBEDDED, work / JA_SRT
-    cue_count = None
-    if artifacts.is_current(record_path, identity) and ja_path.is_file():
-        record = artifacts.read_json(record_path)
-        if record.get("ja_srt_sha256") == artifacts.sha256_file(ja_path):
-            cue_count = record["cues"]
+    cue_count = artifacts.read_json(record_path)["cues"] if plan.embedded_current(work, identity) else None
     if cue_count is None:
         try:
             text, stats = embedded.clean(media.extract_subtitle(video.path, int(stream["index"]), config.paths.ffmpeg))
@@ -487,7 +483,6 @@ def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str,
             return f"no usable cue among {stats['source_cues']}"
         work.mkdir(parents=True, exist_ok=True)
         clean_leftovers(work)
-        (work / artifacts.JA_CUES).unlink(missing_ok=True)
         srt.write_srt(text, ja_path)
         artifacts.write_artifact(record_path, identity, {"stream": dict(stream), **stats,
                                                          "ja_srt_sha256": artifacts.sha256_file(ja_path)})
@@ -673,11 +668,14 @@ def advance_or_fail(ctx: _Context, video: VideoFile, stage: str) -> bool:
 # --- ja-cues、专名建表、翻译与发布 ----------------------------------------------------------------
 
 def build_ja_cues(config: Config, video: VideoFile) -> None:
+    """写 `ja.srt`，再写 `ja-cues.json`；payload 另记写出的 `ja.srt` 的 SHA256，供阶段计划核对 `ja.srt` 的新鲜度。"""
     align = artifacts.read_json(video.work_dir / artifacts.ALIGN)
     payload, text = cues.build_cues(align, asdict(config.cues))
-    srt.write_srt(text, video.work_dir / JA_SRT)
+    ja_path = video.work_dir / JA_SRT
+    srt.write_srt(text, ja_path)
     assert video.plan is not None
-    artifacts.write_artifact(video.work_dir / artifacts.JA_CUES, video.plan.identities["ja_cues"], payload)
+    artifacts.write_artifact(video.work_dir / artifacts.JA_CUES, video.plan.identities["ja_cues"],
+                             {**payload, "ja_srt_sha256": artifacts.sha256_file(ja_path)})
 
 
 def _names_line(relative: str, result: Any) -> str:

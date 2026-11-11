@@ -50,7 +50,7 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 ## 代码与验证入口
 
-- 代码：`kototoki/plan.py`（`Target`、`Plan`、`next_stage`、`advance`、`PlanError`、`ModelSha`、`ENGINE_PARTS`、各阶段身份函数、`embedded_identity` 与内嵌记录是否当前的判定、`ja.srt` 新鲜度辅助函数、`EMBEDDED_KEY`、`names_identity`、`translate_plan`、`STAGES`／`GPU_STAGES`／`STAGE_INPUTS`／`STAGE_OUTPUT`／`IDENTITY_KEY`、`worker_models`、`model_files`、`recipe_hash`、模型文件 SHA256 常量）。
+- 代码：`kototoki/plan.py`（`Target`、`Plan`、`next_stage`、`advance`、`PlanError`、`ModelSha`、`ENGINE_PARTS`、各阶段身份函数、`embedded_identity` 与内嵌记录是否当前的判定 `embedded_current(work_dir, identity)`、`ja.srt` 新鲜度辅助函数 `_current_with_ja_srt`（cues 检查与 `embedded_current` 共用）、`EMBEDDED_KEY`、`names_identity`、`translate_plan`、`STAGES`／`GPU_STAGES`／`STAGE_INPUTS`／`STAGE_OUTPUT`／`IDENTITY_KEY`、`worker_models`、`model_files`、`recipe_hash`、模型文件 SHA256 常量）。
 - 测试（core，`just test`）：`tests/core/test_plan.py` 直接测计划模块：阶段链逐级推进、cues 阶段同时要求 `ja-cues.json` 与 SHA256 相符的 `ja.srt`（手改 `ja.srt` 后 cues 重建）、`MEDIA` hash 变而 PCM 不变时 vad、asr、align、cues 仍当前、无语音直达 `publish`、`advance` 停在未写出产物的阶段、连续调用结果相同且不改写入参、`PlanError` 标明阶段、损坏产物视为不当前；翻译阶段以属性 patch 替换 `kototoki.translate.plan`（只需返回 `identity` 与 `needs_model`），names 阶段用伪建表 hash；names 组另测身份随配方 hash 与 seed 变化、链为 cues → names → translate、`ja.srt`／seed 变化或表缺失停在 names、手改注入条目改变翻译身份并重新翻译与发布、从 names 继续推进、无语音路径没有 names 键（具体用例以 `test_plan.py` 当前内容为准，ADR-0019 后随之改写）；内嵌字幕组（`EmbeddedChainTests`）测身份随输入文件、配方与流索引变化、计划从 names 起且不调用 `ModelSha`、`sources` 的键、目录里遗留的 STT 产物不影响这条路径。`tests/core/test_job.py` 核对一次整批运行中每文件 `next_stage` 恰一次、每个跑过的阶段 `advance` 恰一次；`tests/core/test_stt_workers.py` 核对壳写出的身份与本模块的期望身份逐字段相等。
 - 真实运行：票据 14 交付时对四个整片工作目录重算身份全等（见状态行）。
 - 未验证：没有单独的真实运行；行为由编排与 worker 的整片验收间接覆盖。

@@ -24,7 +24,7 @@ from unittest import mock
 import wave
 
 from kototoki import __main__ as cli
-from kototoki import artifacts, job, media
+from kototoki import artifacts, job, media, recipes
 from kototoki.config import ConfigError, load
 from tests.fake_worker import FAKE_MODELS
 
@@ -1278,9 +1278,10 @@ class EmbeddedSubtitleTests(JobCase):
         self.run_job(stt)                                   # 先走 STT：ja.srt 来自 cue 阶段
         self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_JA)
         self.final("a.mkv").unlink()
-        self.run_job()                                      # 改走内嵌字幕：ja.srt 换成字幕轨，ja-cues.json 删除
+        self.run_job()                                      # 改走内嵌字幕：ja.srt 换成字幕轨，ja-cues.json 不再当前
         self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_EMBEDDED_CLEAN)
-        self.assertFalse((work / artifacts.JA_CUES).exists())
+        self.assertNotEqual(artifacts.read_json(work / artifacts.JA_CUES)["ja_srt_sha256"],
+                            artifacts.sha256_file(work / "ja.srt"))
         self.assertIn("ja_embedded", self.published("a.mkv")["sources"])
         self.final("a.mkv").unlink()
         launches = len(self.launches())
@@ -1289,6 +1290,48 @@ class EmbeddedSubtitleTests(JobCase):
         self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_JA)
         self.assertEqual(self.final("a.mkv").read_text(encoding="utf-8"), MERGED)
         self.assertIn("ja_cues", self.published("a.mkv")["sources"])
+
+
+class IdentityTests(JobCase):
+    def test_media_hash_change_with_same_pcm_keeps_vad_and_later_stages_current(self) -> None:
+        # 票据 03：LAYOUT_BY_CHANNELS 与音轨选择规则进 MEDIA，MEDIA hash 变一次。旧工作目录的 probe.json 不再当前、
+        # 重抽一次音频；派生 PCM 不变，vad、asr、align、cues 与专名表仍当前，不起 worker、不重建 cue。
+        legacy = {key: value for key, value in recipes.MEDIA.items()
+                  if key not in ("layout_by_channels", "audio_selection")}
+        self.assertEqual(recipes.recipe_hash(legacy),  # 改之前的 MEDIA（test_recipes.py 记着同一个值）
+                         "58892e0a96afe3a876ba90959ce19ef649d5cd1052910c132bcd92055f971e1e")
+        self.make_inputs("a.mkv")
+        with mock.patch("kototoki.recipes.MEDIA", legacy):
+            self.run_job()
+        work = self.work_dir("a.mkv")
+        kept = {name: (work / name).read_bytes() for name in (artifacts.VAD, artifacts.ASR, artifacts.ALIGN,
+                                                              artifacts.JA_CUES, "ja.srt", artifacts.NAME_TABLE)}
+        probe = artifacts.read_json(work / artifacts.PROBE)["identity"]
+        launches, names = len(self.launches()), len(self.names_snapshots)
+        self.final("a.mkv").unlink()
+
+        summary = self.run_job()
+        self.assertEqual(summary.published, ["a.mkv"])
+        self.assertEqual(self.extracted, ["a.mkv", "a.mkv"])  # probe.json 不当前：重抽一次
+        self.assertNotEqual(artifacts.read_json(work / artifacts.PROBE)["identity"], probe)
+        self.assertEqual((len(self.launches()), len(self.names_snapshots)), (launches, names))
+        self.assertEqual({name: (work / name).read_bytes() for name in kept}, kept)
+
+    def test_hand_edited_ja_srt_rebuilds_cues(self) -> None:
+        self.make_inputs("a.mkv")
+        self.run_job()
+        work = self.work_dir("a.mkv")
+        record = artifacts.read_json(work / artifacts.JA_CUES)
+        self.assertEqual(record["ja_srt_sha256"], artifacts.sha256_file(work / "ja.srt"))
+        (work / "ja.srt").write_text(SRT_JA.replace("こんにちは", "さようなら"), encoding="utf-8")
+        self.final("a.mkv").unlink()
+        launches = len(self.launches())
+        with mock.patch("kototoki.job.cues.build_cues", side_effect=self._build_cues) as build:
+            summary = self.run_job()
+        self.assertEqual(summary.published, ["a.mkv"])
+        self.assertEqual((build.call_count, len(self.launches())), (1, launches))
+        self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_JA)
+        self.assertEqual(artifacts.read_json(work / artifacts.JA_CUES), record)
 
 
 class ImportAndDirTests(JobCase):
