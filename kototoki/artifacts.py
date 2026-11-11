@@ -14,8 +14,8 @@
 
 - `probe.json`：ffprobe 快照，时间字段保持 ffprobe 原值；音轨 `start_time` 只作诊断。
 - `vad.json`／`asr.json`／`align.json`：窗口、段、对齐记录一律是 WAV 本地秒与整数样本
-  （16 kHz，sample 0 即视频 0 秒），顶层必须带 `offset_s`（产品恒为 0）。
-  唯一例外是 `align.json` 的 `units[].start/end` 已含 `offset_s`（与现有 `result.json` 一致）。
+  （16 kHz，sample 0 即视频 0 秒），顶层必须带 `offset_s`（产品恒为 0）；
+  `align.json` 的 `units[].start/end` 同样是 WAV 本地秒，`offset_s` 只由日文 cue 加一次。
 - `ja-cues.json` 及三份 SRT：cue 时间是最终 SRT 时间（视频时间轴）。
 
 JSON 产物的顶层固定为 `{"identity": {...}, ...payload}`。身份只由内容摘要、配方 hash 与

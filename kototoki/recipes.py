@@ -168,7 +168,7 @@ CROSS: dict[str, Any] = {
         "x0_failed_window": "keep w0",
         "w0_failed_window": "stays failed",
         "score_error": "keep w0, warn, count",  # 打分抛 RuntimeError：该窗口取 w0，不作窗口级失败
-        "x0_text_cleaning": "drop whitespace adjacent to a non-ASCII character in x0 text only; w0 text untouched",  # workers.asr.clean_x0
+        "x0_text_cleaning": "drop whitespace adjacent to a non-ASCII character in x0 text only; w0 text untouched",  # judge.clean_x0
     },
 }
 
