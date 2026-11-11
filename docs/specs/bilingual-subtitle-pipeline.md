@@ -1,14 +1,14 @@
 # 中日双语字幕批量生产流水线：技术设计
 
-状态：implemented（2026-10-14，票据 00–09 交付，两部整片验收见[验收记录](../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)；2026-10-15 最终验收后票据 10–15 完成，票据 13 裁定不实现；2026-10-18 票据 16 把产品配方换成 `dp10-cut-degrade-v1`（[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)）；2026-10-20 新增专名一致性（`names` 阶段与发布时替换，[ADR-0014](../adr/0014-name-consistency-in-product.md)）；**2026-11-08 产品翻译切到 Q2、取消发布时替换（[ADR-0019](../adr/0019-product-translation-q2.md)，下文标"ADR-0019"之处为现行规则，其余 Hy-MT2／`dp10-cut-degrade-v1`／替换的描述是历史设计依据）**；ADR-0020 起输入含音频、工作目录外置、只发布双语字幕到源文件旁，见 §13）。设计收口于 2026-10-13，2026-10-14 按三轮评审修订并改为 CUDA 12 统一环境（§13）；取舍记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。当前行为以[架构总览](../architecture/INDEX.md)中的产品模块页为准，本文保留设计依据与裁定  
+状态：implemented（只含跨模块契约；配置参考、环境与历史记录已拆出，见文末"拆出的内容"）  
 日期：2026-10-13  
-范围：第一个正式产品形态，命令行工具，输入一批日语视频或音频，在源文件旁输出中日双语 SRT。不含 UI、流式、打包、非日语输入。
+范围：第一个正式产品形态，命令行工具，输入一批日语视频或音频，在源文件旁输出中日双语 SRT。不含 UI、流式、打包、非日语输入。本文只写跨模块契约（阶段链、调度、产物、cue 交界、失败语义）；各模块的完整行为以[架构总览][arch]中的模块页为准，依赖方向与接缝见[模块边界][mb]，取舍见 [ADR-0007][adr7]。
 
 ## 1. 目标与边界
 
-- 输入：`input_dir` 下（递归）的本地视频或音频文件（扩展名见 §10，视频还是音频由 ffprobe 判定）。音频默认视为日语对白。
-- 输出（每个输入）：写在源文件所在目录的 `<stem>.ja-zh.srt`（ADR-0020）；`ja.srt`、`zh.srt` 等中间产物留在工作目录（§4）。源文件旁已有 `<stem>.ja-zh.srt` 即跳过该文件。
-- 第一版没有命令行参数：入口 `python -m kototoki [kototoki.toml]` 只读一份配置文件（§10），输入目录、工作目录、模型目录、各组件需要关注的参数都在里面。质量基线直接复用已采纳的配方；影响模型行为的解码／采样／提示常量不进配置文件，作为配方常量留在代码里（§10.2）。
+- 输入：`input_dir` 下（递归）的本地视频或音频文件（扩展名见[配置参考][cfg]，视频还是音频由 ffprobe 判定）。音频默认视为日语对白。
+- 输出（每个输入）：写在源文件所在目录的 `<stem>.ja-zh.srt`（ADR-0020）；`ja.srt`、译文等中间产物留在工作目录（§4）。源文件旁已有 `<stem>.ja-zh.srt` 即跳过该文件。
+- 入口 `python -m kototoki [kototoki.toml]` 只读一份配置文件，没有其他命令行参数；影响模型行为的解码／采样／提示常量是配方常量，留在代码里，不进配置文件（[配置参考][cfg]）。
 - 产品不变量继续生效：本地运行、ASR／CTC／翻译只跑 GPU 不回退 CPU、保留日语原文、音频与转写不进 Git 与日志。
 
 ### 1.1 固定配方（写死，不做配置项）
@@ -17,235 +17,127 @@
 | --- | --- | --- |
 | 音频分离 | ① 视频：ffmpeg 流复制（`-c:a copy`）保留原始编码，不转码（音频文件不做 ①）；② 模型输入直接从输入容器按绝对流索引解码（不是从 ① 的裸码流），带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV | 用户要求无损保留原格式；两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；裸码流容器丢时间戳，见 §2.2 |
 | VAD 与分窗 | Pyannote `segmentation-3.0`（revision `e66f3d3b…`），powerset 原生检测，onset／offset 0.5，`source-span-merge-v1`：≤30 s、整数样本坐标、保留块内间隙 | [ADR-0003](../adr/0003-new-pyannote-baselines.md) |
-| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗复读守卫（规则 `repeat-strict`：命中窗口折叠相邻重复，仍命中则置空，§6），解码与特征仍是 W0 基线，产品配方 id `w0-faster-whisper-large-v3-guard-v2` | [W0 契约](w0-reusable-demo.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md) |
+| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗复读守卫（规则 `repeat-strict`，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v2` | [W0 契约](w0-reusable-demo.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md) |
 | ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](x0-reusable-demo.md) |
-| ASR `cross`（可选，默认仍为 `w0`） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0 转写、再 x0 转写，然后由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变。HF II／III 实测两部合计 CER 15.25% → 14.30%（−0.95 pp，低于预设 1.0 pp 验收线，用户裁定仍采用），asr 阶段墙钟 3.75 倍；译文层收益与新材料确认未测 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[交叉打分研究](../research/2026-10-19-asr-pair-cross-score.md) |
+| ASR `cross`（可选） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0、再 x0 转写，由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../research/acceptance/2026-10-19-cross-asr-acceptance.md) |
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
-| 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2 给出初值） | [显示契约](../testing/demo-display-contract.md)为起点 |
-| 翻译（2026-11-08 起，ADR-0019） | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，默认启动配置，产品以 `strata launch --no-tui --model iq3_s` 启动，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`（前 20／后 5 条按条数，可见 ≤35 条，超出先去后邻）；`confidence: high` 的专名注入；每批最多两次（seed、seed+1）。此前为 Hy-MT2 30B-A3B APEX-I-Compact＋`official30b-cached-v1`＋`dp10-cut`（H0，ADR-0005／ADR-0010，产品已删除） | [ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) |
-| 专名一致性（2026-10-20 起建表；2026-11-08 起建表必开、表只经翻译注入使用，没有发布时替换，ADR-0019；2026-11-09 起在与翻译共用的 Strata 上按基线 Q3 规则建表，[ADR-0022](../adr/0022-product-names-on-strata.md)） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：Strata 上的 Qwen3.8-Flash-Next（no-think、提示 v5、context 24576、`max_tokens` 8192、不发 `response_format`，配方 `q3-names-v1`）把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，不合格依次换 seed 最多 5 次请求；翻译时只注入 `confidence: high` 的写法（每个 `forms[]` 一行 `日文 → 中文`，按日文去重，只注入出现在该批可见台词里的行）。建表规则与 Q3 的 `names-strata-v4` 逐字节一致，不调参 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[专名一致性模块页](../architecture/modules/name-consistency.md) |
-| 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文就是翻译结果（注入的专名译法已在翻译里，不再替换） | 用户裁定 |
+| 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2） | [显示契约](../testing/demo-display-contract.md)为起点 |
+| 翻译 | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，`strata launch --no-tui --model iq3_s`，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`；`confidence: high` 的专名注入；每批最多两次（seed、seed+1）；产品配方 `q2-degrade-v1` | [ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) |
+| 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，不合格依次换 seed 最多 5 次请求（配方 `q3-names-v1`，与 Q3 的 `names-strata-v4` 逐字节一致）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[专名一致性][names] |
+| 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文就是翻译结果 | 用户裁定 |
 
-### 1.2 已裁定（2026-10-13）
+### 1.2 已裁定
 
-| 事项 | 结论 |
-| --- | --- |
-| 默认 STT 引擎 | `w0`；两片合并 CER 15.25% 对 x0 16.68%，推理快约 2.5 倍，无生成触顶 |
-| 批次粒度 | 第一版不提供 `--batch-size`，整批按阶段推进 |
-| 无时间字符 | 产品端插值＋整窗回退，在 cue 文件里记账；内部方案另行细聊 |
-| 音频产物 | 原始编码流复制保留；派生的 16 kHz WAV 也保留，不删除 |
-| 输出位置（ADR-0020） | 最终 `<stem>.ja-zh.srt` 写在源文件旁；工作目录在 `[paths] work_dir`（默认仓库 `.local/work/`）下按目标目录分子目录，不写进目标目录 |
-| 双语行序 | 中文在上、日文在下，无选项 |
-| cue 切分数值 | 由实现方给出初值并放配置文件，后续按真实输出调整 |
-| Python 环境的 CUDA 版本 | **整体 CUDA 12.8**（2026-10-14 替代原方案 A）：torch 2.11.0+cu128 与 CTranslate2 共用 torch 的 CUDA 12 运行时（CT2 自带的 cuDNN 调度器例外，见 §7.2），不再有侧车与无 torch worker；llama-server 为独立进程，保留官方 CUDA 13.4 构建 |
-| Python 版本 | 3.13（3.15 无 CT2／torchaudio／torchcodec wheel，不可用；3.14 边角依赖未核） |
-| 环境管理 | 单一根项目：根 `pyproject.toml` 即产品，uv 管理，Torch 走显式 cu128 索引（实现方选择，见 §7.2） |
-| 入口形态 | 第一版不做 CLI，入口只读配置文件；输入／输出／模型目录与组件参数全部在配置文件里 |
-| cue 切分初值 | 接受 §5.2 的初值作为起点 |
-| 流复制容器 | 按编码选最合适的容器，其余退回 `.mka`（映射见 §2.1，实现方选择） |
-| 回归测试 | 本期只讨论工程架构，升级后的回归与容差推迟到实现之后 |
-| 翻译批内对应 | 本期 1+10+1 中间 10 条与中文一一对应；批内语序自由调整属未来方向（§11） |
-| 配置文件边界 | 按 §10.2：路径、并发、显示规则、seed 进配置；解码／采样／提示常量留在代码 |
-| 翻译失败降级 | 批次终态失败自动 10→5→1 拆批重试；单条仍失败则保留日文并写入报告，整片照常交付 |
-| cue 结束延长 | `lead_out_s` 初值 0.3 s，向后延长不越过下一条起点 |
-| 输出目录 | 镜像输入目录的子目录层级 |
-| 里程碑 | 由实现方拆分并建票（§12） |
-| 下混 | 单声道直通；双声道沿用 0.5/0.5；5.1 以上用 ffmpeg 标准矩阵含中置 |
-| 重采样器 | ffmpeg 默认 swr（`aresample=16000`，2026-10-15 用户裁定由 soxr 28 bit 改回，票据 10）；派生 WAV 与基线 `hf-ii-full.wav` 逐字节一致 |
-| 翻译引擎 | 官方 llama.cpp b11583 win-cuda-13.4 替代 ADR-0005 的 b11429 兼容引擎条款 |
-| 产品翻译配方 | `q2-degrade-v1`（2026-11-08 起，ADR-0019；2026-10-18..11-08 为 `dp10-cut-degrade-v1`；之前为 `b10-joint-degrade-v1`） |
-
-第三轮评审（2026-10-14，独立评审）采纳的裁定：
-
-| 事项 | 结论 |
-| --- | --- |
-| 时间轴零点 | 派生 WAV 用 `async=1:first_pts=0` 补齐起始静音，sample 0 即输入 0 秒；`offset_s` 恒为 0，音轨 `start_time` 只进 `probe.json` 作诊断，不再贯穿链路（§2.2） |
-| 产物坐标系 | 各阶段 JSON 一律本地秒（与 WAV 一致）＋顶层 `offset_s`；cue 时间只在 ja-cues 阶段加一次 offset（§4） |
-| 5.1 下混 | 每种声道布局的 `pan` 表达式写死为配方常量，含归一化系数，禁止削波（§2.2） |
-| 时长校验 | 视频输入对照第一条视频流时长：解码短于它超过 1 s 判失败；音频输入对照所选音轨时长：短于它只告警（ADR-0020）；两者长于参照都只告警，无流时长时用容器时长；ffmpeg verbose 日志入工作目录（§2.2） |
-| 翻译 run 目录 | 按 `translate/srt-<sha12>/<配方名>__s<seed>/` 分键，键由翻译子系统 `translate.plan` 唯一给出，`published.json` 指向当前使用的那份（§4，票据 15） |
-| 发布与跳过（ADR-0020） | 源文件旁已有 `<stem>.ja-zh.srt`（只看文件名）即在扫描阶段跳过；没有 `force`，要重做就删掉该字幕；`published.json` 只作审计记录（§4） |
-| 工作根目录锁 | 启动即取 `<work root>/lock`（同一 `input_dir` 同时只一个编排器，退出码 3），GPU 锁在 GPU 阶段前取（§3.3） |
-| worker 重启 | 按文件计：崩溃时正在处理的文件记该阶段失败，从下一文件重启；不再"整阶段只重启一次"（§3.1） |
-| x0 触顶窗口 | 该窗 `text` 置空、截断文字记入 `failed_windows`，不进对齐与翻译（§6） |
-| 票据 03 门禁 | ASR 文字必须逐字符一致；unit 时间允许 ±20 ms（1 帧），超出另开票但不阻塞 05／06（§12） |
-| `break_stale_lock` | 不进配置文件，改为环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1` 一次性生效（§10） |
-| VAD 设备 | 第一版固定 `cuda:0`，不设配置键；CPU 仍列未来方向（§10） |
-| 产品测试位置 | `tests/`，由票据 00 建目录并把 `kototoki/` 接进 `just check`／`just test`（§12）；2026-10-18 起分为 `tests/core/`（`just test`）与 `tests/full/`（`just test-full`），都不调用真实模型，真实模型验证走 `just smoke`（[开发工作流](../development/workflow.md#测试分层与资源边界)） |
-| 翻译配方归属 | 只住在 `kototoki/translate/recipes.py`（05 建、09 改）；`kototoki/recipes.py` 只放 STT／cue／媒体常量（§7.3） |
+设计阶段（2026-10-13／14）的裁定表原文见[历史记录](../research/2026-11-11-bilingual-pipeline-spec-history.md#12-已裁定2026-10-13)；现行规则以[现行决定](../adr/CURRENT.md)、[决定索引](../adr/INDEX.md)与各 ADR（ADR-0007 起）为准。
 
 ## 2. 阶段分解
 
-每个输入经过 9 个阶段（names 恒在链上，2026-11-08 起没有 `[names] enabled`）；每阶段只读上一阶段的文件产物，写自己的产物，互不导入对方的运行时状态。
+每个输入经过 9 个阶段（names 恒在链上）；每阶段只读上一阶段的文件产物，写自己的产物，互不导入对方的运行时状态。阶段链与各阶段期望身份由[阶段计划][plan]唯一给出。
 
 ```
 probe ──► extract ──► vad ──► asr ──► align ──► ja-cues ──► names ──► translate ──► merge
- CPU       CPU       GPU*    GPU     GPU        CPU        GPU        GPU         CPU         CPU
+ CPU       CPU       GPU*    GPU     GPU        CPU        GPU        GPU         CPU
 ```
 
-| 阶段 | 做什么 | 输入 → 产物 | 设备 | 单片成本（2 h 电影，来自整片证据） |
-| --- | --- | --- | --- | --- |
-| probe | ffprobe 读取全部流：音轨按 `language=jpn` 且非 `disposition.comment` 优先，再按 `disposition.default`，多条匹配告警并记录；没有匹配选第一条音轨并告警；记录绝对流索引、编码、声道布局、`start_time`、时长，以及字幕流清单（供内嵌日文字幕选轨，见下方"内嵌日文字幕"）；`has_video`（除封面图 `attached_pic` 外没有视频流即为音频文件）、`duration_s` 与 `duration_source` | 视频／音频 → `probe.json` | CPU | <1 s |
-| extract | ① （仅视频）ffmpeg `-c:a copy` 把选中音轨原样写出，容器按 §2.1 选；音频文件跳过 ①，`extract.audio_copy` 为 null；② 从输入容器按绝对流索引解码该音轨，`aresample=async=1:first_pts=0` 保留时间轴（起始静音补齐、间隙补零，sample 0 即输入 0 秒），按 §2.2 下混，重采样 16 kHz，PCM16 WAV；ffmpeg verbose 日志写入工作目录；校验解码时长对所选音轨时长（§2.2）；记录 PCM SHA256、样本数、`offset_s = 0` | 输入 → `audio.<ext>`（仅视频）、`audio-16k.wav`、`extract.log` | CPU | ① 秒级 ② 约 10–30 s |
-| vad | Pyannote 检测 → 源跨度合并 → manifest | `audio-16k.wav` → `vad.json` | GPU（VAD 允许 CPU） | 加载 28 s，推理 20 s |
-| asr | 逐窗识别，纯文字 | `audio-16k.wav`+`vad.json` → `asr.json`（`cross` 另写审计文件 `asr-w0.json`、`asr-x0.json`、`asr-judge.json`） | GPU | w0：加载 7 s，推理 150–170 s；x0：加载 19 s，推理 365–395 s；`cross`：两部电影 asr 阶段 1211.6 s，为 w0 阶段（323.4 s）的 3.75 倍（w0 转写 286.0 s＋x0 转写 863.7 s＋Whisper 打分 40.7 s＋加载与启动，[验收记录](../research/acceptance/2026-10-19-cross-asr-acceptance.md)） |
-| align | 逐窗 CTC 对齐，字符时间 | `audio-16k.wav`+`asr.json` → `align.json`（现有 `result.json` 结构） | GPU | 加载 17 s，推理 53–56 s |
-| ja-cues | 字符 units → 日文 cue，含无时间字符的时间回填 | `align.json` → `ja.srt`+`ja-cues.json` | CPU | <1 s |
-| names | 在与翻译共用的 Strata session（Qwen3.8-Flash-Next）上把整份 `ja.srt`（剥时间轴、带 cue 编号）一次送入，按 JSON schema 解析专名表并归一，不合格依次换 seed 最多 5 次请求；终态失败写空表（见 §6）；零条目不请求 | `ja.srt` → `name-table.json` | GPU（整批共用一个 Strata session，与 translate 同一个） | Strata 加载约 75–100 s（整批一次，与翻译共摊）；每部建表耗时以 ADR-0022 所指计划 §7 的实测为准 |
-| translate | 产品配方 `q2-degrade-v1` 整片翻译（ADR-0019；之前为 `dp10-cut-degrade-v1`，ADR-0011），续跑语义沿用 v3；Strata 由产品自动启停（§3.3） | `ja.srt`＋`name-table.json` → `zh.srt`+翻译 run 目录 | GPU（独占） | Q2：HF-II 1099 条、149 包约 2498 s（每包约 16 s），另加 Strata 加载约 98 s（2026-11-08）；此前 H0 为 1993 条约 270 s、387 条约 66 s |
-| ~~替换~~ | 已删除（ADR-0019）：不再有发布时替换、`names-apply.json` 与 `names_apply` 身份键；专名译法只经翻译注入 | — | — | — |
-| merge | 按 cue 编号合并 | `ja.srt`+`zh` → `ja-zh.srt`（发布到源文件旁） | CPU | <1 s |
+| 阶段 | 输入 → 产物 | 设备 | 模块页 |
+| --- | --- | --- | --- |
+| probe | 视频／音频 → `probe.json`（音轨选择、`has_video`、参照时长、字幕流清单） | CPU | [配置、配方与媒体提取][media] |
+| extract | 输入 → `audio.<ext>`（仅视频，流复制）、`audio-16k.wav`、`extract.log` | CPU | 同上 |
+| vad | `audio-16k.wav` → `vad.json` | GPU*（VAD 允许 CPU，第一版固定 `cuda:0`） | [STT worker][stt] |
+| asr | `audio-16k.wav`＋`vad.json` → `asr.json`（`cross` 另写三份审计文件） | GPU | 同上 |
+| align | `audio-16k.wav`＋`asr.json` → `align.json` | GPU | 同上 |
+| ja-cues | `align.json` → `ja.srt`＋`ja-cues.json` | CPU | [日文 cue][cues] |
+| names | `ja.srt` → `name-table.json` | GPU（与 translate 共用一个 Strata session） | [专名一致性][names] |
+| translate | `ja.srt`＋`name-table.json` → 翻译 run 目录 | GPU（独占） | [翻译子系统与双语合并][tr] |
+| merge | `ja.srt`＋译文 → `ja-zh.srt`（发布到源文件旁） | CPU | 同上 |
 
-**内嵌日文字幕**（[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)，2026-11-11）：`[input] use_embedded_subtitles`（默认 `true`）开着，且文件有可用的日文文本字幕轨时，该文件不经上表的 extract、vad、asr、align、ja-cues，改走：
+**内嵌日文字幕**（[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)）：`[input] use_embedded_subtitles`（默认 `true`）开着且文件有可用的日文文本字幕轨时，该文件不经 extract、vad、asr、align、ja-cues，改走：
 
 ```
 probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──► names ──► translate ──► merge
 ```
 
-- 可用的字幕轨：语言标签与 `[input] audio_language` 归一后相同、`codec_name` 为 `subrip`／`ass`／`ssa`／`mov_text`／`webvtt`、非 `disposition.forced`；多条可用时取 `disposition.default` 的，再取流索引最小的，并告警。位图字幕（PGS、VobSub、DVB）视为没有。只看流的元数据，不看内容。
-- 抽取：`ffmpeg -map 0:<index> -c:s srt -f srt`（要读完整个容器，数十秒量级）。清洗：去掉 `<i>`／`<b>`／`<u>`／`<s>`／`<font>` 标签与 `{\...}` 覆盖块，字面的 `\h`、`\N` 换成空格，一条多行并成一行，丢掉清洗后为空、是 ASS 绘图指令、时长非正的条目与起止和文字都相同的重复条目，按（起、止）稳定排序后从 1 重新编号。不改写时间；听障字幕的音效说明原样保留、照常翻译。规则是配方常量 `recipes.EMBEDDED`（id `embedded-ja-subtitle-v1`），不是配置项。
-- 抽取失败或清洗后零条目：记 WARNING，该文件回到上表的 STT 链（§6）。
-- 不做：外挂字幕文件、位图字幕 OCR、按内容判断语言、假名注音处理、按 ASS 样式过滤卡拉 OK 行与屏幕字。
+选轨、抽取与清洗规则（配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`）见[配置、配方与媒体提取][media]；是否采用与回退见[批次编排][orch]。不做：外挂字幕文件、位图字幕 OCR、按内容判断语言、假名注音处理、按 ASS 样式过滤卡拉 OK 行与屏幕字。
 
 ### 2.1 流复制的容器映射
 
-| 音轨编码（ffprobe `codec_name`） | 容器后缀 |
-| --- | --- |
-| flac | `.flac` |
-| aac、alac | `.m4a` |
-| ac3 | `.ac3` |
-| eac3 | `.eac3` |
-| dts | `.dts` |
-| opus | `.opus` |
-| vorbis | `.ogg` |
-| mp3 | `.mp3` |
-| pcm_s16le、pcm_s24le、pcm_s32le、pcm_f32le（小端 PCM） | `.wav`（超过 4 GB 时用 RF64，ffmpeg `-rf64 auto`） |
-| 大端 PCM、pcm_bluray、pcm_dvd、aac_latm、truehd 及其它未列出编码 | `.mka`（Matroska 音频，容纳任何编码并保留时间戳） |
+按音轨编码选容器、其余退回 `.mka` 的映射表见[配置、配方与媒体提取][media]。
 
 ### 2.2 时间轴与下混
 
-- **为什么 ② 不从 ① 派生**：`.ac3`／`.eac3`／`.dts`／`.mp3`／ADTS AAC 等裸码流容器没有时间戳，流复制后丢掉音轨相对视频的起始延迟与中途间隙（广播 `.ts` 常见），AAC 的编码器预延迟处理也不同。② 直接从视频容器解码，`async=1:first_pts=0` 补齐起始静音，让 WAV 的 sample 0 对齐视频 0 秒。
-- **零点与 `offset_s`**（2026-10-14 第三轮修订）：补齐静音后 WAV 已经是视频坐标，因此 `offset_s` 恒为 0，各阶段不再把音轨 `start_time` 加到时间上（否则同一延迟会在 `map_records` 里算两次）。ffmpeg 默认把输入的 `format.start_time` 平移到 0，广播 `.ts` 的音轨 `start_time` 是绝对值，直接当偏移会整体后移一秒多；而音频先于视频的负延迟又无法用非负 offset 表达。`start_time`（音轨与容器）只进 `probe.json` 作诊断。现有 W0 链路的 `offset_s` 参数保留，产品固定传 0；票据 02 的"延迟音轨"合成测试必须断言最终 cue 时间等于视频时间。
-- **丢样与时长校验**：`async=1` 是硬补偿（插静音／丢样本），时间戳回绕或 PTS 断裂时会静默丢音频，因此解码用 `-loglevel verbose` 并把日志写入 `extract.log`，记录补偿量（票据 02 实测：swr 在 verbose 下报告 `adding N audio samples of silence`，但只报出一部分，合成 2 s 间隙只报约 0.63 s，因此另按 ffmpeg 结束统计的输入样本数记净补偿 `net_padding_s`，见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)）。校验对象是**视频流时长**（音频输入为所选音轨的时长，ADR-0020）而不是 `format.duration`（TS 内 VBR 音频的容器时长是估算值），无流时长时用容器时长：视频输入解码短于它超过 1 s 视为截断失败；音频输入只告警（没有画面要对齐，VBR MP3 缺 Xing 头时 ffprobe 时长是估算值）；长于它只告警。时长的来源按优先级取 `stream.duration`、精确的 `DURATION` 标签、mkvmerge 统计标签 `DURATION-<lang>`、`format.duration`；标签来源与 `format.duration` 相差超过容差时取较小者并告警（票据 11：ffmpeg `-c copy` 剪辑会保留原片的 `DURATION-eng`，曾把合法片段误判为截断）。
-- **下混按声道布局**：每种布局的 `pan` 表达式在 `recipes.py` 写死并进配方 hash。单声道直通；双声道沿用基线证据的 `pan=mono|c0=0.5*c0+0.5*c1`；5.1 及以上用 ffmpeg 标准系数（前左右 1、中置 0.707、环绕 0.707、丢 LFE）并除以系数和归一化，禁止削波，不能只取左右前；`-ac 1` 的隐式矩阵不用，因为它的系数与归一化不在配方里。合成 5.1 测试断言满幅输入不削波。日本广播双单声道（主／副音声）无法自动识别，第一版按双声道处理并记为已知限制。
-- **重采样器**：降采样用 ffmpeg 默认 swr（`aresample=16000`），与 `async=1:first_pts=0` 的时间轴补偿同为 swr。2026-10-14 曾裁定改 soxr 28 bit，2026-10-15 最终验收发现 soxr 版派生 WAV 使 Pyannote 少保留约 9–10% 语音、产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点，而产品 VAD 在 swr 版 WAV 上与基线窗口完全相等，用户裁定改回（票据 10）。保留 2026-10-14 的频谱对比供参考：在 HF II 整片对比中，6 kHz 以下两者差异比信号低约 79 dB，差别集中在 7.8–8 kHz（swr 残留 −8.3 dB，soxr −44.9 dB，即 swr 边缘的折叠残留），削波无差别（各 1–2 个样本）；默认 swr 时派生 WAV 与基线 `hf-ii-full.wav` 的 PCM SHA256 一致（票据 02 与票据 10 均核对为 `ee4e2da3…`）。频谱上更干净没有换来识别率：Pyannote 对 soxr 版音频更保守，这是改回的直接原因。
-
-"无损"的边界：① 是严格无损（字节级流复制），只作归档；② 是推理输入，下混与重采样必然改变样本。
-
-VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32。默认 GPU（成本只有 50 s／片），CPU 作为将来需要让出显存时的选项，第一版不做。
+- **时间零点只在媒体模块定义**：② 直接从输入容器解码（裸码流容器丢时间戳），`aresample=async=1:first_pts=0` 补齐起始静音，WAV 的 sample 0 即输入 0 秒，因此 `offset_s` 恒为 0；音轨 `start_time` 只进 `probe.json` 作诊断，下游阶段只传 `offset_s = 0`。
+- 时长校验、按声道布局的 `pan` 常量（进 `MEDIA` 配方 hash、禁止削波）与重采样器（ffmpeg 默认 swr）见[配置、配方与媒体提取][media]；swr／soxr 的频谱对比与改回 swr 的经过见[历史记录][hist-26]。
+- "无损"的边界：① 是严格无损（字节级流复制），只作归档；② 是推理输入，下混与重采样必然改变样本。
 
 ## 3. 调度模型：CPU 流水线 + GPU 分阶段批处理
 
 ### 3.1 结论
 
-- **CPU 阶段（probe、extract、ja-cues、merge）与 GPU 阶段分开**。extract 用一个小进程池（默认 `min(4, cpu_count)`）先跑完整批，GPU 阶段再开始：worker 启动时拿到的是固定的 `batch.json`，整批 extract 只需 1–2 分钟，不做流式投喂。
-- **GPU 阶段按"阶段 × 整批"推进，而不是"文件 × 全流程"**：加载 VAD → 跑完本批全部文件 → 卸载；加载 ASR → 跑完本批 → 卸载；加载 MMS → …；然后启动 Strata（`strata launch --no-tui --model iq3_s`，ADR-0019／ADR-0022）→ 为本批全部 `ja.srt` 建专名表 → 不停，翻译本批全部 SRT → `strata launch --stop`。产品只有 Strata 一个服务进程，不起 llama-server。第一版没有批次切分参数。
-- 每个 GPU 阶段在**独立子进程**中执行（一个阶段一个子进程，而不是一个文件一个子进程）：进程退出即彻底释放显存与 CUDA 上下文，崩溃不拖垮编排器，OOM 的影响范围只有一个阶段。worker 逐文件增量写结果；worker 进程异常退出时，编排器按增量结果判定"正在处理的文件"，把它记为该阶段失败，再为其后的文件重启 worker；重启次数按文件计，而不是整阶段只重启一次，避免一个文件的 OOM 把其后所有文件连带标失败。worker 遇到单文件异常（非 CUDA 粘性错误）记失败并继续下一文件，退出码 1；检测到 CUDA 粘性错误（后续文件必然失败）时退出码 2 让编排器重启。编排器本身不加载任何模型，也不 import torch（有测试保证，范围见 §7.1）。
+- **CPU 阶段（probe、extract、ja-cues、merge）与 GPU 阶段分开**：extract 用线程池（`[run] extract_workers`）先跑完整批，GPU 阶段再开始，不做流式投喂。
+- **GPU 阶段按"阶段 × 整批"推进**：加载 VAD → 跑完本批 → 卸载；ASR、MMS 同理；然后启动 Strata → 为本批全部 `ja.srt` 建专名表 → 不停，翻译本批全部 SRT → `strata launch --stop`。产品只有 Strata 一个服务进程，不起 llama-server；没有批次切分参数。
+- 每个 GPU 阶段在**独立子进程**中执行（一个阶段一个子进程）：进程退出即释放显存，崩溃不拖垮编排器。worker 逐文件增量写结果；单文件异常记失败并继续（退出码 1），CUDA 粘性错误退出码 2；worker 异常退出时编排器把正在处理的文件记该阶段失败，再为其后的文件重启 worker，重启按文件计。编排器本身不加载模型、不 import torch（§7.1）。细节见[批次编排][orch]。
 
 ### 3.2 为什么这样选
 
-| 考虑 | 分阶段批处理（采用） | 逐文件全流程 |
-| --- | --- | --- |
-| 显存 | 任一时刻只有一个模型驻留；翻译峰值 15.7–15.8 GB 已接近 16 GB 整卡，无法与任何 STT 模型共存。**例外**：`cross` 引擎的 asr 阶段内 Whisper 与 Qwen 同进程共驻，整卡峰值实测 10688 MiB（T0 探针）／10030 MiB（产品路径验收）；探针实测峰值加 1 GB 余量仍 ≤ 13.5 GB 才共驻（已通过），否则回退为 Whisper 整批转写 → 卸载 → Qwen 整批转写 → 卸载 → Whisper 整批打分的三段式，产物与接口不变（回退未实测）。MMS 对齐与翻译不变，仍独立阶段、不与之共驻 | 需要 VAD+ASR+MMS 共驻（估计 10–12 GB，未验证），翻译仍必须单独一段 |
-| 模型加载开销 | 每阶段每批一次：Pyannote 28 s、MMS 17 s、whisper 7 s、Qwen 19 s、Strata 约 75–100 s（建表与翻译共用一次） | 每文件重复一次，20 部电影多付约 20–40 分钟 |
-| 首个结果出现时间 | 整批 STT 结束后才有第一份 `ja.srt`，整批翻译结束后才有第一份双语 SRT | 第一部电影约 10 分钟后完成 |
-| 失败隔离 | 一个文件失败只跳过它，阶段继续 | 同样可做 |
-
-批量生产场景下吞吐与显存安全优先，接受首个结果延迟。需要更早看到结果时，用户可以自行分几次调用。
+任一时刻只有一个模型驻留（翻译峰值占满 16 GB 整卡），加载开销每阶段每批一次，代价是首个结果要等整批 STT 结束；理由见 [ADR-0007][adr7]，原对比表在[历史记录][hist-26]。唯一例外是 `cross` 的 asr 阶段内 Whisper 与 Qwen 同进程共驻（显存门槛与回退见 [STT worker][stt]）。
 
 ### 3.3 GPU 内部顺序与并发
 
-- GPU 阶段严格串行，由 `.local/gpu.lock`（沿用现有互斥语义：不抢占、不杀进程、死锁需显式 `KOTOTOKI_BREAK_STALE_LOCK=1`，一次性生效）保护。GPU 锁在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；翻译阶段只在有文件需要模型（`needs_model`：非零条目且 run 未完成）时才取锁、建 session，全部 run 已完成或零条目时整批不占 GPU（票据 15）。
-- 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`（同 `ProcessLock` 语义，`<work root>` 见 §4），已被占用则退出码 3（`WorkLocked`），否则两个编排器会在 GPU 锁之前并发写同一 `index.json` 与工作目录。GPU 锁信息记 `input_dir`。任何阶段（含 names、translate）撞 GPU 锁都是进程级冲突：整批以退出码 4 结束、不写逐文件 `failure.json`，已完成的 CPU 产物保留，可续跑（ADR-0025）。
-- 启动 Strata 前用 `nvidia-smi` 轮询空闲显存：上一 worker 退出后 WDDM 释放显存有延迟，直接启动可能分配失败并白白消耗重启额度；空闲量低于阈值超时则按基础设施失败处理，错误信息写明当时的空闲量。
-- 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立；并发只会争抢算力与显存，没有吞吐收益。
-- names 阶段：排在 translate 之前，与 translate 共用同一个 Strata session（[ADR-0022](../adr/0022-product-names-on-strata.md)）：编排在 names 之前建一个共享 `strata.Session`，第一次真正需要模型时启动（表已当前、零条目时不起，也不取锁；names 全部当前时由 translate 第一次启动），两阶段之间不停；启动失败整批累计 3 次或 `StrataRefused` 即置 `unavailable`，本批其余需要模型的影片在两个阶段都直接失败。每部影片最多 5 个请求（seed 依次 +1），不做同调用内重启，传输／HTTP／OOM 失败停掉 Strata、该影片失败。GPU 锁里记录 Strata 的 pid（见[专名一致性](../architecture/modules/name-consistency.md)、[批次编排](../architecture/modules/batch-orchestration.md)）。
-- 翻译阶段（ADR-0019）：整批共用一个 Strata session，沿用 v3 `generate.py` 的批次与续跑语义，一次 session 顺序翻完本批所有需要模型的 SRT（每个 SRT 是一个 scene）。Strata 在第一次真正需要请求模型时才启动：`strata launch --status` 必须为空（别人的 launch 在服务则拒绝，不替别人停）→ 等空闲显存 ≥14000 MiB → `strata launch --no-tui --model iq3_s`（子进程里必须点名模型；`--model iq3_s` 即默认选择，计划与不带参数的 `strata launch` 逐行相同）→ 等唯一一个 ready 的 launch → 按 ADR-0017 核对身份（版本 0.2.12／build 0.1.58、本机 8080、run config 的模型与 `--max-context 131072`、服务日志所记的 DFlash2 起草、`/v1/models`、原生上下文 131072），不符即拒绝；整批结束、出错或被中断时 `strata launch --stop` 并核实 status 为空、显存回到 14000 MiB，核实失败只记 ERROR 与 `strata-final.json`。不需要模型的文件（零条目、run 已完成）只读回译文，且全部不需要时不启动 Strata；锁或 session 建不起来只让需要模型的文件失败，Strata 一直起不来或被拒绝时本批其余需要模型的文件直接失败（票据 15；见[翻译子系统](../architecture/modules/translation-subsystem.md)）。
-
-### 3.4 时间线示意（4 部电影、w0）
-
-```
-CPU:  ex1 ex2 ex3 ex4 | ............ | cue1-4 | ............ | ............ | apply+merge1-4
-GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4][names 1 2 3 4][translate 1 2 3 4]
-```
-
-单片 GPU 成本约 50+165+73+45+300 ≈ 10.5 分钟（w0），4 部约 42 分钟；整批 extract 约 1–2 分钟，先于 GPU 阶段完成。
+- GPU 阶段严格串行，由 `.local/gpu.lock` 保护（不抢占、不杀进程；破残留锁只认一次性的 `KOTOTOKI_BREAK_STALE_LOCK=1`）。只有编排器获取它：在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；names、translate 只在有文件需要模型时才取锁、起 Strata。锁文件记录编排器、当前 worker 与 Strata 的 pid。
+- 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`，已被占用则退出码 3。任何阶段撞 GPU 锁都是进程级冲突：整批以退出码 4 结束、不写逐文件 `failure.json`，已完成的产物保留，可续跑（ADR-0025）。
+- 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立，并发只会争抢算力与显存。
+- names 与 translate 共用编排持有的一个 Strata session（[ADR-0022](../adr/0022-product-names-on-strata.md)）：第一次真正需要模型时启动，两阶段之间不停，整批结束、出错或中断时 `strata launch --stop`。启动前核对没有别人的 launch、空闲显存足够、身份符合 ADR-0017；Strata 起不来或被拒绝（`StrataRefused`）时本批其余需要模型的影片在两个阶段都直接失败。见[专名一致性][names]、[翻译子系统][tr]。
 
 ## 4. 产物：中间产物与最终产物
 
-最终产物只有写在源文件旁的双语字幕（`<input_dir>/S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`），其余全在工作目录（ADR-0020）。工作目录布局：`[paths] work_dir`（默认仓库 `.local/work/`）下有共用的 `cache/`，以及每个目标目录一个工作根 `<work_dir>/<input_dir 末段名>-<绝对路径 sha12>/`（下称 `<work root>`）。每个输入有一个工作目录 `<work root>/<id>/`，`<id>` 是相对路径（含扩展名）SHA256 的前 12 位，避免同名不同扩展名碰撞与 Windows 路径长度上限；`index.json` 维护 `<id>` ↔ 相对路径。目标目录改名或移动后对应不上旧工作根，从头重跑。下面以单层为例。
+最终产物只有写在源文件旁的双语字幕（`<input_dir>/S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`），其余全在工作目录（ADR-0020）。`[paths] work_dir` 下有共用的 `cache/` 与每个目标目录一个工作根 `<work_dir>/<input_dir 末段名>-<绝对路径 sha12>/`（下称 `<work root>`）；每个输入的工作目录 `<work root>/<id>/`，`<id>` 是相对路径（含扩展名）SHA256 的前 12 位。目标目录改名或移动后对应不上旧工作根，从头重跑。路径、身份与原子写的权威正文是[产物契约][art]。
 
 ```
 <work_dir>/
   cache/                 HF_HOME／TORCH_HOME 与 model-verification.json，各目标目录共用
-  <input_dir 末段名>-<sha12>/    工作根 <work root>
-    lock                 编排器独占本目标目录（ProcessLock）
-    input.json           目标目录绝对路径
-    index.json           <id> ↔ 相对路径
-    jobs-<stage>.json    各阶段 worker 的 --jobs 文件
-    translate-sessions/  Strata 运行证据（每次运行一个 `<UTC戳>-<pid>` 目录，按 session 分子目录，整批影片共用：`strata.json`、`resources.json`、`strata-final.json`）
-    strata-sessions/     names 与翻译共用的 Strata session 证据（接入身份、资源峰值、停止核实；ADR-0022 前为 translate-sessions/）
-    run-<戳>.log         运行日志，与控制台逐行相同（INFO／WARNING／ERROR）
-    run-<戳>-<stage>.stderr.log  该阶段 worker 的 stderr（壳日志与第三方告警），每次启动追加
+  <input_dir 末段名>-<sha12>/    <work root>
+    lock、input.json、index.json、jobs-<stage>.json
+    strata-sessions/     names 与翻译共用的 Strata session 证据
+    run-<戳>.log、run-<戳>-<stage>.stderr.log
     <id>/
-      probe.json           音轨选择与 ffprobe 快照（含 start_time 诊断、`has_video`、`duration_s`／`duration_source`）
-      audio.<ext>          原始编码音轨（流复制），保留；音频输入没有
-      audio-16k.wav        模型输入（2 h ≈ 230 MB），保留
-      extract.log          ffmpeg verbose 日志（补偿统计）
-      vad.json             身份：PCM SHA256 + VAD 配方 hash
-      asr.json             最贵的 STT 阶段；每窗文字与 trace（含复读守卫记录）、failed_windows，不含音频
-      asr-w0.json、asr-x0.json、asr-judge.json   仅 `engine = cross`：两路各自完整的 `asr.json` 结构与裁判审计记录（带 `offset_s`）；审计产物，不参与身份与跳过判定
-      align.json           权威 STT 证据：全文、units、text_only、对齐记录
-      ja-cues.json         cue ↔ unit 映射、时间回填记账、未渲染文字记账
-      ja-embedded.json     仅采用内嵌日文字幕的文件（ADR-0024，此时没有 audio-16k.wav、vad／asr／align／ja-cues）：所用字幕流、清洗计数、`ja.srt` 的 SHA256；身份：输入文件身份＋`EMBEDDED` 配方 hash＋字幕流索引
-      name-table.json      专名表（`name-table-v2`，含 `build.status`）；身份：`ja.srt` SHA256＋`BUILD` 配方 hash＋`[names] seed`；用户可改 `entries`（见下）
-      names/transport/<UTC戳>-<pid>/session-NN/   建表请求的原始交换，供复查
-      （ADR-0019 已删除 `names-apply.json`；工作目录里的遗留文件不再读取）
-      translate/srt-<sha12>/<配方名>__s<seed>/   v3 风格 run，按 ja.srt 的 SHA256 分键、再按配方与 seed 分目录：run.json、batches.jsonl、scene.json、transport；可续跑
-      published.json       审计记录：最终 `ja-zh.srt` 的路径与 SHA256、来源产物身份（含当前使用的 translate run 目录，相对工作目录；`sources` 另含 `names`＝表的身份；翻译身份含注入行的 `names_sha256`；只作审计，不参与是否发布的判定）
-      failure.json         任一阶段失败时写，记录阶段、异常与已完成产物
+      probe.json、audio.<ext>（仅视频）、audio-16k.wav、extract.log
+      vad.json、asr.json（cross 另有 asr-w0.json、asr-x0.json、asr-judge.json，只作审计）、align.json
+      ja-cues.json 或 ja-embedded.json（内嵌字幕路径）、ja.srt
+      name-table.json、names/transport/…
+      translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>/   翻译 run，可续跑
+      published.json       审计记录，不参与是否发布的判定
+      failure.json         任一阶段失败时写
 ```
 
 规则：
 
-- **每个产物带输入身份与配方 hash**；阶段开始前若产物存在且身份匹配，直接跳过；身份不匹配时**原地原子替换**（旧产物不另存，这是"所有产物保留"的唯一例外，`translate/` 目录除外，见下）。这同时提供崩溃后续跑与"改了翻译配方只重跑翻译"。身份的组成规则集中在 `kototoki/artifacts.py`（票据 00），各阶段的期望身份与阶段链由 `kototoki/plan.py` 给出（票据 14）：输入文件身份 = 相对路径＋大小＋修改时间＋ffprobe 指纹（只取流的 `index`／`codec_name`／`channels`／`channel_layout`／`sample_rate`／`start_time`／`duration` 与容器 `duration`，不含 `filename` 与 `tags`，不对整个视频算哈希）；派生产物身份 = 上游产物 SHA256＋配方 hash＋模型文件 SHA256＋影响输出的配置键（cue 规则、seed）；绝对路径不参与身份。模型文件 SHA256 沿用 v3 `verify_model` 的 size+mtime 缓存（`<work_dir>/cache/model-verification.json`），每次运行最多算一次，不逐文件重算。
-- **坐标系**：`vad.json`、`asr.json`、`align.json` 里的窗口、段、对齐记录一律是 WAV 本地秒／整数样本（`units` 也是本地秒，offset 只在 ja-cues 阶段加一次），顶层带 `offset_s`（产品恒为 0）；ja-cues 阶段产出的 cue 时间是最终 SRT 时间。票据 00 的产物契约逐文件写明字段坐标，票据 04 带非零 offset 的测试证明只加一次。
-- 所有产物保留，不自动删除。翻译 run 目录按 `ja.srt` 的 SHA256 前 12 位分键（与 v3 `deliveries/` 同形），因为 v3 `run_generation` 在 `run.json` 的 `sources`／`scene_ids` 不一致时直接拒绝；改 cue 规则后产生新的 `ja.srt` 就用新目录，旧目录保留。
-- 双语字幕在 merge 阶段发布（先写到工作目录 `publish/` 暂存，再原子移动到源文件旁；Windows 下文件被播放器占用会 `PermissionError`，带重试），并在 `<id>/published.json` 记审计记录：最终路径、SHA256、来源产物身份、translate run 目录（相对工作目录）。**不按记录判定覆盖**（ADR-0020）：扫描时源文件旁已有 `<stem>.ja-zh.srt`（只看文件名，不论来源）即跳过该文件，不进任何阶段；要重做就删掉这份字幕，中间产物按身份续跑，只重做受影响的阶段。同一目录里主名相同的两个输入（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕路径：按相对路径排序靠后的那个在扫描阶段失败，其余照常。
-- **专名表可人工校对**：`name-table.json` 的跳过只比 `identity` 块，用户改 `entries`（改错名、删条目）不触发重建；**改到会被注入的条目（`confidence: high` 的实体或其 `forms`）会改变注入行的哈希 `names_sha256`，翻译身份随之变化：删掉该片的 `*.ja-zh.srt` 后再运行，即另起 run 目录、重译该片（需要 Strata）并重新发布；只改 medium／low 条目不触发重译**（ADR-0019、ADR-0020）。`ja.srt`、`BUILD` 配方或 `[names] seed` 变化会重建并覆盖手改。
-- 工作目录之外只写源文件旁的双语字幕，不写其他转写内容；控制台只输出进度、计数与耗时；专名表条目是转写内容，只在工作目录，日志只记计数。
+- **每个产物带输入身份与配方 hash**；身份匹配即跳过，不匹配时原地原子替换（`translate/` 按键另开目录，旧目录保留）。输入文件身份 = 相对路径＋大小＋修改时间＋ffprobe 指纹；派生产物身份 = 上游产物 SHA256＋配方 hash＋模型文件 SHA256＋影响输出的配置键；绝对路径不参与身份。组成规则在[产物契约][art]，各阶段的期望身份在[阶段计划][plan]。
+- **坐标系**：`vad.json`、`asr.json`、`align.json` 一律 WAV 本地秒／整数样本，顶层带 `offset_s`（产品恒为 0）；offset 只在 ja-cues 阶段加一次，cue 时间即最终 SRT 时间。
+- 所有产物保留，不自动删除。
+- **发布**：merge 阶段先写工作目录暂存、再原子移动到源文件旁，并写 `published.json`。扫描时源文件旁已有 `<stem>.ja-zh.srt`（只看文件名）即跳过该文件；要重做就删掉这份字幕，中间产物按身份续跑。主名相同的两个输入争用同一字幕路径时，相对路径排序靠后的那个在扫描阶段失败。
+- **专名表可人工校对**：跳过只比 `identity`，改 `entries` 不触发重建；改到会被注入的条目会改变 `names_sha256` 与翻译身份，删掉该片的 `*.ja-zh.srt` 后再运行即重译；只改 medium／low 条目不触发重译（[专名一致性][names]）。
+- 工作目录之外只写源文件旁的双语字幕；控制台只输出进度、计数与耗时；专名表条目是转写内容，日志只记计数。
 
 ## 5. 日文 cue：STT 与翻译的交界
 
 ### 5.1 翻译输入为什么是 `ja.srt`
 
-b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后邻条只作上下文，每条中文直接继承那条日文的编号与时间，双语合并只是拼接。若改为翻译 30 s ASR 窗口的整段日文，得到的是一整段中文，必须再切成若干块贴回各句日语的时间范围；中日语序不同、翻译会并句拆句，这个回映射没有可靠的自动方法，也没有任何已验证的基线。因此翻译输入固定为 `ja.srt`，**cue 切分质量同时决定日文字幕可读性与翻译上下文**。
+逐条翻译日文 cue，每条中文直接继承那条日文的编号与时间，双语合并只是拼接；翻译 ASR 窗口的整段日文需要把中文切回各句时间，没有可靠方法（[ADR-0007][adr7]）。因此**cue 切分质量同时决定日文字幕可读性与翻译上下文**。
 
-### 5.2 切分规则初值（配置文件 `kototoki.toml`，待按真实输出调整）
+### 5.2 切分规则
 
-| 键 | 初值 | 说明 |
-| --- | --- | --- |
-| `max_chars` | 24 | 单条 cue 的日文字符数上限（按 Unicode 码点计，不含空白）。日本商业字幕常用每行 13–16 字、最多两行；双语显示时日文只占一行，取 24 作为单行可读上限 |
-| `max_duration_s` | 6.0 | 单条 cue 显示时长上限 |
-| `min_duration_s` | 0.8 | 低于此值且后方有间隙时向后延长，不与下一条重叠 |
-| `max_gap_s` | 1.0 | 相邻词汇字符之间的正间隔超过此值且该间隔不整个落在同一个 VAD 子段内时断开（票据 12：CTC 发射点稀疏，拖长音会在词内留下超过阈值的假间隙，只有跨非语音区的间隔才算句界）。原初值 0.4 在 CTC 字间间隔处把词切碎，2026-10-14 按票据 04 离线观感改为 1.0（用户采纳） |
-| `sentence_endings` | `。！？!?` | 遇到即断开 |
-| `soft_breaks` | `、，,` | 超过 `max_chars` 时优先在这些字符后断 |
-| `lead_out_s` | 0.3 | 每条 cue 结束时间向后延长的秒数（CTC 给的是发声结束，整片证据中比参考字幕结束中位早约 0.34 s），不越过下一条起点 |
-
-规则顺序：先按句末标点与间隔断成"句"，句超限时在软断点处切，仍超限时按字符数硬切。无时间字符的回填：窗内零散 `text_only` 字符按相邻有时间字符线性插值（`time_source=interpolated`）；窗首或窗尾只有单侧邻居时，向窗口边界方向按同样的每字符时长外推，不越过窗口边界；整窗对齐失败时整窗文字按该窗的 VAD 子段（manifest `segments`）分配并对每字符时长设上限（`time_source=fallback`，沿用 `kototoki_eval.schema` 的取值，不新造 `coarse`）。`align.json` 保留原始 `text_only` 记账，回填只发生在 ja-cues 阶段并记录每个 unit 的来源。SRT 毫秒取整沿用 `replay.py` 的 `floor(x*1000+0.5)`，不用 Python `round`。中文译文允许换行（v3 只禁空行），双语合并时把中文内的换行替换为空格，保证 `ja-zh.srt` 每条恰好两行。
+键与默认值见[配置参考][cfg]；规则顺序、无时间字符的回填（`time_source`）、毫秒取整见[日文 cue][cues]。双语合并把中文内的换行替换为空格，保证 `ja-zh.srt` 每条恰好两行（[翻译子系统与双语合并][tr]）。
 
 ## 6. 失败、部分结果与续跑
 
-- 文件级隔离：一个文件在某阶段失败，写 `failure.json`，该文件退出后续阶段，批次继续；最终汇总打印失败清单，退出码非零。
-- 内嵌日文字幕不可用（ADR-0024）：选中的字幕轨 ffmpeg 抽取失败，或清洗后没有任何条目，记一行 WARNING（`[extract] <相对路径>: Embedded subtitle stream N is unusable (…); falling back to speech recognition`），该文件照常提取音频走 STT，不写 `failure.json`；这个结果不缓存，下次运行再试一次。
-- 无语音：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布零条目 `ja-zh.srt` 并告警（现有 SRT 解析器对空文件抛错，产品侧绕过它）。
-- x0 生成触顶（4096 token）：只把该窗口记为失败窗口，不让整部影片失败。表示方式由 worker 协议（票据 00）统一规定，w0／x0 相同：`asr.json` 中该窗的 `text` 置空，截断文字与原因记入 `failed_windows`（供诊断，不进对齐、cue 与翻译），"每个字符恰好一个 unit"的不变量按保留文本计算；窗口失败数进入汇总。现有 `x0_demo/pipeline.py::validate_asr` 拒绝 `token_limit_reached` 的行为不移植。
-- w0 整窗复读（[ADR-0023](../adr/0023-asr-repeat-guard.md)）：Whisper 偶尔在一个窗口里把同一短语复读几十遍。`asr` 阶段在 w0 解码之后、写 `asr.json` 之前对每个未失败的窗口按规则 `repeat-strict` 检查（规范化文本上周期 ≥2 字的单元相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖该窗规范化文字 ≥50%）：命中窗口折叠相邻重复，只留第一个单元；折叠后仍命中（含只有非相邻复现、没有可折叠区段）的窗口按上一条的失败窗口表示置空，原因 `guard:repeat-strict`。两种情况都在该窗的 `asr_traces[i].guard` 记规则名、动作、周期、份数与删去的字符数。只做后处理，不重解码；规则参数是 `W0` 配方常量，不是配置项；`cross` 引擎对 w0 那一路同样处理、裁判用守卫后的文字，x0 的输出不过守卫。
-- 阶段级终态与基础设施失败区分（沿用 v3，ADR-0019 起对象是 Strata）：OOM、服务崩溃／断开、传输错误、`server_error`、Strata 起不来是基础设施失败，同一调用内停掉 Strata 并重新启动，最多重启 2 次；每次重启是 v3 意义上的新 session（`sessions[]` 新增一项、`cache_state` 重置、`resumed=true`；首个请求的 `cache_n` 只记录，不据此判失败）。生成触顶、解析／校验失败、HTTP 报超出 context 是批次终态，进入下面的降级。**Strata 被拒绝**（`StrataRefused`：已有别的 launch 在服务、身份与 ADR-0017 不符）不重试，本批其余需要模型的影片直接失败；输入超过 Q1 预算（12224 token）只记录、不判失败。
-- 翻译降级（产品规则，区别于 v3 实验的"不缩批"与研究侧 Q2 的"只空出该包"；ADR-0019）：批次（≤10 条）两次尝试都失败 → 拆成前后两半（与原批次用同一条邻文规则与专名注入规则，seed 不变）→ 仍失败的半批拆成单条（10→5→1）→ 单条仍失败时该 cue 的中文位置保留日文原文。子批次 ID 为 `父ID.a`／`父ID.b`，场景文件记录降级树；降级清单写 `translate/report.json` 并在控制台汇总，发布日志行与汇总给出回退 cue 数。降级改变了研究侧配方的失败处理，产品配方另名、另算 hash（`q2-degrade-v1`）；译文校验在研究侧的 ID 集合／顺序／非空之外另拒绝含空行的译文。这与两次可靠性尝试都不是"翻译多次再挑选"（ADR-0008）。
-- 专名建表失败（ADR-0014、ADR-0019、ADR-0022）：提示超预算（`/v1/messages/count_tokens` 两段之和超过 24576 − 8192 − 512 = 15872）或依次换 seed 的 5 次回复都不合格，写 `build.status` 为 `too_long`／`failed` 的空表，运行日志一行 WARNING，影片照常翻译与发布（空表不注入）——表是观感优化，不该让整部影片没有字幕；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（`failure.json`），Strata 一直起不来或被拒绝时本批其余需要模型的影片直接失败，重跑同一命令对它们再建表。没有发布时替换，因而没有替换失败。
-- 续跑：重跑同一命令即可；已完成的产物按身份跳过。翻译按批次增量落盘（v3 原本按整个场景落盘，产品改为每批次追加写），中断后从未完成的批次继续。回退为日文的 cue 对该配方 hash 与 seed 是终态，重跑同一命令不会再试；要重试须改 `[translate] seed`（另起 run 目录，整片重译；seed 须为正整数）；要重做已发布的文件须先删掉其 `.ja-zh.srt`（ADR-0020）。
+- **文件级隔离**：一个文件在某阶段失败，写 `failure.json`，该文件退出后续阶段，批次继续；最终汇总打印失败清单，退出码非零。
+- **内嵌字幕不可用**（ADR-0024）：抽取失败或清洗后零条目，记一行 WARNING，该文件回到 STT 链，不写 `failure.json`，结果不缓存。
+- **无语音**：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布零条目 `ja-zh.srt` 并告警。
+- **ASR 失败窗口**（w0／x0／cross 同一表示）：x0 生成触顶、w0 整窗复读守卫（`repeat-strict`，[ADR-0023](../adr/0023-asr-repeat-guard.md)）折叠后仍命中，都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker][stt]、[产物契约][art]）。
+- **Strata 基础设施失败与批次终态**（ADR-0019）：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、解析／校验失败、超出 context 是批次终态，进入降级；`StrataRefused` 不重试，本批其余需要模型的影片直接失败。
+- **翻译降级**（产品规则，配方另名 `q2-degrade-v1`）：批次两次尝试都失败 → 10→5→1 拆批 → 单条仍失败时该 cue 的中文位置保留日文；降级清单写 `report.json` 并在汇总给出回退数。可靠性重试与降级都不是"翻译多次再挑选"（ADR-0008）。见[翻译子系统][tr]。
+- **专名建表失败**（ADR-0022）：超预算或 5 次回复都不合格写空表（`build.status` 为 `too_long`／`failed`），记 WARNING，影片照常翻译与发布；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（[专名一致性][names]）。
+- **续跑**：重跑同一命令即可，已完成的产物按身份跳过；翻译按批次增量落盘，中断后从未完成的批次继续。回退为日文的 cue 对该身份是终态；要重试须改 `[translate] seed`（另起 run 目录、整片重译）；要重做已发布的文件须先删掉其 `.ja-zh.srt`（ADR-0020）。
 
 ## 7. 进程、环境与依赖
 
@@ -254,257 +146,53 @@ b10-joint 是 `jpn.srt → chn.srt` 的流程：逐条翻译日文 cue，前后�
 ```
 python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；不 import torch)
  ├─ ThreadPool → ffmpeg/ffprobe 子进程（CPU 队列）
- ├─ python -m kototoki.workers.vad    --jobs batch.json   (子进程，加载一次，循环文件)
- ├─ python -m kototoki.workers.asr    --jobs batch.json   (引擎取 jobs 的 config.engine：w0|x0|cross)
- ├─ python -m kototoki.workers.align  --jobs batch.json
- ├─ Strata（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next）+ 进程内 HTTP 客户端先逐片建专名表、再循环翻译（一个 Strata session 服务整批两个阶段，第一次需要时启动，结束时 `strata launch --stop`）
+ ├─ python -m kototoki.workers.{vad,asr,align} --jobs <work root>/jobs-<stage>.json  (每阶段一个子进程；asr 引擎取 jobs 的 config.engine)
+ ├─ Strata（strata launch）+ 进程内 HTTP 客户端：先逐片建专名表，再循环翻译
  └─ 进程内 ja-cues / merge
 ```
 
-- worker 之间只通过 `<work root>/<id>/` 下的 JSON 交接，每阶段重验输入身份（继承 X0 的做法）。编排器与 worker 用同一解释器（`sys.executable`）。
-- 锁：只有编排器获取 `.local/gpu.lock`（仓库内固定路径，不随配置文件移动），worker、翻译模块都不再获取；v3 的 `GpuLock`／W0 的 `gpu_lock` 不移植，只保留 `ProcessLock` 给编排器。锁文件记录编排器、当前 worker 与 Strata 的 pid。
-- 所有 worker 与 Strata CLI 子进程放进 KILL_ON_JOB_CLOSE Job Object：编排器被强杀时子进程随之退出，不留占显存的孤儿。Strata 服务由 `strata launch` 在后台启动，不在 Job Object 内，靠 `Session` 退出（含异常与中断）时的 `strata launch --stop` 收尾；进程被强杀时它可能残留，下次运行因 `--status` 非空而拒绝，须手动 `strata launch --stop`。
-- 编排器为 worker 子进程设置离线环境（`HF_HUB_OFFLINE=1`、`HF_HOME`／`TORCH_HOME` 指向 `<work_dir>/cache/`（各目标目录共用，不是每文件一份）、`PYANNOTE_METRICS_ENABLED=0` 等，沿用 `setup_runtime` 的变量但**不再加私有 DLL 目录**），保持本地运行不变量。子进程环境统一 `PYTHONUTF8=1`，进度 JSON 与日志文件显式 UTF-8（本机根环境默认 cp1252，`scripts/check_docs.py` 在无 mise 的 shell 下即因此崩溃）。
-- DLL 解析顺序：ASR worker 必须先 `import torch` 再导入 `ctranslate2`／`faster_whisper`，cublas／cudart 与 cuDNN 子库由此来自 torch 目录；CT2 在导入时按全路径加载自带的 `cudnn64_9.dll`（9.10 调度器），与 torch 的 9.19 调度器同进程并存，2026-10-14 用户接受（01 smoke #3：W0 冻结窗口 token 与特征逐一一致）。有导入顺序测试。VAD worker 不需要 FFmpeg PATH：01 smoke #2 实测 pyannote＋torchcodec 对内存波形推理全程不加载任何 FFmpeg DLL。
-- "编排器不 import torch"的测试断言 `import kototoki.job` 与 `kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec` 与任何 `experiments.*`。
+- worker 之间只通过 `<work root>/<id>/` 下的 JSON 交接，每阶段重验输入身份；编排器与 worker 用同一解释器（`sys.executable`）。
+- 所有 worker 与 Strata CLI 子进程放进 KILL_ON_JOB_CLOSE Job Object；Strata 服务由 `strata launch` 在后台启动、不在 Job Object 内，靠 session 退出时的 `--stop` 收尾，编排器被强杀时它可能残留，下次运行拒绝，须手动 `strata launch --stop`。
+- 编排器为 worker 设置离线环境（`HF_HUB_OFFLINE=1`、`HF_HOME`／`TORCH_HOME` 指向 `<work_dir>/cache/` 等）与 `PYTHONUTF8=1`。ASR worker 先 `import torch` 再导入 CTranslate2；"编排器不 import torch"有测试。细节见[批次编排][orch]与 [STT worker][stt]。
 
-### 7.2 环境：一个统一的 CUDA 12.8 环境
+### 7.2–7.4 环境、代码布局、上游版本
 
-现状三个隔离环境版本互斥（见[环境清单](../research/2026-10-04-runtime-inventory.md)）：
+当前环境、版本、选版规则与 CUDA 说明见[技术选型](../development/technology-stack.md)与[依赖布局与资产清单](../development/dependencies.md)；当前文件布局见[架构总览][arch]；原文（含 2026-10-13 上游版本核实表）见[历史记录](../research/2026-11-11-bilingual-pipeline-spec-history.md#7-进程环境与依赖)。
 
-| 环境 | Python | Torch | 关键包 | 用途 |
-| --- | --- | --- | --- | --- |
-| `whisper-latest` | 3.13 | 2.8.0+cu128 | CT2 4.8.2、torchaudio 2.8、transformers 4.57.6 | W0 ASR、MMS |
-| `qwen-hf-final` | 3.13 | 2.14.1+cu130 | transformers 5.18 | X0 ASR |
-| `vad-pyannote-gpu-v1` | 3.12 | 2.11.0+cu128 | pyannote.audio 4.0.7 | VAD |
+## 10. 配置文件 `kototoki.toml`
 
-分裂的根因是 WhisperX 要求 transformers 4.x 与 Torch 2.8。产品不再依赖 WhisperX，统一为**一个 CUDA 12.8 环境**（2026-10-14 决定，替代此前的 CUDA 13＋CT2 侧车方案）：
+见[配置参考][cfg]。
 
-| 组件 | 目标版本 | 来源与依据 |
-| --- | --- | --- |
-| Python | 3.13 | uv 托管 |
-| torch | 2.11.0+cu128 | PyTorch cu128 索引（含 sm_120）；cu128 索引止于 2.11.0。本机 `vad-pyannote-gpu-v1` 已在跑 |
-| torchaudio | 2.11.0+cu128 | 同上；`forced_align`／`merge_tokens` 保留（2026-10-14 在本机 `vad-pyannote-gpu-v1` 的 torchaudio 2.11.0+cu128 上只读核实存在；CUDA 路径等价性由 01 smoke #1 验证） |
-| torchcodec | 0.17.0 | PyPI（cu128 索引没有 0.17.0）；本机 `vad-pyannote-gpu-v1` 已与 torch 2.11.0+cu128 同装并运行 |
-| transformers | 5.19.0 | PyPI；覆盖 Qwen3-ASR 与 MMS wav2vec2；要求 torch ≥2.5 |
-| pyannote.audio | 4.0.7 | PyPI；本机已在 torch 2.11 上运行 |
-| faster-whisper／CTranslate2 | 1.2.1／4.8.3 | PyPI；CT2 wheel 按 CUDA 12.8＋cuDNN 9.10 构建，不需要侧车。01 smoke #3（2026-10-14，干净 PATH、先 import torch）实测：cudart／cuBLAS 与 cuDNN 子库来自 torch（cuDNN 9.19.0），CT2 wheel 自带的 `cudnn64_9.dll`（9.10.2.21 调度器）由其 `__init__` 按全路径加载，两份调度器并存；W0 冻结窗口解码的 token 与特征 SHA 与 torch 2.8＋CT2 4.8.2 的记录逐一一致，用户接受这一组合。CT2 在 sm_120 上依赖 PTX JIT（`CUDA_DISABLE_PTX_JIT=1` 时解码失败；wheel 只嵌入 sm_86 PTX、无 sm_120 SASS，2026-10-14 扫描 `ctranslate2.dll` 确认）：冷启动首窗解码 27 s，二次启动 5 s |
-| llama.cpp | b11583 官方 `win-cuda-13.4` 二进制 | 独立进程，与 Python 进程无 DLL 交集；13.4 构建原生含 sm_120 内核，12.4 构建需 PTX JIT，故不降级 |
-| CUDA toolkit | 不需要本地安装 | 所有组件用 wheel／二进制自带运行时；驱动 617.42 同时满足 12.x 与 13.x |
+## 11. 未来方向
 
-**选版规则**（用户 2026-10-14 明确）：CUDA 12 与 Python 3.13 是固定锚点；被它们限制的组件随之锁定（torch／torchaudio／torchcodec 取 cu128 索引上的最新版本，CTranslate2 取 CUDA 12 wheel 的最新版本）；不受影响的组件一律取最新稳定版（transformers、pyannote.audio、faster-whisper、numpy、llama.cpp 官方构建）。上表各行均按此规则选定，实施时以 `uv lock` 当日的最新稳定版为准并记录。
+未裁定事项与未来方向见[待裁定事项](../pending-decisions.md)与 `.scratch/next-directions/issues/` 的票据；本节原文见[历史记录](../research/2026-11-11-bilingual-pipeline-spec-history.md#11-未来方向本期不做只登记)。
 
-**为什么从 CUDA 13 退到 CUDA 12**：CT2 是 w0 的推理内核且只有 CUDA 12 wheel；cuDNN 9 的 DLL 文件名在 CUDA 12 与 13 构建间相同，同进程只能加载一份，原方案 A 因此要求 w0 worker 不 import torch 并用 NumPy 重写特征，复杂且无先例。整体 CUDA 12 后 w0 worker 与 VAD、对齐、x0 worker 一样正常 import torch，特征链保持现有 torch 实现，等价性风险最小。代价是 torch 停在 2.11.0 而非 2.14.1；用户 2026-10-14 接受。CT2 wheel 在 sm_120 上是 PTX JIT（只含 sm_86 PTX；01 smoke #3 冷启动 27 s、二次 5 s）。2026-10-14 复议过 cu12／cu13 混用并维持本决定；事实、重新评估的触发条件与届时的可靠形态记录在 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 依据段，不在此重复。
+## 拆出的内容
 
-**llama.cpp 改用官方 b11583 构建**（2026-11-08 起产品只有 names 建表还用 llama-server，翻译已换 Strata，ADR-0019；2026-11-09 起建表也换 Strata，产品不再用 llama-server，llama.cpp 只供研究侧，ADR-0022）：上游 2026-07-13 合并 `hy_v3` 架构；本机 APEX-I-Compact GGUF 的路由偏置张量已是上游命名 `blk.N.exp_probs_b`（2026-10-13 本地读取确认），旧补丁针对的 `.bias` 命名问题不存在。这替代了 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md) 中"继续使用 b11429 兼容 loader、不以 stock 引擎替代"的条款（用户 2026-10-14 确认），由 ADR-0007 记录。票据 01 的 smoke 要对比兼容引擎与 stock 引擎的 `/tokenize` 输出与固定 seed 的短生成，并在一个真实 b10 批次上测量显存峰值（现有 15.7–15.8 GB 是兼容引擎的数字）。`ManagedServer` 要求的 `identity.json` 与驻留日志解析按 stock 构建适配。
+2026-11-11 文档架构整理（票据 09）把下列内容移出本文：
 
-**依赖管理**：根 `pyproject.toml` 改为产品项目 `kototoki`，运行时依赖写入 `dependencies`，`[[tool.uv.index]]` 声明 `pytorch-cu128`（`explicit = true`），`[tool.uv.sources]` 把 torch／torchaudio／torchcodec 指向该索引，`tool.uv.environments` 限 win32，`uv.lock` 锁定；测试工具放 dependency group。后果：根环境从此有 Torch，`experiments/` 中原本因缺 NumPy／Torch 跳过的离线测试会实际运行。三个历史环境保留供复现，不删除。
-
-**升级即新身份**：Torch／CT2／llama.cpp 版本变化会轻微改变数值，必须在冻结输入上与现有基线成绩回归后才算接上基线（本期不做，见 §11）。
-
-**后续可选实验（不在第一版）**：用 HF transformers 的 Whisper 实现（纯 PyTorch）替换 CT2，解除 CUDA 12 锁定、跟上最新 torch。代价是速度约慢 1.5–3 倍、文字与现 W0 有细微差异，需要独立的等价性验证。另一条路是保留 CT2、只给 ASR worker 一个独立的 cu12 侧车 venv，让其余 worker 跟最新 torch；触发条件见 ADR-0007。
-
-### 7.3 代码布局
-
-各模块的接口以模块页为准，依赖方向、接缝裁定与责任边界以[模块边界](../architecture/module-boundaries.md#产品包的责任边界)为准（原目标架构页于票据 08 并入后删除）。下表是实现时（票据 00–09）的文件与来源对照，**冻结于 2026-10-14，不再随后续票据维护**；当前文件布局以[架构总览的模块地图](../architecture/INDEX.md#模块地图)为准。票据 14 新增 `kototoki/plan.py`（阶段链与期望身份从 `job.py` 与三个 worker 壳迁出，见[阶段计划](../architecture/modules/stage-plan.md)），票据 15 把 `translate/data.py` 并入 `batching.py`。2026-10-20 起新增 `kototoki/names/`（专名建表）；Strata 生命周期与共享 session 在 `kototoki/strata.py`，本机回环客户端在 `kototoki/local_client.py`，进程原语在 `kototoki/procs.py`，见[专名一致性](../architecture/modules/name-consistency.md)与模块边界。
-
-新建产品包 `kototoki/`，从 `experiments/` 复制并精简已验证的实现（历史目录保持冻结，产品包不导入它们）：
-
-| 产品模块 | 来源 |
+| 原章节 | 去向 |
 | --- | --- |
-| `kototoki/__main__.py`、`job.py`（批次、阶段推进、续跑、锁） | 新写；锁与 Job Object 取自 `translation_v3/procs.py` |
-| `config.py`（读 `kototoki.toml`，§10）、`recipes.py`（VAD／ASR／MMS／cue／媒体的配方常量与 hash，**不含翻译配方**） | 新写，`tomllib` 读取；配方常量取自各 demo 的 `RECIPE`／`recipes.py` |
-| `artifacts.py`（产物路径、身份、匹配跳过、原子写与 Windows 重试、`failure.json`、`published.json`）、`workers/protocol.py`（`--jobs` 格式、增量结果、`failed_windows`、退出码） | 新写；原子写取自 `translation_v3/common.py` |
-| `media.py`（ffprobe／ffmpeg 流复制与派生 WAV） | 新写；下混与重采样参数取自 `experiments/corpus/prepare_round2.py`（2026-10-14 曾改 soxr 28 bit，2026-10-15 改回默认 swr，票据 10） |
-| `vad.py` | `w0_demo/vad_candidates.py` 的 `CurrentPyannoteVad` + `chunk_intervals` |
-| `asr_whisper.py` | `w0_demo/asr.py`（torch 特征链不变，去掉私有 DLL 目录逻辑，显式 torch 先于 ctranslate2 导入） |
-| `asr_qwen.py` | `x0_demo/asr.py` + `experiments/qwen/run_qwen.py` 的资产身份常量、`checkpoint_identity`、`check_gpu`（复制，不导入历史包） |
-| `align.py` | `w0_demo/alignment.py`（继续用 torchaudio `forced_align`，放宽 2.8.0 版本断言） |
-| `cues.py` | `display/replay.py` 的组 cue 规则 + 软断点 + 时间回填 |
-| `translate/`（2026-11-08 起，ADR-0019：`recipes.py` 产品配方 `q2-degrade-v1`、`batching.py`、`degrade.py`、`generate.py`；`adapters.py`、`server.py` 与 H0 配方已删除；`translate/recipes.py` 仍是翻译配方的唯一归属） | `experiments/translation_v3/{qwen,strata}.py` 的提示、请求体与 `probe`，`names11.product_tables` 的注入行，`wide-context-v1`，`translation_v3` 的 `batching`、`generate`（改为传入已建 session、按批次落盘）、`common`（路径改配置）、`data`（`Scene`／`Cue`），`translation_demo` 的 `client`、`explicit_oom`（现为 `kototoki/local_client.py`）；去掉 `mbr` 导入与裁判／统计命令。**以下为 2026-10-18 之前的来源，历史记录**：`translation_v3` 的 `recipes`、`server`、`procs`，`translation_demo` 的 `adapters`、`run`（资产清单），`translation_demo_runtime` 的驻留解析（驻留解析与 `ManagedServer` 随唯一使用者搬到研究侧 `experiments/translation_v3/llama_server.py`，ADR-0025） |
-| `srt.py`、`merge.py` | `translation_flow/srt.py`（允许零条目） + 新写合并 |
-| `schema.py` | `kototoki_eval/schema.py` 的 `validate_transcript` |
+| 状态行修订历史、§1.2、§8、§9、§11、§12、§13 | [历史记录][hist]（原文） |
+| §2 的单片成本列、§2.2 重采样经过、§3.2 对比表、§3.4 时间线 | [历史记录][hist-26]（原文）；理由见 [ADR-0007][adr7] |
+| §2 各阶段细则、§2.1、§2.2 时长校验与下混 | [配置、配方与媒体提取][media]、各模块页 |
+| §4、§6 的逐模块细则 | [产物契约][art]、[阶段计划][plan]、[批次编排][orch]、[翻译子系统][tr]、[专名一致性][names] |
+| §5.2 规则表 | [配置参考][cfg]、[日文 cue][cues] |
+| §7.1 的 DLL 与导入细节 | [STT worker][stt]、[批次编排][orch] |
+| §7.2–§7.4 | [技术选型](../development/technology-stack.md)、[依赖布局与资产清单](../development/dependencies.md)；原文在[历史记录][hist] |
+| §10 | [配置参考][cfg] |
 
-产品测试放 `tests/`（2026-10-18 起分为 `tests/core/` 与 `tests/full/`，分层见 workflow.md），不与模块同目录；票据 00 创建 `tests/__init__.py` 并把 `kototoki/` 接进 `just check`。现有 `kototoki_eval/` 保持评分用途不动。
-
-### 7.4 上游版本核实（2026-10-13）
-
-由子 agent 对官方发布页、PyPI、PyTorch wheel 索引、NVIDIA redist 核实，访问日期 2026-10-13；标 UNVERIFIED 的项未实测。本表是 CUDA 13 方案时期的核实记录，原样保留；CUDA 12.8 环境的选版以 §7.2 为准。
-
-| 组件 | 最新稳定 | Windows 构建（核实时按 CUDA 13 查） | Python | 备注 |
-| --- | --- | --- | --- | --- |
-| CUDA Toolkit | 13.4 Update 1（redist 13.4.1／13.4.2） | R615 驱动；本机 617.42 满足 | — | cuBLAS 随 toolkit；13.1 起不再捆绑驱动 |
-| cuDNN | 9.27.0 | 有 cuda13 Windows 包；pip `nvidia-cudnn-cu13` 有 win_amd64 wheel | — | 支持 CUDA 13.4.1 |
-| torch | 2.14.1（2026-09-30） | 索引有 cu126／cu130／cu132；cu130 用 CUDA 13.0 构建，含 sm_120；PyPI 上的 Windows wheel 是 CPU 版 | cp312–cp314、cp314t；3.15 仅索引且 `torch.compile` 不可用 | cu128 停在 2.11.0；cu132 标为 experimental |
-| torchaudio | 2.11.0（2026-03-23），无更新 | cu130 索引有 2.11.0+cu130 | cp310–cp314 | `forced_align` 保留（CPU／CUDA，batch 1）；与 torch 2.14.1 配对 UNVERIFIED |
-| torchcodec | 0.17.0 | cu130 wheel | cp311–cp314 | pyannote 4.x 的音频 I/O 依赖，需要 FFmpeg 共享 DLL |
-| CTranslate2 | 4.8.3（2026-10-13） | **仅 CUDA 12.8 + cuDNN 9.10**；CUDA 13 issue #1933 开放；wheel 是否含 sm_120 kernel UNVERIFIED | cp39–cp314、cp314t | 源码构建需绕过 `FindCUDA` 的 arch 解析（手加 `compute_120,sm_120`）；对 CUDA 13 头文件能否编译 UNVERIFIED |
-| faster-whisper | 1.2.1（2025-10-31） | 跟随 CT2 | — | 要求 `ctranslate2>=4,<5` |
-| transformers | 5.19.0（2026-10-06） | — | ≥3.10 | `qwen3_asr` 自 5.13 原生支持（`AutoModelForMultimodalLM`）；`Wav2Vec2ForCTC` 的 `load_adapter` 仍在 |
-| pyannote.audio | 4.0.7（2026-06-30） | — | ≥3.10 | `torch>=2.8`、`torchaudio>=2.8`、`torchcodec>=0.7`；4.x 改用 torchcodec I/O、`token=`、`revision=`；直接加载 `segmentation-3.0` UNVERIFIED（仓库门控） |
-| llama.cpp | b11583（2026-10-13） | 官方 `llama-b11583-bin-win-cuda-13.4-x64.zip` + `cudart-…-cuda-13.4` | — | PR #25395（2026-07-13）合并 `hy_v3`；源码构建 sm_120 用 `CMAKE_CUDA_ARCHITECTURES=120a-real` |
-| Python | 3.15.0（2026-10-09） | — | — | 3.15 不可用（CT2／torchaudio／torchcodec 无 wheel）；3.14 核心栈齐全但 av／tokenizers／safetensors 未核；3.13 保守 |
-| ffmpeg | 本机 git-20261001 full build | — | — | 只用默认 swr 重采样，不要求 libsoxr |
-
-## 8. 仍开放的问题
-
-无。2026-10-14 评审新增的四项已裁定（§1.2）；实施中出现的新问题记入对应票据。
-
-## 9. 验收（草案）
-
-- 离线单元测试：ffprobe 音轨选择与容器映射、派生 WAV 参数、产物身份与跳过逻辑、cue 切分与时间回填、SRT 解析／写出／合并、批次推进与失败隔离（伪 worker）。
-- 环境 smoke（票据 01，脚本入库到 `scripts/smoke/`，并接到 `just test-full`，2026-10-18 起改由真实模型验证入口 `just smoke` 运行；每项各自在独立子进程运行，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在一个进程里相遇）：① torchaudio 2.11.0 配 torch 2.11.0+cu128 的 `forced_align`（合成序列＋一个真实冻结窗口）；② pyannote 4.0.7＋torchcodec 0.17 在产品环境导入并对内存波形推理，列出进程实际加载的 FFmpeg DLL（若没有任何 `avcodec*` 被加载，则 VAD worker 不需要 FFmpeg PATH，§7.1 的那条随之删除）；③ **在不含 `whisper-runtime-provisional` 的干净 PATH 下**，同一进程先 import torch（cu128）再用 CT2 解码一窗，打印实际加载的 cudnn／cublas／cudart 模块路径，除 CT2 wheel 自带的 `cudnn64_9.dll` 外均来自 torch 目录，并记录 cuDNN 版本与是否 PTX JIT；④ 官方 llama.cpp 加载 APEX GGUF，与兼容引擎比对 `/tokenize` 与固定 seed 短生成，再发**同一 session 的第二个 `cache_prompt` 请求**并断言 `timings.cache_n`、`tokens_evaluated`、`stop_type`／`stopped_limit`／`truncated` 的含义与 v3 `run_step` 的假设一致，保存一份 stock 引擎加载日志供 `residency_evidence` 回归，测一个 b10 批次的显存峰值。
-- GPU smoke：1 个 5 分钟片段走完 8 阶段，产物齐全、SRT 合法、双语对齐。
-- 回归：II／III 上新环境与现有基线的 CER／时间指标对比（本期不做，§11）。
-- 整片：2 部电影批量运行一次，记录各阶段墙钟、显存峰值与失败清单。
-
-## 10. 配置文件 `kototoki.toml`（草案）
-
-### 10.1 结构
-
-```toml
-[paths]
-input_dir   = "D:/movie/inbox"          # 递归扫描视频与音频；最终 ja-zh.srt 写在源文件旁
-work_dir    = ".local/work"             # 缓存与各目标目录的工作根；不得在 input_dir 内，也不得在仓库内 .local/ 以外
-models_root = ".local/models"           # 下面各模型路径相对于它
-ffmpeg      = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe"
-ffprobe     = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe"
-# （已删除的键：llama_server；产品不再起 llama-server，ADR-0022）
-
-[input]
-extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi", ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"]   # 视频还是音频由 ffprobe 判定
-audio_language   = "jpn"                # 优先选此语言标签的音轨（jpn／ja／jp 视为同一语言），没有则第一条并告警
-use_embedded_subtitles = true           # 有该语言的文本字幕轨（非 forced）时跳过 STT、直接翻译字幕轨（ADR-0024）；false 一律走 STT
-
-[run]
-extract_workers = 4                     # ffmpeg 并发数
-stable_check_s = 10                     # 两次采样大小不变才视为写入完成（不用 mtime，拷贝工具常保留源 mtime）
-
-[stt]
-engine = "w0"                           # w0 | x0 | cross（cross 需要 [asr.w0] 与 [asr.x0]）
-
-[vad]
-model  = "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"   # 设备固定 cuda:0，第一版无配置键
-
-[asr.w0]
-model      = "faster-whisper-large-v3"
-mel_assets = "w0-assets"
-
-[asr.x0]
-model = "qwen3-asr-1.7b-hf"
-
-[align]
-model = "mms-1b-all"
-
-[cues]
-max_chars = 24
-max_duration_s = 6.0
-min_duration_s = 0.8
-max_gap_s = 1.0
-sentence_endings = "。！？!?"
-soft_breaks = "、，,"
-lead_out_s = 0.3                        # 发声结束后向后延长，不越过下一条起点
-
-[translate]                              # 2026-11-08 起（ADR-0019）模型由 Strata 管理、端口固定 8080，只剩 seed
-# （已删除的键：model、port）
-# seed 须为小于 2**31 的正整数（Strata 不接受 0）
-seed  = 20261008
-
-[names]                                  # 2026-11-09 起（ADR-0022）建表在与翻译共用的 Strata 上，只剩 seed
-seed    = 20261019                      # 改 seed 即重建专名表（另起身份）
-# （已删除的键：enabled、model、port；建表必开。写了按未知键报错）
-```
-
-用户写出的相对路径以配置文件所在目录解析；用户省略的键用上述默认值，其中相对路径默认值以仓库根目录解析（配置文件放仓库外时默认模型目录仍可用）。未知键报错而不是忽略。GPU 锁路径固定为仓库内 `.local/gpu.lock`，不可配置；破除死锁用环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效，不放配置文件（配置里的开关是粘性的，每次都会自动破锁）。
-
-### 10.2 暴露与冻结的边界
-
-| 放配置文件（用户关注、不改变模型行为） | 留在代码 `recipes.py`／`translate/recipes.py`（改动即新配方 hash） |
-| --- | --- |
-| 所有路径、模型目录、二进制位置（GPU 锁路径除外） | VAD onset／offset、30 s 窗口与合并策略、设备 `cuda:0`、下混矩阵与重采样参数 |
-| 并发数、端口、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳；x0：BF16、greedy、4096；cross：裁判阈值 −1.0、无长度项、打分批上限 16、守卫（配方 `CROSS`） |
-| 输入扩展名、音轨语言偏好 | MMS FP32、归一化、字符映射 |
-| cue 显示规则（§5.2） | 翻译采样（0.7／0.8／20）、dp10-cut 切包与 wide-context 邻文、`qwen-joint-v1` 提示、专名注入规则、模型与 Strata 身份核对（ADR-0019） |
-| 翻译 seed | 翻译请求重试次数、失败分类、降级策略 |
-| 专名表 `seed` | 建表提示 v5、官方 non-thinking 采样、JSON schema、`max_tokens` 8192、context 24576、思考关闭、5 次尝试、归一规则与常量、模型与 Strata 身份（配方 `BUILD` = `q3-names-v1`，ADR-0022） |
-| | 产物 schema 版本 |
-
-每个产物记录生效的配置快照与配方 hash；只改配置文件里的项不会使已有 STT 产物失效（cue 规则例外：改了只重跑 ja-cues 及之后）。
-
-## 11. 未来方向（本期不做，只登记）
-
-- **翻译批内语序自由**（**已关闭**，2026-10-18 用户裁定，见本条末项）：如 1+5+1、中间 5 条允许并句拆句与重排，需要新的中文→时间回映射方案与评估，是独立研究。2026-10-16 讨论（[v6 结题](../research/2026-10-16-scene-aware-batching-v6.md)后）补充的方向：
-  - 区分两个量。**包的大小**决定模型理解上下文的范围，应保持 10 条左右（v3：b5 不如 b10，"≤5 条、碰标点就切"无收益；v6：按 ≥5 s 静默切包收益很小且不复现）。**内容可挪动的范围**是另一回事，应按"同一句话"划分，而不是按包。
-  - "同一句话"小组：相邻几行停顿很短（量级约 1 s，门槛待定）、连起来是一句完整的话，多数是 2～3 行。语序只允许在小组内调整；**停顿是硬边界**，内容不能跨停顿挪动，否则字幕会出现在无人说话的时刻。参考分布：相邻 cue 间隔中位数约 0.6 s、p90 约 4.3 s（v6 §2.1）。
-  - 其他软件的做法（[Subtitle Edit](../research/2026-10-05-translation-subtitleedit.md)、[VideoLingo](../research/2026-10-05-translation-videolingo.md)、[pyVideoTrans](../research/2026-10-05-translation-pyvideotrans.md)）：主流是把被拆碎的句子合并成整句翻译，再按标点、长度比例或让模型切回原时间段；Subtitle Edit 的合并门槛是相邻间隔 <1 s；公认难点是切回时行数、编号错位，都要加结构校验。
-  - 现有裁判（`claude-opus-5-5-mqm-v1`）已允许相邻 cue 之间合理挪动内容，不计 cue-attribution 与漏译，所以评估面可直接比较"严格一一对应"与"小组内重排"。
-  - 实现形状可以是：包仍为 1+10+1，包内按短停顿与句末标点标出小组并在提示里告知模型，grammar 仍按 cue ID 输出，只是允许同组内的 ID 互相挪内容；回映射因此不需要新的时间对齐，只需校验组内总长度与显示时长。
-  - 2026-10-18 进展：划组规则经[离线统计](../research/2026-10-18-reorder-group-offline-stats.md)定为 R2+（停顿 <1.0 s 且前一行不以 `。？！?!.` 结尾，剥右括号；产品 ASR 句末标点几乎全是半角，所以必须含半角），dev 上 78% 的 cue 落在多 cue 小组、产品 50%。研究侧[第八轮（v8）](../research/2026-10-18-group-reorder-v8.md)验证了上一条的实现形状（包与 grammar 沿用 dp10-cut，只改提示并注入 `groups`）：**证伪**。两次小样 70 个多 cue 组里模型没有任何组内重排，两种措辞都如此，更强的措辞还引入邻文泄漏；且严格逐 ID 模式下模型已把每行译成自足中文。改输出契约的备选路线（每组输出一个字符串再程序切回）也做了预检（v8 §7.3）：模型拿到整组仍按日文行序翻译，54 组 0 例跨行重排，而 8 组把 <1 s 停顿内的不同说话人并成一句。
-  - **2026-10-18 用户裁定：关闭这条线，不立项备选路线。** 翻译保持逐 cue 对应（本节表"翻译批内对应"一行即为最终形态）。重开前提是有说话人信息、能按"同一说话人的同一句话"划组。保留的设施：`translation_v3` 的 `grp1` 配方与 `batching.sentence_groups`、`experiments/reorder_groups/`。
-- **跨文件术语一致**：同一剧集多集之间的人名、专名统一。v3 的 `terms` 配方未采纳，产品暂无跨文件记忆。**单片内一致已由 names 阶段覆盖**（2026-10-20，ADR-0014）：每部影片自己建表，不合并多张表、不跨文件共享。
-- **用 HF transformers Whisper 替换 CTranslate2**，解除 CUDA 12 锁定（§7.2）。
-- **重复／幻觉守卫**：W0 移植的 WhisperX 路径没有温度回退与压缩比检查，长重复输出目前只能靠 VAD 过滤减少；后续可加 n-gram 重复检测并标记。
-- ~~利用视频内嵌日文字幕~~：已实现（2026-11-11，[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)，§2"内嵌日文字幕"）。仍未做的相邻项：同目录外挂字幕、位图字幕 OCR。
-- **双单声道（主／副音声）识别**、**粗回退按 VAD 子段分配时间**。
-- **VAD 跑 CPU** 以让出显存；**升级后的回归与容差**；**单阶段子命令与 CLI**。
-
-## 12. 实施里程碑
-
-票据在 `.scratch/bilingual-subtitle-pipeline/issues/`（本地 tracker，不进 Git），编号与下表一致；依赖关系写在票据的 `Blocked by`。每张票交付时按[随交付同步](../agents/documentation.md#随交付同步)更新对应模块页，不把全部文档推到 08。下表只列设计时规划的票据 00–09；最终验收后的票据 10–16（重采样改回 swr、`DURATION` 标签优先级、间隔断句跨子段、cue 词边界调研、阶段计划模块、翻译 run 键、产品配方换 `dp10-cut-degrade-v1`）在 §13 记录裁定，细节在各模块页"变更与决策来源"。
-
-| 票据 | 里程碑 | 内容 | 完成标准 | Blocked by |
-| --- | --- | --- | --- | --- |
-| 00 | M0 共享基础 | `artifacts.py`（产物路径与短 id、身份与模型哈希缓存、坐标约定、匹配跳过与原地替换、原子写、`failure.json`、`published.json` 与覆盖规则）、`workers/protocol.py`（`--jobs`、增量结果、`failed_windows`、退出码 0／1／2）、`srt.py`（允许零条目、`floor(x*1000+0.5)` 取整）；建 `tests/__init__.py`，`just check` 纳入 `kototoki/` | 离线测试；文档：模块边界加"产物契约"归属 | — |
-| 01 | M1 环境 | 根项目改产品项目、统一 CUDA 12.8 环境（torch 2.11.0+cu128）、官方 llama.cpp b11583；`tool.uv.environments` 限 win32；历史 `experiments` 测试在新环境的处理策略；`just test-full` 从此加载模型，随本票更新 AGENTS.md 重任务清单与 workflow.md 的 `test-full`／`gate-full` 描述；ADR-0005 加被 ADR-0007 部分替代的反向链接；`translation-baseline` recipe 与 translation-runtime 模块页的兼容引擎说明改为历史 | §9 的四项环境 smoke 全部通过并入库 `scripts/smoke/`、接 `just test-full`；`technology-stack.md`／`toolchain.md`／`workflow.md` 更新 | — |
-| 02 | M2 配置与媒体 | `config.py`＋`kototoki.toml`、`recipes.py`（不含翻译配方）、`media.py`（probe 全字段与音轨选择含语言标签归一化、流复制与容器映射、从容器解码派生 WAV 与 verbose 日志、按布局 `pan` 常量下混、对视频流的时长校验、`offset_s = 0`） | 离线测试含合成的延迟音轨（断言 cue 时间等于视频时间）、中途间隙、5.1 满幅不削波、单声道；真实视频三份产物；派生 WAV 与现有 `hf-ii-full.wav` 对照（默认 swr 时 PCM SHA256 应一致） | 00 |
-| 03 | M2 STT 三阶段 | `vad.py`、`asr_whisper.py`（torch 先于 ctranslate2 导入＋测试）、`align.py` 三个 worker；VAD worker 不加 FFmpeg PATH（01 smoke #2）；对齐字典只取 id < 模型 `vocab_size`（transformers 5.x 的 MMS 分词器多出 `|`＝2268，01 smoke #1） | 冻结窗口三阶段结果与现有同窗结果对照：窗口整数边界一致，ASR 文字逐字符一致（不一致即不通过），units 覆盖全文且时间差 ≤20 ms（超出另开票分析，不阻塞 05／06）；模块页 | 01, 02 |
-| 04 | M2 日文 cue | `cues.py`：回填（插值、边缘外推、整窗按 VAD 子段 `fallback`）、三级切分、`lead_out_s`、`min_duration_s`、空／纯标点／♪ 处理，`ja.srt`＋`ja-cues.json` | 离线测试含非零 offset 只加一次；用现有 `result.json` 离线产出 `ja.srt` 人工看 5 分钟 | 00 |
-| 05 | M3 翻译移植 | `translate/`（含 `translate/recipes.py`、v3 b10-joint hash 钉子测试）：session 传入、按批次落盘与续跑、基础设施失败同 run 重启 server 并记新 session、不取锁、配置化路径、run 目录按 `srt-<sha12>` 分键、启动前空闲显存检查、stock 引擎 `identity.json`；`merge.py`（中文换行替换为空格） | 伪客户端测试（正常、续跑、OOM 重启、缓存校验、空场景、`ja.srt` 变化换目录）；一部电影产出 `zh.srt`／`ja-zh.srt` | 01, 02, 04 |
-| 06 | M4 批次编排 | `__main__.py`、`job.py`：扫描镜像、大小采样稳定性检查、发布前置判定、extract 先于 GPU、输出目录锁、worker 子进程与按文件重启、Job Object、唯一 GPU 锁与环境变量破锁、三份 SRT 一起发布、无语音路径、`PYTHONUTF8`、共用 `.work/cache/`、不含 torch 等推理包的测试；随本票把架构总览"只写 `.local/`"不变量改为产品例外并把入口加入 AGENTS.md 重任务清单 | 伪 worker 离线测试（含输出目录锁冲突、崩溃文件隔离）；中断后重跑能续 | 00, 02 |
-| 07 | M5 x0 引擎 | `asr_qwen.py` worker；触顶窗口按 §6 置空并记 `failed_windows`；观察标点密度 | 同窗对照同 03 | 03 |
-| 08 | M5 整片与文档 | 2 部电影整批运行（w0 与 x0 各一次）；架构总览、模块边界、README、AGENTS 触发表、GLOSSARY 收口（各票已随交付更新的部分只核对）；规格改 implemented | 验收记录入 `docs/research/acceptance/` 并登记索引 | 03–07, 09 |
-| 09 | M3 翻译降级 | 10→5→1 拆批、子批次 ID 与降级树、单条回退与其终态语义、`report.json`、`translate/recipes.py` 中的 `b10-joint-degrade-v1` 与请求字节不变测试 | 伪客户端三级降级测试；一部电影真实运行记录降级次数 | 05 |
-
-## 13. 评审修订记录
-
-2026-10-14：主 agent 自审与独立 Opus 评审合并，修订：w0 worker 无 torch（cuDNN 同名冲突）；派生 WAV 从容器解码并贯通 `offset_s`；按声道布局下混；产物契约与 worker 协议独立成票 00；锁唯一归编排器；翻译 session 与按批次续跑；降级另立配方名；三份 SRT 一起发布；工作目录短 id；extract 先于 GPU；无语音与 x0 触顶的产品行为；stock llama.cpp 替代 ADR-0005 引擎条款待确认。
-
-2026-10-14（续）：用户裁定 Python 环境整体退到 CUDA 12.8（torch 2.11.0+cu128），取消 CT2 侧车与无 torch worker；下混、默认 swr、stock 引擎、`b10-joint-degrade-v1` 按推荐采纳；llama-server 保留 CUDA 13.4 构建。
-
-2026-10-14（第三轮，独立评审，用户全部采纳）：`offset_s` 恒为 0、零点由 `first_pts=0` 补齐（原方案双重计时且参考零点错）；产物坐标系写明；5.1 `pan` 常量与不削波；时长校验对视频流、verbose 日志入工作目录；翻译 run 目录按 `ja.srt` SHA 分键；发布覆盖规则按 `published.json` SHA 判定；输出目录锁；worker 按文件重启；x0 触顶窗口置空；票据 03 门禁加时间容差；`recipes.py` 归属拆分、05 依赖 02；产品测试放 `tests/` 并由 00 接线；AGENTS／workflow／ADR-0005 反向链接随 01／06 交付；`break_stale_lock` 改环境变量；删 `[vad] device`；语言标签归一化；小端 PCM 才映射 `.wav`；毫秒取整、`fallback` 命名、边缘插值、双语换行；DLL 共存证据修正与干净 PATH smoke、stock 引擎响应字段断言、smoke 各自子进程；启动 llama-server 前查空闲显存；清理 CUDA 13 时代残留文字。`forced_align` 在本机 torchaudio 2.11.0+cu128 只读核实存在。
-
-2026-10-14（票据 01 实施）：四项环境 smoke 完成；torchcodec 改取 PyPI；VAD worker 不需要 FFmpeg PATH（§7.1 删除该条）；CT2 自带 cuDNN 调度器与 torch 子库并存经用户接受，§7.1／§7.2／§9 表述随之修正；MMS 分词器多出 `|` 记入票据 03。
-
-2026-10-14（票据 02 实施）：用户裁定重采样由默认 swr 改为 soxr 28 bit（§1.2、§2.2；ADR-0007 中"重采样保持默认 swr"一句为当时裁定，不改写）；swr 在 verbose 下只报告部分补偿，`extract` 另记净补偿（§2.2）。
-
-2026-10-14（票据 04 实施）：`max_gap_s` 初值 0.4 → 1.0（前 5 分钟观感：0.4 时 ≤2 字条目 374 条，1.0 时 123 条）；整窗 `fallback` 每字符时长上限 `FALLBACK_MAX_CHAR_S = 0.25` s 归入 cue 配方 hash（票据 02 收编）；`rules` 为与 `[cues]` 表同形的映射；`max_chars` 计入附着标点、非词汇串分配、cue 时间只取词汇字符、零时长补 1 ms 等实现细节经用户确认，见[日文 cue](../architecture/modules/japanese-cues.md)。
-
-2026-10-14（票据 03 实施）：§7.1 两处与目标架构对齐——ASR 引擎由 jobs 的 `config.engine` 选择（不另设 `--engine` 参数），离线环境由编排器为 worker 子进程设置；冻结窗口门禁三阶段结果与现有同窗结果全等（窗口、文字、token、unit 时间），见 [STT worker](../architecture/modules/stt-workers.md)。
-
-2026-10-14（票据 05 实施）：翻译 run 目录在 `srt-<sha12>/` 下再按 `<配方名>__s<seed>/` 分目录（与 v3 run_id 同形），否则改 seed 重试会被 run.json 不一致拒绝；llama-server 由整批共用，运行日志放 `.work/translate-sessions/`（§4）。见[翻译子系统与双语合并](../architecture/modules/translation-subsystem.md)。
-
-2026-10-14（票据 09 实施）：降级的单条子批次命名为 `父ID.a.1`…（§6 只规定了两半的 `父ID.a`／`父ID.b`）；奇数条批次前半多 1 条，只有 1 条的批次失败即回退；降级中各节点结果追加写 `degrade.jsonl`，续跑不重做已有结果的节点；`report.json` 放在 `<配方名>__s<seed>/` run 目录内（每个配方与 seed 各一份）。用户裁定删去 §6 的“`force = true` 重跑整个翻译阶段”：`force` 只管最终文件覆盖，回退的 cue 只经改 seed 重试（最小设计，不为罕见的回退另加重译开关）。
-
-2026-10-15（最终验收）：soxr 28 bit 的派生 WAV 使 Pyannote 少保留约 9–10% 语音，产品 CER 比 2026-10-05 基线高 0.5–3.5 个百分点（删除增多）；见[最终验收](../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)。随后用户裁定三项并建票：重采样改回默认 swr（票据 10，§1.2、§2.2，`MEDIA` 配方 hash 变化、已有 `.work` 整条链重跑）；`DURATION-<lang>` 误判修复（票据 11，§2.2 时长来源优先级）；间隔断句只在跨 VAD 子段时成立（票据 12，§5.2，`CUES` 配方 hash 变化；样本中 1969 s 处的两字落在 VAD 漏检的拖长音上，新规则未能合并）。
-
-2026-10-15（票据 13 调研）：把 ASR token 边界带进 cue 切分的方案经四部整片离线统计只减 12 条 ≤2 字条目且引入 >6 s 条目，不能修复票据 12 的样本（Whisper 日文 token 接近单字）；用户裁定不实现，根因归 VAD 召回。见[cue token 边界调研](../research/2026-10-15-cue-token-boundary-study.md)。
-
-2026-10-15（票据 14 实施）：阶段链、worker 输入名、模型文件清单与各阶段期望身份从 `job.py`、三个 worker 壳与伪 worker 收进新模块 `kototoki/plan.py`（§4 身份归属随改）；身份字段、键名与取值逐字节不变，现有工作目录续跑不受影响。review 修订：`engine` 改为可选关键字、`advance` 对终态报错、编排侧改名 `advance_or_fail`。见[阶段计划](../architecture/modules/stage-plan.md)。
-
-2026-10-15（票据 15 实施）：翻译 run 目录键、翻译身份与"是否需要模型"归翻译子系统 `translate.plan`（§1.2 已记）；`translate/data.py` 并入 `batching.py`。review 修订：GPU 锁的翻译阶段获取移进 `translate_batch` 并只在有文件 `needs_model` 时发生，session 失败只影响需要模型的文件，`TranslatePlan` 类型化（§3.3 随改）。配方内容变了而名字未变时 `plan` 拒绝并提示删目录，不自动另开目录（零迁移，与 v3 一致）。
-
-2026-10-18（票据 16 实施，[ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)）：用户裁定把研究基线 `dp10-cut` 合并到产品，产品配方改为 `dp10-cut-degrade-v1`（§1.2 两处、§6 已改）：`Cue` 带 `ja.srt` 的起止秒，切包与邻文按 ADR-0010，降级子批次用同一条邻文规则；不迁移旧 run、不加开关，已交付影片的翻译身份过期、下次整批重译（用户接受）。`tests/test_translate.py` 的合成 SRT 每 10 条之间留 20 s 停顿，使批次机制用例仍是 10 条一批。
-
-2026-10-19（`cross` 引擎，[ADR-0012](../adr/0012-cross-asr-judge.md)，已接受）：用户裁定在 asr 阶段内新增可选引擎 `cross`（w0 与 x0 共驻、逐文件两路转写、Whisper 交叉打分合并），默认仍为 `w0`，阶段链与下游接口不变；本文 §1.1、§2、§3.2、§4、§7.1、§10 已按交付行为改写。同日产品路径验收（[验收记录](../research/acceptance/2026-10-19-cross-asr-acceptance.md)）：HF II／III 官方整片口径两部合计 CER 15.25% → 14.30%，降 0.95 pp，**低于预设的 1.0 pp 验收线**，用户裁定仍采用并保持默认 `w0`；asr 阶段墙钟为 w0 的 3.75 倍，整卡峰值 10030 MiB，翻译阶段照常启动。译文层收益与新材料确认未测，改默认须新 ADR。
-
-2026-10-20（专名一致性进产品，[ADR-0014](../adr/0014-name-consistency-in-product.md)）：用户裁定把 ADR-0013 冻结的最佳已知配置（提示 v5 建表、规则一＋孤立单字替换）接入产品：新增 GPU 阶段 `names`（`ja-cues` 与 `translate` 之间）与发布时的 CPU 替换，`[names]` 配置节，`name-table.json`／`names-apply.json` 与 `published.json.sources` 的 `names`／`names_apply` 键；建表终态失败写空表照常发布，已交付影片下次整批运行建表并重新发布、不重译（§1.1、§2、§3.1、§3.3、§3.4、§4、§6、§7.1、§7.3、§10、§11 已改）。两部整片产品路径验收与等价校验见[验收记录](../research/acceptance/2026-10-20-name-consistency-product.md)。
-
-2026-11-08（产品翻译切到 Q2，[ADR-0019](../adr/0019-product-translation-q2.md)）：用户裁定产品翻译与基线同为 Q2：配方 `q2-degrade-v1`（Strata 上的 Qwen3.8-Flash-Next IQ3_S，chat completions、无 grammar、`wide-context-v1`、`confidence: high` 专名注入）；Strata 由产品自动启停、不与 llama-server 同时驻留；删除发布时专名替换、`names-apply.json`、`names_apply` 身份键、`[names] enabled`、`[translate] model`／`port` 与 Hy-MT2 后端；翻译身份加 `names_sha256`，手改表中会被注入的条目即重译；失败路径保留 10→5→1 降级（§1.1、§1.2、§2、§3.1、§3.3、§4、§6、§7.1、§10、§11 已改，其余章节的 Hy-MT2／替换描述是历史设计依据）。
-
-2026-11-08（音频输入、工作目录外置、双语字幕发布到源文件旁，[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)）：用户裁定音频文件也是输入（`[input] extensions` 替代 `video_extensions`，ffprobe 判定视频／音频，音频不做流复制）；`[paths] output_dir` 删除、新增 `work_dir`，按目标目录分工作根并共用 `cache/`；只发布 `<stem>.ja-zh.srt` 到源文件旁，已存在即跳过，删除 `[run] force` 与按 `published.json` 判定覆盖（§1、§2、§3.3、§4、§6、§7.1、§10 已改，其余章节的 `.work/`、三份 SRT、`force` 描述是历史设计依据）；锁改为 `<work root>/lock`（退出码 3）。
-
-2026-11-09（产品建表切到 Strata，[ADR-0022](../adr/0022-product-names-on-strata.md)）：用户决定产品 `names` 阶段按基线 Q3 的规则在 Strata 上建表（配方 `q3-names-v1`，请求与 seed 序列与 `names-strata-v4` 逐字节一致，最多 5 次请求），names 与 translate 共用一个由编排持有的 Strata session（`kototoki/strata.py`，整批只启动一次），产品不再起 llama-server、不加载 27B；删除 `[names] model`／`port`、`[paths] llama_server`；本文 §1.2、§3、§4、§6、§7、§10 已按此改写，`names-sessions/` 改为共用的 `strata-sessions/`。
-
-2026-11-11（ASR 整窗复读守卫，[ADR-0023](../adr/0023-asr-repeat-guard.md)）：用户 2026-11-10 裁定 v15 的 A 进产品，2026-11-11 实现。w0 路径（含 `cross` 的 w0 那一路）在 `asr` 阶段解码之后按 `repeat-strict` 折叠复读窗、仍命中则按 `failed_windows` 置空；纯逻辑在 `kototoki/guard.py`。产品 W0 配方加 `guard` 块并换 id `w0-faster-whisper-large-v3-guard-v2`，W0、CROSS 的 `recipe_hash` 随之改变，旧工作目录的 `asr.json` 及其下游重算，不做迁移；W0 基线身份（解码、VAD、对齐）不变。本文 §1.1、§4、§6 已按交付行为改写。验收见[实现计划](../plans/asr-repeat-guard.md) §7。
-
-2026-11-11（内嵌日文字幕，[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)）：用户裁定实现 §11 登记的"利用视频内嵌日文字幕"：默认开启（`[input] use_embedded_subtitles`）、ASS 进第一版、听障说明原样保留、外挂字幕不做。有可用日文文本字幕轨的文件由 CPU 阶段抽轨并清洗成 `ja.srt`（新产物 `ja-embedded.json`，配方 `embedded-ja-subtitle-v1`），不提取音频、不经 vad／asr／align／ja-cues，从 names 起走原链；`published.json.sources` 在这条路径下为 `probe`、`ja_embedded`、`names`、`translate`；抽取失败或零条目回到 STT 链并告警。本文 §2、§4、§6、§10.1、§11 已按交付行为改写。验证只用了 ffmpeg 合成片段（core＋full 测试），真实片源与真实模型验证未做。
+[arch]: ../architecture/INDEX.md
+[mb]: ../architecture/module-boundaries.md
+[adr7]: ../adr/0007-bilingual-subtitle-pipeline-architecture.md
+[cfg]: ../architecture/modules/config-reference.md
+[media]: ../architecture/modules/config-and-media.md
+[stt]: ../architecture/modules/stt-workers.md
+[cues]: ../architecture/modules/japanese-cues.md
+[names]: ../architecture/modules/name-consistency.md
+[tr]: ../architecture/modules/translation-subsystem.md
+[orch]: ../architecture/modules/batch-orchestration.md
+[plan]: ../architecture/modules/stage-plan.md
+[art]: ../architecture/modules/artifact-contract.md
+[hist]: ../research/2026-11-11-bilingual-pipeline-spec-history.md
+[hist-26]: ../research/2026-11-11-bilingual-pipeline-spec-history.md#原第-2-至-6-节中移出的原文

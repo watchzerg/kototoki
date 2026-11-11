@@ -58,7 +58,6 @@ BUDGET_WHITELIST: dict[str, Budget] = {
     "docs/architecture/modules/translation-subsystem.md": (21389, None, 2261),
     "docs/development/dependencies.md": (12000, None, 903),
     "docs/development/workflow.md": (12000, None, 1313),
-    "docs/specs/bilingual-subtitle-pipeline.md": (51461, None, 820),
 }
 
 # 路径检查认的顶层目录；.local/ 等未跟踪目录不查。
@@ -77,7 +76,6 @@ KNOWN_MISSING_PATHS: set[tuple[str, str]] = {
     ("docs/architecture/modules/name-consistency.md", "docs/changes/name-consistency-product.md"),
     ("docs/architecture/modules/stt-workers.md", "docs/changes/local-dependencies-and-test-layers.md"),
     ("docs/architecture/modules/translation-subsystem.md", "docs/changes/local-dependencies-and-test-layers.md"),
-    ("docs/specs/bilingual-subtitle-pipeline.md", "tests/test_translate.py"),
 }
 # 还没有模块页归属的产品模块。
 KNOWN_UNOWNED_MODULES: set[str] = {

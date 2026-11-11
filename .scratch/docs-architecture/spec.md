@@ -297,6 +297,7 @@ Status: claimed
 | [06](issues/06-pending-decisions.md) | resolved | 新增 `docs/pending-decisions.md`：未裁定 2 项、待确认是否仍开放 9 行、已裁定对照 15 行；决定索引"未关闭项"改为指向该页 |
 | [07](issues/07-translation-evaluation.md) | resolved | 新增 `docs/agents/translation-evaluation.md`（5,875 字符）：现行是两个 Claude 裁判 profile；核实不了的 5 点记 §8 第 5 项 |
 | [08](issues/08-extend-check-docs.md) | resolved | `check_docs.py` 新增登记、预算、反引号路径、模块归属、ADR 编号 5 类错误检查与状态行告警，扫描 253 → 486 篇；15 个单元测试；`just gate-core` 通过 |
+| [09](issues/09-split-tech-design.md) | resolved | 技术设计 51,461 → 12,336 字符；配置参考拆成 `modules/config-reference.md`，历史原文存为冻结记录；与代码对不上的 7 处记在票据文件，需用户知道的记 §8 第 6 项 |
 
 ## 8. 待用户裁定
 
@@ -326,3 +327,10 @@ Status: claimed
    - 新轮次没有可复用入口：`experiments.scene_batching_v6` 的 `--round` 只到 v13，v15 另建了包。
    - "人名相关错误"的关键词表在 `experiments/scene_batching_v6/asr10.py` 与 `experiments/scene_batching_v6/v9.py` 里不一样，页面没有指定用哪个。
    请裁定：这几点是否需要定规矩（例如成对 profile 补版本身份、指定人名错误口径），还是保持现状。
+6. **技术设计拆分时发现的、文档之外的过时文字（票据 09）。** 文档侧已按代码改好，下面几处不在本次可改范围内：
+   - `kototoki.toml.example` 的 `[stt] engine` 注释写 `# w0 | x0`，代码还接受 `cross`。
+   - `scripts/upgrade.py` 的输出文字与 `docs/development/dependencies.md` 里写"规格 §7.2 的配置示例"；§7.2 已拆出，原来那里也没有配置示例。
+     改脚本输出属于改代码，没有动；文档那一句是在描述脚本输出，也没有单独改。
+   - `docs/development/dependencies.md`、`docs/development/workflow.md` 各有一行超过 800 字符（表格里的长单元格），不在票据 09–11 的对象里，
+     现记在 `check_docs.py` 的白名单里封顶。
+   请裁定：是否另开一张小票据改示例文件注释、脚本输出文字，并把这两行长单元格拆开。

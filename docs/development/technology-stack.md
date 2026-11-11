@@ -7,7 +7,7 @@
 - Python 3.13（`.python-version` 固定 3.13.16，`pyproject.toml` 要求 `>=3.13,<3.14`）；根项目即产品项目 `kototoki`，`[tool.uv] package = false` 不打包，`environments` 只解析 `sys_platform == 'win32'`。
 - mise 固定 uv 与 just 的版本（`mise.toml`），并设置 `UV_CACHE_DIR`、`UV_PYTHON_INSTALL_DIR` 指向 `.local/`、`UV_PYTHON_PREFERENCE=managed`、`PYTHONUTF8=1`。
 - uv 管理解释器、根环境与 `uv.lock`；just 是任务入口，Windows 下用 pwsh 执行 recipe。
-- 产品推理在根环境（统一 CUDA 12.8）中运行；产品翻译（2026-11-08 起，[ADR-0019](../adr/0019-product-translation-q2.md)）与专名建表（2026-11-09 起，[ADR-0022](../adr/0022-product-names-on-strata.md)）都用独立安装的 Strata 0.2.12／build 0.1.58（`%LOCALAPPDATA%\Strata`，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录），由产品用 `strata launch --no-tui --model iq3_s`／`--stop` 自动启停、整批一个 session；它是外部前置，不在 `assets.toml` 里，由用户维护（见[依赖布局](dependencies.md)）。产品不再起 llama-server；官方 llama.cpp b11669 `win-cuda-13.4` 构建（`.local/tools/llama.cpp/b11669-cuda13.4/`，含 `identity.json`；版本与文件 SHA256 锁在 `assets.toml`；2026-10-19 由 b11583 升级）只供研究侧 demo，与 Python 进程没有 DLL 交集。选型依据见[双语字幕流水线规格 §7.2](../specs/bilingual-subtitle-pipeline.md#72-环境一个统一的-cuda-128-环境)与 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)。
+- 产品推理在根环境（统一 CUDA 12.8）中运行；产品翻译（2026-11-08 起，[ADR-0019](../adr/0019-product-translation-q2.md)）与专名建表（2026-11-09 起，[ADR-0022](../adr/0022-product-names-on-strata.md)）都用独立安装的 Strata 0.2.12／build 0.1.58（`%LOCALAPPDATA%\Strata`，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录），由产品用 `strata launch --no-tui --model iq3_s`／`--stop` 自动启停、整批一个 session；它是外部前置，不在 `assets.toml` 里，由用户维护（见[依赖布局](dependencies.md)）。产品不再起 llama-server；官方 llama.cpp b11669 `win-cuda-13.4` 构建（`.local/tools/llama.cpp/b11669-cuda13.4/`，含 `identity.json`；版本与文件 SHA256 锁在 `assets.toml`；2026-10-19 由 b11583 升级）只供研究侧 demo，与 Python 进程没有 DLL 交集。选型依据见 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 与下文[选版规则](#选版规则)。
 - 产品媒体提取调用 ffmpeg／ffprobe 子进程（路径在 `kototoki.toml` 的 `[paths]`，默认 `.local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/`），派生 WAV 用默认 swr 重采样（2026-10-15 由 soxr 改回，票据 10），不要求 libsoxr；构建为 BtbN win64 gpl `n9.0.2-28-g669f5ab083`（9.0 维护分支，2026-10-19 由 gyan.dev `2026-10-01-git-0b01ed76aa` 升级，派生 WAV 逐字节核对见[验收记录](../research/acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)），版本、来源与文件 SHA256 锁在 `assets.toml`，升级步骤见[依赖布局与资产清单](dependencies.md#ffmpeg)。
 - 产品翻译配方为 `q2-degrade-v1`（`kototoki/translate/recipes.py`，[ADR-0019](../adr/0019-product-translation-q2.md)）：Q2 规则（[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)）加批次终态失败的 10→5→1 拆批降级；切包同 `dp10-cut`，见 [GLOSSARY](../../GLOSSARY.md)。H0（Hy-MT2＋`dp10-cut`）只留在研究侧。
 - 研究期 demo 的推理后端仍在 `.local/envs/` 下的隔离环境中运行，不受根 lock 管理；冻结的 `experiments` recipe 用 Python 3.12 的无依赖历史解释器（`justfile` 的 `legacy`）。
@@ -19,9 +19,17 @@
 
 需要相应能力时优先选用：`typer`（CLI）、`pydantic-settings`（配置）、`fastapi` + `uvicorn`（HTTP 服务）、`httpx`（HTTP 客户端）、`beautifulsoup4` + `lxml`（HTML 解析）、`sqlalchemy` 2.x + `psycopg` 3 + `alembic`（关系数据库）、`structlog`（结构化日志；2026-10-18 评估后未采用，产品用标准库 logging，见[批次编排的运行日志节](../architecture/modules/batch-orchestration.md#运行日志)）。不要仅因清单存在而安装。
 
+### 选版规则
+
+用户 2026-10-14 明确：CUDA 12 与 Python 3.13 是固定锚点；被它们限制的组件随之锁定（torch／torchaudio／torchcodec 取 cu128 索引上的最新版本，CTranslate2 取 CUDA 12 wheel 的最新版本）；不受影响的组件一律取最新稳定版（transformers、pyannote.audio、faster-whisper、numpy 等），以 `uv lock` 当日的最新稳定版为准并记录。锚点的依据：CTranslate2 只有 CUDA 12 wheel，cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名、同一进程只能加载一份（[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)，另见[依赖布局的 CUDA 版本说明](dependencies.md#cuda-版本说明)）；Python 3.15 没有 CTranslate2／torchaudio／torchcodec 的 wheel，3.14 的边角依赖未核。
+
+- 不需要本地安装 CUDA toolkit：所有组件用 wheel／二进制自带的运行时。
+- CTranslate2 wheel 在 sm_120 上靠 PTX JIT（只嵌 sm_86 PTX、无 sm_120 SASS；`CUDA_DISABLE_PTX_JIT=1` 时解码失败）：冷启动首窗解码约 27 s，二次启动约 5 s（2026-10-14 实测）。
+- 升级即新身份：torch、CTranslate2 等推理组件的版本变化会轻微改变数值，必须在冻结输入上与基线成绩回归后才算接上基线。
+
 ## 已选依赖
 
-- 根项目运行时依赖（`uv lock` 于 2026-10-14 解析、2026-10-19 小范围升级，按[选版规则](../specs/bilingual-subtitle-pipeline.md#72-环境一个统一的-cuda-128-环境)：CUDA 12 与 Python 3.13 为锚点，其余取最新稳定版）：
+- 根项目运行时依赖（`uv lock` 于 2026-10-14 解析、2026-10-19 小范围升级，按[选版规则](#选版规则)：CUDA 12 与 Python 3.13 为锚点，其余取最新稳定版）：
 
   | 包 | 版本 | 来源 |
   | --- | --- | --- |
