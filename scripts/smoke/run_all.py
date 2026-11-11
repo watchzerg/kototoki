@@ -6,6 +6,7 @@
 每项一个子进程，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在同一进程相遇；子进程 PATH 去掉
 `whisper-runtime-provisional`，并设置离线变量。结果写入 `.local/smoke/<UTC 时间>/`，
 运行期间持有 `.local/gpu.lock`，已存在时拒绝启动（用 Get-Process 核实后再处理）。
+每项打印开始行与结束行（PASS／FAIL、耗时、该项 `.log`）；中途异常或 Ctrl+C 时先回收仍在运行的子进程再删锁，汇总照常打印。
 """
 
 from __future__ import annotations
@@ -47,21 +48,39 @@ def acquire_lock() -> None:
         raise SystemExit(f"{GPU_LOCK} exists; verify the owning process with Get-Process before removing it") from None
 
 
-def run_one(name: str, out: Path, env: dict[str, str]) -> tuple[int, float]:
+def utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def run_one(index: int, total: int, name: str, out: Path, env: dict[str, str]) -> tuple[int, float]:
+    """跑一项并把子进程输出逐行转发；无论以何种方式退出（含 Ctrl+C 或父进程打印失败），子进程仍在运行就先杀掉并回收。"""
     started = time.perf_counter()
+    log_path = out / f"{name}.log"
+    print(f"=== [{index}/{total}] {name} start {utc_now()}", flush=True)
     command = [sys.executable, "-X", "utf8", str(HERE / f"{name}.py"), "--out", str(out)]
-    with (out / f"{name}.log").open("w", encoding="utf-8") as log:
+    with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(command, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, encoding="utf-8", errors="replace")
-        assert process.stdout is not None
-        for line in process.stdout:
-            log.write(line)
-            print(f"[{name}] {line}", end="", flush=True)
-        code = process.wait()
-    return code, time.perf_counter() - started
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                log.write(line)
+                print(f"[{name}] {line}", end="", flush=True)
+            code = process.wait()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+    seconds = time.perf_counter() - started
+    verdict = "PASS" if code == 0 else f"FAIL (exit {code})"
+    print(f"=== [{index}/{total}] {name} {verdict} in {seconds:.1f}s, log {log_path}", flush=True)
+    return code, seconds
 
 
 def main() -> int:
+    sys.stdout.reconfigure(errors="backslashreplace")  # 重定向到 cp1252 时，子进程的 CJK 行与进度条不让父进程崩溃
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("names", nargs="*", metavar="name", help=f"可选：{', '.join(SMOKES)}")
     names = parser.parse_args().names or list(SMOKES)
@@ -70,14 +89,20 @@ def main() -> int:
     out = REPO / ".local/smoke" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out.mkdir(parents=True)
     acquire_lock()
+    results: dict[str, tuple[int, float]] = {}
     try:
         env = child_env()
-        results = {name: run_one(name, out, env) for name in names}
+        for index, name in enumerate(names, 1):
+            results[name] = run_one(index, len(names), name, out, env)
     finally:
-        GPU_LOCK.unlink(missing_ok=True)
-    for name, (code, seconds) in results.items():
-        print(f"{name}: {'PASS' if code == 0 else f'FAIL (exit {code})'} in {seconds:.1f}s")
-    print(f"results: {out}")
+        GPU_LOCK.unlink(missing_ok=True)  # run_one 已回收子进程，之后才删锁
+        for name in names:
+            if name in results:
+                code, seconds = results[name]
+                print(f"{name}: {'PASS' if code == 0 else f'FAIL (exit {code})'} in {seconds:.1f}s")
+            else:
+                print(f"{name}: not completed")
+        print(f"results: {out}", flush=True)
     return 0 if all(code == 0 for code, _ in results.values()) else 1
 
 

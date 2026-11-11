@@ -50,7 +50,7 @@ Status: in-progress
 | 06 | Strata 与专名：故障行与启停行 | — | resolved |
 | 07 | 续跑计数行 | 01 | resolved |
 | 08 | 格式统一与文档对齐 | 01–07 | resolved |
-| 09 | smoke runner 的编码与子进程回收 | — | ready-for-agent |
+| 09 | smoke runner 的编码与子进程回收 | — | resolved |
 | 10 | 补测试缺口并结题 | 01–09 | ready-for-agent |
 
 ### 01 运行头、异常退出收尾、破锁告警
@@ -197,6 +197,8 @@ Status: in-progress
 4. `docs/development/` 里如有"重定向 smoke 输出须加 `PYTHONUTF8=1`"的说法，改为如实描述。
 
 验收：不运行真实 smoke。用假的步骤脚本做单元测试——stdout 为 cp1252 且子进程输出 CJK 时不崩溃；父进程异常时子进程被回收。未验证项：真实 `just smoke` 重定向运行。
+
+执行差异：第 4 项无需改动——`docs/development/` 里只有 `technology-stack.md` 写 mise 设置 `PYTHONUTF8=1`，没有"重定向须加"的说法；新行为写进 `workflow.md` 的 smoke 细节。
 
 ### 10 补测试缺口并结题
 
