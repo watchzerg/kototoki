@@ -97,9 +97,9 @@ asr 阶段墙钟 321.7 s（两部，整卡峰值 5339 MiB），align 121.3 s（7
 
 1. **研究期 v14 测试钉着产品 W0 的旧 hash。** `experiments/asr_robustness_v14/test_offline.py::Identity::test_w0_recipe_hash_is_pinned` 断言 `plan.recipe_hash("asr", engine="w0")` 等于旧值 `127397b5…f7ba`，W0 配方换 id 后这一项失败（v14 其余 49 项与 v15 的 32 项通过）。它只在 `just experiments-test` 里，不属于任何门禁；本次按"不改 experiments/ 下既有脚本"没有动它。待裁定：保持失败（冻结证据）、还是允许把该断言改成新 hash 或删除。另：v15 的 `inventory.W0_RECIPE_HASH` 在导入时取产品当前 hash，所以重跑 v15 扫描时旧工作目录的 `asr.json` 不再被认作 `recipe_is_w0`——只影响重跑研究脚本，不影响已写出的报告。
 2. **`just smoke` 没有整套跑。** 不带参数的 `just smoke` 包含 `llama_stock`（起 llama-server）、`translate_product`、`names_product`（起 Strata），与本次授权里的"不启动 Strata、不起 llama-server"冲突，所以只跑了 STT 六项（这三项与本次改动无关：守卫只在 asr 阶段）。另外第一次尝试在第一项结束后中断——我把输出接到管道，runner 在 cp1252 控制台编码下打印进度条字符抛 `UnicodeEncodeError`，与产品无关；设 `PYTHONUTF8=1` 后重跑。**已裁定（2026-11-11）：用户授权补跑，三项通过，见 §7。**
-3. **两个冻结窗口 smoke 脚本原本跑不起来，已做一行修复。** `scripts/smoke/stt_frozen_window.py`、`x0_frozen_window.py` 还在用 ADR-0020 之前的 `artifacts.work_root(out)`（现在要两个参数），启动即 `TypeError`；改为 `artifacts.cache_dir(out)` 后 w0 冻结窗口门禁通过。这超出计划范围，为完成 smoke 验收而改；如不接受可回退这两行。
+3. **两个冻结窗口 smoke 脚本原本跑不起来，已做一行修复。** `scripts/smoke/stt_frozen_window.py`、`x0_frozen_window.py` 还在用 ADR-0020 之前的 `artifacts.work_root(out)`（现在要两个参数），启动即 `TypeError`；改为 `artifacts.cache_dir(out)` 后 w0 冻结窗口门禁通过。这超出计划范围，为完成 smoke 验收而改。**已裁定（2026-11-11）：接受。**
 4. **`x0_frozen_window` 未通过。** 窗口 0 文字与对照不同（其余 7 窗文字与 token 全等，587 unit 范围全等、时间在容差内，守卫 0 命中）。这与 STT worker 模块页记录的 2026-10-14 已接受差异（BF16 近平局在不同 torch 版本间翻转）是同一窗口；脚本本身仍把它判为不通过。逐项核对：窗口 0 的 38 个 token 中只有第 2 个不同、61 字中 1 字被替换、字数不变，与 2026-10-14 的记录一致。本次未改 x0 路径。另：本次环境的 transformers 是 5.20.1（模块页记录的是 5.19.0）。**已裁定（2026-11-11）：写进判定。** `scripts/smoke/x0_frozen_window.py` 新增 `accepted_difference`：只放行"唯一不等的窗口是窗口 0，token 等长且只有下标 1 不同，文字等长且恰好 1 字不同"，其它差异仍不通过；重跑通过。
-5. **cross 可能选中 x0 自己的复读。** 按 §3 的决定 x0 那一路不过守卫；写测试时确认：x0 窗口若自己复读且裁判分数偏向它，复读会进合并结果。这是计划内的已知范围，不是缺陷；是否对合并结果再过一遍守卫留给以后裁定。
+5. **cross 可能选中 x0 自己的复读。** 按 §3 的决定 x0 那一路不过守卫；写测试时确认：x0 窗口若自己复读且裁判分数偏向它，复读会进合并结果。这是计划内的已知范围，不是缺陷；**已裁定（2026-11-11）：不需要，合并结果不再过守卫。**
 
 ## 附：执行提示词（粘贴到新 session）
 
