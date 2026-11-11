@@ -385,6 +385,24 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertTrue(self.h.requests[0]["messages"][0]["content"].endswith("台詞 → 台本"))
         self.assertTrue(before.run_dir.is_dir())
 
+    def test_only_high_confidence_rows_enter_the_translate_identity(self) -> None:
+        # 注入规则只在翻译子系统（ADR-0019）：编排测试的伪计划把整张表当不透明身份，这里对真实的 `translate.plan` 断言。
+        doc = document(3)
+        self.h.table = table(("high", "山田", "山田"), ("medium", "東京", "东京"), ("low", "大阪", "大阪"))
+        base = self.h.plan(doc)
+        self.assertEqual(base.identity["names_sha256"], R.names_sha256([{"source": "山田", "translation": "山田"}]))
+        for edited in (table(("high", "山田", "山田"), ("medium", "東京", "东京都"), ("low", "大阪", "大阪")),
+                       table(("high", "山田", "山田"), ("medium", "東京", "东京"), ("low", "大阪", "大坂")),
+                       table(("high", "山田", "山田"))):  # 改或删 medium／low 条目
+            with self.subTest(entries=edited["entries"]):
+                self.h.table = edited
+                self.assertEqual((self.h.plan(doc).identity, self.h.plan(doc).run_dir), (base.identity, base.run_dir))
+        for edited in (table(("high", "山田", "山田君"), ("medium", "東京", "东京"), ("low", "大阪", "大阪")),
+                       table(("high", "山田", "山田"), ("high", "東京", "东京"), ("low", "大阪", "大阪"))):  # 改 high、升为 high
+            with self.subTest(entries=edited["entries"]):
+                self.h.table = edited
+                self.assertNotEqual(self.h.plan(doc).identity["names_sha256"], base.identity["names_sha256"])
+
     def test_plan_rejects_a_run_recorded_under_another_recipe_hash(self) -> None:
         doc = document(3)
         self.h.translate(doc)

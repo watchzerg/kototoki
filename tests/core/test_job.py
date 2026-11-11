@@ -1,4 +1,5 @@
-"""批次编排器离线测试：媒体、cue 构建、翻译与合并均为假实现，GPU 阶段由 `fake_worker.py` 子进程顶替。
+"""批次编排器离线测试：媒体、cue 构建、专名建表、翻译与 Strata session 为假实现（属性 patch），合并用真的，
+GPU 阶段由 `fake_worker.py` 子进程顶替。
 
 `JobCase` 也是 full 层端到端测试（`tests/full/test_job_ffmpeg.py`）的接缝：`FAKE_MEDIA = False` 时媒体阶段用真实 ffmpeg。
 """
@@ -26,12 +27,15 @@ import wave
 from kototoki import __main__ as cli
 from kototoki import artifacts, job, media, recipes
 from kototoki.config import ConfigError, load
+from kototoki.merge import merge as real_merge
+from kototoki.names import NamesError
+from kototoki.strata import StrataRefused
 from tests.fake_worker import FAKE_MODELS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FAKE_WORKER = Path(__file__).resolve().parents[1] / "fake_worker.py"
 SRT_JA = "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n"
-MERGED = "1\n00:00:01,000 --> 00:00:02,000\n你好\nこんにちは\n"  # 伪合并给出的双语字幕
+MERGED = "1\n00:00:01,000 --> 00:00:02,000\n你好\nこんにちは\n"  # 伪翻译经真实合并给出的双语字幕
 DEAD_PID = 999999999
 FAKE_SERVER_PID = 12345   # 伪 Strata 的 pid（names 与翻译共用同一个 session）
 
@@ -80,7 +84,7 @@ class JobCase(unittest.TestCase):
         self.enterContext(mock.patch("kototoki.job.gpu.verify_models", return_value=FAKE_MODELS))
         self.enterContext(mock.patch("kototoki.job.contain_children"))  # 不把测试进程放进 Job Object
 
-        # 假 Strata 共享 session（`kototoki.strata.Session`，orchestrator 经 importlib 取用）：构造不启动，第一次
+        # 假 Strata 共享 session（属性 patch `kototoki.strata.Session`）：构造不启动，第一次
         # `ensure_started` 才"启动"（记 session_enter、回调 pid），`stop`／退出上下文记 session_exit。
         self.calls: list[str] = []
         self.session_error: Exception | None = None   # 设置后 ensure_started 抛（Strata 起不来，不置 unavailable）
@@ -88,9 +92,6 @@ class JobCase(unittest.TestCase):
         self.strata_sessions: list = []               # 本次运行构造的共享 session（应恰一个）
         self.interrupt_translate: set[str] = set()    # work id：伪翻译在记下调用后抛 KeyboardInterrupt
         case = self
-
-        class StrataRefused(RuntimeError):
-            pass
 
         class StrataSession:
             def __init__(self, config, on_server_pid):
@@ -128,43 +129,28 @@ class JobCase(unittest.TestCase):
                     case.calls.append("session_exit")
                     self.on_server_pid(None)
 
-        strata = types.ModuleType("kototoki.strata")
-        strata.Session = StrataSession
-        strata.StrataRefused = StrataRefused
+        self.enterContext(mock.patch("kototoki.strata.Session", StrataSession))
 
-        # 假翻译与合并模块：orchestrator 通过 importlib 取用。
+        # 伪翻译：属性 patch `translate.plan` 与 `translate.translate_document`（阶段计划经延迟导入取同一模块对象）。
+        # 合并用真的 `merge.merge`，只包一层记调用。
         self.translate_snapshots: list[dict] = []
         self.translate_errors: set[str] = set()  # work id
-        # (work id, 注入行 SHA)：伪 run 已完成，再计划即 needs_model=False；注入行一变即另起 run（同真实子系统）
+        # (work id, 表 SHA)：伪 run 已完成，再计划即 needs_model=False；表一变即另起 run
         self.translate_done: set[tuple[str, str]] = set()
         self.fallback = 0
+        self.enterContext(mock.patch("kototoki.translate.plan", self._translate_plan))
+        self.enterContext(mock.patch("kototoki.translate.translate_document", self._translate_document))
+        self.enterContext(mock.patch("kototoki.merge.merge", self._merge))
 
-        translate = types.ModuleType("kototoki.translate")
-        translate.RECIPE_HASH = "a" * 64
-        translate.plan = self._translate_plan
-        translate.translate_document = self._translate_document
-        merge = types.ModuleType("kototoki.merge")
-        merge.merge = self._merge
-
-        # 假专名模块：建表按 `name_entries` 给表，在共享 session 上"请求模型"；没有发布期替换（ADR-0019）。
+        # 伪建表：属性 patch `names.build_document`，按 `name_entries` 给表，在共享 session 上"请求模型"；没有发布期替换
+        # （ADR-0019）。建表配方 hash 钉成固定值，names 身份的断言不随真实配方变化。
         self.name_entries: list[dict] = []          # 伪建表给出的条目；默认空表
         self.names_status: dict[str, str] = {}      # work id → 伪建表终态（failed／too_long）
         self.names_errors: set[str] = set()         # work id：伪 build_document 抛 NamesError
         self.names_snapshots: list[dict] = []
         self.planned_tables: list[dict] = []        # 伪 translate.plan 收到的专名表
-
-        class NamesError(RuntimeError):
-            pass
-
-        names = types.ModuleType("kototoki.names")
-        names.NamesError = NamesError
-        names.build_document = self._build_document
-        names.BUILD_RECIPE_HASH = "d" * 64
-        names_recipes = types.ModuleType("kototoki.names.recipes")
-        names_recipes.BUILD_RECIPE_HASH = "d" * 64
-        self.enterContext(mock.patch.dict(sys.modules, {
-            "kototoki.strata": strata, "kototoki.translate": translate, "kototoki.merge": merge,
-            "kototoki.names": names, "kototoki.names.recipes": names_recipes}))
+        self.enterContext(mock.patch("kototoki.names.build_document", self._build_document))
+        self.enterContext(mock.patch("kototoki.names.recipes.BUILD_RECIPE_HASH", "d" * 64))
 
     # --- 假实现 -------------------------------------------------------------------------------
 
@@ -228,7 +214,7 @@ class JobCase(unittest.TestCase):
             "session": session is not None, "seed": seed,
             "ja_srt": (Path(work_dir) / "ja.srt").is_file()})
         if identifier in self.names_errors:
-            raise sys.modules["kototoki.names"].NamesError("fake names transport failure")
+            raise NamesError("fake names transport failure")
         status = self.names_status.get(identifier, "ok")
         entries = [dict(entry) for entry in self.name_entries] if status == "ok" and document.cues else []
         payload = {"schema": "name-table-v2", "prompt_version": "fake", "work_guess": None, "entries": entries,
@@ -238,22 +224,23 @@ class JobCase(unittest.TestCase):
         return types.SimpleNamespace(payload=payload, attempts=1 if document.cues else 0, seconds=1.5, status=status)
 
     @staticmethod
-    def injected_sha256(table: dict) -> str:
-        """伪注入行身份：同真实子系统，只取 `confidence: high` 条目的 `forms`（缺 entries 即抛）。"""
-        rows = [form for entry in table["entries"] if entry["confidence"] == "high" for form in entry["forms"]]
-        return hashlib.sha256(json.dumps(rows, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    def table_sha256(table: dict) -> str:
+        """伪表身份：整张 `name-table.json` 内容的不透明 hash。哪些条目进翻译身份（只取 `confidence: high`）是翻译子系统的
+        规则，由 `tests/core/test_translate.py` 对真实的 `translate.plan` 断言，这里不重写。"""
+        return hashlib.sha256(json.dumps(table, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
     def _translate_plan(self, work_dir, document, name_table, config):
-        """伪计划：目录键与真实子系统同形；同一注入行已翻译过（`translate_done`）或零条目即不需要模型。"""
+        """伪计划：目录键与真实子系统同形；同一张表已翻译过（`translate_done`）或零条目即不需要模型。"""
         self.planned_tables.append(name_table)
-        names = self.injected_sha256(name_table)
+        name_table["entries"]  # 同真实子系统：表缺 entries 即抛
+        table_sha = self.table_sha256(name_table)
         run_dir = (Path(work_dir) / "translate" / f"srt-{document.source_sha256[:12]}"
-                   / f"fake__s{config.translate.seed}__n{names[:12]}")
+                   / f"fake__s{config.translate.seed}__n{table_sha[:12]}")
         return types.SimpleNamespace(
-            work_dir=Path(work_dir), run_dir=run_dir, document=document, names_sha256=names,
-            needs_model=bool(document.cues) and (Path(work_dir).name, names) not in self.translate_done,
+            work_dir=Path(work_dir), run_dir=run_dir, document=document, names_sha256=table_sha,
+            needs_model=bool(document.cues) and (Path(work_dir).name, table_sha) not in self.translate_done,
             identity={"ja_srt_sha256": document.source_sha256, "recipe_hash": "a" * 64, "seed": config.translate.seed,
-                      "names_sha256": names},
+                      "names_sha256": table_sha},
             relative=run_dir.relative_to(work_dir).as_posix())
 
     def _translate_document(self, plan, session):
@@ -279,8 +266,7 @@ class JobCase(unittest.TestCase):
 
     def _merge(self, document, translations) -> str:
         self.calls.append("merge")
-        return "\n\n".join(f"{cue.index_text}\n{cue.time_line}\n{translations[cue.id]}\n{cue.text}"
-                           for cue in document.cues) + "\n"
+        return real_merge(document, translations)
 
     # --- 辅助 ---------------------------------------------------------------------------------
 
@@ -453,14 +439,13 @@ class ExistingSubtitleTests(JobCase):
         for rel in ("a.mkv", "b.mkv"):
             self.final(rel).unlink()
         artifacts.write_failure(self.work_dir("a.mkv"), "asr", RuntimeError("stale"))
-        translate = sys.modules["kototoki.translate"]
-        inner = translate.translate_document
+        inner = self._translate_document
 
         def write_then_translate(plan, session):  # 翻译期间用户（或别的工具）写了 a 的字幕
             self.final("a.mkv").write_text("written meanwhile\n", encoding="utf-8")
             return inner(plan, session)
 
-        translate.translate_document = write_then_translate
+        self.enterContext(mock.patch("kototoki.translate.translate_document", write_then_translate))
         console = io.StringIO()
         summary = self.run_job(console=console)
         self.assertEqual((summary.existing, summary.published, summary.exit_code), (["a.mkv"], ["b.mkv"], 0))
@@ -475,14 +460,13 @@ class WorkRootTests(JobCase):
     def test_work_root_is_keyed_by_input_dir_name_and_path_hash(self) -> None:
         self.make_inputs("a.mkv")
         seen: list[dict] = []
-        translate = sys.modules["kototoki.translate"]
-        inner = translate.translate_document
+        inner = self._translate_document
 
         def look_then_translate(plan, session):  # 运行中工作根里有锁
             seen.append({"lock": (self.work_root / artifacts.LOCK).is_file(), "work_dir": plan.work_dir})
             return inner(plan, session)
 
-        translate.translate_document = look_then_translate
+        self.enterContext(mock.patch("kototoki.translate.translate_document", look_then_translate))
         self.run_job()
         digest = hashlib.sha256(os.path.normcase(str(self.input)).encode("utf-8")).hexdigest()[:12]
         self.assertEqual(self.work_root, self.work / f"in-{digest}")
@@ -993,7 +977,7 @@ class NamesTests(JobCase):
             self.assertEqual(table["build"]["status"], "ok")
             sources = self.published(rel)["sources"]
             self.assertEqual(sources["names"], table["identity"])
-            self.assertEqual(sources["translate"]["names_sha256"], self.injected_sha256(table))
+            self.assertEqual(sources["translate"]["names_sha256"], self.table_sha256(table))
 
     def test_strata_starts_once_in_names_and_stops_after_translate(self) -> None:
         # ADR-0022：整批一个 Strata session，names 第一部启动，两阶段之间不停，翻译结束才 --stop，之后才放 GPU 锁。
@@ -1033,7 +1017,7 @@ class NamesTests(JobCase):
         self.assertFalse(self.config.gpu_lock.exists())
         self.assertFalse((self.work_root / artifacts.LOCK).exists())
 
-    def test_high_confidence_entries_reach_the_translate_plan_without_replacing_output(self) -> None:
+    def test_table_reaches_the_translate_plan_without_replacing_output(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
         self.name_entries = [GREETING, TOKYO]
         summary = self.run_job()
@@ -1041,20 +1025,22 @@ class NamesTests(JobCase):
         self.assertEqual([table["entries"] for table in self.planned_tables[-2:]], [[GREETING, TOKYO]] * 2)
         for rel in ("a.mkv", "b.mkv"):
             sources = self.published(rel)["sources"]
-            self.assertEqual(sources["translate"]["names_sha256"], self.injected_sha256({"entries": [GREETING]}))
+            self.assertEqual(sources["translate"]["names_sha256"], self.table_sha256(self.table(rel)))
             self.assertEqual(set(sources), {"probe", "vad", "asr", "align", "ja_cues", "names", "translate",
                                             "no_speech", "translate_fallback_cues"})
             # 表只经翻译注入：发布的译文就是翻译结果，不再做发布期替换、不写替换审计。
             self.assertEqual(self.final(rel).read_text(encoding="utf-8"), MERGED)
             self.assertFalse((self.work_dir(rel) / "names-apply.json").exists())
 
-    def test_editing_a_high_confidence_entry_retranslates_without_rebuilding(self) -> None:
+    def test_changed_table_identity_retranslates_on_the_session_without_rebuilding(self) -> None:
+        # 哪些条目改动会改变翻译身份（只有 `confidence: high`）见 test_translate.py；这里只看编排：翻译计划说表身份变了
+        # → 需要模型 → 用共享 session 重译，表仍当前、不重建。
         self.make_inputs("a.mkv", "b.mkv")
         self.name_entries = [GREETING, TOKYO]
         self.run_job()
         path = self.work_dir("a.mkv") / artifacts.NAME_TABLE
         table = artifacts.read_json(path)
-        table["entries"] = [dict(GREETING, forms=[{"ja": "こんにちは", "zh": "嗨"}]), TOKYO]  # 用户校对 high 条目
+        table["entries"] = [dict(GREETING, forms=[{"ja": "こんにちは", "zh": "嗨"}]), TOKYO]  # 用户校对条目
         artifacts.atomic_write_json(path, table)
         self.final("a.mkv").unlink()  # 要重做就删掉字幕（ADR-0020）
         self.calls.clear()
@@ -1066,36 +1052,14 @@ class NamesTests(JobCase):
         summary = self.run_job()
         self.assertEqual((summary.published, summary.existing), (["a.mkv"], ["b.mkv"]))
         self.assertEqual(len(self.launches()), launches)
-        # 表仍当前：不建表；注入行变了：翻译身份变化，起 Strata 重译 a。
+        # 表仍当前：不建表；表身份变了：翻译需要模型，起 Strata 重译 a。
         self.assertEqual(self.calls, ["session_enter", f"translate:{self.ids('a.mkv')[0]}", "session_exit", "merge"])
         self.assertEqual(self.names_snapshots, [])
         (snapshot,) = self.translate_snapshots
         self.assertEqual((snapshot["session"], snapshot["lock"]["server_pid"]), (True, FAKE_SERVER_PID))
         sources = self.published("a.mkv")["sources"]
-        self.assertEqual(sources["translate"]["names_sha256"], self.injected_sha256(table))
+        self.assertEqual(sources["translate"]["names_sha256"], self.table_sha256(table))
         self.assertEqual(artifacts.read_json(path)["entries"], table["entries"])  # 手改的表不被重建覆盖
-
-    def test_editing_only_medium_or_low_entries_does_not_retranslate(self) -> None:
-        self.make_inputs("a.mkv")
-        self.name_entries = [GREETING, TOKYO]
-        self.run_job()
-        path = self.work_dir("a.mkv") / artifacts.NAME_TABLE
-        table = artifacts.read_json(path)
-        low = dict(TOKYO, entity_ja="大阪", confidence="low", forms=[{"ja": "大阪", "zh": "大阪"}])
-        table["entries"] = [GREETING, dict(TOKYO, forms=[{"ja": "東京", "zh": "东京都"}]), low]
-        artifacts.atomic_write_json(path, table)
-        self.final("a.mkv").unlink()
-        self.calls.clear()
-        self.translate_snapshots.clear()
-        launches = len(self.launches())
-        self.config.gpu_lock.unlink(missing_ok=True)
-
-        summary = self.run_job()
-        self.assertEqual(summary.published, ["a.mkv"])
-        # 注入行不变：翻译身份不变，只读回已完成的 run，不建表、不起 server、不取锁
-        self.assertEqual((self.calls, len(self.launches())), ([f"translate:{self.ids('a.mkv')[0]}", "merge"], launches))
-        self.assertFalse(self.translate_snapshots[-1]["session"])
-        self.assertFalse(self.config.gpu_lock.exists())
 
     def test_session_failure_only_fails_files_with_cues(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
@@ -1135,8 +1099,7 @@ class NamesTests(JobCase):
         self.assertEqual((self.table("a.mkv")["build"]["status"], self.table("a.mkv")["entries"]), ("failed", []))
         self.assertEqual(self.final("a.mkv").read_text(encoding="utf-8"), MERGED)
         names_sha = {rel: self.published(rel)["sources"]["translate"]["names_sha256"] for rel in ("a.mkv", "b.mkv")}
-        self.assertEqual(names_sha, {"a.mkv": self.injected_sha256({"entries": []}),
-                                     "b.mkv": self.injected_sha256({"entries": [GREETING]})})
+        self.assertEqual(names_sha, {rel: self.table_sha256(self.table(rel)) for rel in ("a.mkv", "b.mkv")})
         warnings = [m[2] for m in map(LOG_LINE.match, console.getvalue().splitlines()) if m and m[1] == "WARNING"]
         self.assertEqual(warnings, ["[names] done a.mkv: build failed (fake failed), empty table"])
 
@@ -1336,7 +1299,7 @@ class IdentityTests(JobCase):
 
 class ImportAndDirTests(JobCase):
     def test_job_and_main_import_no_inference_stack(self) -> None:
-        # 编排器在进程内延迟导入的专名与翻译子系统同样不得带进推理栈或 experiments。
+        # 编排器以普通导入使用的 Strata、专名、翻译与合并模块同样不得带进推理栈或 experiments。
         code = (
             "import sys, kototoki.job, kototoki.__main__, kototoki.names, kototoki.translate\n"
             "banned = {'torch', 'ctranslate2', 'faster_whisper', 'transformers', 'pyannote', 'torchaudio',\n"

@@ -394,7 +394,7 @@ def run_film(film: str, whisper, qwen, scorer: Scorer, recorder: PhaseRecorder, 
 def run(out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     from kototoki.config import GPU_LOCK
-    from kototoki.job import ProcessLock
+    from kototoki.procs import ProcessLock
 
     summary: dict = {"started_at_utc": datetime.now(timezone.utc).isoformat(), "preflight": preflight(),
                      "errors": [], "films": {}, "dlls": {}}

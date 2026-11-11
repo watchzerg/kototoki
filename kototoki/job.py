@@ -15,13 +15,15 @@
 
 阶段链、期望身份与"下一个要跑的阶段"归阶段计划模块 `kototoki.plan`：CPU 阶段之后每文件算一次 `next_stage`，
 某阶段跑完再 `advance` 继续核对；产物存在且身份匹配即跳过，因此中断后重跑同一命令即续跑。GPU 阶段产物
-（`vad.json`、`asr.json`、`align.json`）由 worker 写出；CPU 阶段产物（`probe.json`、`ja-embedded.json`、`ja-cues.json`）由本模块
-写出。模型文件 SHA256 的核对（size+mtime 缓存，每次运行每阶段最多一次）在本模块经 `workers/gpu.verify_models`
-完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）。
+（`vad.json`、`asr.json`、`align.json`）由 worker 写出；CPU 与进程内阶段的产物（`probe.json`、`ja-embedded.json`、
+`ja-cues.json`、`name-table.json`）由本模块写出。模型文件 SHA256 的核对（size+mtime 缓存，每次运行每阶段最多一次）
+在本模块经 `workers/gpu.verify_models` 完成。本模块不做任何时间换算，不导入任何推理模块（有测试守门）；
+`strata`、`names`、`translate`、`merge` 以普通导入使用
+（都只依赖标准库层面的产品代码、不导入 `plan` 与 `job`）。
 
 工作根 `<work_dir>/<目标目录键>/`（`artifacts.work_root`，ADR-0020）。锁：启动即取工作根下的 `lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
 锁文件记录编排器、当前 worker 与 Strata 服务的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
-锁、Job Object 与进程身份取自 `experiments/translation_v3/procs.py`（复制，不导入）。
+锁、Job Object 与进程身份是基础层 `kototoki/procs.py` 的进程原语（复制自 `experiments/translation_v3/procs.py`，不导入）。
 """
 
 from __future__ import annotations
@@ -29,9 +31,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator, Mapping
 import concurrent.futures
 import contextlib
-import ctypes
 from dataclasses import asdict, dataclass, field
-import importlib
 import json
 import logging
 import os
@@ -40,15 +40,15 @@ import re
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING, Any, TextIO
+from typing import Any, TextIO
 
-from kototoki import artifacts, cues, embedded, media, plan, srt
+from kototoki import artifacts, cues, embedded, media, merge, names, plan, srt, strata, translate
 from kototoki.config import REPO_ROOT, Config
 from kototoki.logs import RunFormatter
+from kototoki.names import BuildResult
 from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
-
-if TYPE_CHECKING:  # 翻译子系统运行时才以 importlib 导入
-    from kototoki.translate import TranslatePlan
+from kototoki.procs import LockError, ProcessLock, contain_children
+from kototoki.translate import TranslatePlan
 from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, classify_launch, write_jobs
 
@@ -93,189 +93,6 @@ class NotPublished(RuntimeError):
 
 # 提取补偿（`probe.json` 的 `extract.compensation`）超过这么多秒时记 WARNING：净补入／丢弃与 swr 报告的丢弃样本。
 COMPENSATION_WARN_S = 0.1
-
-
-# --- 进程身份、Job Object 与文件锁（取自 translation_v3/procs.py） --------------------------------
-
-_QUERY = 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION
-_STILL_ACTIVE = 259
-
-
-class LockError(RuntimeError):
-    pass
-
-
-def _kernel() -> Any:
-    from ctypes import wintypes
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.OpenProcess.restype = wintypes.HANDLE
-    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
-    kernel.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
-    kernel.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(wintypes.FILETIME),) * 4
-    return kernel
-
-
-def pid_alive(pid: Any) -> bool:
-    if type(pid) is not int or pid <= 0:
-        return False
-    if sys.platform != "win32":
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-    from ctypes import wintypes
-    kernel = _kernel()
-    handle = kernel.OpenProcess(_QUERY, False, pid)
-    if not handle:
-        return ctypes.get_last_error() == 5  # access denied => 进程存在
-    try:
-        code = wintypes.DWORD()
-        return not kernel.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == _STILL_ACTIVE
-    finally:
-        kernel.CloseHandle(handle)
-
-
-def process_created(pid: Any) -> int | None:
-    """进程创建时间（Windows FILETIME 整数）；不可得时为 None。"""
-    if sys.platform != "win32" or type(pid) is not int or pid <= 0:
-        return None
-    from ctypes import wintypes
-    kernel = _kernel()
-    handle = kernel.OpenProcess(_QUERY, False, pid)
-    if not handle:
-        return None
-    try:
-        times = [wintypes.FILETIME() for _ in range(4)]
-        if not kernel.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
-            return None
-        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
-    finally:
-        kernel.CloseHandle(handle)
-
-
-def process_matches(pid: Any, created: Any) -> bool:
-    """进程存活，且记录了创建时间时仍是同一进程（防 pid 复用）。"""
-    if not pid_alive(pid):
-        return False
-    if created is None:
-        return True
-    current = process_created(pid)
-    return current is None or current == created
-
-
-_job_handle: Any = None
-
-
-def contain_children() -> None:
-    """把编排器进程放进 KILL_ON_JOB_CLOSE Job Object；之后启动的 ffmpeg、worker 与 Strata CLI 自动加入（Strata 服务本身在后台，靠 `--stop` 收尾）。
-
-    句柄只由本进程持有、从不显式关闭：编排器以任何方式退出时系统关闭句柄，子进程随之结束，
-    不留占显存的孤儿。每个进程只做一次；非 Windows 平台不做。
-    """
-    global _job_handle
-    if _job_handle is not None or sys.platform != "win32":
-        return
-    from ctypes import wintypes
-
-    class BasicLimit(ctypes.Structure):
-        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
-                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
-                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
-                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
-                    ("SchedulingClass", wintypes.DWORD)]
-
-    class IoCounters(ctypes.Structure):
-        _fields_ = [(name, ctypes.c_uint64) for name in (
-            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
-            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
-
-    class ExtendedLimit(ctypes.Structure):
-        _fields_ = [("BasicLimitInformation", BasicLimit), ("IoInfo", IoCounters),
-                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
-                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
-    kernel.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
-    kernel.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
-    kernel.GetCurrentProcess.restype = wintypes.HANDLE
-    handle = kernel.CreateJobObjectW(None, None)
-    if not handle:
-        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
-    info = ExtendedLimit()
-    info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    if not kernel.SetInformationJobObject(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
-        raise OSError(ctypes.get_last_error(), "SetInformationJobObject failed")
-    if not kernel.AssignProcessToJobObject(handle, kernel.GetCurrentProcess()):
-        raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
-    _job_handle = handle
-
-
-Alive = Callable[[Any, Any], bool]
-
-
-class ProcessLock:
-    """O_EXCL 锁文件，以 pid + 创建时间标识持有者；从不抢占存活的持有者。"""
-
-    def __init__(self, path: Path, kind: str, info: Mapping[str, Any] | None = None, *,
-                 alive: Alive = process_matches):
-        self.path, self.kind, self.alive = Path(path), kind, alive
-        self.pid = os.getpid()
-        self.created = process_created(self.pid)
-        self.info = dict(info or {})
-        self.stale: dict[str, Any] | None = None
-        self.held = False
-
-    def read(self) -> dict[str, Any] | None:
-        if not self.path.exists():
-            return None
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
-            return {"unparseable": True}
-        return data if isinstance(data, dict) else {"unparseable": True}
-
-    def acquire(self, *, break_stale: bool = False) -> None:
-        current = self.read()
-        if current is not None:
-            # 空的或无法解析的锁文件（持有者刚创建就被杀）没有 pid，与死 pid 同等对待：默认拒绝，`break_stale` 时替换。
-            owner = current.get("pid") if type(current.get("pid")) is int else None
-            if owner is not None and self.alive(owner, current.get("pid_created")):
-                raise LockError(f"{self.kind} {self.path} held by live pid {owner}; not starting. Do not kill it.")
-            if not break_stale:
-                origin = f"from dead pid {owner}" if owner is not None else "with no owner pid (empty or unparseable)"
-                raise LockError(f"Stale {self.kind} {self.path} {origin}; "
-                                f"set KOTOTOKI_BREAK_STALE_LOCK=1 for one run to remove it")
-            self.stale = current
-            self.path.unlink()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError as exc:
-            raise LockError(f"{self.kind} {self.path} was taken concurrently") from exc
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump({"pid": self.pid, "pid_created": self.created, **self.info, "owner": "kototoki",
-                       "created_at_utc": artifacts.utc_now(), "replaced_stale_lock": self.stale}, stream)
-        self.held = True
-
-    def update(self, **fields: Any) -> None:
-        if self.held:
-            current = self.read() or {}
-            if current.get("pid") == self.pid:
-                artifacts.atomic_write_json(self.path, current | fields)
-
-    def release(self) -> None:
-        if not self.held:
-            return
-        current = self.read()
-        if current and current.get("pid") == self.pid and current.get("pid_created") == self.created:
-            self.path.unlink()
-        self.held = False
 
 
 # --- 运行日志 -----------------------------------------------------------------------------------
@@ -398,23 +215,7 @@ def stable_files(files: list[tuple[str, Path]], interval_s: float,
     return stable, [rel for rel, _ in unstable]
 
 
-# --- Strata、专名、翻译与合并的延迟导入、模型核对 ----------------------------------------------------
-
-def _strata_module() -> Any:
-    return importlib.import_module("kototoki.strata")
-
-
-def _names_module() -> Any:
-    return importlib.import_module("kototoki.names")
-
-
-def _translate_module() -> Any:
-    return importlib.import_module("kototoki.translate")
-
-
-def _merge_module() -> Any:
-    return importlib.import_module("kototoki.merge")
-
+# --- 模型核对 -------------------------------------------------------------------------------------
 
 def model_sha_lookup(config: Config) -> ModelSha:
     """按阶段核对 worker 用到的模型文件 SHA256（size+mtime 缓存与 worker 共用），每次运行每阶段最多一次。
@@ -678,7 +479,7 @@ def build_ja_cues(config: Config, video: VideoFile) -> None:
                              {**payload, "ja_srt_sha256": artifacts.sha256_file(ja_path)})
 
 
-def _names_line(relative: str, result: Any) -> str:
+def _names_line(relative: str, result: BuildResult) -> str:
     """一部影片建表结果的日志行：只有计数、token 与耗时，条目文字不进日志。"""
     if result.status != "ok":
         return f"[names] done {relative}: build failed ({result.payload['build']['reason']}), empty table"
@@ -690,7 +491,7 @@ def _names_line(relative: str, result: Any) -> str:
             f"{meta['prompt_tokens']} prompt tok, {meta['completion_tokens']} completion tok, {result.seconds:.1f} s")
 
 
-def names_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> None:
+def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) -> None:
     """为 `batch` 建专名表并写 `name-table.json`；建表终态失败（`too_long`／`failed`）写空表、记 WARNING，影片照常往下走。
 
     只有某个文件的 `ja.srt` 有 cue 时才取 GPU 锁，有 cue 的文件拿到共享 `session`（第一次请求模型时启动 Strata），零条目
@@ -700,7 +501,6 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> None:
         return
     started = time.perf_counter()
     logger.info(f"[names] start: {len(batch)} file(s)")
-    names = _names_module()
     documents: dict[str, srt.SourceDocument] = {}
     for video in batch:
         try:
@@ -728,7 +528,8 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> None:
     logger.info(f"[names] end: {time.perf_counter() - started:.1f}s")
 
 
-def translate_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> dict[str, tuple[dict[str, str], int, str]]:
+def translate_batch(ctx: _Context, batch: list[VideoFile],
+                    session: strata.Session) -> dict[str, tuple[dict[str, str], int, str]]:
     """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 回退条数, run 目录相对工作目录)。
 
     只有某个文件 `needs_model` 时才取 GPU 锁（names 已取时沿用），需要模型的文件拿到共享 `session`（names 阶段没有
@@ -740,7 +541,6 @@ def translate_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> dict
         return results
     started = time.perf_counter()
     logger.info(f"[translate] start: {len(batch)} file(s)")
-    translate = _translate_module()
     if any(video.translate_plan.needs_model for video in batch):
         ctx.ensure_gpu_lock()
     for video in batch:
@@ -895,7 +695,7 @@ def _run(ctx: _Context) -> None:
 
     # names 与 translate 共用一个 Strata session：第一次需要模型时启动，退出上下文（正常、出错、中断）即 `--stop` 并核实
     # 显存释放，之后才放 GPU 锁；两阶段都不需要模型时整批不启动。pid 经回调写进 GPU 锁（未取锁时 update 是空操作）。
-    with _strata_module().Session(config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid)) as session:
+    with strata.Session(config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid)) as session:
         names_batch(ctx, planned("names"), session)
         translated = translate_batch(ctx, planned("translate"), session)
     ctx.gpu_lock.release()
@@ -909,7 +709,7 @@ def _run(ctx: _Context) -> None:
             elif stage == "translate" and video.relative in translated:
                 translations, fallback, translate_dir = translated[video.relative]
                 document = video.plan.translate.document
-                text = _merge_module().merge(document, translations) if document.cues else ""
+                text = merge.merge(document, translations) if document.cues else ""
                 publish(ctx, video, text, translate_dir, fallback)
         except Exception as error:
             ctx.fail(video, "publish", error)

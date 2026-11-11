@@ -15,7 +15,6 @@ import tempfile
 import types
 import unittest
 from unittest import mock
-import sys
 
 from kototoki import artifacts, plan, recipes, srt
 from kototoki.config import load
@@ -55,15 +54,9 @@ class PlanCase(unittest.TestCase):
         self.final = artifacts.final_srt_path(self.root / "in", "a.mkv")
         self.target = plan.Target(self.work, PROBE_IDENTITY, PCM)
         self.tables: list[dict] = []  # 伪 translate.plan 收到的专名表
-        translate = types.ModuleType("kototoki.translate")
-        translate.RECIPE_HASH = "a" * 64
-        translate.plan = self._translate_plan
-        recipes = types.ModuleType("kototoki.names.recipes")
-        recipes.BUILD_RECIPE_HASH = "d" * 64
-        names = types.ModuleType("kototoki.names")
-        names.recipes = recipes
-        self.enterContext(mock.patch.dict(sys.modules, {"kototoki.translate": translate, "kototoki.names": names,
-                                                        "kototoki.names.recipes": recipes}))
+        # 属性 patch 真实模块：`plan` 经延迟导入取到的是同一模块对象。
+        self.enterContext(mock.patch("kototoki.translate.plan", self._translate_plan))
+        self.enterContext(mock.patch("kototoki.names.recipes.BUILD_RECIPE_HASH", "d" * 64))
 
     def _translate_plan(self, work_dir, document, name_table, config):
         self.tables.append(name_table)
