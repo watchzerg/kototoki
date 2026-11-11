@@ -1678,6 +1678,25 @@ class RunLogTests(JobCase):
                          [f"[names] FAILED {rel}: StrataRefused" for rel in ("a.mkv", "b.mkv", "c.mkv")])
         self.assertEqual("\n".join(file).count("Traceback (most recent call last):"), 1)  # 只有触发拒绝的第一部
 
+    def test_plan_line_counts_where_each_file_resumes(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv", "d.mkv")
+        self.plan({"asr": {"b.mkv": "crash"}, "vad": {"c.mkv": "empty"}})
+        _, file = self.run_logged()
+        self.assertIn("[plan] 4 file(s) resume at: vad 4", self.entries_at(file, "INFO"))
+
+        # 续跑：b 从 asr 起；a、d 已发布，扫描即跳过；c 无语音已发布。删掉 a 的字幕与翻译 run 让它从 translate 起
+        self.plan({})
+        self.final("a.mkv").unlink()
+        self.translate_done.clear()
+        _, file = self.run_logged()
+        self.assertIn("[plan] 2 file(s) resume at: asr 1, translate 1", self.entries_at(file, "INFO"))
+        extract = [e for e in self.entries_at(file, "INFO") if e.startswith("[extract] done")]
+        self.assertEqual(sorted(extract), ["[extract] done a.mkv (reused)", "[extract] done b.mkv (reused)"])
+
+    def test_plan_line_with_nothing_to_plan(self) -> None:
+        _, file = self.run_logged()
+        self.assertIn("[plan] 0 file(s) resume at: none", self.entries_at(file, "INFO"))
+
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")
 

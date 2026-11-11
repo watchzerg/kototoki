@@ -48,7 +48,7 @@ Status: in-progress
 | 04 | cues 阶段三件套 | — | resolved |
 | 05 | 翻译：固定校验消息、行内文件归属、降级批次字段 | — | resolved |
 | 06 | Strata 与专名：故障行与启停行 | — | resolved |
-| 07 | 续跑计数行 | 01 | ready-for-agent |
+| 07 | 续跑计数行 | 01 | resolved |
 | 08 | 格式统一与文档对齐 | 01–07 | ready-for-agent |
 | 09 | smoke runner 的编码与子进程回收 | — | ready-for-agent |
 | 10 | 补测试缺口并结题 | 01–09 | ready-for-agent |

@@ -166,6 +166,7 @@ class VideoFile:
     pcm_sha256: str | None = None
     embedded: dict[str, Any] | None = None  # 采用内嵌日文字幕时 `ja-embedded.json` 的身份（此时不提取音频）
     embedded_note: str = ""       # 采用内嵌字幕时的日志说明（流索引、编码、条数）
+    reused_wav: bool = False      # 本次运行复用了已有的派生 WAV（`probe.json` 当前，跳过 extract）
     plan: Plan | None = None      # CPU 阶段之后由阶段计划模块给出，某阶段跑完后推进
     failed: str | None = None     # 本次运行中失败的阶段
 
@@ -336,6 +337,7 @@ def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
         record = artifacts.read_json(path)["extract"]
         if record is not None:
             video.pcm_sha256 = record["pcm_sha256"]
+            video.reused_wav = True
             return (fallback + video.probe.warnings + tuple(record["warnings"])
                     + tuple(compensation_warnings(record["compensation"], video.probe.audio.sample_rate)))
     clean_leftovers(video.work_dir)
@@ -744,7 +746,8 @@ def _run(ctx: _Context) -> None:
                 for warning in future.result():
                     logger.warning(f"[extract] {video.relative}: {warning}")
                 logger.info(f"[extract] done {video.relative}"
-                            + (f": {video.embedded_note}, skipping speech recognition" if video.embedded else ""))
+                            + (f": {video.embedded_note}, skipping speech recognition" if video.embedded else "")
+                            + (" (reused)" if video.reused_wav else ""))
         except BaseException:  # Ctrl+C：排队中的文件不再提取，只等正在跑的 ffmpeg 结束
             pool.shutdown(wait=True, cancel_futures=True)
             raise
@@ -758,6 +761,7 @@ def _run(ctx: _Context) -> None:
             video.plan = plan.next_stage(video.target(), config, ctx.models)
         except PlanError as error:
             ctx.fail(video, error.stage, error)
+    logger.info(_plan_line([video.plan.stage for video in live() if video.plan is not None]))
 
     def planned(stage: str) -> list[VideoFile]:
         return [video for video in live() if video.plan is not None and video.plan.stage == stage]
@@ -797,6 +801,13 @@ def _run(ctx: _Context) -> None:
         if video.relative not in summary.published and video.relative not in summary.existing:
             stage = video.plan.stage if video.plan is not None else None
             ctx.fail(video, "publish", NotPublished(f"planned stage {stage!r} was not handled by any executor"))
+
+
+def _plan_line(stages: list[str]) -> str:
+    """计划之后每个文件从哪个阶段继续：按阶段链顺序只列非零项（`publish` 即无语音或已全部完成、只差发布）。"""
+    order = (*GPU_STAGES, "cues", "names", "translate", "publish")
+    counts = {stage: stages.count(stage) for stage in order if stages.count(stage)}
+    return f"[plan] {len(stages)} file(s) resume at: " + (", ".join(f"{stage} {n}" for stage, n in counts.items()) or "none")
 
 
 def _log_summary(summary: Summary) -> None:
