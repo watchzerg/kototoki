@@ -111,7 +111,7 @@ def terminal_delivers_sigint() -> bool:
     """本进程在终端前台进程组时，Ctrl-C 已直接送达同组的命令，不必重复转发。"""
     try:
         return os.tcgetpgrp(sys.stdin.fileno()) == os.getpgrp()
-    except OSError, ValueError, AttributeError:
+    except (OSError, ValueError, AttributeError):
         return False
 
 

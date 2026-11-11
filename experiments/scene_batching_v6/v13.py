@@ -68,6 +68,7 @@ E_ROOT = V13_ROOT / "E"
 T0, T1 = "q2-names-27b", "q2-names-s1"
 S1_NAME = VARIANTS[CANDIDATE]["name"]
 S1_MAX_TOKENS = 8192
+FIRST_S1_ATTEMPTS = 2  # attempts of v1 and v2 (the 27B-era product value); more than this is recorded as ``retries``
 S1_CONTEXT = 24576  # context - max_tokens - 512 = 15872, the product prompt budget
 MAIN_SEEDS = v9.MAIN_SEEDS
 PRODUCT_SEEDS = v11.PRODUCT_SEEDS
@@ -94,13 +95,13 @@ def s1_recipe(variant: str = CANDIDATE) -> dict[str, Any]:
     from kototoki.names.table import PROMPT_BUDGET, PROMPT_GUARD_TOKENS
     assert S1_CONTEXT - S1_MAX_TOKENS - PROMPT_GUARD_TOKENS == PROMPT_BUDGET
     v = VARIANTS[variant]
-    build = {k: x for k, x in BUILD.items() if k != "model_asset"} | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT}
-    if v["attempts"] != BUILD["attempts"]:
-        build["attempts"] = v["attempts"]
+    # Since ADR-0022 the product ``BUILD`` is itself the Strata recipe and its ``build`` block is the S1 v4 block; the
+    # variants differ from it in ``attempts`` only (the 27B-era product recipe S1 was derived from had 2).
+    build = dict(BUILD["build"]) | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT, "attempts": v["attempts"]}
     request: dict[str, Any] = {"response_format": None, "chat_template_kwargs": {"enable_thinking": False},
                                "model": strata.MODEL}
     if v["response_format"]:
-        request["response_format"] = {"type": "json_schema", "schema_sha256": BUILD["response_schema_sha256"],
+        request["response_format"] = {"type": "json_schema", "schema_sha256": build["response_schema_sha256"],
                                       "strata_method": "prompt_and_validate",
                                       "http_502_structured_output_failed": "failed attempt"}
     out = {"name": v["name"], "build": build,
@@ -110,7 +111,7 @@ def s1_recipe(variant: str = CANDIDATE) -> dict[str, Any]:
             "request": request,
             "prompt_budget_check": {"endpoint": COUNT_TOKENS, "segments": ["system", "user"], "sum": True,
                                     "fallback": "no precheck; usage.prompt_tokens recorded, over budget flagged"}}
-    if v["attempts"] > BUILD["attempts"]:
+    if v["attempts"] > FIRST_S1_ATTEMPTS:
         out["retries"] = "build_table again with seed + 2k while it fails; at most attempts requests; first ok kept"
     return out
 
@@ -132,14 +133,17 @@ def _post(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
 
 def strata_body(body: dict[str, Any], *, response_format: bool = False) -> dict[str, Any]:
     """The product request body (``table._request_body``) as S1 sends it: the Strata model, ``max_tokens`` 8192,
-    thinking stated off, ``response_format`` dropped (v1, v2, v4) or kept as the product sends it (v3).
+    thinking stated off, ``response_format`` dropped (v1, v2, v4) or the 27B-era product one (v3).
     (``build_table`` keeps checking the prompt against the product budget, which S1 leaves unchanged.)"""
     if (body.get("chat_template_kwargs") or {}).get("enable_thinking") is not False:
         raise ValueError("S1 requests must state enable_thinking: false")
     if type(body.get("seed")) is not int or body["seed"] <= 0:
         raise ValueError("Strata takes only a positive integer seed")
-    return {k: v for k, v in body.items() if response_format or k != "response_format"} | {
-        "model": strata.MODEL, "max_tokens": S1_MAX_TOKENS}
+    out = {k: v for k, v in body.items() if k != "response_format"} | {"model": strata.MODEL, "max_tokens": S1_MAX_TOKENS}
+    if response_format:  # v3: the 27B-era product ``response_format`` (the product no longer sends one, ADR-0022)
+        from kototoki.names.table import RESPONSE_SCHEMA
+        out["response_format"] = {"type": "json_schema", "json_schema": {"name": "name_table", "schema": RESPONSE_SCHEMA}}
+    return out
 
 
 def _empty_reply(finish: str) -> dict[str, Any]:

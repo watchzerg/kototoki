@@ -35,7 +35,8 @@ large-v3／CUDA FP16／beam5／batch1，MMS CUDA FP32。WhisperX 中未实际执
 使用已经配置的 `.local/envs/whisper-latest`，不安装或升级。现有环境版本与模型身份见
 [框架研究](../../docs/research/2026-10-04-whisper-framework-architecture.md)。首次从已经取得的本机资产
 复制旧 PyanNet 和 Mel 文件；当前 newPyannote 仅复用其中 Mel，旧 checkpoint 用于历史回归。
-脚本只读本地文件并校验固定 SHA256，目标已存在时拒绝覆盖：
+脚本只读本地文件并校验固定 SHA256，目标已存在时拒绝覆盖；它只用标准库，下例用根环境的解释器，
+`whisper-latest` 只作为 `--source` 的资产来源：
 
 ```powershell
 .venv/Scripts/python.exe -m experiments.w0_demo.prepare_assets --source .local/envs/whisper-latest/Lib/site-packages/whisperx/assets

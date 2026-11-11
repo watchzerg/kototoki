@@ -2,6 +2,8 @@
 
 检查范围：根目录 README、AGENTS、GLOSSARY、CODING_STANDARDS 与 docs/ 下全部 Markdown。
 模块页（docs/architecture/modules/*.md）必须能从 docs/architecture/INDEX.md 沿链接到达。
+不检查的两类：docs/archive/ 下的归档件（原样保存，其相对链接按原位置写）；指向仓库之外的相对链接
+（相邻仓库，本机未必存在），只计数。
 """
 
 import argparse
@@ -14,6 +16,7 @@ from urllib.parse import unquote, urlsplit
 ROOT_DOCUMENTS = ("README.md", "AGENTS.md", "GLOSSARY.md", "CODING_STANDARDS.md")
 ARCHITECTURE_INDEX = Path("docs/architecture/INDEX.md")
 MODULES = Path("docs/architecture/modules")
+ARCHIVE = Path("docs/archive")
 LINK_TITLE = r"""(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?"""
 LINK = re.compile(
     r"!?\[(?P<text>[^\]\n]*)\]\(\s*(?P<dest><[^>\n]+>|[^\s)]+)" + LINK_TITLE + r"\s*\)"
@@ -90,9 +93,10 @@ def anchors(lines: list[tuple[int, str]]) -> set[str]:
     return result
 
 
-def check_documents(root: Path) -> tuple[list[str], int, int]:
+def check_documents(root: Path) -> tuple[list[str], int, int, int]:
     root = root.resolve()
-    files = {root / name for name in ROOT_DOCUMENTS} | set((root / "docs").rglob("*.md"))
+    files = {root / name for name in ROOT_DOCUMENTS} | {
+        path for path in (root / "docs").rglob("*.md") if not path.is_relative_to(root / ARCHIVE)}
     errors = []
     documents = {}
     for path in sorted(files):
@@ -103,6 +107,7 @@ def check_documents(root: Path) -> tuple[list[str], int, int]:
     sections = {path: anchors(lines) for path, lines in documents.items()}
     graph: dict[Path, set[Path]] = {path: set() for path in documents}
     links = 0
+    external = 0
     for source, lines in documents.items():
         for number, raw in link_targets(lines):
             destination = raw.strip("<>")
@@ -113,7 +118,7 @@ def check_documents(root: Path) -> tuple[list[str], int, int]:
             target = (source.parent / unquote(url.path)).resolve() if url.path else source
             location = f"{source.relative_to(root)}:{number}"
             if not target.is_relative_to(root):
-                errors.append(f"{location} 链接越出仓库：{destination}")
+                external += 1
                 continue
             if not target.exists():
                 errors.append(f"{location} 链接目标不存在：{destination}")
@@ -134,7 +139,7 @@ def check_documents(root: Path) -> tuple[list[str], int, int]:
             pending.extend(graph.get(current, set()) - visited)
     for module in sorted(set((root / MODULES).rglob("*.md")) - visited):
         errors.append(f"架构入口不可达：{module.relative_to(root)}")
-    return errors, len(documents), links
+    return errors, len(documents), links - external, external
 
 
 def main() -> int:
@@ -148,11 +153,12 @@ def main() -> int:
     # 错误信息含中文与文档里的任意字符；控制台代码页不是 UTF-8（本机默认 cp1252）时转义而不崩溃。
     sys.stdout.reconfigure(errors="backslashreplace")
     root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
-    errors, documents, links = check_documents(root)
+    errors, documents, links, external = check_documents(root)
     if errors:
         print("\n".join(errors))
         return 1
-    print(f"文档检查通过：{documents} 篇，{links} 个本地链接；模块页均可从架构入口到达。")
+    print(f"文档检查通过：{documents} 篇，{links} 个本地链接；模块页均可从架构入口到达。"
+          f"未检查 {external} 个指向仓库之外的链接。")
     return 0
 
 

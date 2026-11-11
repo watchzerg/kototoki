@@ -277,12 +277,14 @@
 
 ## 8. 待用户裁定
 
-- **lint 与类型检查工具**：`just gate-core` 因 `lint`、`typecheck` 未接入而不可能通过，这是工作流文档记录在案的现状。要让门禁可用，需要选定工具（会改环境）或把这两项从 `gate-core` 拿掉。本计划不动。
-- **`just check-toolchain` 在本机失败**（2026-11-11 基线即如此）：本机 uv 是 0.13.0，`mise.toml` 钉 0.12.22。修它要改环境或改钉住的版本，本计划不动；各票据的离线验收因此只有 `docs-check` 与 `test` 两项有效。
-- **`experiments/scene_batching_v6/test_v13.py` 在改动前就有 3 失败 1 错误**（`VariantTest.test_hashes`、`ClientTest.test_body_drops_response_format_and_states_no_thinking`、`IdentityTest.test_product_build_hash_unchanged_and_s1_separate`、`VariantTest.test_v3_keeps_response_format_and_502_is_a_failed_attempt`）：这些测试钉着 ADR-0022 之前的产品建表配方（`response_format`、`attempts`、旧 `BUILD` hash），产品换成 `q3-names-v1` 后没有跟着改。修它们要改研究测试的断言，超出"只改导入行"的授权；本计划只保证不新增失败。要不要修、怎么修，请裁定。
-- **`Session` 的客户端接口与 §4 票据 04 的写法不同**：计划写 `Session.client(trace_root, timeout)`，由 `Session` 决定子目录 `<trace_root>/<runtime_root.name>/session-NN`。但翻译现有的 trace 目录是 `<run 目录>/transport/session-<run 内序号>`，只有 names 用 `<runtime_root.name>/session-NN` 作目录；照计划的签名做，翻译 run 目录的布局就要变，违反 §3 第 9 条。执行时改为 `Session.label`（只读，`<runtime_root.name>/session-NN`）＋`Session.client(trace_dir, *, timeout)`（目录由调用方给）：两处布局都不变，names 与翻译同样不再碰 `ordinal`、`runtime_root`、`client_factory`。如不同意请指出。
+2026-11-11 用户裁定：`Session` 接口照执行时的写法（`Session.label`＋`Session.client(trace_dir, *, timeout)`）；其余各条"按建议处理，至少不报错，该改测试断言就改"。处理结果如下，本节不再有待裁定项。
+
+- **`just gate-core`、`just gate-full` 现在通过**（`just gate-full` 实跑退出码 0）：
+  - `lint`、`typecheck` 未选定工具，从 `gate-core` 拿掉，换成 `check`（`compileall`，范围加上 `scripts`、`tests`）；两个 recipe 仍保留并说明原因。选定工具属改环境，另行决定。
+  - `mise.toml` 的 uv 钉到本机实际使用的 0.13.0（选版规则：不受锚点限制的取最新稳定版），没有改环境。
+  - `docs-check` 不再检查 `docs/archive/` 归档件（16 处，归档的旧 AGENTS 按原位置写相对链接），指向仓库之外的相对链接（28 处，相邻仓库）只计数；冻结文档本身没有改。
+  - `scripts/with_lock.py` 的 `except A, B:` 加了括号，3.13 与 3.14 都能编译。
+- **`experiments/scene_batching_v6/test_v13.py` 的 3 失败 1 错误已修**：其中的错误不是断言过期，而是 `v13.s1_recipe` 仍按 27B 时期的平铺形状读产品 `BUILD`，ADR-0022 之后一调用就 `KeyError`。改为从 `BUILD["build"]` 取建表块、只覆盖 `attempts`；`names-strata-v2`（`eb4b1c6d…`，原有钉子）与 `names-strata-v4`（`38cb7bcd…`，ADR-0021，新加钉子）两个 hash 都与记录一致。`strata_body` 对 v3 自己补上 27B 时期的 `response_format`（产品已不发送）。测试里过期的产品 hash 与断言跟着改。v4（Q3）的请求体与建表输出仍由 `tests/equivalence/test_names.py` 对照，未变。
+- `experiments/translation_v3/strata.py` 的 docstring 改指 `experiments.translation_v3.llama_server.ManagedServer`；`experiments/w0_demo/README.md` 写明 `prepare_assets` 只用标准库、`whisper-latest` 只是资产来源（根环境解释器 `--help` 实测可导入）。
+- 未动：`tests/core/test_plan.py` 的伪 `translate.plan` 自带一份"只取 high"的规则——它是该测试的替身，不引起失败，真实规则由翻译子系统自己的测试覆盖。
 - ADR-0022 里"留在原文件、不挪不删"实际在决定第 6 点，不是 §2、§3 写的第 4 点；ADR-0025 与 ADR-0022 的状态行按实际出处写。
-- 票据 01 没改的两处：`docs/specs/bilingual-subtitle-pipeline.md` 的移植来源表里仍写 `llama_server`（票据 10 核对规格时处理）；`experiments/w0_demo/README.md` 对 `prepare_assets` 解释器的两种说法（§2 列为文档漂移，但它在研究代码目录里，哪一种说法对需要跑环境才能确认，未改）。
-- `scripts/with_lock.py` 在 Python 3.13 下编译不过（第 114 行 `except A, B:` 写法），是改动前就有的问题，本计划没碰这个文件。
-- `experiments/translation_v3/strata.py` 的 docstring 仍提到 `kototoki.llama_server.ManagedServer`：它是 Q3 基线实现，按"只改导入行"没有动。
-- （执行中遇到的事项追加在这里。）

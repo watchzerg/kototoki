@@ -15,7 +15,10 @@ from experiments.translation_v3.recipes import load_recipe
 
 from . import names11, v10, v11, v12, v13
 
-PRODUCT_BUILD_HASH = "5b8d1b76da757bb26aa3d3fb894c1963935a308b6ef4eb7c75edeaa2d44c9e50"
+# q3-names-v1 (ADR-0022). The 27B-era product recipe S1 was derived from was 5b8d1b76…; since ADR-0022 the product
+# ``BUILD["build"]`` is the S1 v4 block itself.
+PRODUCT_BUILD_HASH = "d3317926ee3b3096277faa9a5fbc0879d562336fb1fe89bf0ebd04c5b0be6b17"
+Q3_BUILD_HASH = "38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0"  # names-strata-v4, ADR-0021
 Q2_DEV_HASH = "4c3d0f70a94e43207dbe439893284d078993a041bf5ebb3dd378aefeb42b0499"      # ADR-0017
 Q2_PRODUCT_HASH = "86b61ec93da4ad38fc0ff709bb973a8b659660ab6dc1b3be08f068b91be908b7"  # ADR-0017
 GOOD = json.dumps({"work_guess": None, "entries": [
@@ -53,9 +56,10 @@ class IdentityTest(unittest.TestCase):
         from kototoki.names.recipes import BUILD, BUILD_RECIPE_HASH
         self.assertEqual(BUILD_RECIPE_HASH, PRODUCT_BUILD_HASH)
         s1 = v13.s1_recipe("v2")
-        self.assertEqual(s1["build"], {k: v for k, v in BUILD.items() if k != "model_asset"}
-                         | {"max_tokens": 8192, "context": 24576})
-        self.assertEqual(s1["build"]["prompt_budget"], BUILD["prompt_budget"])  # 24576 - 8192 - 512 = 15872
+        self.assertEqual(s1["build"], BUILD["build"] | {"attempts": 2})
+        self.assertEqual(v13.s1_recipe("v4")["build"], BUILD["build"])
+        self.assertEqual((s1["build"]["max_tokens"], s1["build"]["context"], s1["build"]["prompt_budget"]),
+                         (8192, 24576, 15872))  # 24576 - 8192 - 512
         self.assertEqual((s1["model"], s1["runtime"]["launch"], s1["request"]["response_format"]),
                          (strata.MODEL, "default", None))
         self.assertNotEqual(v13.s1_hash(), BUILD_RECIPE_HASH)
@@ -66,8 +70,8 @@ class ClientTest(unittest.TestCase):
     def test_body_drops_response_format_and_states_no_thinking(self):
         from kototoki.names.table import _request_body
         product = _request_body([{"role": "user", "content": "x"}], 20261019)
-        self.assertIn("response_format", product)
-        body = v13.strata_body(product)
+        self.assertNotIn("response_format", product)  # the product stopped sending it with ADR-0022
+        body = v13.strata_body(product | {"response_format": {"type": "json_schema"}})
         self.assertNotIn("response_format", body)
         self.assertEqual((body["model"], body["chat_template_kwargs"], body["max_tokens"]),
                          (strata.MODEL, {"enable_thinking": False}, 8192))
@@ -115,6 +119,7 @@ class ClientTest(unittest.TestCase):
 class VariantTest(unittest.TestCase):
     def test_hashes(self):
         self.assertEqual(v13.s1_hash("v2"), "eb4b1c6d91517683f18fd6e83cda12fc6ea0c6cdbf9b31a43ccfc002d8d5b920")
+        self.assertEqual(v13.s1_hash("v4"), Q3_BUILD_HASH)
         self.assertEqual(len({v13.s1_hash(v) for v in ("v2", "v3", "v4")}), 3)
         self.assertEqual((v13.s1_recipe("v3")["build"]["attempts"], v13.s1_recipe("v4")["build"]["attempts"]), (5, 5))
         self.assertIsNone(v13.s1_recipe("v4")["request"]["response_format"])

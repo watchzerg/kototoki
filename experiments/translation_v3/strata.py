@@ -12,7 +12,7 @@ only the model and the inference engine change, plus the changes Strata forces (
   ``qwen_options.thinking`` (F2) the thinking packs also send ``thinking_budget_tokens`` and get the budget as extra
   ``max_tokens``; there is no thought-prefix grammar.
 
-The service is not started here (``kototoki.llama_server.ManagedServer`` cannot run Strata's engine): the executor
+The service is not started here (``experiments.translation_v3.llama_server.ManagedServer`` cannot run Strata's engine): the executor
 starts the ``kototoki-translate`` launch (usage doc §3) and ``session_factory`` attaches to it, holds the v3 GPU lock,
 checks ``strata --version``, ``strata launch --status --output json`` (+ its run config), ``/v1/models`` and
 ``/v1/status`` against the fixed identity below, records the observed values, and samples ``/v1/status`` machine

@@ -63,7 +63,7 @@ translation-flow-v2-test:
     {{legacy}} python -m unittest experiments.translation_flow.test_v2_prepare experiments.translation_flow.test_v2_common_source experiments.translation_flow.test_v2_output_budget experiments.translation_flow.test_v2_ordered_text experiments.translation_flow.test_combined_stage experiments.translation_flow.test_v2_prepare_integrity experiments.translation_flow.test_v2_worker experiments.translation_flow.test_v2_semantic experiments.translation_flow.test_v2_delivery experiments.translation_flow.test_v2_reproject experiments.translation_flow.test_v2_statistics experiments.translation_flow.test_v2_timing experiments.translation_flow.test_v2_evaluation experiments.translation_flow.test_v2_trial experiments.translation_flow.test_v2_confirmation experiments.translation_flow.test_v2_confirmation_dispatch experiments.translation_flow.test_v2_universal_review experiments.translation_flow.test_v2_matched_evaluation experiments.translation_flow.test_v2_fluency_runner experiments.translation_flow.test_v2_consistency experiments.translation_flow.test_v2_consistency_custody experiments.translation_flow.test_v2_consistency_runner experiments.translation_flow.test_v2_unit_diagnostics experiments.translation_flow.test_v2_unit_custody experiments.translation_flow.test_v2_unit_main_proof experiments.translation_flow.test_v2_review_evaluation experiments.translation_flow.test_v2_judge_dispatch experiments.translation_flow.test_v2_risk_reconciliation experiments.translation_flow.test_v2_risk_runner experiments.translation_flow.test_v2_risk_transport_runner -v
 
 check:
-    uv run --locked --offline python -m compileall -q kototoki kototoki_eval experiments
+    uv run --locked --offline python -m compileall -q kototoki kototoki_eval experiments scripts tests
 
 setup:
     uv sync --locked
@@ -123,6 +123,7 @@ smoke *args:
 docs-check:
     uv run --locked --offline python scripts/check_docs.py
 
-gate-core: check-toolchain docs-check lint typecheck test
+# lint、typecheck 未选定工具，不在门禁内；以编译检查 check 代替（docs/development/workflow.md#命令与门禁）。
+gate-core: check-toolchain docs-check check test
 
 gate-full: gate-core test-full test-equivalence
