@@ -43,6 +43,7 @@ import subprocess
 import sys
 import time
 from typing import Any, TextIO
+import warnings
 
 from kototoki import artifacts, cues, embedded, media, merge, names, plan, srt, strata, translate
 from kototoki.config import REPO_ROOT, Config
@@ -110,13 +111,13 @@ _STDERR_PROBLEM = re.compile(rb"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z \[ *[0-9.]
 def _run_logging(path: Path, console: TextIO | None = None) -> Iterator[None]:
     """`run` 期间把日志写到控制台与 `.work/run-<时间戳>.log`（内容相同，INFO 及以上）；退出时摘下并关闭 handler。
 
-    handler 挂在 root logger 上，第三方库的告警也进同一文件；`kototoki` logger 临时放到 INFO。
-    只有进度、计数与耗时，不写转写与译文。
+    handler 挂在 root logger 上，第三方库的告警（含 `warnings.warn`，经 `captureWarnings`）也进同一文件；
+    `kototoki` logger 临时放到 INFO。只有进度、计数与耗时，不写转写与译文。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     formatter = RunFormatter(time.time())
     root, ours = logging.getLogger(), logging.getLogger("kototoki")
-    level = ours.level
+    level, showwarning = ours.level, warnings.showwarning
     with path.open("a", encoding="utf-8", newline="\n") as stream:
         handlers = [logging.StreamHandler(stream),
                     logging.StreamHandler(console if console is not None else sys.stdout)]
@@ -125,13 +126,25 @@ def _run_logging(path: Path, console: TextIO | None = None) -> Iterator[None]:
             handler.setFormatter(formatter)
             root.addHandler(handler)
         ours.setLevel(logging.INFO)
+        logging.captureWarnings(True)
         try:
             yield
         finally:
+            if warnings.showwarning is not showwarning:  # 进入前已在捕获时不动
+                logging.captureWarnings(False)
             ours.setLevel(level)
             for handler in handlers:
                 root.removeHandler(handler)
                 handler.close()
+
+
+def _stale_line(lock: ProcessLock) -> str:
+    """破除残留锁的告警行：旧锁的 pid，以及它记下的 worker 阶段与 Strata 服务 pid（有才写）。"""
+    stale = lock.stale or {}
+    owner = stale.get("pid")
+    parts = [f"pid {owner}" if type(owner) is int else "no owner pid"]
+    parts += [f"{key} {stale[key]}" for key in ("worker_stage", "server_pid") if stale.get(key) is not None]
+    return f"[lock] replaced stale {lock.kind} ({', '.join(parts)})"
 
 
 def _count_stderr_problems(data: bytes) -> int:
@@ -372,7 +385,9 @@ class _Context:
             self.gpu_lock.acquire(break_stale=self.config.break_stale_lock)
         except LockError as error:
             raise GpuLocked(str(error)) from error
-        logger.info(f"GPU lock acquired: {self.gpu_lock.path}")
+        logger.info(f"[lock] GPU acquired: {self.gpu_lock.path}")
+        if self.gpu_lock.stale is not None:
+            logger.warning(_stale_line(self.gpu_lock))
 
 
 def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, list[dict[str, Any]]]:
@@ -608,9 +623,17 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
         gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"input_dir": str(input_dir)})
         ctx = _Context(config, Summary(), root, stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
         with _run_logging(root / f"run-{stamp}.log", console):
+            logger.info(f"[run] start: config={config.source} input={input_dir} engine={config.engine}")
+            if work_lock.stale is not None:
+                logger.warning(_stale_line(work_lock))
             try:
                 _run(ctx)
+            except BaseException as error:  # Ctrl+C、GpuLocked、Strata 启停异常等：日志收尾后原样抛出
+                logger.error(f"[run] ABORTED: {type(error).__name__}",
+                             exc_info=None if isinstance(error, KeyboardInterrupt) else error)
+                raise
             finally:
+                _log_summary(ctx.summary)
                 gpu_lock.release()
     finally:
         work_lock.release()
@@ -723,6 +746,9 @@ def _run(ctx: _Context) -> None:
             stage = video.plan.stage if video.plan is not None else None
             ctx.fail(video, "publish", NotPublished(f"planned stage {stage!r} was not handled by any executor"))
 
+
+def _log_summary(summary: Summary) -> None:
+    """结尾汇总：任何退出路径都写（中断时是已知的计数）。"""
     logger.info(f"[summary] {summary.total} file(s): {len(summary.published)} published "
                 f"({len(summary.no_speech)} no speech, {len(summary.embedded)} from embedded subtitles), "
                 f"{len(summary.existing)} with subtitles, "

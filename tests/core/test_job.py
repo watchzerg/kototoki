@@ -22,6 +22,7 @@ import time
 import types
 import unittest
 from unittest import mock
+import warnings
 import wave
 
 from kototoki import __main__ as cli
@@ -1357,8 +1358,9 @@ NOISY_WORKER = (
 
 
 class RunLogTests(JobCase):
-    def run_logged(self, config=None, **kwargs) -> tuple[list[str], list[str]]:
-        """跑一次，返回 (控制台行, 本次运行日志文件行)。"""
+    def run_logged(self, config=None, *, raises: type[BaseException] | None = None,
+                   **kwargs) -> tuple[list[str], list[str]]:
+        """跑一次，返回 (控制台行, 本次运行日志文件行)；`raises` 给出时断言运行以该异常结束。"""
         before = set(self.work_root.glob("run-*.log"))
         # 日志文件名精确到秒：同一用例内第二次运行若落在同一秒会复用文件名，先等到下一秒。
         stamp = lambda: time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -1367,8 +1369,9 @@ class RunLogTests(JobCase):
             while stamp() == current:
                 time.sleep(0.05)
         console = io.StringIO()
-        job.run(config or self.config, worker_command=kwargs.pop("worker_command", fake_worker_command),
-                sleep=kwargs.pop("sleep", lambda seconds: None), console=console)
+        with self.assertRaises(raises) if raises else contextlib.nullcontext():
+            job.run(config or self.config, worker_command=kwargs.pop("worker_command", fake_worker_command),
+                    sleep=kwargs.pop("sleep", lambda seconds: None), console=console)
         (path,) = set(self.work_root.glob("run-*[0-9]Z.log")) - before
         data = path.read_bytes()
         self.assertNotIn(b"\r", data)
@@ -1487,6 +1490,76 @@ class RunLogTests(JobCase):
         self.assertIn("[transformers] third-party note", self.entries_at(file, "WARNING"))
         self.assertIn("own note", self.entries_at(file, "INFO"))
         self.assertNotIn("below root level", "\n".join(file))
+
+    def test_first_line_is_the_run_header(self) -> None:
+        self.make_inputs("a.mkv")
+        _, file = self.run_logged()
+        self.assertEqual(LOG_LINE.match(file[0])[2],
+                         f"[run] start: config={self.config.source} input={self.input} engine={self.config.engine}")
+        self.assertIn(f"[lock] GPU acquired: {self.config.gpu_lock}", self.entries_at(file, "INFO"))
+
+    def test_unexpected_exception_is_logged_as_aborted_with_summary(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.extract_errors.add("b.mkv")
+        with mock.patch("kototoki.job.run_gpu_stage", side_effect=OSError("disk gone")):
+            console, file = self.run_logged(raises=OSError)
+        self.assertEqual(console, file)
+        self.assertIn("[run] ABORTED: OSError", self.entries_at(file, "ERROR"))
+        text = "\n".join(file)
+        self.assertIn("OSError: disk gone", text.split("[run] ABORTED: OSError", 1)[1])
+        info = self.entries_at(file, "INFO")
+        self.assertIn("[summary] 2 file(s): 0 published (0 no speech, 0 from embedded subtitles), 0 with subtitles, "
+                      "1 failed, 0 unstable, 0 fallback cue(s)", info)
+        self.assertEqual(info[-1], "[summary] failed at extract: b.mkv")
+        self.assertFalse(self.config.gpu_lock.exists())
+
+    def test_keyboard_interrupt_is_aborted_without_traceback(self) -> None:
+        self.make_inputs("a.mkv")
+        with mock.patch("kototoki.job.run_gpu_stage", side_effect=KeyboardInterrupt):
+            _, file = self.run_logged(raises=KeyboardInterrupt)
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[run] ABORTED: KeyboardInterrupt"])
+        self.assertNotIn("Traceback", "\n".join(file))
+        self.assertTrue(LOG_LINE.match(file[-1])[2].startswith("[summary] 1 file(s): 0 published"))
+
+    def test_gpu_lock_conflict_after_extract_closes_the_log(self) -> None:
+        self.make_inputs("a.mkv")
+        self.config.gpu_lock.write_text(json.dumps({"pid": os.getpid(), "pid_created": None}), encoding="utf-8")
+        _, file = self.run_logged(raises=job.GpuLocked)
+        messages = [LOG_LINE.match(line)[2] for line in file if LOG_LINE.match(line)]
+        self.assertLess(messages.index("[extract] done a.mkv"), messages.index("[run] ABORTED: GpuLocked"))
+        self.assertTrue(messages[-1].startswith("[summary] 1 file(s): 0 published"))
+
+    def test_breaking_stale_locks_is_a_warning(self) -> None:
+        self.make_inputs("a.mkv")
+        for path, record in ((self.work_root / artifacts.LOCK, {"pid": DEAD_PID}),
+                             (self.config.gpu_lock, {"pid": DEAD_PID, "worker_stage": "asr", "server_pid": 4242})):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(record), encoding="utf-8")
+        _, file = self.run_logged(replace(self.config, break_stale_lock=True))
+        self.assertEqual(self.entries_at(file, "WARNING"), [
+            f"[lock] replaced stale work directory lock (pid {DEAD_PID})",
+            f"[lock] replaced stale GPU lock (pid {DEAD_PID}, worker_stage asr, server_pid 4242)"])
+
+        self.config.gpu_lock.write_bytes(b"")
+        self.final("a.mkv").unlink()
+        self.translate_done.clear()
+        _, file = self.run_logged(replace(self.config, break_stale_lock=True))
+        self.assertEqual(self.entries_at(file, "WARNING"), ["[lock] replaced stale GPU lock (no owner pid)"])
+
+    def test_python_warnings_are_captured_during_the_run_only(self) -> None:
+        self.make_inputs("a.mkv")
+        before = warnings.showwarning
+
+        def build_cues(align, options):
+            warnings.warn("third-party deprecation", UserWarning)
+            return {"cues": []}, SRT_JA
+
+        with mock.patch("kototoki.job.cues.build_cues", side_effect=build_cues), warnings.catch_warnings():
+            warnings.simplefilter("always")
+            _, file = self.run_logged()
+            self.assertIs(warnings.showwarning, before)
+        self.assertTrue(any(entry.startswith("[py] ") and "UserWarning: third-party deprecation" in entry
+                            for entry in self.entries_at(file, "WARNING")))
 
     def test_worker_stderr_warnings_are_counted(self) -> None:
         self.make_inputs("a.mkv")
