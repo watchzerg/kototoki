@@ -91,7 +91,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 **日志**（由 `gpu.main` 配置）：
 
-- root 上一个写 stderr 的 handler（`kototoki.logs.RunFormatter`，与运行日志同格式），`kototoki` logger 为 INFO；第三方只有 WARNING 及以上；`logging.captureWarnings(True)` 把 Python warnings 收进同一流。
+- root 上一个写 stderr 的 handler（`kototoki.logs.RunFormatter`，与运行日志同格式），`kototoki` logger 为 INFO；第三方只有 WARNING 及以上；`logging.captureWarnings(True)` 把 Python warnings 收进同一流；`gpu.quiet_known_warnings` 只过滤 `KNOWN_HARMLESS_WARNINGS` 列出的已知无害告警（当前一条：pyannote 在 GPU 上关掉 TF32 时的 `ReproducibilityWarning`，按 `UserWarning` 与消息开头匹配），免得 vad 每次运行都在运行日志里留一行告警计数，其他告警照常。
 - 三个壳的 logger 固定命名为 `kototoki.workers.<stage>`：以 `python -m kototoki.workers.<stage>` 运行时 `__name__` 是 `__main__`，不在 INFO 级的 `kototoki` 之下，每文件 INFO 行会被丢弃。
 - 壳记模型核对与加载耗时、每文件窗口数／失败数／推理秒数；每个失败窗口一行 WARNING（只记序号与 reason，不记文字）。
 - `protocol` 对单文件失败、`FatalWorkerError` 与启动失败记 ERROR（异常类型＋traceback）；启动失败行为 `[<stage>] startup failed: <类型>`，读 jobs 失败、还不知道阶段时为 `[worker] startup failed: <类型>`。
@@ -108,13 +108,13 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
   - 壳写出的身份与 `plan` 的期望身份逐字段相等，壳不自有 `identity`／`model_files`／`recipe_hash`；坐标、`failed_windows`、上游身份不符。
   - 退出码 0／1／2 与 CUDA 守卫；`gpu.file_processor` 查一次 CUDA 后按序写出多个产物、CUDA 坏时一个都不写；启动校验（配方不符、引擎不可用）。
   - 产出能被 `cues.build_cues` 消费；offset 0 整链的 `align.json`、`ja-cues.json`、`ja.srt` 字节钉成 sha256（`CueChainBytesTest`）。
-  - 壳导入不加载推理库；三壳 logger 名钉在 `kototoki.workers.<stage>`（`WorkerLoggerNameTest`）；日志不含窗口文字。
+  - 壳导入不加载推理库；三壳 logger 名钉在 `kototoki.workers.<stage>`（`WorkerLoggerNameTest`）；日志不含窗口文字；已知无害告警的过滤只丢 TF32 那一条（`KnownWarningFilterTest`）。
   - ASR 与 `cross` 的用例见 [STT ASR](stt-asr.md#代码与验证入口)。
 - 冻结窗口门禁（真实模型验证，占 GPU，须用户批准，不属于任何测试层与 gate）：`just smoke stt_frozen_window`（`scripts/smoke/stt_frozen_window.py`）与 `just smoke x0_frozen_window`（`scripts/smoke/x0_frozen_window.py`，复用前者的 `child_env`、`run_stage`、`compare`）。
   - 由 `scripts/smoke/run_all.py` 持锁启动，结果写 `.local/smoke/<UTC>/`；没有 `.local/gpu.lock` 时脚本拒绝运行。
   - 在 300 s 冻结窗口上跑三阶段，与 W0／X0 demo 的对照逐窗比较边界、文字与 token、unit 范围与时间。
   - `x0_frozen_window` 只放行一处已接受的环境差异（窗口 0 的单个 token），结果记 `accepted_difference`，其它差异仍不通过；规则写在脚本头部。
-- 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试。
+- 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 
 ## 变更与决策来源
 

@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 import time
 from typing import Any
+import warnings
 import wave
 
 from kototoki import artifacts
@@ -25,6 +26,16 @@ from kototoki.workers.protocol import FatalWorkerError, FileJob, Jobs, run_worke
 Output = tuple[Path, Mapping[str, Any], Mapping[str, Any]]
 # compute(job) -> (按写出顺序排列的产物，阶段产物在最后, 进度行附加字段)
 Compute = Callable[[FileJob], tuple[Sequence[Output], Mapping[str, Any]]]
+
+# 每次运行都会出现、已知无害的第三方告警：(类别, 消息开头的正则)。pyannote 在 GPU 上关掉 TF32 时发
+# `ReproducibilityWarning`（`UserWarning` 子类，这里不导入 pyannote，按父类匹配）；它会让 vad 每次都有告警计数行。
+KNOWN_HARMLESS_WARNINGS = ((UserWarning, r"TensorFloat-32 \(TF32\) has been disabled"),)
+
+
+def quiet_known_warnings() -> None:
+    """只过滤 `KNOWN_HARMLESS_WARNINGS`，其他告警照常进 stderr 日志。"""
+    for category, message in KNOWN_HARMLESS_WARNINGS:
+        warnings.filterwarnings("ignore", message=message, category=category)
 
 
 def main(start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]],
@@ -43,6 +54,7 @@ def main(start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]],
     logging.getLogger().addHandler(handler)
     logging.getLogger("kototoki").setLevel(logging.INFO)
     logging.captureWarnings(True)
+    quiet_known_warnings()
     return run_worker(jobs_path, start)
 
 

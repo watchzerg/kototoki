@@ -22,6 +22,7 @@ import tempfile
 import types
 import unittest
 from unittest import mock
+import warnings
 import wave
 
 import numpy as np
@@ -871,3 +872,31 @@ class WorkerLoggerNameTest(unittest.TestCase):
                                 env={**os.environ, "PYTHONUTF8": "1"}, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "kototoki.workers.asr")
+
+
+class ReproducibilityWarning(UserWarning):
+    """与 pyannote.audio.utils.reproducibility 的同名类同构（UserWarning 子类）；测试不导入 pyannote。"""
+
+
+# 文字取自 2026-11-09 真实 vad 运行的 stderr（pyannote `fix_reproducibility`）。
+TF32_MESSAGE = ("TensorFloat-32 (TF32) has been disabled as it might lead to reproducibility issues and lower accuracy.\n"
+                "It can be re-enabled by calling\n")
+
+
+class KnownWarningFilterTest(unittest.TestCase):
+    def test_only_the_tf32_notice_is_dropped(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            gpu.quiet_known_warnings()
+            logging.captureWarnings(True)
+            try:
+                with self.assertLogs("py.warnings", "WARNING") as logs:
+                    warnings.warn(ReproducibilityWarning(TF32_MESSAGE))
+                    warnings.warn("TensorFloat-32 (TF32) has been disabled", DeprecationWarning)  # 类别不符，保留
+                    warnings.warn("some other notice", UserWarning)
+            finally:
+                logging.captureWarnings(False)
+        messages = [record.getMessage() for record in logs.records]
+        self.assertEqual(len(messages), 2, messages)
+        self.assertIn("DeprecationWarning", messages[0])
+        self.assertIn("UserWarning: some other notice", messages[1])
