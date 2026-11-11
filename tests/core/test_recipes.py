@@ -74,6 +74,21 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(recipes.recipe_hash(recipes.CROSS),
                          "d29b138b492290b3c1fbf788c029472c97ecc1fb58aa7cdc4bb415c1cbec717f")
 
+    def test_pinned_media_vad_mms_cues_embedded_recipe_hashes(self) -> None:
+        # 2026-11-11 架构整理（docs/plans/architecture-cleanup.md 票据 03）钉住：值取自 c639b22 的配方。
+        # 除 MEDIA 外，这次整理不得改变任何一个；翻译 RECIPE_HASH 与建表 BUILD_RECIPE_HASH 各在
+        # test_translate_recipes.py、test_names_recipes.py 钉住。
+        self.assertEqual(recipes.recipe_hash(recipes.MEDIA),
+                         "58892e0a96afe3a876ba90959ce19ef649d5cd1052910c132bcd92055f971e1e")
+        self.assertEqual(recipes.recipe_hash(recipes.VAD),
+                         "d940145d29b8bc4ba834d53fa2ac818fbf28aab8b2b9ce18af555c350733a60c")
+        self.assertEqual(recipes.recipe_hash(recipes.MMS),
+                         "ebafa3aa8f83555e87f3d7506aef20a5135f3cae5c4664ba00d0da2c07975475")
+        self.assertEqual(recipes.recipe_hash(recipes.CUES),
+                         "cad2355caf19cf25d43065c800042f0f03ef42f7062f8bdbcb2f9bd06cf18243")
+        self.assertEqual(recipes.recipe_hash(recipes.EMBEDDED),
+                         "7c82c08b3256f09c0df4f7c7511a95a5aaca2f988eb3fae819bed4c71187f2b2")
+
     def test_cross_nests_both_sub_recipes_and_judge_parameters(self) -> None:
         self.assertIs(recipes.CROSS["w0"], recipes.W0)
         self.assertIs(recipes.CROSS["x0"], recipes.X0)
