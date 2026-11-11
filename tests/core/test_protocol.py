@@ -125,6 +125,56 @@ class RunTests(ProtocolCase):
         self.assertEqual(loads, ["asr"])
 
 
+class ClassifyLaunchTests(unittest.TestCase):
+    IDS = ("a", "b", "c", "d")
+
+    @staticmethod
+    def done(*ids: str) -> list[dict]:
+        return [{"event": "done", "id": i, "stage": "asr"} for i in ids]
+
+    def test_normal_finish(self) -> None:
+        self.assertEqual(p.classify_launch(self.IDS, p.EXIT_OK, self.done(*self.IDS)),
+                         p.LaunchOutcome((), None, False, None, ()))
+
+    def test_partial_failure_reports_failed_ids_without_restart(self) -> None:
+        events = [*self.done("a"), {"event": "failed", "id": "b", "error_type": "ValueError"}, *self.done("c"),
+                  {"event": "failed", "id": "d", "error_type": "ValueError"}]
+        self.assertEqual(p.classify_launch(self.IDS, p.EXIT_PARTIAL, events),
+                         p.LaunchOutcome(("b", "d"), None, False, None, ()))
+
+    def test_fatal_marks_that_id_and_restarts_after_it(self) -> None:
+        events = [*self.done("a"), {"event": "fatal", "id": "b", "error_type": "FatalWorkerError"}]
+        self.assertEqual(p.classify_launch(self.IDS, p.EXIT_FATAL, events),
+                         p.LaunchOutcome((), "b", True, None, ("c", "d")))
+
+    def test_startup_failure_fails_the_rest_without_restart(self) -> None:
+        events = [{"event": "startup_failed", "error_type": "RuntimeError", "message": "model load failed"}]
+        self.assertEqual(p.classify_launch(self.IDS, p.EXIT_FATAL, events),
+                         p.LaunchOutcome((), None, False, "RuntimeError", ()))
+
+    def test_crash_without_events_blames_the_first_id(self) -> None:
+        self.assertEqual(p.classify_launch(self.IDS, 3, []), p.LaunchOutcome((), "a", False, None, ("b", "c", "d")))
+
+    def test_crash_blames_the_id_after_the_last_handled_one(self) -> None:
+        events = [*self.done("a"), {"event": "failed", "id": "b", "error_type": "ValueError"}]
+        self.assertEqual(p.classify_launch(self.IDS, 3, events), p.LaunchOutcome(("b",), "c", False, None, ("d",)))
+
+    def test_crash_after_every_id_reported_has_no_culprit(self) -> None:
+        self.assertEqual(p.classify_launch(self.IDS, 3, self.done(*self.IDS)),
+                         p.LaunchOutcome((), None, False, None, ()))
+
+    def test_exit_one_with_missing_events_is_a_crash(self) -> None:
+        # 退出码 1 也是 Python 未捕获异常的退出码：缺事件的 id 不能当作正常结束。
+        for code in (p.EXIT_OK, p.EXIT_PARTIAL):
+            with self.subTest(code=code):
+                self.assertEqual(p.classify_launch(self.IDS, code, self.done("a")),
+                                 p.LaunchOutcome((), "b", False, None, ("c", "d")))
+
+    def test_events_without_a_pending_id_are_ignored(self) -> None:
+        events = [{"event": "done", "id": "zz"}, {"note": "x"}, *self.done("a", "b")]
+        self.assertEqual(p.classify_launch(("a", "b"), p.EXIT_OK, events), p.LaunchOutcome((), None, False, None, ()))
+
+
 class FailedWindowTests(unittest.TestCase):
     def asr(self) -> dict:
         return {"original_segments": [{"text": "こんにちは"}, {"text": "ああああ…"}, {"text": "さようなら"}],

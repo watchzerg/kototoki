@@ -9,11 +9,12 @@ worker 加载一次模型后逐文件处理，每个文件的结果由 worker �
 （增量落盘），处理完一个文件即在 stdout 打一行 UTF-8 JSON 进度。单文件异常写该文件的
 `failure.json` 并继续下一个；启动失败或 `FatalWorkerError`（如 CUDA 粘性错误，后续文件必然失败）
 立即以退出码 2 结束，由编排器从下一文件重启。异常同时以 `error`（带 traceback）记到 stderr 日志。
+编排器读退出码与进度行只经 `classify_launch`，不自己解释字面量。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 import logging
@@ -132,6 +133,42 @@ def run_worker(jobs_path: Path, start: Callable[[Jobs], Callable[[FileJob], Mapp
         emit_progress({"event": "startup_failed", "error_type": type(error).__name__, "message": str(error)}, stream)
         return EXIT_FATAL
     return run_jobs(jobs, process, stream=stream)
+
+
+# --- 读侧：编排器解释一次 worker 启动 ---------------------------------------------------------------
+
+@dataclass(frozen=True)
+class LaunchOutcome:
+    """一次 worker 启动的分类结果（`classify_launch`）。"""
+    failed: tuple[str, ...]        # 报告了 `failed` 的 id（`failure.json` 已由 worker 写出），按待跑顺序
+    crashed: str | None            # 崩溃文件：worker 退出时正在处理的 id；正常结束或启动失败时为 None
+    fatal: bool                    # 崩溃文件报告了 `fatal`（`failure.json` 已由 worker 写出）
+    startup_failed: str | None     # `startup_failed` 事件的 `error_type`；有它即本阶段剩余文件全部失败、不重启
+    remaining: tuple[str, ...]     # 需要重启 worker 继续跑的 id，按待跑顺序
+
+
+def classify_launch(ids: Sequence[str], exit_code: int, events: Sequence[Mapping[str, Any]]) -> LaunchOutcome:
+    """按本模块的退出码与事件名解释一次 worker 启动；`ids` 为本次启动的待跑 id（jobs 的顺序）。
+
+    退出码 0／1 且每个待跑 id 都有事件：正常结束。退出码 1 也是 Python 未捕获异常的退出码，所以有 id 缺事件时
+    不算正常结束，与其他异常退出同样处理：有 `startup_failed` 即启动失败；有 `fatal` 即该 id 为崩溃文件；否则最后
+    一个有事件的 id 之后的那个 id 是崩溃文件。崩溃文件之后的 id 需要重启 worker 继续跑。
+    """
+    reported = {event.get("id"): event.get("event") for event in events}
+    failed = tuple(i for i in ids if reported.get(i) == "failed")
+    if exit_code in (EXIT_OK, EXIT_PARTIAL) and all(i in reported for i in ids):
+        return LaunchOutcome(failed, None, False, None, ())
+    startup = next((event for event in events if event.get("event") == "startup_failed"), None)
+    if startup is not None:
+        return LaunchOutcome(failed, None, False, str(startup.get("error_type")), ())
+    position = {i: at for at, i in enumerate(ids)}
+    handled = [position[i] for i in reported if i in position]
+    culprit_at = (max(handled) + 1) if handled else 0
+    fatal = next((event.get("id") for event in events if event.get("event") == "fatal"), None)
+    if fatal in position:
+        culprit_at = position[fatal]
+    crashed = ids[culprit_at] if culprit_at < len(ids) else None
+    return LaunchOutcome(failed, crashed, crashed is not None and crashed == fatal, None, tuple(ids[culprit_at + 1:]))
 
 
 # --- ASR 失败窗口（w0／x0 共用） ------------------------------------------------------------

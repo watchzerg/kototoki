@@ -50,7 +50,7 @@ from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
 if TYPE_CHECKING:  # 翻译子系统运行时才以 importlib 导入
     from kototoki.translate import TranslatePlan
 from kototoki.workers import gpu
-from kototoki.workers.protocol import FileJob, Jobs, write_jobs
+from kototoki.workers.protocol import FileJob, Jobs, classify_launch, write_jobs
 
 EXIT_OK = 0
 EXIT_FAILED = 1           # 有文件在某阶段失败；其余文件照常发布
@@ -85,6 +85,10 @@ class ArtifactMissing(RuntimeError):
 
 class FinalPathCollision(RuntimeError):
     """同目录另一个输入文件（主名相同、扩展名不同）已占用同一份双语字幕路径。"""
+
+
+class NotPublished(RuntimeError):
+    """收尾时文件既未失败也未发布：它的计划阶段没有被任何执行器处理（不变量被破坏）。"""
 
 
 # 提取补偿（`probe.json` 的 `extract.compensation`）超过这么多秒时记 WARNING：净补入／丢弃与 swr 报告的丢弃样本。
@@ -413,14 +417,25 @@ def _merge_module() -> Any:
 
 
 def model_sha_lookup(config: Config) -> ModelSha:
-    """按阶段核对 worker 用到的模型文件 SHA256（size+mtime 缓存与 worker 共用），每次运行每阶段最多一次。"""
+    """按阶段核对 worker 用到的模型文件 SHA256（size+mtime 缓存与 worker 共用），每次运行每阶段最多一次。
+
+    核对失败（模型缺失或 SHA 不符）同样缓存：同阶段的其余文件直接得到同一个异常，不再逐个重新哈希。
+    """
     models = plan.worker_models(config)
     cache_path = artifacts.model_cache_path(config.paths.work_dir)
     done: dict[str, Mapping[str, str]] = {}
+    failed: dict[str, tuple[Exception, Any]] = {}  # 阶段 → (异常, 首次核对时的 traceback)
 
     def lookup(stage: str) -> Mapping[str, str]:
+        if stage in failed:
+            error, traceback = failed[stage]
+            raise error.with_traceback(traceback)  # 复原首次的 traceback，不随每次重抛累积
         if stage not in done:
-            done[stage] = gpu.verify_models(plan.model_files(stage, models, engine=config.engine), cache_path)
+            try:
+                done[stage] = gpu.verify_models(plan.model_files(stage, models, engine=config.engine), cache_path)
+            except Exception as error:
+                failed[stage] = (error, error.__traceback__)
+                raise
         return done[stage]
     return lookup
 
@@ -578,11 +593,16 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
         offset = stderr.tell()
         process = subprocess.Popen(ctx.worker_command(stage, jobs_path), stdout=subprocess.PIPE, stderr=stderr,
                                    stdin=subprocess.DEVNULL, env=child_env(config), cwd=REPO_ROOT)
-        ctx.gpu_lock.update(worker_pid=process.pid, worker_stage=stage)
-        assert process.stdout is not None
-        with process.stdout:
-            events = _read_events(ctx, stage, process.stdout, by_id)
-        code = process.wait()
+        try:
+            ctx.gpu_lock.update(worker_pid=process.pid, worker_stage=stage)
+            assert process.stdout is not None
+            with process.stdout:
+                events = _read_events(ctx, stage, process.stdout, by_id)
+            code = process.wait()
+        finally:
+            if process.returncode is None:  # 读 stdout 时抛异常（Ctrl+C、写日志失败）：先回收 worker，再向上抛
+                process.kill()
+                process.wait()
     ctx.gpu_lock.update(worker_pid=None, worker_stage=None)
     with stderr_path.open("rb") as stream:
         stream.seek(offset)
@@ -613,33 +633,23 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
     """跑完 `batch`；worker 异常退出时按增量结果找出正在处理的文件，记失败，为其后文件重启 worker。"""
     started = time.perf_counter()
     logger.info(f"[{stage}] start: {len(batch)} file(s)")
+    by_id = {video.work_dir.name: video for video in batch}
     pending = list(batch)
     while pending:
         code, events = _launch(ctx, stage, pending)
-        reported = {event.get("id"): event.get("event") for event in events}
-        position = {v.work_dir.name: i for i, v in enumerate(pending)}
-        for video in pending:
-            if reported.get(video.work_dir.name) == "failed":
-                ctx.fail(video, stage)
-        if code in (0, 1):
-            break
-        startup = next((e for e in events if e.get("event") == "startup_failed"), None)
-        if startup is not None:
+        outcome = classify_launch([video.work_dir.name for video in pending], code, events)
+        for identifier in outcome.failed:
+            ctx.fail(by_id[identifier], stage)
+        if outcome.startup_failed is not None:
             # 模型加载失败与文件无关：本阶段剩余文件全部失败，不逐个重启。
-            error = WorkerCrashed(f"{stage} worker startup failed: {startup.get('error_type')}")
+            error = WorkerCrashed(f"{stage} worker startup failed: {outcome.startup_failed}")
             for video in pending:
                 ctx.fail(video, stage, error)
-            pending = []
             break
-        handled = [position[i] for i in reported if i in position]
-        culprit_at = (max(handled) + 1) if handled else 0
-        fatal = next((e.get("id") for e in events if e.get("event") == "fatal"), None)
-        if fatal in position:
-            ctx.fail(pending[position[fatal]], stage)
-            culprit_at = position[fatal]
-        elif culprit_at < len(pending):
-            ctx.fail(pending[culprit_at], stage, WorkerCrashed(f"{stage} worker exited with code {code}"))
-        pending = pending[culprit_at + 1:]
+        if outcome.crashed is not None:
+            ctx.fail(by_id[outcome.crashed], stage,
+                     None if outcome.fatal else WorkerCrashed(f"{stage} worker exited with code {code}"))
+        pending = [by_id[identifier] for identifier in outcome.remaining]
         if pending:
             logger.info(f"[{stage}] restarting worker for {len(pending)} remaining file(s)")
     done = sum(advance_or_fail(ctx, video, stage) for video in batch if not video.failed)
@@ -686,7 +696,7 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> None:
     """为 `batch` 建专名表并写 `name-table.json`；建表终态失败（`too_long`／`failed`）写空表、记 WARNING，影片照常往下走。
 
     只有某个文件的 `ja.srt` 有 cue 时才取 GPU 锁，有 cue 的文件拿到共享 `session`（第一次请求模型时启动 Strata），零条目
-    文件传 None；取锁失败只让有 cue 的文件失败，建表异常只让该文件失败。
+    文件传 None；撞 GPU 锁（`GpuLocked`）向上抛、整批退出码 4（此时共享 session 尚未启动 Strata），建表异常只让该文件失败。
     """
     if not batch:
         return
@@ -699,13 +709,8 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> None:
             documents[video.relative] = srt.read_srt(video.work_dir / JA_SRT)
         except Exception as error:
             ctx.fail(video, "names", error)
-    needed = [video for video in batch if not video.failed and documents[video.relative].cues]
-    if needed:
-        try:
-            ctx.ensure_gpu_lock()
-        except Exception as error:
-            for video in needed:
-                ctx.fail(video, "names", error)
+    if any(not video.failed and documents[video.relative].cues for video in batch):
+        ctx.ensure_gpu_lock()
     for video in batch:
         if video.failed:
             continue
@@ -729,8 +734,8 @@ def translate_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> dict
     """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 回退条数, run 目录相对工作目录)。
 
     只有某个文件 `needs_model` 时才取 GPU 锁（names 已取时沿用），需要模型的文件拿到共享 `session`（names 阶段没有
-    启动 Strata 时在这里第一次启动）；零条目或 run 已完成的文件不需要模型，传 None、直接读回译文。取锁失败只让需要
-    模型的文件失败。
+    启动 Strata 时在这里第一次启动）；零条目或 run 已完成的文件不需要模型，传 None、直接读回译文。撞 GPU 锁
+    （`GpuLocked`）向上抛、整批退出码 4。
     """
     results: dict[str, tuple[dict[str, str], int, str]] = {}
     if not batch:
@@ -738,13 +743,8 @@ def translate_batch(ctx: _Context, batch: list[VideoFile], session: Any) -> dict
     started = time.perf_counter()
     logger.info(f"[translate] start: {len(batch)} file(s)")
     translate = _translate_module()
-    needed = [video for video in batch if video.translate_plan.needs_model]
-    if needed:
-        try:
-            ctx.ensure_gpu_lock()
-        except Exception as error:
-            for video in needed:
-                ctx.fail(video, "translate", error)
+    if any(video.translate_plan.needs_model for video in batch):
+        ctx.ensure_gpu_lock()
     for video in batch:
         if video.failed:
             continue
@@ -915,6 +915,13 @@ def _run(ctx: _Context) -> None:
                 publish(ctx, video, text, translate_dir, fallback)
         except Exception as error:
             ctx.fail(video, "publish", error)
+
+    # 收尾不变量：未失败的文件必须已发布（含无语音）或按"已存在"跳过；某个计划阶段没被任何执行器处理时记失败，
+    # 不让它既不发布也不失败、整批却以 0 退出。
+    for video in live():
+        if video.relative not in summary.published and video.relative not in summary.existing:
+            stage = video.plan.stage if video.plan is not None else None
+            ctx.fail(video, "publish", NotPublished(f"planned stage {stage!r} was not handled by any executor"))
 
     logger.info(f"[summary] {summary.total} file(s): {len(summary.published)} published "
                 f"({len(summary.no_speech)} no speech, {len(summary.embedded)} from embedded subtitles), "

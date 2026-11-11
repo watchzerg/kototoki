@@ -589,6 +589,61 @@ class IsolationTests(JobCase):
         self.assertIn("startup failed", self.failure("f2.mkv")["message"])
         self.assertEqual(self.calls, [])
 
+    def test_exit_one_with_a_file_unreported_restarts_for_the_rest(self) -> None:
+        # worker 在 run_jobs 之外崩溃（未捕获异常，退出码 1）：缺事件的文件是崩溃文件，其后的文件重启 worker。
+        self.make_inputs(*FOUR)
+        real_launch = job._launch
+
+        def launch(ctx, stage, batch):
+            code, events = real_launch(ctx, stage, batch)
+            if stage == "asr" and len(batch) == len(FOUR):  # 第一次 asr：只留 f1 的事件，假装 worker 以 1 退出
+                return 1, events[:1]
+            return code, events
+
+        with mock.patch("kototoki.job._launch", side_effect=launch):
+            summary = self.run_job()
+        self.assertEqual(summary.failed, {"f2.mkv": "asr"})
+        self.assertEqual(self.failure("f2.mkv")["error_type"], "WorkerCrashed")
+        self.assertEqual([e["ids"] for e in self.launches("asr")], [self.ids(*FOUR), self.ids("f3.mkv", "f4.mkv")])
+
+    def test_interrupt_while_reading_worker_output_reaps_the_worker(self) -> None:
+        self.make_inputs("a.mkv")
+        started: list[subprocess.Popen] = []
+        real_popen = subprocess.Popen
+
+        def popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            started.append(process)
+            return process
+
+        sleeper = lambda stage, jobs_path: [sys.executable, "-c", "import time; time.sleep(60)"]  # noqa: E731
+        with mock.patch("kototoki.job.subprocess.Popen", side_effect=popen), \
+                mock.patch("kototoki.job._read_events", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            job.run(self.config, worker_command=sleeper, sleep=lambda seconds: None, console=io.StringIO())
+        (process,) = started
+        self.assertIsNotNone(process.returncode)  # 已 kill 并 wait，不留孤儿 worker
+        self.assertFalse(self.config.gpu_lock.exists())
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+
+    def test_file_left_unhandled_by_every_executor_fails_at_publish(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        with mock.patch("kototoki.job.translate_batch", return_value={}):  # 翻译执行器漏掉全部文件
+            summary = self.run_job()
+        self.assertEqual((summary.published, summary.exit_code), ([], 1))
+        self.assertEqual(summary.failed, {"a.mkv": "publish", "b.mkv": "publish"})
+        failure = self.failure("a.mkv")
+        self.assertEqual((failure["stage"], failure["error_type"]), ("publish", "NotPublished"))
+
+    def test_model_check_failure_is_cached_per_stage(self) -> None:
+        verify = self.enterContext(mock.patch("kototoki.job.gpu.verify_models",
+                                              side_effect=FileNotFoundError("model missing")))
+        lookup = job.model_sha_lookup(self.config)
+        for _ in range(3):
+            with self.assertRaises(FileNotFoundError):
+                lookup("vad")
+        self.assertEqual(verify.call_count, 1)
+
     def test_ordinary_failure_excludes_file_from_later_stages(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
         self.plan({"vad": {"b.mkv": "fail"}})
@@ -699,6 +754,43 @@ class LockTests(JobCase):
         self.assertEqual(self.launches(), [])
         self.assertEqual(self.config.gpu_lock.read_text(encoding="utf-8"), text)
         self.assertFalse((self.work_root / artifacts.LOCK).exists())  # 工作根锁已释放
+
+    def test_gpu_lock_conflict_at_names_is_process_level(self) -> None:
+        # ADR-0025：首个需要 GPU 的阶段是 names（整批都是内嵌字幕文件）时撞锁同样退出码 4，不写逐文件 failure.json。
+        self.make_inputs("a.mkv", "b.mkv")
+        for rel in ("a.mkv", "b.mkv"):
+            self.subtitles[rel] = JPN_SRT_TRACK
+            self.subtitle_text[rel] = SRT_EMBEDDED
+        text = self.write_lock(self.config.gpu_lock, os.getpid())
+        with self.assertRaises(job.GpuLocked):
+            self.run_job()
+        code, err = self.run_main()
+        self.assertEqual(code, job.EXIT_GPU_LOCKED)
+        self.assertIn("GPU locked", err)
+        self.assertEqual(list(self.work.rglob(artifacts.FAILURE)), [])
+        self.assertEqual((self.calls, self.launches()), ([], []))
+        for rel in ("a.mkv", "b.mkv"):  # CPU 产物保留，可续跑
+            self.assertTrue((self.work_dir(rel) / "ja.srt").is_file())
+            self.assertTrue((self.work_dir(rel) / artifacts.JA_EMBEDDED).is_file())
+            self.assertFalse(self.final(rel).exists())
+        self.assertEqual(self.config.gpu_lock.read_text(encoding="utf-8"), text)
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+
+    def test_gpu_lock_conflict_at_translate_is_process_level(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.empty_cues = {"b.mkv"}
+        self.run_job()
+        self.final("a.mkv").unlink()
+        self.final("b.mkv").unlink()  # b 零条目：不需要模型，但同批撞锁后也等下一次运行再发布
+        self.translate_done.clear()   # a 只有翻译需要模型
+        self.calls.clear()
+        self.write_lock(self.config.gpu_lock, os.getpid())
+        with self.assertRaises(job.GpuLocked):
+            self.run_job()
+        self.assertEqual(list(self.work.rglob(artifacts.FAILURE)), [])
+        self.assertEqual(self.calls, [])
+        self.assertFalse(self.final("a.mkv").exists())
+        self.assertFalse(self.final("b.mkv").exists())
 
     def test_stale_gpu_lock_refused_unless_break_requested(self) -> None:
         self.make_inputs("a.mkv")
