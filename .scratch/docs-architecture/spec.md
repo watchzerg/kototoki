@@ -299,6 +299,7 @@ Status: claimed
 | [08](issues/08-extend-check-docs.md) | resolved | `check_docs.py` 新增登记、预算、反引号路径、模块归属、ADR 编号 5 类错误检查与状态行告警，扫描 253 → 486 篇；15 个单元测试；`just gate-core` 通过 |
 | [09](issues/09-split-tech-design.md) | resolved | 技术设计 51,461 → 12,336 字符；配置参考拆成 `modules/config-reference.md`，历史原文存为冻结记录；与代码对不上的 7 处记在票据文件，需用户知道的记 §8 第 6 项 |
 | [10](issues/10-rewrite-module-pages.md) | resolved | 7 篇模块页重写到现状并进预算（如翻译子系统 21,389 → 11,858、STT worker 22,892 → 9,080、批次编排 20,637 → 11,993）；拆出 Strata session、STT ASR、运行日志与进程 3 篇新页；3 篇冻结记录保存移出的原文；与代码对不上的 12 处记在票据文件，§8 第 7 项 |
+| [11](issues/11-architecture-index-and-boundaries.md) | resolved | 架构总览 13,282 → 8,582 字符（产品与研究两张模块表、按任务找模块页表）；模块边界 19,491 → 11,078；26 个产品模块 docstring 加一行指向模块页；`just gate-core` 通过 |
 
 ## 8. 待用户裁定
 

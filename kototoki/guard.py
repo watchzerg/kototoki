@@ -12,6 +12,8 @@
 
 算法移植自研究脚本 `experiments/asr_robustness_v15/repeat.py`（产品包只复制不引用），
 `tests/core/test_guard.py` 核对两者在同一组文本上结果相同。参数是 `recipes.W0["guard"]`，不是配置项。
+
+模块页：docs/architecture/modules/stt-asr.md。
 """
 
 from __future__ import annotations

@@ -20,6 +20,8 @@ names 阶段的身份由本模块自己算，只经 `kototoki.names.recipes` 延
 names 恒在链上（建表必开）；`sources` 含 `names`（表的身份），表的内容经翻译身份的 `names_sha256` 体现。
 `next_stage` 对一个文件从 vad 起逐阶段核对，返回第一个需要运行的阶段与此前各阶段的期望身份；
 某阶段跑完后用 `advance` 从该阶段继续核对，不再从头重算。
+
+模块页：docs/architecture/modules/stage-plan.md。
 """
 
 from __future__ import annotations

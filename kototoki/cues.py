@@ -10,6 +10,8 @@
 句末标点与间隔断句、超限时在软断点后切、仍超限则硬切，最后加 `lead_out_s` 与
 `min_duration_s`。间隔断句只在间隔不落在同一个 VAD 子段内时成立：CTC 只给每个
 字符一个短发射点，拖长音会在词内留下超过 `max_gap_s` 的"假间隙"（票据 12）。cue 时间只取词汇字符；标点、空白与 ♪ 等符号附着到相邻 cue。
+
+模块页：docs/architecture/modules/japanese-cues.md。
 """
 
 from __future__ import annotations

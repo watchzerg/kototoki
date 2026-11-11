@@ -2,6 +2,8 @@
 
 纯函数，写出由编排器完成。中文译文内的换行替换为空格，保证 `ja-zh.srt` 每条恰好两行；
 日文 cue 由 `cues.build_cues` 产出，本身是单行。回退为日文的条目两行相同，照常输出（报告见票据 09）。
+
+模块页：docs/architecture/modules/translation-subsystem.md。
 """
 
 from __future__ import annotations

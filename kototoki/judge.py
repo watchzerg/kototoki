@@ -13,6 +13,8 @@ hyp_w 就是 w0 窗口原文（§2.2 第 3 条）。
 
 整文件裁判 `judge_file`：逐窗按"w0 失败 → x0 失败 → 裁判（打分出错取 w0）"分类、计数，给出合并文本、
 `asr-judge.json` 的逐窗记录与汇总；进入裁判前 x0 原文先经 `clean_x0`。打分回调由 worker 壳按窗口提供。
+
+模块页：docs/architecture/modules/stt-asr.md。
 """
 
 from __future__ import annotations

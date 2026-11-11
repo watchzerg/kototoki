@@ -11,6 +11,8 @@
 
 不进配置文件的两项：GPU 锁路径固定为仓库内 `.local/gpu.lock`；破除死锁只认环境变量
 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效。
+
+模块页：docs/architecture/modules/config-and-media.md、docs/architecture/modules/config-reference.md。
 """
 
 from __future__ import annotations

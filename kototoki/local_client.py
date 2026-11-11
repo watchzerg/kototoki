@@ -7,6 +7,8 @@
 `LlamaClient` 源头是 `experiments/translation_demo/client.py`（产品新增 `chat_completion`），`explicit_oom` 复制自
 `translation_demo/run.py`。llama-server 的进程生命周期与 `LlamaClient.tokenize`／`.complete` 随唯一使用者搬到研究侧
 `experiments/translation_v3/llama_server.py`。
+
+模块页：docs/architecture/modules/strata-session.md。
 """
 
 from __future__ import annotations

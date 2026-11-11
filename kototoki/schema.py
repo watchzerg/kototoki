@@ -2,6 +2,8 @@
 
 基础层：只依赖标准库与 `recipes`（`SAMPLE_RATE`、`MAX_WINDOW_SAMPLES`），编排器与各 worker 都可直接导入。
 窗口是 WAV 本地整数样本与秒，`units[].start/end` 也是 WAV 本地秒（不含 `offset_s`，offset 由日文 cue 加）。
+
+模块页：docs/architecture/modules/stt-workers.md。
 """
 
 from __future__ import annotations

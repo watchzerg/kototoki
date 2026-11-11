@@ -4,6 +4,8 @@
 `experiments/display/replay.py` 的 `floor(x*1000+0.5)`（不用 Python `round`
 的银行家舍入），见规格 §5.2。时间已是整数毫秒的条目走 `format_srt_ms`，不经秒；
 时间行四段（时、分、秒、毫秒）到整数毫秒是 `time_parts_ms`，毫秒格式化只在本模块实现。
+
+模块页：docs/architecture/modules/artifact-contract.md。
 """
 
 from __future__ import annotations

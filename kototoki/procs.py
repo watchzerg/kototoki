@@ -3,6 +3,8 @@
 与流水线无关；批次编排（`kototoki.job`）用它持有工作根锁与 `.local/gpu.lock`，并把编排器放进 KILL_ON_JOB_CLOSE
 Job Object。复制自 `experiments/translation_v3/procs.py`（不导入）。锁文件内容的时间戳与原子改写取自同在基础层的
 `kototoki.artifacts`。
+
+模块页：docs/architecture/modules/run-logging-and-processes.md。
 """
 
 from __future__ import annotations

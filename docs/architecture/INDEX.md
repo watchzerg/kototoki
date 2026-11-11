@@ -1,40 +1,69 @@
 # 当前架构总览
 
-仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频或音频在源文件旁生产中日双语 SRT，STT 默认 W0、可选 X0，翻译用 Q2 规则的产品配方 `q2-degrade-v1`（Strata 上的 Qwen3.8-Flash-Next，由产品自动启停，[ADR-0019](../adr/0019-product-translation-q2.md)），翻译前在同一个 Strata session 上用 Flash-Next 按基线 Q3 的规则建专名表（[ADR-0022](../adr/0022-product-names-on-strata.md)）、翻译时把表里高置信的译法注入提示（[ADR-0014](../adr/0014-name-consistency-in-product.md)、ADR-0019，没有发布时替换）。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `dp10-cut`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，研究侧唯一翻译基线是 Q3（Q2 的翻译规则＋同一 Strata 实例上的 Flash-Next 建表，[ADR-0021](../adr/0021-q3-strata-names-baseline.md)；Q2 规则见 [ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)，对照规则见 [ADR-0018](../adr/0018-q2-sole-translation-baseline.md)），H0 的模型与采样见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)／完整 SRT 流程见 [ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)（历史对照）；产品配方见 [ADR-0019](../adr/0019-product-translation-q2.md)。
-
-本页是理解当前系统的入口，覆盖正式代码；"当前"指同一仓库版本的已实现结构，不代表全部环境已验收。阅读顺序：本页 → [模块边界](module-boundaries.md) → 受影响的模块页 → 源码与测试。
+仓库有一个产品包 `kototoki/`（双语字幕批量流水线，入口 `python -m kototoki`）与一组研究／demo 入口（`experiments/`、`kototoki_eval/`）。
+本页是理解当前系统的入口："当前"指同一仓库版本已实现的结构，不代表全部环境已验收。现行决定与基线身份看 [CURRENT.md](../adr/CURRENT.md)，本页不复述。
+阅读顺序：本页 → [模块边界](module-boundaries.md) → 受影响的模块页 → 源码与测试。
 
 ## 模块地图
 
-每模块一篇完整当前说明，模板见[文档维护规则](../agents/documentation.md#模块页模板)。逻辑职责不要求与源码包一一对应。
+每个模块一篇完整的当前说明，模板见[文档维护规则](../agents/documentation.md#模块页模板)；逻辑职责不要求与源码包一一对应。
 
-| 模块 | 职责与主要状态所有者 | 实际位置 |
+### 产品包
+
+| 模块页 | 代码 | 职责 |
 | --- | --- | --- |
-| [外部 VAD 阶段](modules/vad-stage.md) | 在独立环境运行一个 VAD 候选（当前基线为新 Pyannote），产出带输入身份与整数源窗口的 VAD manifest；manifest 文件是 W0／X0 窗口的唯一来源 | `experiments/vad_comparison/vad_stage.py`、`experiments/w0_demo/vad_candidates.py` |
-| [W0 pipeline](modules/w0-pipeline.md) | 单进程 VAD 回放 → faster-whisper ASR → MMS；拥有 `.local/w0-demo/<run>/` 与 `.local/gpu.lock` 的简单锁实现 | `experiments/w0_demo/`（`run.py`、`pipeline.py`、`asr.py`、`vad.py`） |
-| [X0 pipeline](modules/x0-pipeline.md) | 父进程编排 plan／asr／align 三个隔离子进程：分段计划 → Qwen ASR → MMS；拥有 `.local/x0-demo/<run>/` | `experiments/x0_demo/` |
-| [MMS 对齐](modules/mms-alignment.md) | W0／X0 共用的 MMS-1b-all 日语 CTC 强制对齐、字符映射与 `text_only` 记账 | `experiments/w0_demo/alignment.py` |
-| [STT 评分与显示重放](modules/stt-evaluation.md) | 后端无关的转写 JSON 契约（`validate_transcript`）、完整分母 CER／时间评分、最小 SRT 显示重放 | `kototoki_eval/`、`experiments/display/replay.py` |
-| [语料与模型资产准备](modules/corpus-and-assets.md) | 冻结私有语料窗口与参考、生成样本精确 PCM 输入；联网获取固定 revision 的模型资产，与离线推理分离 | `experiments/corpus/`、`experiments/provision/`、`experiments/w0_demo/prepare_assets.py` |
-| [逐窗翻译运行时](modules/translation-runtime.md) | 托管一个本地 llama.cpp server（loopback），按冻结窗口 JSONL 生成并机械校验译文；ADR-0005 模型／采样基线入口 | `experiments/translation_demo_runtime.py`、`experiments/translation_demo/`、`experiments/translation_monitor.py` |
-| [完整 SRT 翻译流程](modules/translation-srt-flow.md) | v3 配方、批次、可续跑生成与 `translate-srt` 整片交付；ADR-0010 `dp10-cut` 基线（前任 ADR-0009 `dp6-grp`、ADR-0006 `b10-joint`）；拥有 v3 格式 `.local/gpu.lock` 与 v3 产物根目录 | `experiments/translation_v3/` |
-| [产物契约](modules/artifact-contract.md) | 双语字幕流水线共用的工作目录与产物身份、匹配跳过与原子替换、`failure.json`／`published.json`（审计记录）、worker `--jobs` 协议与 `failed_windows`、SRT 读写 | `kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py` |
-| [配置、配方与媒体提取](modules/config-and-media.md) | 双语字幕流水线的 `kototoki.toml` 读取与路径解析、STT／cue／媒体配方常量与 `recipe_hash`、ffprobe 选音轨、流复制原始音轨、从容器派生 16 kHz WAV（定义时间轴零点，`offset_s` 恒为 0）；内嵌日文文本字幕轨的选轨、抽取与清洗（ADR-0024，有字幕轨的文件跳过 STT） | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py` |
-| [配置参考](modules/config-reference.md) | 产品配置文件 `kototoki.toml` 的全部键、默认值、读取校验、配置与代码的边界，以及哪些键进产物身份 | `kototoki/config.py`、`kototoki.toml.example` |
-| [日文 cue](modules/japanese-cues.md) | 双语字幕流水线中把 `align.json` 字符时间回填（插值、外推、整窗 `fallback`）并切成日文 cue 的纯函数，产出 `ja-cues.json` payload 与 `ja.srt` 文本；时间轴上唯一加 `offset_s` 的地方 | `kototoki/cues.py` |
-| [STT ASR](modules/stt-asr.md) | 双语字幕流水线的 ASR 阶段：w0／x0 逐窗转写适配器、可选引擎 cross 的交叉打分裁判与审计产物、w0 整窗复读守卫 | `kototoki/asr_whisper.py`、`kototoki/asr_qwen.py`、`kototoki/judge.py`、`kototoki/guard.py`、`kototoki/workers/asr.py` |
-| [STT worker](modules/stt-workers.md) | 双语字幕流水线的三个 GPU 阶段：Pyannote VAD 分窗（`vad.json`）、w0／x0／cross 逐窗转写（`asr.json`，窗口级 `failed_windows`，x0 触顶窗口置空；`cross` 为可选引擎，w0 与 x0 共驻、Whisper 交叉打分裁判，另写三个审计产物）、MMS 字符级对齐（`align.json`，W0 `result.json` 结构）；推理模块按窗口推理，worker 壳管身份、产物与 CUDA 粘性错误退出码 | `kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`、`schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py` |
-| [批次编排](modules/batch-orchestration.md) | 双语字幕流水线的唯一入口 `python -m kototoki`：扫描与镜像、阶段 × 整批调度（线程池 extract、GPU 阶段子进程 worker、进程内 ja-cues／专名建表／翻译）、续跑与按文件重启、工作根锁与 `.local/gpu.lock`、Job Object、双语字幕发布到源文件旁（已存在即跳过）；拥有 `<work_dir>/<目标目录键>/` 的锁、运行日志（目的地与格式）与发布记录 | `kototoki/__main__.py`、`kototoki/job.py`、`kototoki/logs.py`、`kototoki/procs.py` |
-| [运行日志、进程原语与 worker 子进程](modules/run-logging-and-processes.md) | 运行日志的格式与内容规则、进程身份与锁文件、Job Object、GPU worker 的启动与崩溃判定 | `kototoki/logs.py`、`kototoki/procs.py`、`kototoki/workers/protocol.py` |
-| [阶段计划](modules/stage-plan.md) | 双语字幕流水线的阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段期望身份，以及按产物身份判定"下一个要跑的阶段"与发布状态（`next_stage`／`advance`）；编排与 worker 壳共用，翻译阶段的身份转问翻译子系统，names 身份延迟导入 `names.recipes` 取配方 hash | `kototoki/plan.py` |
-| [翻译子系统与双语合并](modules/translation-subsystem.md) | 双语字幕流水线的翻译：与 names 建表共用一个由产品自动启停的 Strata session（中间层 `kototoki/strata.py`：`strata launch --no-tui --model iq3_s`／`--stop`、身份核对、专家区检查）、产品配方 `q2-degrade-v1`（`dp10-cut` 切包、`wide-context-v1` 邻文、`qwen-joint-v1` chat 请求、`confidence: high` 的专名注入，终态失败按 10→5→1 降级）、按批次落盘与续跑、基础设施失败重启即新 session；中日两行合并的纯函数 | `kototoki/translate/`、`kototoki/merge.py` |
-| [Strata 服务与共享 session](modules/strata-session.md) | 产品唯一的推理服务：Strata 起停、身份核对、专家区检查、整批共用的 session 与启动额度、本机回环客户端 | `kototoki/strata.py`、`kototoki/local_client.py` |
-| [专名一致性](modules/name-consistency.md) | 双语字幕流水线的 names 阶段：在与翻译共用的 Strata session 上用 Flash-Next 按 Q3 规则（配方 `q3-names-v1`，最多 5 次请求）把整份 `ja.srt` 一次建成 `name-table-v2` 表并归一（终态失败写空表照常翻译，不注入）；建表必开；表由翻译注入使用，没有发布时替换；`BUILD` 配方与 hash | `kototoki/names/` |
-| 历史实验代码（冻结或只作回归参考） | 不建模块页；复现历史时按各自 README 使用冻结配置与旧身份，见下方列表 | 见下 |
+| [批次编排](modules/batch-orchestration.md) | `kototoki/__main__.py`、`kototoki/job.py` | 唯一入口：扫描、阶段 × 整批调度、续跑、锁、发布到源文件旁 |
+| [运行日志、进程原语与 worker 子进程](modules/run-logging-and-processes.md) | `kototoki/logs.py`、`kototoki/procs.py` | 运行日志格式与规则、锁文件与 Job Object、GPU worker 启动与崩溃判定 |
+| [阶段计划](modules/stage-plan.md) | `kototoki/plan.py` | 阶段链、各阶段产物与输入、模型清单、期望身份、下一个要跑的阶段 |
+| [产物契约](modules/artifact-contract.md) | `kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py` | 工作目录与产物身份、匹配跳过、原子替换、失败与发布记录、worker `--jobs` 协议 |
+| [配置、配方与媒体提取](modules/config-and-media.md) | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py` | 读配置、配方常量与 `recipe_hash`、选音轨与派生 WAV、内嵌字幕抽取与清洗 |
+| [配置参考](modules/config-reference.md) | `kototoki/config.py`、`kototoki.toml.example` | `kototoki.toml` 的全部键、默认值、校验，哪些键进产物身份 |
+| [STT worker](modules/stt-workers.md) | `kototoki/workers/`、`kototoki/vad.py`、`kototoki/align.py`、`kototoki/schema.py` | GPU worker 壳的共用规则（jobs、模型核对、身份、失败分级）、VAD 与对齐 |
+| [STT ASR](modules/stt-asr.md) | `kototoki/asr_whisper.py`、`kototoki/asr_qwen.py`、`kototoki/judge.py`、`kototoki/guard.py` | w0／x0 逐窗转写、cross 交叉打分裁判、w0 整窗复读守卫 |
+| [日文 cue](modules/japanese-cues.md) | `kototoki/cues.py` | 字符时间回填并切成日文 cue；时间轴上唯一加 `offset_s` 的地方 |
+| [Strata 服务与共享 session](modules/strata-session.md) | `kototoki/strata.py`、`kototoki/local_client.py` | Strata 起停、身份核对、专家区检查、整批共用的 session 与启动额度、回环客户端 |
+| [专名一致性](modules/name-consistency.md) | `kototoki/names/` | 在共享 session 上把整份 `ja.srt` 一次建成专名表；失败写空表照常翻译 |
+| [翻译子系统与双语合并](modules/translation-subsystem.md) | `kototoki/translate/`、`kototoki/merge.py` | 产品翻译配方：切包、请求、专名注入、按批次续跑、10→5→1 降级；中日两行合并 |
 
-历史实验代码：[whisper](../../experiments/whisper/README.md)、[qwen](../../experiments/qwen/README.md)、[x0_flow](../../experiments/x0_flow/README.md)、[japanese_ctc](../../experiments/japanese_ctc/README.md)、[framework_equivalence](../../experiments/framework_equivalence/README.md)、[components](../../experiments/components/README.md)、[crisp](../../experiments/crisp/README.md)、[asr_candidates](../../experiments/asr_candidates/README.md)、[vad_comparison](../../experiments/vad_comparison/README.md)（除 `vad_stage.py` 外）、[fullfilm_comparison](../../experiments/fullfilm_comparison/README.md)、[performance](../../experiments/performance/README.md)、`experiments/analysis/`；翻译侧 [translation_flow](../../experiments/translation_flow/README.md)（v1／v2，v2 冻结）、[translation_eval](../../experiments/translation_eval/README.md)、[translation_judge](../../experiments/translation_judge/README.md)、[translation_compat](../../experiments/translation_compat/README.md)、[translation_corpus](../../experiments/translation_corpus/README.md)、[translation_four_quantization](../../experiments/translation_four_quantization/README.md)、[translation_v4](../../experiments/translation_v4/README.md)，以及 `experiments/` 根下 `translation_*.py`、`run_experiment.py`、`run_round2.py`、`x0_flow_evaluate.py` 等单文件脚本。其中当前模块仍在导入的少数符号见[模块边界](module-boundaries.md#依赖方向)。
+### 研究与 demo
+
+| 模块页 | 代码 | 职责 |
+| --- | --- | --- |
+| [外部 VAD 阶段](modules/vad-stage.md) | `experiments/vad_comparison/vad_stage.py`、`experiments/w0_demo/vad_candidates.py` | 独立环境跑一个 VAD 候选，产出 VAD manifest（W0／X0 窗口的唯一来源） |
+| [W0 pipeline](modules/w0-pipeline.md) | `experiments/w0_demo/` | 单进程 VAD 回放 → faster-whisper ASR → MMS |
+| [X0 pipeline](modules/x0-pipeline.md) | `experiments/x0_demo/` | 父进程编排 plan／asr／align 三个隔离子进程：Qwen ASR → MMS |
+| [MMS 对齐](modules/mms-alignment.md) | `experiments/w0_demo/alignment.py` | W0／X0 共用的日语 CTC 强制对齐、字符映射与 `text_only` 记账 |
+| [STT 评分与显示重放](modules/stt-evaluation.md) | `kototoki_eval/`、`experiments/display/replay.py` | 后端无关的转写 JSON 契约、CER 与时间评分、最小 SRT 显示重放 |
+| [语料与模型资产准备](modules/corpus-and-assets.md) | `experiments/corpus/`、`experiments/provision/` | 冻结语料窗口与参考、生成样本 PCM；联网获取固定 revision 的模型资产 |
+| [逐窗翻译运行时](modules/translation-runtime.md) | `experiments/translation_demo_runtime.py`、`experiments/translation_demo/` | 托管本地 llama.cpp server，按冻结窗口生成并机械校验译文（H0 模型与采样） |
+| [完整 SRT 翻译流程](modules/translation-srt-flow.md) | `experiments/translation_v3/` | v3 配方、批次、可续跑生成与 `translate-srt` 整片交付（`dp10-cut`） |
+| [当前 STT 基准线](stt-candidate-pipelines.md) | — | W0／X0 的组件选型与基线身份（冻结的权威表） |
+
+其余实验包（历史实验、各研究轮次）不建模块页，逐包状态见 [experiments 包登记](../../experiments/INDEX.md)；复现历史时按各自 README 使用冻结配置与旧身份，不把其入口当作当前基线。
+
+## 按任务找模块页
+
+| 任务 | 从这里继续 |
+| --- | --- |
+| 改配置键、默认值或校验 | [配置参考](modules/config-reference.md) → [配置、配方与媒体提取](modules/config-and-media.md) |
+| 改音轨选择、WAV 派生或内嵌字幕路径 | [配置、配方与媒体提取](modules/config-and-media.md) |
+| 改 VAD 分窗、对齐或 worker 的 jobs 约定 | [STT worker](modules/stt-workers.md) → [产物契约](modules/artifact-contract.md) |
+| 改 w0／x0 转写、cross 裁判或复读守卫 | [STT ASR](modules/stt-asr.md) |
+| 改日文 cue 的切分与显示规则 | [日文 cue](modules/japanese-cues.md) |
+| 改翻译配方、降级或双语合并 | [翻译子系统与双语合并](modules/translation-subsystem.md) |
+| 改专名建表 | [专名一致性](modules/name-consistency.md) |
+| 改 Strata 起停、显存检查或 session | [Strata 服务与共享 session](modules/strata-session.md) |
+| 加阶段、改产物身份或跳过判定 | [阶段计划](modules/stage-plan.md) → [产物契约](modules/artifact-contract.md) |
+| 改调度、续跑、锁或发布 | [批次编排](modules/batch-orchestration.md) |
+| 改日志、进程锁或 worker 启动 | [运行日志、进程原语与 worker 子进程](modules/run-logging-and-processes.md) |
+| 跨模块改动、移动或改名产品符号 | [模块边界](module-boundaries.md) → [技术设计](../specs/bilingual-subtitle-pipeline.md) |
+| 运行、比较或修改 W0／X0 基线 | [标准基线测试指南](../guides/baseline-testing.md) → [W0 pipeline](modules/w0-pipeline.md)／[X0 pipeline](modules/x0-pipeline.md) → [规格索引](../specs/INDEX.md)的 demo 契约 |
+| 改转写 JSON 字段、评分或字幕显示 | [STT 评分与显示重放](modules/stt-evaluation.md) → [评测器契约](../testing/evaluator-contract.md) |
+| 研究侧翻译（逐窗、整片 SRT） | [逐窗翻译运行时](modules/translation-runtime.md)、[完整 SRT 翻译流程](modules/translation-srt-flow.md) |
 
 ## 依赖与装配
+
+研究侧（箭头从使用方指向被依赖方）：
 
 ```mermaid
 flowchart LR
@@ -53,6 +82,8 @@ flowchart LR
   end
   CORPUS[语料与模型资产准备]
 ```
+
+文件契约未画出：外部 VAD 阶段写出的 manifest 由 W0／X0 读取；W0／X0 的 `result.json` 由评分 CLI 读取；语料准备产出 WAV 与参考 JSON，各 demo 只读文件，不导入语料模块。
 
 产品包 `kototoki/`（进程边界用虚线）：
 
@@ -80,69 +111,37 @@ flowchart TB
   NM --> LS
   ST --> LS
   ST -->|strata CLI 与 HTTP| STRATA["Strata（外部服务）"]
-  MEDIA --> BASE
-  CUES --> BASE
-  EMB --> BASE
-  MERGE --> BASE
-  PLAN --> BASE
-  TR --> BASE
-  NM --> BASE
-  ST --> BASE
-  LS --> BASE
-  WK --> BASE
-  VAD --> BASE
-  ASR --> BASE
-  ALIGN --> BASE
+  MEDIA & CUES & EMB & MERGE & PLAN & TR & NM & ST & LS & WK & VAD & ASR & ALIGN --> BASE
   BASE["基础层：config · recipes · artifacts · srt · workers/protocol · schema · logs · procs · judge · guard"]
 ```
 
-依赖只允许向下；四条硬规则（编排不导入推理模块、推理模块互不导入、基础层不依赖 torch／ffmpeg／网络、产品包不导入 `experiments.*`）与责任边界见[模块边界](module-boundaries.md#依赖方向)。导入关系只有一个方向：产品代码不导入研究代码（从实验代码复制而来，不引用；`tests/core` 也不导入 `experiments.*`，与研究实现的实时对照在 `tests/equivalence/`，[ADR-0025](../adr/0025-product-package-boundaries.md)）；反过来研究侧导入产品符号，2026-11-11 时有 5 个研究包的 27 个文件（`asr_robustness_v14`、`quality_v5`、`asr_robustness_v15`、`scene_batching_v6`、`translation_v3`），其中 `translation_v3/strata.py` 与 `scene_batching_v6/v13.py` 是基线 Q3 的实现；产品符号移动或改名时同一提交里机械改这些导入行。设计期的目标架构页（`bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入本页，依赖方向、责任边界与接缝并入模块边界；各产品模块的接口以其模块页"接口与依赖"节为准。
+依赖只允许向下。硬规则、责任边界与接缝在[模块边界](module-boundaries.md#依赖方向)：产品代码不导入研究代码，研究侧可以导入产品符号；产品符号移动或改名时，同一提交里改研究侧的导入行。
 
-箭头从使用方指向被依赖方。VAD manifest、`result.json`、参考 JSON 等文件契约在图中未画出：外部 VAD 阶段写出的 manifest 由 W0／X0 读取；W0／X0 的 `result.json` 由评分 CLI 读取；语料准备产出 WAV 与参考 JSON，各 demo 只读取文件，不导入语料模块。
-
-装配入口（全部从仓库根目录启动，模型加载均为 GPU 重任务）：
+装配入口（全部从仓库根目录启动，加载模型的都是 GPU 重任务）：
 
 | 入口 | 解释器 | 模块 |
 | --- | --- | --- |
-| `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；专名建表与翻译共用一个本机 Strata session（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next，第一次需要时启动、整批结束停止），Strata 须预先安装并备好模型；产品不起 llama-server | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
+| `python -m kototoki [kototoki.toml]` | 根 `.venv`；GPU 阶段以同一解释器起子进程 worker；建表与翻译共用本机 Strata（须预先安装并备好模型） | [批次编排](modules/batch-orchestration.md) |
 | `python -m experiments.vad_comparison.vad_stage` | `.local/envs/vad-pyannote-gpu-v1` | 外部 VAD 阶段 |
 | `python -m experiments.w0_demo.run` | `.local/envs/whisper-latest` | W0 pipeline |
-| `python -m experiments.x0_demo.run`／`just x0-demo` | 父进程用 `legacy` 解释器（`just x0-demo`），子进程用 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |
+| `python -m experiments.x0_demo.run`／`just x0-demo` | 父进程 `legacy` 解释器，子进程 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |
 | `python -m kototoki_eval`、`python -m experiments.display.replay` | 根 `.venv` | STT 评分与显示重放（离线） |
-| `just translation-baseline`／`just translation-demo` → `experiments.translation_demo_runtime` | `justfile` 的 `legacy` 解释器（`uv run --no-project --python 3.12`，不是根 `.venv`）+ 本机 llama-server | 逐窗翻译运行时 |
-| `just translation-srt` → `experiments.translation_v3 translate-srt --recipe dp10-cut` | `legacy` 解释器（同上）+ 本机 llama-server | 完整 SRT 翻译流程 |
+| `just translation-baseline`／`just translation-demo` | `legacy` 解释器（不是根 `.venv`）+ 本机 llama-server | 逐窗翻译运行时 |
+| `just translation-srt` | `legacy` 解释器 + 本机 llama-server | 完整 SRT 翻译流程 |
 
-产品入口的使用方式见仓库 [README](../../README.md#双语字幕流水线)；基线的完整命令序列见[标准基线测试指南](../guides/baseline-testing.md)。
+产品入口的用法见仓库 [README](../../README.md#双语字幕流水线)；基线的完整命令序列见[标准基线测试指南](../guides/baseline-testing.md)。
 
 ## 系统不变量
 
-- 音频与转写／译文只写入 `.local/` 下新建的私有运行目录，已有目录或输出拒绝覆盖；控制台只输出状态、计数与耗时。见[模块边界：状态与契约](module-boundaries.md#状态与契约)。产品例外（ADR-0020）：`python -m kototoki` 的工作目录 `work_dir`（默认 `.local/work/`，不得位于输入目录内，也不得位于仓库内 `.local/` 以外）按产物身份续跑与原地替换，最终双语字幕写在输入目录的源文件旁（输入目录不得位于仓库内，`.local/` 除外），源文件旁已有同名字幕即跳过、从不覆盖，见[批次编排](modules/batch-orchestration.md)。
-- ASR 与 MMS 只在 CUDA 上运行，失败不回退 CPU；VAD 设备由外部阶段显式记录。见 [MMS 对齐](modules/mms-alignment.md#当前行为规格)、[W0 pipeline](modules/w0-pipeline.md#当前行为规格)。
-- 识别全文的每个字符在 `units` 中恰好出现一次；缺时间的字符保留为 `text_only`，不删除、不伪造时间。见 [MMS 对齐](modules/mms-alignment.md#当前行为规格)。
-- W0／X0 的识别窗口以 VAD manifest 的源坐标为准，有成对整数 `start_sample/end_sample` 时 ASR 与 MMS 使用同一整数裁剪。见[外部 VAD 阶段](modules/vad-stage.md#接口与依赖)。
+- 研究入口：音频、转写与译文只写入 `.local/` 下新建的私有运行目录，已有目录或输出拒绝覆盖；控制台只输出状态、计数与耗时。见[模块边界：状态与契约](module-boundaries.md#状态与契约)。
+- 产品入口：工作目录 `work_dir` 按产物身份续跑与原地替换；最终只发布源文件旁的 `ja-zh.srt`，已存在即跳过、没有覆盖开关。目录位置的限制见[批次编排](modules/batch-orchestration.md)。
+- 产品产物的跳过与续跑只看产物身份（上游 SHA256、配方 hash、模型 SHA256，不含绝对路径）。见[产物契约](modules/artifact-contract.md)。
+- ASR 与 MMS 只在 CUDA 上运行，失败不回退 CPU；VAD 设备由外部阶段显式记录，产品 VAD 固定 `cuda:0`。见 [MMS 对齐](modules/mms-alignment.md#当前行为规格)、[W0 pipeline](modules/w0-pipeline.md#当前行为规格)。
+- 识别全文的每个字符在 `units` 中恰好出现一次；缺时间的字符保留为 `text_only`，不删除、不伪造时间。
+- W0／X0 的识别窗口以 VAD manifest 的源坐标为准，有成对整数 `start_sample/end_sample` 时 ASR 与 MMS 用同一整数裁剪。见[外部 VAD 阶段](modules/vad-stage.md#接口与依赖)。
+- 产品时间轴：派生 WAV 的 sample 0 等于输入 0 秒（`offset_s` 恒为 0），各阶段 JSON 一律 WAV 本地秒，cue 时间只在日文 cue 加一次 offset。见[模块边界：产品包的责任边界](module-boundaries.md#产品包的责任边界)。
 - 推理期间不联网、不下载；模型获取只经[语料与模型资产准备](modules/corpus-and-assets.md)。
 - 同一时刻只有一个持 `.local/gpu.lock` 的 GPU 作业；不抢占、不删除活跃锁。见[模块边界：并发与生命周期](module-boundaries.md#并发与生命周期)。
 - 运行身份（recipe、recipe_hash、模型 SHA256、源码哈希）随结果冻结；改变行为须另建身份，不复用旧分数。
-- 产品时间轴：派生 WAV 的 sample 0 等于输入 0 秒（`offset_s` 恒为 0），各阶段 JSON 一律 WAV 本地秒，cue 时间只在日文 cue 加一次 offset；编排、翻译、合并不做时间换算。产品 VAD 固定 `cuda:0`。见[配置、配方与媒体提取](modules/config-and-media.md)、[模块边界：产品包的责任边界](module-boundaries.md#产品包的责任边界)。
-- 产品产物的跳过与续跑只看产物身份（上游 SHA256、配方 hash、模型 SHA256，不含绝对路径）；最终只发布源文件旁的 `ja-zh.srt`，已存在即跳过、没有覆盖开关。见[产物契约](modules/artifact-contract.md)。
 
-## 按任务阅读
-
-| 任务 | 从这里继续 |
-| --- | --- |
-| 运行或比较当前 W0／X0 基线 | [标准基线测试指南](../guides/baseline-testing.md) → [W0 pipeline](modules/w0-pipeline.md)／[X0 pipeline](modules/x0-pipeline.md) |
-| 替换或调整 VAD、分段窗口 | [外部 VAD 阶段](modules/vad-stage.md) → [W0 契约](../specs/w0-reusable-demo.md)／[X0 契约](../specs/x0-reusable-demo.md) |
-| 修改 W0 特征、解码或 ASR | [W0 pipeline](modules/w0-pipeline.md) → [W0 契约](../specs/w0-reusable-demo.md) |
-| 修改 X0 分段、Qwen 输入或子进程编排 | [X0 pipeline](modules/x0-pipeline.md) → [X0 契约](../specs/x0-reusable-demo.md) |
-| 修改 CTC 对齐（同时影响 W0 与 X0） | [MMS 对齐](modules/mms-alignment.md) |
-| 改转写 JSON 字段、评分或字幕显示 | [STT 评分与显示重放](modules/stt-evaluation.md) → [评测器契约](../testing/evaluator-contract.md) |
-| 准备新语料窗口或获取模型 | [语料与模型资产准备](modules/corpus-and-assets.md) |
-| 逐窗翻译、换模型或采样配置 | [逐窗翻译运行时](modules/translation-runtime.md) → [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md) |
-| 整片 SRT 翻译或新流程配方 | [完整 SRT 翻译流程](modules/translation-srt-flow.md) → [ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md) |
-| 回归、benchmark 或比较改动后的 W0 | [W0 demo 验证](../testing/2026-10-05-w0-demo-validation.md)、[STT 评估方法](../testing/stt-evaluation.md) |
-| 回归当前 X0 实现 | [X0 demo 验证](../testing/2026-10-05-x0-demo-validation.md) |
-| 理解 X0 流程的采纳依据与质量主张的区别 | [ADR-0002](../adr/0002-x0-demo-flow.md) |
-| 修改双语字幕流水线（产品包 `kototoki/`） | [模块边界](module-boundaries.md)（依赖方向、产品包的责任边界与接缝）→ 受影响的产品模块页 → [技术设计](../specs/bilingual-subtitle-pipeline.md) |
-| 复现历史实验结果 | 模块地图下方的历史实验 README；不要把其入口当作当前基线 |
-
-重要取舍见 `../adr/`，证据见[调研索引](../research/INDEX.md)；两者不覆盖当前正文。
+重要取舍见[决定索引](../adr/INDEX.md)，证据见[调研索引](../research/INDEX.md)；两者不覆盖当前正文。

@@ -15,6 +15,8 @@ Strata 的生命周期归中间层 `kototoki.strata`：编排器持有共享 `Se
 依赖方向：只依赖基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata` 与 `kototoki.local_client`
 （`InfraFailure`、`explicit_oom`）；不导入 torch、`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、
 不打含条目文字的日志。见 docs/architecture/modules/name-consistency.md。
+
+模块页：docs/architecture/modules/name-consistency.md。
 """
 
 from __future__ import annotations

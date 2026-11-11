@@ -47,8 +47,6 @@ BYTE_VERIFIED = ("docs/agents/subtitle-translation-evaluation.md", "docs/develop
 # 现有超标文件：记当前数值，只许降不许升；回到预算内后删掉对应行（脚本会告警提醒）。
 BUDGET_WHITELIST: dict[str, Budget] = {
     "docs/agents/subtitle-translation-evaluation.md": (25975, None, 1230),
-    "docs/architecture/INDEX.md": (None, 150, 1321),
-    "docs/architecture/module-boundaries.md": (19491, None, 1664),
     "docs/development/dependencies.md": (12000, None, 903),
 }
 

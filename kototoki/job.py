@@ -24,6 +24,8 @@
 工作根 `<work_dir>/<目标目录键>/`（`artifacts.work_root`，ADR-0020）。锁：启动即取工作根下的 `lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
 锁文件记录编排器、当前 worker 与 Strata 服务的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
 锁、Job Object 与进程身份是基础层 `kototoki/procs.py` 的进程原语（复制自 `experiments/translation_v3/procs.py`，不导入）。
+
+模块页：docs/architecture/modules/batch-orchestration.md。
 """
 
 from __future__ import annotations

@@ -4,6 +4,8 @@
 `-c:s srt -f srt` 的输出：ASS 的样式会变成 `<font>`／`<i>` 标签，对齐留成 `{\\an8}`，`\\h` 原样留下，绘图指令
 漏成文字，空事件留成只有标签的条目，文字里还可能有空行——所以这里自己宽松地分条，不用 `srt.parse_srt`
 的严格解析。不改写时间，不判断内容是不是日文，不过滤听障字幕的音效说明。
+
+模块页：docs/architecture/modules/config-and-media.md。
 """
 
 from __future__ import annotations

@@ -11,6 +11,8 @@
 - 窗口一律是整数样本（ASR 适配器先 `schema.validate_windows`），研究期旧窗口的分支（按秒裁剪、按秒乘采样率）不移植。
 
 不做原生 WhisperX trellis、断句、插值或 cue。导入本模块不加载 torch，构造 `MmsAligner` 时才加载。
+
+模块页：docs/architecture/modules/stt-workers.md。
 """
 
 from __future__ import annotations

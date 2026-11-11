@@ -2,6 +2,8 @@
 
 这里的值改变模型输入或输出，因此不进配置文件：改动任何一项即得到新的 `recipe_hash`，
 已有产物按产物契约失效重算。各值取自已验证的 demo 实现（来源写在每节注释里）。
+
+模块页：docs/architecture/modules/config-and-media.md。
 """
 
 from __future__ import annotations

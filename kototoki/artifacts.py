@@ -21,6 +21,8 @@
 JSON 产物的顶层固定为 `{"identity": {...}, ...payload}`。身份只由内容摘要、配方 hash 与
 影响输出的配置键组成，绝对路径不参与；身份匹配即跳过，不匹配时原地原子替换
 （翻译 run 目录由翻译子系统按 `ja.srt` 的 SHA 分键另建，不替换）。
+
+模块页：docs/architecture/modules/artifact-contract.md。
 """
 
 from __future__ import annotations

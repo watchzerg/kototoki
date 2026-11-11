@@ -1,6 +1,8 @@
 """运行日志的格式：编排器的运行日志与 GPU worker 的 stderr 共用同一行格式。
 
 只依赖标准库，属基础层；handler 与目的地由使用方（`job.run`、`workers/gpu.main`）各自配置。
+
+模块页：docs/architecture/modules/run-logging-and-processes.md。
 """
 
 from __future__ import annotations

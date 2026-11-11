@@ -4,6 +4,8 @@
 只保留 pyannote 一条路径。输入是内存波形（mono float32 16 kHz），输出是 WAV 本地坐标的窗口：
 秒与成对整数样本 `start_sample/end_sample`，以及组成窗口的子段 `segments`。设备固定 `cuda:0`，
 不回退 CPU。导入本模块不加载 torch 与 pyannote，构造 `PyannoteVad` 时才加载。
+
+模块页：docs/architecture/modules/stt-workers.md。
 """
 
 from __future__ import annotations

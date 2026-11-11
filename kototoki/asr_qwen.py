@@ -4,6 +4,8 @@
 与研究期实现的差别：生成触顶（`max_new_tokens` 4096）不再抛错让整片失败，而是作为失败窗口返回，
 由 worker 壳经 `protocol.fail_window` 置空并把截断文字记入 `failed_windows`（规格 §6）；
 模型文件 SHA256 由 worker 壳经产物契约的缓存核对，本模块不再自行哈希（研究期的 `checkpoint_identity`）。
+
+模块页：docs/architecture/modules/stt-asr.md。
 """
 
 from __future__ import annotations

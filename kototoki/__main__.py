@@ -1,6 +1,8 @@
 """`python -m kototoki [kototoki.toml]`：读配置、检查工作目录位置、跑一批（规格 §1、§10）。
 
 退出码见 `kototoki.job`：0 全部成功；1 有文件失败；2 配置或工作目录不可用；3 同一目标目录已有编排器在运行；4 GPU 锁冲突。
+
+模块页：docs/architecture/modules/batch-orchestration.md。
 """
 
 from __future__ import annotations

@@ -11,6 +11,8 @@ ffmpeg 把它转成 SRT 文本返回；是否采用、清洗与落盘归编排�
 
 只产生 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），返回结果对象；
 `probe.json` 等 JSON 产物的身份包装、写入与是否跳过由编排经产物契约完成。
+
+模块页：docs/architecture/modules/config-and-media.md。
 """
 
 from __future__ import annotations

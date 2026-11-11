@@ -6,6 +6,8 @@
 专名表只注入 `confidence: high` 条目的写法，这条规则只在本包（`translate.plan` 算 `names_sha256`）。
 子系统不取 GPU 锁、不做时间换算。
 见 docs/architecture/modules/translation-subsystem.md 与 ADR-0019、ADR-0022。
+
+模块页：docs/architecture/modules/translation-subsystem.md。
 """
 
 from .generate import TranslateError, TranslatePlan, TranslateResult, plan, translate_document

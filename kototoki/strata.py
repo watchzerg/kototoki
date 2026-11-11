@@ -38,6 +38,8 @@
 翻译自己的规则），启动失败（`InfraFailure`）整批累计 `MAX_START_FAILURES` 次或被拒绝（`StrataRefused`）即 `unavailable`，
 其余需要模型的影片在两个阶段都直接失败。退出上下文时总是 `stop()`。
 证据在 `<工作根>/strata-sessions/<UTC戳>-<pid>/session-NN/`。
+
+模块页：docs/architecture/modules/strata-session.md。
 """
 
 from __future__ import annotations
