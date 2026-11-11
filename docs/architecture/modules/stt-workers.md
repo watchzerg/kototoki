@@ -113,3 +113,5 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 2026-10-19 修复 worker 壳 logger 名：三个 worker 原按 `__name__` 取 logger，以 `python -m kototoki.workers.<stage>` 运行时名为 `__main__`，不在 `gpu.main` 设为 INFO 的 `kototoki` 之下，每文件 INFO 行（窗口数、cross 计数等）一直被丢弃，cross 验收时发现；现固定为 `kototoki.workers.<stage>`，测试 `tests/core/test_stt_workers.py::WorkerLoggerNameTest`。
 
 2026-11-11 w0 复读守卫交付，依据 [ADR-0023](../../adr/0023-asr-repeat-guard.md) 与 [v15](../../research/2026-11-10-asr-robustness-v15.md) 票据 01、02，实现计划与验收 [`docs/plans/asr-repeat-guard.md`](../../plans/asr-repeat-guard.md)，票据 `.scratch/asr-repeat-guard/`。新增基础层模块 `kototoki/guard.py`（算法复制自 `experiments/asr_robustness_v15/repeat.py`），壳 `workers/asr.py` 在 w0 引擎与 cross 的 w0 那一路接入；`recipes.W0` 加 `guard` 块、id 改为 `w0-faster-whisper-large-v3-guard-v2`，W0 与 CROSS 的 `recipe_hash` 改变，旧 `asr.json` 及下游重算。
+
+2026-11-11 `x0_frozen_window` 的判定加入已接受差异（用户裁定）：窗口 0 的 38 个 token 中第 2 个与对照不同（上文 2026-10-14 记录的环境差异）此前一直让该项报不通过；脚本现在只放行这一处（唯一不等的窗口是窗口 0、token 等长且只有下标 1 不同、文字等长且恰好 1 字不同），结果里记 `accepted_difference`，其它差异仍不通过。同日修两个冻结窗口脚本对 `artifacts.work_root` 的过期调用（改为 `artifacts.cache_dir`）。本次运行环境 transformers 5.20.1。

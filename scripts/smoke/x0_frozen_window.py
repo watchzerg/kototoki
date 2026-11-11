@@ -4,6 +4,10 @@
 VAD 窗口整数边界逐个相等；ASR 每窗文字逐字符相等（不相等即不通过）；对齐 units 字符范围与状态一致，
 有时间的 unit 起止与对照差 ≤20 ms（超差单独标记）。另记触顶窗口数（对照中为 0）。
 
+已接受的差异（用户 2026-10-14 裁定为环境差异、2026-11-11 裁定写进判定）：窗口 0 的 token 序列与对照等长、
+只有下标 1 一个 token 不同，文字等长、恰好 1 个字符不同（BF16 近平局在本环境与对照环境的 torch 版本间翻转）。
+只放行这一处：其它窗口、其它位置或更多差异仍不通过；是否走了这条放行记在 `accepted_difference`。
+
 入口：`just smoke x0_frozen_window`（`run_all.py` 持锁并以 `python scripts/smoke/x0_frozen_window.py --out <dir>`
 启动本脚本；锁不存在时拒绝运行）。产物写入 `<out>/x0_frozen_window/`，
 结果写 `<out>/x0_frozen_window.json`，只含计数、差值、耗时与版本，不含转写文字。
@@ -25,6 +29,20 @@ from kototoki.workers.protocol import FileJob, Jobs  # noqa: E402
 
 NAME = "x0_frozen_window"
 REFERENCE = "x0-demo/pyannote-gpu-v1-x0-pyannote-current-hf-ii-window-01/result.json"
+
+
+ACCEPTED_WINDOW, ACCEPTED_TOKEN = 0, 1
+
+
+def accepted_difference(asr: dict[str, Any], reference: dict[str, Any], comparison: dict[str, Any]) -> bool:
+    """文字不全等时，差异是否恰好是已接受的那一处（见模块说明）。"""
+    if comparison["asr"]["mismatched_windows"] != [ACCEPTED_WINDOW]:
+        return False
+    tokens, expected_tokens = (document["asr_traces"][ACCEPTED_WINDOW]["tokens"] for document in (asr, reference))
+    text, expected_text = (document["original_segments"][ACCEPTED_WINDOW]["text"] for document in (asr, reference))
+    return (len(tokens) == len(expected_tokens) and len(text) == len(expected_text)
+            and [i for i, (a, b) in enumerate(zip(tokens, expected_tokens)) if a != b] == [ACCEPTED_TOKEN]
+            and sum(a != b for a, b in zip(text, expected_text)) == 1)
 
 
 def main() -> int:
@@ -67,7 +85,10 @@ def main() -> int:
         traces = artifacts.read_json(work_dir / artifacts.ASR)["asr_traces"]
         comparison["asr"]["token_limit_windows"] = sum(1 for t in traces if t and t["token_limit_reached"])
         result["comparison"] = comparison
-        result["blocking_passed"] = (comparison["windows"]["integer_bounds_equal"] and comparison["asr"]["text_equal"]
+        accepted = accepted_difference(artifacts.read_json(work_dir / artifacts.ASR), reference, comparison)
+        result["accepted_difference"] = accepted
+        result["blocking_passed"] = (comparison["windows"]["integer_bounds_equal"]
+                                     and (comparison["asr"]["text_equal"] or accepted)
                                      and comparison["align"]["char_ranges_equal"])
         result["time_within_tolerance"] = comparison["align"]["over_tolerance"] == 0
         result["stage_seconds"] = {name: artifacts.read_json(work_dir / file)["stages"] for name, file in (
@@ -75,7 +96,8 @@ def main() -> int:
     else:
         result["blocking_passed"] = False
     (args.out / f"{NAME}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({key: result.get(key) for key in ("blocking_passed", "time_within_tolerance", "comparison")},
+    print(json.dumps({key: result.get(key) for key in ("blocking_passed", "accepted_difference",
+                                                       "time_within_tolerance", "comparison")},
                      ensure_ascii=False, indent=2))
     return 0 if result["blocking_passed"] else 1
 
