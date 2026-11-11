@@ -156,7 +156,7 @@ VAD 的"GPU*"：按选型原则 VAD 可 CPU 可 GPU；整片证据用 CUDA FP32�
 ### 3.3 GPU 内部顺序与并发
 
 - GPU 阶段严格串行，由 `.local/gpu.lock`（沿用现有互斥语义：不抢占、不杀进程、死锁需显式 `KOTOTOKI_BREAK_STALE_LOCK=1`，一次性生效）保护。GPU 锁在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；翻译阶段只在有文件需要模型（`needs_model`：非零条目且 run 未完成）时才取锁、建 session，全部 run 已完成或零条目时整批不占 GPU（票据 15）。
-- 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`（同 `ProcessLock` 语义，`<work root>` 见 §4），已被占用则退出码 3（`WorkLocked`），否则两个编排器会在 GPU 锁之前并发写同一 `index.json` 与工作目录。GPU 锁信息记 `input_dir`。
+- 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`（同 `ProcessLock` 语义，`<work root>` 见 §4），已被占用则退出码 3（`WorkLocked`），否则两个编排器会在 GPU 锁之前并发写同一 `index.json` 与工作目录。GPU 锁信息记 `input_dir`。任何阶段（含 names、translate）撞 GPU 锁都是进程级冲突：整批以退出码 4 结束、不写逐文件 `failure.json`，已完成的 CPU 产物保留，可续跑（ADR-0025）。
 - 启动 Strata 前用 `nvidia-smi` 轮询空闲显存：上一 worker 退出后 WDDM 释放显存有延迟，直接启动可能分配失败并白白消耗重启额度；空闲量低于阈值超时则按基础设施失败处理，错误信息写明当时的空闲量。
 - 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立；并发只会争抢算力与显存，没有吞吐收益。
 - names 阶段：排在 translate 之前，与 translate 共用同一个 Strata session（[ADR-0022](../adr/0022-product-names-on-strata.md)）：编排在 names 之前建一个共享 `strata.Session`，第一次真正需要模型时启动（表已当前、零条目时不起，也不取锁；names 全部当前时由 translate 第一次启动），两阶段之间不停；启动失败整批累计 3 次或 `StrataRefused` 即置 `unavailable`，本批其余需要模型的影片在两个阶段都直接失败。每部影片最多 5 个请求（seed 依次 +1），不做同调用内重启，传输／HTTP／OOM 失败停掉 Strata、该影片失败。GPU 锁里记录 Strata 的 pid（见[专名一致性](../architecture/modules/name-consistency.md)、[批次编排](../architecture/modules/batch-orchestration.md)）。
@@ -209,7 +209,7 @@ GPU:      [VAD 1 2 3 4][ASR 1  2  3  4 ][MMS 1 2 3 4][names 1 2 3 4][translate 1
 规则：
 
 - **每个产物带输入身份与配方 hash**；阶段开始前若产物存在且身份匹配，直接跳过；身份不匹配时**原地原子替换**（旧产物不另存，这是"所有产物保留"的唯一例外，`translate/` 目录除外，见下）。这同时提供崩溃后续跑与"改了翻译配方只重跑翻译"。身份的组成规则集中在 `kototoki/artifacts.py`（票据 00），各阶段的期望身份与阶段链由 `kototoki/plan.py` 给出（票据 14）：输入文件身份 = 相对路径＋大小＋修改时间＋ffprobe 指纹（只取流的 `index`／`codec_name`／`channels`／`channel_layout`／`sample_rate`／`start_time`／`duration` 与容器 `duration`，不含 `filename` 与 `tags`，不对整个视频算哈希）；派生产物身份 = 上游产物 SHA256＋配方 hash＋模型文件 SHA256＋影响输出的配置键（cue 规则、seed）；绝对路径不参与身份。模型文件 SHA256 沿用 v3 `verify_model` 的 size+mtime 缓存（`<work_dir>/cache/model-verification.json`），每次运行最多算一次，不逐文件重算。
-- **坐标系**：`vad.json`、`asr.json`、`align.json` 里的窗口、段、对齐记录一律是 WAV 本地秒／整数样本（与现有 `result.json` 相同：只有 `units.start/end` 含 offset），顶层带 `offset_s`（产品恒为 0）；ja-cues 阶段产出的 cue 时间是最终 SRT 时间。票据 00 的产物契约逐文件写明字段坐标，票据 04 带非零 offset 的测试证明只加一次。
+- **坐标系**：`vad.json`、`asr.json`、`align.json` 里的窗口、段、对齐记录一律是 WAV 本地秒／整数样本（`units` 也是本地秒，offset 只在 ja-cues 阶段加一次），顶层带 `offset_s`（产品恒为 0）；ja-cues 阶段产出的 cue 时间是最终 SRT 时间。票据 00 的产物契约逐文件写明字段坐标，票据 04 带非零 offset 的测试证明只加一次。
 - 所有产物保留，不自动删除。翻译 run 目录按 `ja.srt` 的 SHA256 前 12 位分键（与 v3 `deliveries/` 同形），因为 v3 `run_generation` 在 `run.json` 的 `sources`／`scene_ids` 不一致时直接拒绝；改 cue 规则后产生新的 `ja.srt` 就用新目录，旧目录保留。
 - 双语字幕在 merge 阶段发布（先写到工作目录 `publish/` 暂存，再原子移动到源文件旁；Windows 下文件被播放器占用会 `PermissionError`，带重试），并在 `<id>/published.json` 记审计记录：最终路径、SHA256、来源产物身份、translate run 目录（相对工作目录）。**不按记录判定覆盖**（ADR-0020）：扫描时源文件旁已有 `<stem>.ja-zh.srt`（只看文件名，不论来源）即跳过该文件，不进任何阶段；要重做就删掉这份字幕，中间产物按身份续跑，只重做受影响的阶段。同一目录里主名相同的两个输入（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕路径：按相对路径排序靠后的那个在扫描阶段失败，其余照常。
 - **专名表可人工校对**：`name-table.json` 的跳过只比 `identity` 块，用户改 `entries`（改错名、删条目）不触发重建；**改到会被注入的条目（`confidence: high` 的实体或其 `forms`）会改变注入行的哈希 `names_sha256`，翻译身份随之变化：删掉该片的 `*.ja-zh.srt` 后再运行，即另起 run 目录、重译该片（需要 Strata）并重新发布；只改 medium／low 条目不触发重译**（ADR-0019、ADR-0020）。`ja.srt`、`BUILD` 配方或 `[names] seed` 变化会重建并覆盖手改。
@@ -306,7 +306,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 ### 7.3 代码布局
 
-各模块的接口以模块页为准，依赖方向、接缝裁定与责任边界以[模块边界](../architecture/module-boundaries.md#产品包的责任边界)为准（原目标架构页于票据 08 并入后删除）。下表是实现时（票据 00–09）的文件与来源对照，**冻结于 2026-10-14，不再随后续票据维护**；当前文件布局以[架构总览的模块地图](../architecture/INDEX.md#模块地图)为准。票据 14 新增 `kototoki/plan.py`（阶段链与期望身份从 `job.py` 与三个 worker 壳迁出，见[阶段计划](../architecture/modules/stage-plan.md)），票据 15 把 `translate/data.py` 并入 `batching.py`。2026-10-20 起新增 `kototoki/llama_server.py`（翻译与专名建表共用的 llama-server 生命周期）与 `kototoki/names/`（专名建表与替换），见[专名一致性](../architecture/modules/name-consistency.md)与模块边界。
+各模块的接口以模块页为准，依赖方向、接缝裁定与责任边界以[模块边界](../architecture/module-boundaries.md#产品包的责任边界)为准（原目标架构页于票据 08 并入后删除）。下表是实现时（票据 00–09）的文件与来源对照，**冻结于 2026-10-14，不再随后续票据维护**；当前文件布局以[架构总览的模块地图](../architecture/INDEX.md#模块地图)为准。票据 14 新增 `kototoki/plan.py`（阶段链与期望身份从 `job.py` 与三个 worker 壳迁出，见[阶段计划](../architecture/modules/stage-plan.md)），票据 15 把 `translate/data.py` 并入 `batching.py`。2026-10-20 起新增 `kototoki/names/`（专名建表）；Strata 生命周期与共享 session 在 `kototoki/strata.py`，本机回环客户端在 `kototoki/local_client.py`，进程原语在 `kototoki/procs.py`，见[专名一致性](../architecture/modules/name-consistency.md)与模块边界。
 
 新建产品包 `kototoki/`，从 `experiments/` 复制并精简已验证的实现（历史目录保持冻结，产品包不导入它们）：
 
@@ -321,7 +321,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | `asr_qwen.py` | `x0_demo/asr.py` + `experiments/qwen/run_qwen.py` 的资产身份常量、`checkpoint_identity`、`check_gpu`（复制，不导入历史包） |
 | `align.py` | `w0_demo/alignment.py`（继续用 torchaudio `forced_align`，放宽 2.8.0 版本断言） |
 | `cues.py` | `display/replay.py` 的组 cue 规则 + 软断点 + 时间回填 |
-| `translate/`（2026-11-08 起，ADR-0019：`recipes.py` 产品配方 `q2-degrade-v1`、`strata.py` Strata 启停与身份核对、`batching.py`、`degrade.py`、`generate.py`；`adapters.py`、`server.py` 与 H0 配方已删除；`translate/recipes.py` 仍是翻译配方的唯一归属） | `experiments/translation_v3/{qwen,strata}.py` 的提示、请求体与 `probe`，`names11.product_tables` 的注入行，`wide-context-v1`，`translation_v3` 的 `batching`、`generate`（改为传入已建 session、按批次落盘）、`common`（路径改配置）、`data`（`Scene`／`Cue`），`translation_demo` 的 `client`（经 `llama_server` 复用）、`explicit_oom`；去掉 `mbr` 导入与裁判／统计命令。**以下为 2026-10-18 之前的来源，历史记录**：`translation_v3` 的 `recipes`、`server`、`procs`，`translation_demo` 的 `adapters`、`run`（资产清单），`translation_demo_runtime` 的驻留解析（驻留解析与 `ManagedServer` 现只服务 names，在 `llama_server.py`） |
+| `translate/`（2026-11-08 起，ADR-0019：`recipes.py` 产品配方 `q2-degrade-v1`、`batching.py`、`degrade.py`、`generate.py`；`adapters.py`、`server.py` 与 H0 配方已删除；`translate/recipes.py` 仍是翻译配方的唯一归属） | `experiments/translation_v3/{qwen,strata}.py` 的提示、请求体与 `probe`，`names11.product_tables` 的注入行，`wide-context-v1`，`translation_v3` 的 `batching`、`generate`（改为传入已建 session、按批次落盘）、`common`（路径改配置）、`data`（`Scene`／`Cue`），`translation_demo` 的 `client`、`explicit_oom`（现为 `kototoki/local_client.py`）；去掉 `mbr` 导入与裁判／统计命令。**以下为 2026-10-18 之前的来源，历史记录**：`translation_v3` 的 `recipes`、`server`、`procs`，`translation_demo` 的 `adapters`、`run`（资产清单），`translation_demo_runtime` 的驻留解析（驻留解析与 `ManagedServer` 随唯一使用者搬到研究侧 `experiments/translation_v3/llama_server.py`，ADR-0025） |
 | `srt.py`、`merge.py` | `translation_flow/srt.py`（允许零条目） + 新写合并 |
 | `schema.py` | `kototoki_eval/schema.py` 的 `validate_transcript` |
 
