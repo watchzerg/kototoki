@@ -2,7 +2,7 @@
 
 状态：current（本目录不再新增文件；下表标明每篇能否修改）
 
-当前测试规则（分层、收录）见 [../agents/testing.md](../agents/testing.md)，命令与门禁见 [../development/workflow.md](../development/workflow.md)。本目录是历史契约与记录，不是当前测试规则的入口。
+当前测试规则（分层、收录）见 [../agents/testing.md](../agents/testing.md)，命令与门禁见 [../development/workflow.md](../development/workflow.md)；现行翻译评估方法见 [../agents/translation-evaluation.md](../agents/translation-evaluation.md)。本目录是历史契约与记录，不是当前测试规则的入口。
 
 类别含义：
 
@@ -28,7 +28,7 @@
 | [fatestay-reference.md](fatestay-reference.md) | 被校验 | `experiments/run_round2.py` 把它纳入冻结源快照并记录 sha256 | 四部电影日语评估参考的来源、身份与素材保护规则。 |
 | [stt-evaluation.md](stt-evaluation.md) | 被校验 | `experiments/run_round2.py` 同上 | STT 质量与性能评估的方法与首轮状态。 |
 | [subtitle-timing-benchmark.md](subtitle-timing-benchmark.md) | 活契约 | 无 | 以时间同步为优先的字幕评估标准，区分文字、内容时间与显示质量。 |
-| [translation-model-evaluation.md](translation-model-evaluation.md) | 被校验 | `experiments/translation_four_quantization/__main__.py` 纳入冻结源快照并记录 sha256；已被取代，后继是现行翻译评估方法页（`docs/agents/`） | 冻结的 Codex 时代翻译评估方法（`sol-high-auto-v1`），当前工作改用后继文档。 |
+| [translation-model-evaluation.md](translation-model-evaluation.md) | 被校验 | `experiments/translation_four_quantization/__main__.py` 纳入冻结源快照并记录 sha256；已被取代，后继 [../agents/translation-evaluation.md](../agents/translation-evaluation.md) | 冻结的 Codex 时代翻译评估方法（`sol-high-auto-v1`），当前工作改用后继文档。 |
 | [validation.md](validation.md) | 被校验 | `experiments/run_round2.py` 纳入冻结源快照并记录 sha256 | 2026-10-05 前的验证边界约定，内容停在该日，当前测试规则见 [../agents/testing.md](../agents/testing.md)。 |
 | [yodas2-parliament-reference.md](yodas2-parliament-reference.md) | 活契约 | 无 | YODAS2 国会讨论素材的获取身份与使用边界。 |
 

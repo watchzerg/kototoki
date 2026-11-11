@@ -59,7 +59,8 @@
 | 涉及领域术语、数据模型或与 ADR 冲突 | [GLOSSARY.md](GLOSSARY.md)、[领域文档规则](docs/agents/domain.md) |
 | 读取、创建、更新或分类票据 | [tracker 约定](docs/agents/issue-tracker.md)、[标签映射](docs/agents/triage-labels.md) |
 | 查现行决定与基线身份（翻译 Q3、产品翻译与建表、W0／X0）；用户采纳或变更决定 | [CURRENT.md](docs/adr/CURRENT.md)；[记录新决定](docs/adr/INDEX.md#记录新决定) |
-| 调研、实验、复用已有结论，查研究轮次（含已结题的翻译流程 v1–v8、专名、旧 Codex 评估） | [调研索引](docs/research/INDEX.md)；新产出放 `docs/research/` 并登记 |
+| 新的翻译对比、裁判与统计口径 | [翻译评估方法](docs/agents/translation-evaluation.md)（旧 Codex 流程只作历史） |
+| 调研、实验、复用已有结论，查研究轮次（含已结题的翻译流程 v1–v8、专名） | [调研索引](docs/research/INDEX.md)；新产出放 `docs/research/` 并登记 |
 | 测试、benchmark、运行或修改 W0／X0 | [基线测试指南](docs/guides/baseline-testing.md) → demo README → 契约。复用并更新 `experiments/w0_demo/`、`experiments/x0_demo/`；配方变更先出新版本并记录验证；CLI 须显式选择新 Pyannote（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)） |
 | 选择或对比 STT 引擎、模型、对齐器 | [推理选型原则](docs/development/inference-selection.md) |
 | 接续旧任务 | `docs/context/` 台账（冻结证据，不整读），**先对照仓库核实状态** |

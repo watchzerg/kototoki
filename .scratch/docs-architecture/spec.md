@@ -295,6 +295,7 @@ Status: claimed
 | [04](issues/04-split-research-index.md) | resolved | 调研索引 47,341 → 4,979 字符；时间线移到 `timeline.md`，条目分到 `topics/` 7 篇子索引；117 篇报告各登记一次，14 篇附录补登记 |
 | [05](issues/05-guardrail-indexes.md) | resolved | 新增 `docs/context`、`docs/testing`、`docs/plans`、`docs/specs`、`experiments` 五个索引；5 篇翻译草案状态行标 superseded；`docs/INDEX.md` 9,566 → 2,980 字符 |
 | [06](issues/06-pending-decisions.md) | resolved | 新增 `docs/pending-decisions.md`：未裁定 2 项、待确认是否仍开放 9 行、已裁定对照 15 行；决定索引"未关闭项"改为指向该页 |
+| [07](issues/07-translation-evaluation.md) | resolved | 新增 `docs/agents/translation-evaluation.md`（5,875 字符）：现行是两个 Claude 裁判 profile；核实不了的 5 点记 §8 第 5 项 |
 
 ## 8. 待用户裁定
 
@@ -316,3 +317,11 @@ Status: claimed
 4. **`docs/pending-decisions.md` 里 9 行"待用户确认是否仍开放"（票据 06）。** 来源报告写着待裁定，但没有 ADR 或决定索引的明确裁定：
    v5 §8 第 1–2 项、v6 第 1–3 项、v7 第 3–4 项、v9 第 3 与 6 项、v10 第 5 项、v11 第 2 项与第 5 项、v14 第 11 项、声学裁判线后续。
    请逐项确认是否仍开放；确认关闭的从该页删行。
+5. **现行翻译评估方法里核实不了或没有定论的地方（票据 07）。** `docs/agents/translation-evaluation.md` 只写了能确认的部分：
+   - 裁判提示从 prompt-v1 改到 prompt-v2 时 profile 名没变（`experiments/translation_v3/README.md`），而 v3 计划 §4.2 写"提示一变就是新版本"。
+     有没有哪一轮把两版提示的分数放在一起比过，没有查到。
+   - `v5-asr-pairwise-v1` 没有 profile hash 与版本字段，只在报告里记系统提示的 sha256；这算不算足够的版本身份，没有定过。
+   - 备用执行面（子 agent 读导出包）固定不了具体模型（Agent 工具只接受别名）；有没有哪一轮真的用它评过分，没有查到。
+   - 新轮次没有可复用入口：`experiments.scene_batching_v6` 的 `--round` 只到 v13，v15 另建了包。
+   - "人名相关错误"的关键词表在 `experiments/scene_batching_v6/asr10.py` 与 `experiments/scene_batching_v6/v9.py` 里不一样，页面没有指定用哪个。
+   请裁定：这几点是否需要定规矩（例如成对 profile 补版本身份、指定人名错误口径），还是保持现状。
