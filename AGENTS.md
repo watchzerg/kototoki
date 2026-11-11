@@ -1,6 +1,6 @@
 # Kototoki
 
-自托管 Speech-to-Text（STT）工具：Python + 本地 AI 模型，验证目标是原生 Windows（pwsh、RTX 5080），macOS 未验证。仓库以**研究／demo** 为主：W0／X0 基线与可复用 demo 已存在；第一个产品形态（双语字幕批量流水线 `kototoki/`，`python -m kototoki`）已实现，UI、流式、打包尚未开始。
+自托管 Speech-to-Text（STT）工具：Python + 本地 AI 模型，验证目标是原生 Windows（pwsh、RTX 5080），macOS 未验证。仓库以**研究／demo** 为主；第一个产品形态是双语字幕批量流水线 `kototoki/`（`python -m kototoki`），UI、流式、打包尚未开始。
 
 ## 常驻约束
 
@@ -16,7 +16,6 @@
 - 采用符合项目规模的最小充分设计：校验与错误处理只覆盖实际会出现的情况；抽象、配置项、扩展点和兼容垫片等到出现第二个使用者时再加。
 - 只针对当前代码、当前数据库 schema 和新数据实现。兼容旧版本、迁移历史数据或照顾进行中的旧流程属于额外需求：先说明具体需求、影响与新增复杂度，获用户批准后再纳入。
 - 变更代码时按[随交付同步](docs/agents/documentation.md#随交付同步)更新受影响文档；完成报告区分实现、自动检查和未验证项。
-- 每次交付前按[待填标记](docs/agents/documentation.md#待填标记)给出的命令搜索剩余标记：标记注明的时机已到，或本次任务产生了对应内容，就填写并删除标记；否则原样保留，不编造。全部标记消失后删除本条。
 
 ### 产品不变量
 
@@ -25,14 +24,13 @@
 - **保留原语言**：日语转写仍为日语。
 - **不进 Git 与日志**：模型权重、缓存、录音、生成的转写、密钥、`.local/`；默认不打印音频内容和完整转写。
 
-### 冻结证据与基线身份
+### 冻结证据与现行决定
 
-- **冻结的历史证据只读**：结果报告、`docs/context/*`、ADR 历史，以及 Codex 时代的翻译裁判链（`experiments/translation_judge/`、`experiments/translation_flow/v2_*`、`experiments/translation_eval/`、参考 prompt）带 sha256 自检和记录在案的 `gpt-6.1-sol`／`codex-cli` 身份。需要改动时新增带版本的文件；原文件不重命名、不重排版、不"现代化"。
+- **冻结的历史证据只读**：调研与验收报告、`docs/context/*`、`docs/plans/*`、ADR 正文（只追加状态行）、已结题的 `.scratch/<slug>/`，以及 Codex 时代的翻译裁判链（`experiments/translation_judge/`、`experiments/translation_flow/v2_*`、`experiments/translation_eval/`、参考 prompt），后者带 sha256 自检和记录在案的 `gpt-6.1-sol`／`codex-cli` 身份。需要改动时新增带版本的文件；原文件不重命名、不重排版、不"现代化"。改任何既有文档前，先搜代码里有没有对它的 sha256 或内容断言。
+- 现行决定的完整定义在 [CURRENT.md](docs/adr/CURRENT.md)，沿革在[决定索引](docs/adr/INDEX.md)。翻译只有**一条基线 Q3**，直到用户另行决定：新测试以 Q3 为对照，引用 Q2、Q1、Q0、F1、H0 时写明。
 - 翻译代码中的 `reasoning_effort:no_think` 是 Hy-MT2 chat-template token，不是 agent 设置；`reasoning_effort` 不做批量替换。
-- 当前有效决定以[决定索引](docs/adr/INDEX.md)为准。翻译只有**一条基线 Q3**（[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)，2026-11-09 起），直到用户另行决定：Q2 的翻译规则不变（Q1 配方规则 `qwen-wide`＋只注入 `confidence: high` 的专名表，模型为 Strata 上的 Qwen3.8-Flash-Next IQ3_S、不加参数 `strata launch`、DFlash2，[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)），专名表改由同一 Strata 实例上的 Flash-Next 建（`names-strata-v4`，失败后最多 5 次请求、取第一张合格的表），不起 llama-server（前任 Q2＝27B 建表、Q1＝Qwen3.8-27B 翻译、Q0＝`qwen-wide`）。新测试以 Q3 为对照，引用 Q2、Q1、Q0、F1、H0 时写明。**H0**（Hy-MT2＋`dp10-cut`，[ADR-0010](docs/adr/0010-dp10-cut-translation-flow-baseline.md)）不再是基线，只作历史对照。产品翻译是 Q2 规则＋Q3 建表：翻译配方 `q2-degrade-v1`（[ADR-0019](docs/adr/0019-product-translation-q2.md)），建表配方 `q3-names-v1` 与 Q3 的 `names-strata-v4` 逐字节一致，两者在同一个由产品自动启停的 Strata session 上先建表再翻译，产品不起 llama-server、不加载 27B（[ADR-0022](docs/adr/0022-product-names-on-strata.md)）；专名表只注入、不替换。
-- **不自动选用"翻译多次再挑选"的方法**（多样本／多 seed＋MBR 或 reranking、best-of-N、多次全量翻译投票及其更省变体）：不提议、不列候选、不在无人值守时执行，除非用户明确要求；v4 `mbr8c`、v5 `mbr8s` 已放弃，边界情况先问（[ADR-0008](docs/adr/0008-no-multi-translation-selection.md)）。
-- 专名一致性研究线（`experiments/name_consistency/`，建表＋生成后替换）已结题：最佳已知配置冻结在 [ADR-0014](docs/adr/0014-name-consistency-in-product.md)，不再提议或开启新轮次；建表已进产品（`kototoki/names/`），产品的替换已按 [ADR-0019](docs/adr/0019-product-translation-q2.md) 删除（表只经翻译注入）；`experiments/name_consistency/` 仍冻结、产品不导入；重开只由用户明确要求——2026-11-10 用户已明确要求在 [v15](docs/research/2026-11-10-asr-robustness-v15.md) 票据 04 重开一次，范围限日文转写侧“只按专名表写法替换”，中文侧替换不重做；2026-11-11 用户裁定该替换不进产品，这次重开结束。
-- v3、v4、v5（剧集）确认集已开封，新的确认须用全新隔离的集合。第二轮（v2）已停止并冻结：其台账 1300+ 行，只按节读取，其作业不再恢复；先验只取[v1/v2 教训](docs/research/2026-10-10-hy30-flow-v1-v2-lessons.md)。
+- **不自动选用"翻译多次再挑选"的方法**（多样本／多 seed＋MBR 或 reranking、best-of-N、多次全量翻译投票及其更省变体）：不提议、不列候选、不在无人值守时执行，除非用户明确要求；边界情况先问（[ADR-0008](docs/adr/0008-no-multi-translation-selection.md)）。
+- 已结题的研究线不重开、已开封的确认集不再用于确认：专名一致性研究线（[CURRENT·专名](docs/adr/CURRENT.md#专名)）不提议新轮次；v3、v4、v5 确认集已开封，新的确认用全新隔离的集合；第二轮（v2）已停止，其台账只按节读取、作业不恢复，先验只取[v1/v2 教训](docs/research/2026-10-10-hy30-flow-v1-v2-lessons.md)。重开只由用户明确要求。
 
 ### 重任务与环境
 
@@ -54,23 +52,14 @@
 
 | 触发条件 | 必读入口 |
 | --- | --- |
-| 设计、修改、实现或 review 代码 | [架构总览](docs/architecture/INDEX.md) → 受影响的模块页（尚不存在时按[随交付同步](docs/agents/documentation.md#随交付同步)建页）；行为依据查 `docs/specs/`、`docs/plans/`，取舍查[决定索引](docs/adr/INDEX.md) |
-| 实现、修改或 review 产品包 `kototoki/`（双语字幕流水线） | [模块边界](docs/architecture/module-boundaries.md)：依赖方向、产品包的责任边界与接缝 → 受影响模块页的"接口与依赖" → [技术设计](docs/specs/bilingual-subtitle-pipeline.md)。接口形状要变时先改模块页与模块边界，再动手 |
-| review diff 的代码质量 | [CODING_STANDARDS.md](CODING_STANDARDS.md) |
-| 编写、修改、移动或 review 测试，制定测试计划或整理验收证据，执行 `implement-spec` | [测试设计与验收](docs/agents/testing.md)、[验证边界](docs/testing/validation.md) |
-| 运行命令、选择门禁，调整依赖、工具版本或平台／GPU 配置 | [开发工作流](docs/development/workflow.md)、[技术选型](docs/development/technology-stack.md)、[依赖布局与资产清单](docs/development/dependencies.md)、[工具链](docs/development/toolchain.md)、[Windows 与 NVIDIA](docs/development/windows-nvidia.md) |
+| 设计、修改、实现或 review 代码 | [架构总览](docs/architecture/INDEX.md) → 受影响的模块页。产品包 `kototoki/` 另读[模块边界](docs/architecture/module-boundaries.md)，接口形状要变时先改模块页与模块边界再动手；跨模块契约查[技术设计](docs/specs/bilingual-subtitle-pipeline.md)；review 质量按 [CODING_STANDARDS.md](CODING_STANDARDS.md) |
+| 编写、修改、移动或 review 测试，测试计划、验收证据，执行 `implement-spec` | [测试设计与验收](docs/agents/testing.md) |
+| 运行命令、选择门禁，调整依赖、工具版本或平台／GPU 配置 | [开发工作流](docs/development/workflow.md)，再按需读 `docs/development/` 的对应页 |
 | 新增、移动、删除文档，或讨论形成明确结论 | [文档维护规则](docs/agents/documentation.md) |
-| 涉及领域术语、数据模型或与 ADR 冲突；需要 W0、X0 或翻译基线的身份定义 | [GLOSSARY.md](GLOSSARY.md)、[领域文档规则](docs/agents/domain.md) |
-| 读取、创建或更新票据 | [tracker 约定](docs/agents/issue-tracker.md) |
-| 分类票据或调整分诊标签 | [标签映射](docs/agents/triage-labels.md) |
-| 调研、实验或复用已有结论 | [调研索引](docs/research/INDEX.md)；新产出放 `docs/research/` 并在索引登记 |
-| 查当前有效决定及其演进 | [决定索引](docs/adr/INDEX.md)（现行规则按主题，标权威 ADR 条款） |
-| 用户采纳或变更决定（换基线、裁定研究结论、改产品行为） | [决定索引·记录新决定](docs/adr/INDEX.md#记录新决定)：新 ADR＋旧 ADR 只追加状态行＋同一提交改决定索引与摘要入口 |
-| 查研究轮次与探索状态 | [决定与探索时间线](docs/research/INDEX.md#决定与探索时间线) |
-| 接续旧任务 | `docs/context/` 台账（冻结证据），**先对照仓库核实状态** |
-| 测试、benchmark 或对比 W0／X0 | [基线测试指南](docs/guides/baseline-testing.md) → demo README → 契约 → 验证记录 |
-| 运行或修改 W0（VAD、ASR、对齐）或 X0（分段、Qwen 输入、MMS） | W0：[demo](experiments/w0_demo/README.md) → [契约](docs/specs/w0-reusable-demo.md)；X0：[demo](experiments/x0_demo/README.md) → [契约](docs/specs/x0-reusable-demo.md)。复用并更新 `experiments/w0_demo/`、`experiments/x0_demo/`，`x0_flow` 与 `qwen` 只作回归参照；配方变更先出新版本并记录验证，再更新基线文档。CLI 省略参数会落到旧默认（旧 PyanNet／fixed30），须显式选择新 Pyannote（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)） |
+| 涉及领域术语、数据模型或与 ADR 冲突 | [GLOSSARY.md](GLOSSARY.md)、[领域文档规则](docs/agents/domain.md) |
+| 读取、创建、更新或分类票据 | [tracker 约定](docs/agents/issue-tracker.md)、[标签映射](docs/agents/triage-labels.md) |
+| 查现行决定与基线身份（翻译 Q3、产品翻译与建表、W0／X0）；用户采纳或变更决定 | [CURRENT.md](docs/adr/CURRENT.md)；[记录新决定](docs/adr/INDEX.md#记录新决定) |
+| 调研、实验、复用已有结论，查研究轮次（含已结题的翻译流程 v1–v8、专名、旧 Codex 评估） | [调研索引](docs/research/INDEX.md)；新产出放 `docs/research/` 并登记 |
+| 测试、benchmark、运行或修改 W0／X0 | [基线测试指南](docs/guides/baseline-testing.md) → demo README → 契约。复用并更新 `experiments/w0_demo/`、`experiments/x0_demo/`；配方变更先出新版本并记录验证；CLI 须显式选择新 Pyannote（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)） |
 | 选择或对比 STT 引擎、模型、对齐器 | [推理选型原则](docs/development/inference-selection.md) |
-| 翻译基线 | Q3（唯一基线，Q2 规则＋Strata 建表）：[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)；Q2 与 Q1 配方规则：[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，对照规则：[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)；产品翻译（Q2＋降级、Strata 启停）：[ADR-0019](docs/adr/0019-product-translation-q2.md)；产品建表（Q3 规则、与翻译共用 Strata session）：[ADR-0022](docs/adr/0022-product-names-on-strata.md)；Q0 与 H0 身份、测试规则：[ADR-0015](docs/adr/0015-two-translation-baselines.md)；H0 模型／采样：[ADR-0005](docs/adr/0005-apex-i-compact-translation-baseline.md)，流程 `dp10-cut`：[ADR-0010](docs/adr/0010-dp10-cut-translation-flow-baseline.md)、`just translation-srt`；[翻译 demo](experiments/translation_demo/README.md) |
-| 翻译流程探索历史（v3–v8 已结题） | v5–v8 只在[调研索引](docs/research/INDEX.md)登记（报告与 `.scratch/` 票据）；v4：[报告](docs/research/2026-10-11-hy30-flow-v4-report.md)、[台账](docs/context/2026-10-11-hy30-flow-exploration-v4.md)、[`translation_v4`](experiments/translation_v4/README.md)，唯一确认配方 `mbr8c`（约 6 倍墙钟）已放弃（ADR-0008）；v3：[报告](docs/research/2026-10-10-hy30-flow-v3-report.md)、[计划](docs/plans/hy-mt2-translation-flow-exploration-v3.md)、[`translation_v3`](experiments/translation_v3/README.md)，裁判 profile `claude-opus-5-5-mqm-v1` |
-| 旧翻译评估（历史） | [评估方法](docs/testing/translation-model-evaluation.md) + [流程](docs/agents/subtitle-translation-evaluation.md)：冻结的 Codex 时代 `sol-high-auto-v1`，其分数不与 Claude 裁判分数混用 |
+| 接续旧任务 | `docs/context/` 台账（冻结证据，不整读），**先对照仓库核实状态** |

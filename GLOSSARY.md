@@ -16,50 +16,33 @@ _Avoid_: 同义词一, 同义词二
 
 ### 基线身份
 
+每个身份只给一句定义；配方 id、hash、模型与启动方式的完整定义在[现行决定](docs/adr/CURRENT.md)，沿革在[决定索引](docs/adr/INDEX.md#演进链)。
+
 **W0**：
-faster-whisper + new Pyannote segmentation-3.0 + MMS CTC alignment, with WhisperX
-ideas ported (cut-merge, timestamp-free decoding, feature handling).
+STT 基线之一：faster-whisper＋新 Pyannote segmentation-3.0＋MMS CTC 对齐，由自有适配层移植 WhisperX 的切分合并、无时间戳解码与特征处理（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)）。
 
 **X0**：
-Qwen-ASR + new Pyannote + the same MMS, adopting only WhisperX ideas compatible
-with Qwen (keep Qwen-native decoding/features). fixed30 and no-VAD cut-merge are separately
-identified controls.
-
-**Translation baseline**：
-Separate experiment, not part of the STT milestone: Hy-MT2 30B-A3B
-APEX-I-Compact, sampling recipe `official30b-cached-v1`; full-SRT flow baseline is the v3
-recipe `dp10-cut` since 2026-10-17 (ADR-0010: joint-understanding prompt of `b10-joint`, DP packing of
-6-10 targets around 10 with at most 12 visible cues, cuts penalised at short silences, never across a
->=20 s silence, gap-aware read-only neighbours; not GPU-screened). `dp6-grp` (ADR-0009: cuts only between
-<1 s groups, 6-12 targets, never across >=10 s) briefly preceded it; `b10-joint` (ADR-0006: 10
-targets/batch, 1 neighbour each side) is the earlier baseline and the control of rounds v3-v7; `dp10-cut`
-is the control of round v8. `gap_pack` is the recipe field for silence-aware packing (`gap-pack-v1` in
-`dp6-grp`, `gap-pack-v2` adds the tiered cut penalty of `dp10-cut`). `grp1` (v8: R2+ sentence groups
-injected into `dp10-cut` packs with the `joint-understanding-v2` prompt, `group-reorder-v1`) produced no
-reordering and the line was closed on 2026-10-18; it is kept as a recipe, not a baseline. The product
-recipe `dp10-cut-degrade-v1` (ADR-0011, 2026-10-18) carried the same packing into `kototoki/` until
-2026-11-08; the product recipe `q2-degrade-v1` (ADR-0019) keeps the packing with the Q2 request.
-Since 2026-10-21 this line is named **H0**, with **Q0** beside it (ADR-0015).
+STT 基线之一：Qwen-ASR＋同一新 Pyannote＋同一 MMS，只吸收与 Qwen 兼容的 WhisperX 做法，保留 Qwen 原生解码与特征；fixed30 与不带 VAD 的 cut-merge 是单独标识的对照（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)）。
+_Avoid_: Q0（那是翻译身份）
 
 **H0**：
-专用翻译模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Hy-MT2 30B-A3B APEX-I-Compact＋采样 `official30b-cached-v1`（ADR-0005），研究侧配方 `dp10-cut`（ADR-0010），产品配方 `dp10-cut-degrade-v1`（ADR-0011）。即上条 Translation baseline 的现名。2026-11-08 起不再是基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)），同日产品也切走（[ADR-0019](docs/adr/0019-product-translation-q2.md)），只作历史对照。
-_Avoid_: Hy 基线、旧基线
+专用翻译模型线的历史对照身份（2026-11-08 起不再是基线）：Hy-MT2 30B-A3B APEX-I-Compact＋采样 `official30b-cached-v1`＋完整 SRT 流程配方 `dp10-cut`（[ADR-0005](docs/adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0010](docs/adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0015](docs/adr/0015-two-translation-baselines.md)）。
+_Avoid_: Hy 基线、旧基线、Translation baseline（2026-10-21 前的旧称）
 
 **Q0**：
-通用模型线的翻译基线（[ADR-0015](docs/adr/0015-two-translation-baselines.md)，2026-10-21）：Qwen3.8-27B UD-IQ3_S（2026-11-09 前与产品 `names` 同一模型），`translation_v3` 配方 `qwen-wide`——切包与 H0 相同，只读邻文前 20／后 5（`wide-context-v1`），提示 `qwen-joint-v1`。证据只到 v9 dev 筛选（accuracy 两类显著优于 H0，unnatural 变差、墙钟约 3.3 倍）；未进产品；`translate-srt` 自 v10 起可跑 Qwen 配方。
-2026-11-08 起 Q 线的当前基线先由 **Q1**、同日再由 **Q2** 接替，2026-11-09 起为 **Q3**；Q0 保留为历史身份。
+通用模型线的第一个翻译身份（历史）：Qwen3.8-27B＋`translation_v3` 配方 `qwen-wide`，切包与 H0 相同、只读邻文更宽（[ADR-0015](docs/adr/0015-two-translation-baselines.md)）。
 _Avoid_: qwen-wide（指基线时）、通用模型基线、X0（那是 Qwen-ASR 的 STT 基线）
 
 **Q1**：
-通用模型线的前任翻译基线（[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08）：Q0 加上专名表注入 N\*。表由产品 `names` 阶段对同一输入建出，只注入 `confidence: high` 实体的全部写法（`filter: window`，表头 `qwen-name-table-v1`），注入后不再替换。不分产品 ASR 源与 dev 干净源。表内容进 hash，所以每个输入一个实例（v11 产品为 `q0-names-high` `c10e143a…`）。证据：产品上非劣、人名错误 120 → 72；dev 上 accuracy 显著变差，用户已接受。未进产品。
+Q0 加上只注入 `confidence: high` 条目的专名表、注入后不替换的翻译身份（历史；[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)）。
 _Avoid_: N\*（指基线时）、q0-names-high（指基线时）、Q0＋注入
 
 **Q2**：
-前任翻译基线（[ADR-0018](docs/adr/0018-q2-sole-translation-baseline.md)；身份见 [ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)，2026-11-08；2026-11-09 起由 Q3 接替）：表由产品 `names` 的 27B 建，Q1 的配方规则不变，模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（本机解析为 128K、DFlash2、并发自动适配，quick tune 确认无需额外参数）；配方带 `qwen_options.strata_launch: "default"`，不用 grammar。质量证据来自同配方、MTP 启动的 v12 F1（dev 与产品都显著优于 Q1）。2026-11-08 起进产品：产品配方 `q2-degrade-v1`＝Q2 规则＋10→5→1 降级（[ADR-0019](docs/adr/0019-product-translation-q2.md)）。
+前任翻译基线：Q1 的配方规则不变，模型换为 Strata 上的 Qwen3.8-Flash-Next、不加参数启动；产品翻译配方 `q2-degrade-v1` 即 Q2 规则加降级（[ADR-0017](docs/adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0019](docs/adr/0019-product-translation-q2.md)）。
 _Avoid_: F1（指基线时；F1 是 v12 的 MTP／32K 启动）、Flash-Next 基线
 
 **Q3**：
-唯一的翻译基线（[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)，2026-11-09）：Q2 的翻译规则不变，只换注入表的来源——表由同一 Strata 实例上的 Flash-Next 建，建表配方 `names-strata-v4`（`38cb7bcd…`；产品 `BUILD` 去掉 llama.cpp 资产、`max_tokens` 8192＋context 24576、不发 `response_format`、`enable_thinking: false`，失败后依次换 seed 最多 5 次请求，取第一张合格的表，不挑选）。每个输入一个实例（v13 dev `q2-names-s1` `eeba5a71…`）。证据来自 v13：dev 电影与产品 ASR 源显著变好，dev 剧集 wrong-referent 显著变差，两次建表差别大，用户已知并接受。2026-11-09 起产品按同一规则建表（配方 `q3-names-v1`，[ADR-0022](docs/adr/0022-product-names-on-strata.md)）；产品翻译仍是 `q2-degrade-v1`。
+唯一的翻译基线（2026-11-09 起）：Q2 的翻译规则不变，注入的专名表改由同一 Strata 实例上的 Flash-Next 建（[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)；完整定义见[现行决定](docs/adr/CURRENT.md#翻译基线-q3)）。
 _Avoid_: S1（指基线时；S1 是 v13 的候选臂）、names-strata-v4（指基线时）、Strata 建表基线
 
 ### 双语字幕流水线
@@ -113,4 +96,4 @@ _Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是�
 **落点**：
 在锚定 cue 的译文里找到的、应被换成目标中文的那一段：先找同实体其他写法的中文与过特异性检验的 `zh_variants`（变体层），找不到再用跨 cue 统计（统计层）；统计层落点按规则一扩展到整个名字。落点重叠、紧邻复合名连接符或不在词边界上时不替换，记为 `unresolved`。
 
-Legacy CLI defaults (old PyanNet / fixed30) are **not** the adopted baselines; see [ADR-0003](docs/adr/0003-new-pyannote-baselines.md).
+W0／X0 demo 的 CLI 旧默认（旧 PyanNet／fixed30）**不是**已采纳的基线，见 [ADR-0003](docs/adr/0003-new-pyannote-baselines.md)。

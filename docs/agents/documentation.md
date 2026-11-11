@@ -82,6 +82,7 @@
 3. 术语变化更新 `GLOSSARY.md`；满足 ADR 条件的决策新增 ADR；使用方式改变时更新 README 或 `operations/`。
 4. 交付说明列出已更新文档与验证范围。无文档影响时说明判断，不机械改动。After changing code, config, scripts, or dependencies, check the affected docs (README, `AGENTS.md`, `docs/`) and update only what became inaccurate. No mechanical rewrites or date refreshes.
 5. 新增、移动或删除文档时同步 `docs/INDEX.md`、所属目录索引及所有引用；仅当新文档成为某类任务的必读入口时才改 `AGENTS.md` 触发表。有链接检查命令时运行它。
+6. 每次交付前按[待填标记](#待填标记)的命令搜索剩余标记：标记注明的时机已到，或本次任务产生了对应内容，就填写并删除标记；否则原样保留，不编造。
 
 ## 待填标记
 
@@ -100,7 +101,7 @@ grep -rnE '<待填 (初始化|阶段3|首个模块|按需)：' --exclude-dir=.gi
 | 首个模块 | 第一个职责有了可描述的行为和测试后；项目已有代码时读代码填写 |
 | 按需 | 说明中的条件出现时 |
 
-填写后删除整个标记；内容尚不存在时保留，不编造。全部标记消失后删除 `AGENTS.md` 中对应的常驻约束。
+填写后删除整个标记；内容尚不存在时保留，不编造。2026-11-11 起只剩发布流程 1 个标记（`docs/development/workflow.md`），交付前的搜索规则不再占 `AGENTS.md` 的常驻条目，改由[随交付同步](#随交付同步)第 6 步承担；全部标记消失后删除该步与本节。
 
 ## 项目约定
 
