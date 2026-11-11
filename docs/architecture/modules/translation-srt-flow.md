@@ -24,6 +24,7 @@
 - `generate.py::run_generation`：逐场景原子写 `scenes/<id>.json`；`managed_session_factory` 每个 session 新启动服务器，首个 completion 必须 `timings.cache_n == 0`；session 只在服务器成功启动后记入 `run.json`；多于一个实际工作的 session 时标 `resumed: true`、`performance_comparable: false`。
 - `server.py`：`ManagedServer` 复现 `translation_demo_runtime` 的基线命令行（模块 docstring 列出全部参数），驻留解析直接导入该模块；`verify_model` 加载前对 GGUF 全量 SHA256 并按路径＋大小＋mtime 缓存；`resolve_model` 要求资产清单 SHA256 等于 `common.EXPECTED_MODEL_SHA256`。
 - `procs.py`：`ProcessLock`（pid＋进程创建时间，防 PID 复用）、`KillOnCloseJob`（Windows Job Object，Python 被强杀时服务器随之退出）、`list_llama_servers`。
+- `llama_server.py`：Q0／Q1 路径（`qwen.py`）用的官方 llama.cpp 生命周期——`ServerSpec`、`ManagedServer`、驻留校验、`server_command`、`port_free`、`check_model`、`check_engine` 与 `tokenize`／`complete` 补充；[ADR-0025](../../adr/0025-product-package-boundaries.md) 起从产品包搬来（产品不为研究侧保留代码），本机客户端仍导入产品的 `kototoki.local_client.LlamaClient`。
 - `common.py`：仓库内固定路径（引擎、身份文件、v2 冻结源数据目录、v3 根目录、GPU 锁）与原子写（Windows `PermissionError` 时最多重试 20 次）。
 - 探索工具（历史）：`judge.py`（Claude MQM 盲评，profile `claude-opus-5-5-mqm-v1`）、`stats.py`（配对 bootstrap 与判定）、`synth.py`、`mbr.py`、`status.py`、`data.py`（读取 `.local/translation-evaluation/hy30-flow-v2-20261008/` 下的冻结 v2 源数据）。
 

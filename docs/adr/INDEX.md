@@ -11,7 +11,7 @@
 
 ## 当前有效决定
 
-更新于 2026-11-11（ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT，同日采纳并实现；同日 ADR-0023 的 ASR 复读守卫已实现并验收）。此前 2026-11-10（ADR-0023 采纳）、2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
+更新于 2026-11-11（ADR-0025：GPU 锁冲突一律进程级、产品不为研究侧留代码、核心测试不导入研究代码，同日采纳；同日 ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT，采纳并实现；ADR-0023 的 ASR 复读守卫已实现并验收）。此前 2026-11-10（ADR-0023 采纳）、2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
 
 | 主题 | 现行规则 | 权威出处 |
 | --- | --- | --- |
@@ -27,6 +27,7 @@
 | 专名一致性 | 研究线已结题，不开新轮次，建表配置冻结（no-think、提示 v5；v13 由用户明确要求重开，产出 Q3 的 Strata 建表配方；2026-11-10 用户再次明确要求在 v15 重开，范围限日文转写侧的表内写法替换；2026-11-11 用户裁定该替换不进产品，这次重开结束）。产品 `names` 阶段在与翻译共用的 Strata session 上用 Flash-Next 建表（配方 `q3-names-v1`，请求与 seed 序列与 Q3 的 `names-strata-v4` 逐字节一致，最多 5 次请求），必开，不起 llama-server；表只经翻译注入（high 条目）使用，没有发布时替换；表可手改，改到注入行即重译 | [0014](0014-name-consistency-in-product.md)；替换与开关的删除见 [0019](0019-product-translation-q2.md)；基线的建表见 [0021](0021-q3-strata-names-baseline.md)；产品建表与共享 session 见 [0022](0022-product-names-on-strata.md) |
 | ASR 复读守卫 | 产品 w0 路径（含 `cross` 的 w0 那一路；x0 不过守卫）在 `asr` 阶段解码后过守卫：规则 `repeat-strict`（规范化文本上周期 ≥2 的相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖 ≥50%），动作折叠（保留第一个单元），折叠后仍命中则按 `failed_windows` 置空（原因 `guard:repeat-strict`），trace 记 `guard`。只做后处理，不重解码；W0 基线身份不变，产品 W0 配方 id `w0-faster-whisper-large-v3-guard-v2`（2026-11-11 实现，旧 `asr.json` 重算） | [0023](0023-asr-repeat-guard.md) |
 | 内嵌日文字幕 | `[input] use_embedded_subtitles`（默认 `true`）开着且文件有可用的日文文本字幕轨（语言相符、`subrip`／`ass`／`ssa`／`mov_text`／`webvtt`、非 forced；多条取 default 再取索引最小）时，该文件不做 STT：probe → ffmpeg 抽轨转 SRT＋清洗（去标签、多行并一行、丢空条目／绘图指令／重复、按时间排序）写 `ja.srt` 与 `ja-embedded.json` → `names` → `translate` → publish，不提取音频。抽取失败或零条目回到 STT 链并告警。配方 `embedded-ja-subtitle-v1`。不读外挂字幕、不做位图 OCR、不检测内容语言、不过滤听障说明 | [0024](0024-embedded-japanese-subtitles.md) |
+| 产品包边界与失败级别 | 任何阶段撞 `.local/gpu.lock` 都以退出码 4 结束整批，不写逐文件 `failure.json`，已完成的 CPU 产物保留。产品不为研究侧导入方保留代码：`kototoki/llama_server.py` 拆掉，产品剩 `kototoki/local_client.py`（`LlamaClient`、`InfraFailure`、`explicit_oom`），llama-server 进程生命周期代码在 `experiments/translation_v3/llama_server.py`。产品符号移动或改名时同一提交里机械改研究侧导入行（Q3 实现的离线测试须仍通过）。`tests/core` 不导入 `experiments.*`：等价钉字面量／sha256，实时对照在 `tests/equivalence/`（`just test-equivalence`，属 `gate-full`） | [0025](0025-product-package-boundaries.md) |
 
 ### 未关闭项
 
@@ -88,6 +89,11 @@
   4. → [0018](0018-q2-sole-translation-baseline.md)（11-08 同日）：Q2 成为唯一翻译基线，H0 退出基线。
   5. → [0019](0019-product-translation-q2.md)（11-08 同日）：产品翻译切到 Q2。
   6. → [0021](0021-q3-strata-names-baseline.md)（11-09）：**Q3**＝Q2 翻译规则＋Strata Flash-Next 建表（`names-strata-v4`，最多 5 次请求），来自 v13；产品建表同日由 0022 切换。
+- **产品包与研究代码的边界**：
+  1. [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13）：产品包不导入 `experiments.*`，历史实现只复制。
+  2. → [0014](0014-name-consistency-in-product.md)（10-19）：翻译与建表两个使用者出现，llama-server 生命周期抽成共享的 `kototoki/llama_server.py`。
+  3. → [0022](0022-product-names-on-strata.md)（11-09）：产品不再起 llama-server，`ManagedServer` 等只剩研究侧使用者，留在原文件；等价由 `tests/core/` 导入 v13 守门。
+  4. → [0025](0025-product-package-boundaries.md)（11-11）：产品不为研究侧留代码（`llama_server.py` 拆成产品的 `local_client.py` 与 `experiments/translation_v3/llama_server.py`），研究侧导入行随产品符号机械改，`tests/core` 不导入 `experiments.*`、实时对照移到 `tests/equivalence/`；GPU 锁冲突一律进程级（退出码 4）。
 
 ## 全部 ADR
 
@@ -106,11 +112,12 @@
 | [0019](0019-product-translation-q2.md) | 产品翻译切到 Q2 | 有效；第 2 点中的 llama-server 建表与"不同时驻留"由 0022 替代 |
 | [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) | 音频输入、工作目录移出目标目录、双语字幕发布到源文件旁 | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 唯一翻译基线 Q3（Q2 规则＋Strata 建表，最多 5 次请求） | 有效 |
-| [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效 |
+| [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效；第 6 点中 `llama_server.py`"不挪不删"与第 1 点中"由 `tests/core/` 导入 v13 对照"由 0025 替代 |
 | [0023](0023-asr-repeat-guard.md) | ASR 阶段整窗复读守卫（`repeat-strict`＋折叠） | 已接受，2026-11-11 已实现 |
 | [0024](0024-embedded-japanese-subtitles.md) | 有内嵌日文文本字幕轨的文件跳过 STT | 已接受，2026-11-11 已实现（真实片源与真实模型验证未做） |
+| [0025](0025-product-package-boundaries.md) | 产品包边界与失败级别（GPU 锁冲突进程级、产品不为研究侧留代码、核心测试不导入研究代码） | 已接受（2026-11-11），实现见计划 `architecture-cleanup` §7 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0025 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0026 起。
 
 ## 记录新决定
 

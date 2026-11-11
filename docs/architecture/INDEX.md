@@ -1,6 +1,6 @@
 # 当前架构总览
 
-仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频或音频在源文件旁生产中日双语 SRT，STT 默认 W0、可选 X0，翻译用 Q2 规则的产品配方 `q2-degrade-v1`（Strata 上的 Qwen3.8-Flash-Next，由产品自动启停，[ADR-0019](../adr/0019-product-translation-q2.md)），翻译前在同一个 Strata session 上用 Flash-Next 按基线 Q3 的规则建专名表（[ADR-0022](../adr/0022-product-names-on-strata.md)）、翻译时把表里高置信的译法注入提示（[ADR-0014](../adr/0014-name-consistency-in-product.md)、ADR-0019，没有发布时替换）。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `dp10-cut`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，研究侧翻译基线是 Q2（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)），H0 的模型与采样见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)／完整 SRT 流程见 [ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)（历史对照）；产品配方见 [ADR-0019](../adr/0019-product-translation-q2.md)。
+仓库有一个正式产品形态与一组研究／demo 入口。产品包 `kototoki/` 是双语字幕批量流水线（[技术设计](../specs/bilingual-subtitle-pipeline.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)）：入口 `python -m kototoki [kototoki.toml]` 从一批日语视频或音频在源文件旁生产中日双语 SRT，STT 默认 W0、可选 X0，翻译用 Q2 规则的产品配方 `q2-degrade-v1`（Strata 上的 Qwen3.8-Flash-Next，由产品自动启停，[ADR-0019](../adr/0019-product-translation-q2.md)），翻译前在同一个 Strata session 上用 Flash-Next 按基线 Q3 的规则建专名表（[ADR-0022](../adr/0022-product-names-on-strata.md)）、翻译时把表里高置信的译法注入提示（[ADR-0014](../adr/0014-name-consistency-in-product.md)、ADR-0019，没有发布时替换）。其余可复用代码是一组以 `python -m` 启动的离线实验入口，各自在 `.local/` 下新建私有运行目录并冻结源码、输入与模型身份。研究侧提供两条日语 STT 基线 demo（W0：faster-whisper，X0：Qwen-ASR；二者共用外部新 Pyannote VAD 阶段与 MMS CTC 对齐）、与推理后端无关的转写评分与显示重放，以及独立的 Hy-MT2 字幕翻译运行时和完整 SRT 流程基线 `dp10-cut`。组件选型与基线身份见[当前 STT 基准线](stt-candidate-pipelines.md)，研究侧唯一翻译基线是 Q3（Q2 的翻译规则＋同一 Strata 实例上的 Flash-Next 建表，[ADR-0021](../adr/0021-q3-strata-names-baseline.md)；Q2 规则见 [ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)，对照规则见 [ADR-0018](../adr/0018-q2-sole-translation-baseline.md)），H0 的模型与采样见 [ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)／完整 SRT 流程见 [ADR-0010](../adr/0010-dp10-cut-translation-flow-baseline.md)（历史对照）；产品配方见 [ADR-0019](../adr/0019-product-translation-q2.md)。
 
 本页是理解当前系统的入口，覆盖正式代码；"当前"指同一仓库版本的已实现结构，不代表全部环境已验收。阅读顺序：本页 → [模块边界](module-boundaries.md) → 受影响的模块页 → 源码与测试。
 
@@ -72,7 +72,7 @@ flowchart TB
   WK --> ALIGN["align"]
   TR --> ST
   NM --> ST
-  TR --> LS["llama_server（中间层，客户端）"]
+  TR --> LS["local_client（中间层，客户端）"]
   NM --> LS
   ST --> LS
   ST -->|strata CLI 与 HTTP| STRATA["Strata（外部服务）"]
@@ -89,10 +89,10 @@ flowchart TB
   VAD --> BASE
   ASR --> BASE
   ALIGN --> BASE
-  BASE["基础层：config · recipes · artifacts · srt · workers/protocol · schema · logs · judge · guard"]
+  BASE["基础层：config · recipes · artifacts · srt · workers/protocol · schema · logs · procs · judge · guard"]
 ```
 
-依赖只允许向下；四条硬规则（编排不导入推理模块、推理模块互不导入、基础层不依赖 torch／ffmpeg／网络、产品包不导入 `experiments.*`）与责任边界见[模块边界](module-boundaries.md#依赖方向)。产品与研究入口之间没有导入关系：产品代码从实验代码复制而来，不引用。设计期的目标架构页（`bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入本页，依赖方向、责任边界与接缝并入模块边界；各产品模块的接口以其模块页"接口与依赖"节为准。
+依赖只允许向下；四条硬规则（编排不导入推理模块、推理模块互不导入、基础层不依赖 torch／ffmpeg／网络、产品包不导入 `experiments.*`）与责任边界见[模块边界](module-boundaries.md#依赖方向)。导入关系只有一个方向：产品代码不导入研究代码（从实验代码复制而来，不引用；`tests/core` 也不导入 `experiments.*`，与研究实现的实时对照在 `tests/equivalence/`，[ADR-0025](../adr/0025-product-package-boundaries.md)）；反过来研究侧导入产品符号，2026-11-11 时有 5 个研究包的 27 个文件（`asr_robustness_v14`、`quality_v5`、`asr_robustness_v15`、`scene_batching_v6`、`translation_v3`），其中 `translation_v3/strata.py` 与 `scene_batching_v6/v13.py` 是基线 Q3 的实现；产品符号移动或改名时同一提交里机械改这些导入行。设计期的目标架构页（`bilingual-pipeline-architecture.md`，2026-10-14 设计稿）已于票据 08 收口时删除：分层图与不变量并入本页，依赖方向、责任边界与接缝并入模块边界；各产品模块的接口以其模块页"接口与依赖"节为准。
 
 箭头从使用方指向被依赖方。VAD manifest、`result.json`、参考 JSON 等文件契约在图中未画出：外部 VAD 阶段写出的 manifest 由 W0／X0 读取；W0／X0 的 `result.json` 由评分 CLI 读取；语料准备产出 WAV 与参考 JSON，各 demo 只读取文件，不导入语料模块。
 
@@ -103,10 +103,10 @@ flowchart TB
 | `python -m kototoki [kototoki.toml]` | 根 `.venv`（统一 CUDA 12.8 环境），GPU 阶段以同一解释器起子进程 worker；专名建表与翻译共用一个本机 Strata session（`strata launch --no-tui --model iq3_s`，Qwen3.8-Flash-Next，第一次需要时启动、整批结束停止），Strata 须预先安装并备好模型；产品不起 llama-server | [批次编排](modules/batch-orchestration.md)（产品入口；配置样例 `kototoki.toml.example`） |
 | `python -m experiments.vad_comparison.vad_stage` | `.local/envs/vad-pyannote-gpu-v1` | 外部 VAD 阶段 |
 | `python -m experiments.w0_demo.run` | `.local/envs/whisper-latest` | W0 pipeline |
-| `python -m experiments.x0_demo.run`／`just x0-demo` | 根 `.venv`，子进程用 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |
+| `python -m experiments.x0_demo.run`／`just x0-demo` | 父进程用 `legacy` 解释器（`just x0-demo`），子进程用 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |
 | `python -m kototoki_eval`、`python -m experiments.display.replay` | 根 `.venv` | STT 评分与显示重放（离线） |
-| `just translation-baseline`／`just translation-demo` → `experiments.translation_demo_runtime` | 根 `.venv` + 本机 llama-server | 逐窗翻译运行时 |
-| `just translation-srt` → `experiments.translation_v3 translate-srt --recipe dp10-cut` | 根 `.venv` + 本机 llama-server | 完整 SRT 翻译流程 |
+| `just translation-baseline`／`just translation-demo` → `experiments.translation_demo_runtime` | `justfile` 的 `legacy` 解释器（`uv run --no-project --python 3.12`，不是根 `.venv`）+ 本机 llama-server | 逐窗翻译运行时 |
+| `just translation-srt` → `experiments.translation_v3 translate-srt --recipe dp10-cut` | `legacy` 解释器（同上）+ 本机 llama-server | 完整 SRT 翻译流程 |
 
 产品入口的使用方式见仓库 [README](../../README.md#双语字幕流水线)；基线的完整命令序列见[标准基线测试指南](../guides/baseline-testing.md)。
 
