@@ -1,6 +1,6 @@
 # 字幕翻译流程 A：通用语言模型
 
-状态：draft；设计提案，未实现、未执行翻译质量测试。  
+状态：superseded（2026-11-11 标注：未被采纳为产品能力，现行翻译基线与产品翻译见[现行决定](../adr/CURRENT.md)）；原状态 draft；设计提案，未实现、未执行翻译质量测试。  
 最后更新：2026-10-06。  
 范围：能够接受自由文本指令的通用语言模型，以 OpenAI-compatible Chat Completions 作为传输形状示例；不限 OpenAI 模型，也不默认调用云端。共同数据与验收规则见[总设计](subtitle-translation-common.md)。
 

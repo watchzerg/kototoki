@@ -1,6 +1,6 @@
 # Hy-MT2 字幕翻译流程提案
 
-状态：draft；完整增强流程尚未实现，固定窗口 JSON／GBNF 子集已有 demo 和实测，其余批量与增强协议仍待验证。  
+状态：superseded（2026-11-11 标注：未被采纳为产品能力，现行翻译基线与产品翻译见[现行决定](../adr/CURRENT.md)）；原状态 draft；完整增强流程尚未实现，固定窗口 JSON／GBNF 子集已有 demo 和实测，其余批量与增强协议仍待验证。  
 最后更新：2026-10-07。
 范围：本地日语→简体中文字幕；当前基线为 **Hy-MT2 30B-A3B APEX-I-Compact**（`hy-mt2-30b-a3b-apex-i-compact`），见[ADR-0005](../adr/0005-apex-i-compact-translation-baseline.md)与[demo](../../experiments/translation_demo/README.md)。7B Q8_0、30B-A3B Q3_K_M 及其他量化保留独立对照身份。本文不改变当前 STT 基线，不把翻译接入已实现的产品能力。
 

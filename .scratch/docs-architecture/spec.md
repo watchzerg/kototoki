@@ -293,6 +293,7 @@ Status: claimed
 | [02](issues/02-adr-current.md) | resolved | 新增 `docs/adr/CURRENT.md`（约 8,500 字符）；决定索引的现行表压成每行一句话，变更日志移到页尾"更新记录"；ADR 之间的不一致记 §8 第 1–3 项 |
 | [03](issues/03-slim-agents-glossary.md) | resolved | `AGENTS.md` 7,621 → 4,317 字符，触发表 18 → 11 行；`GLOSSARY.md` 基线身份每条一句；"原条目 → 新位置"对照表在票据文件里 |
 | [04](issues/04-split-research-index.md) | resolved | 调研索引 47,341 → 4,979 字符；时间线移到 `timeline.md`，条目分到 `topics/` 7 篇子索引；117 篇报告各登记一次，14 篇附录补登记 |
+| [05](issues/05-guardrail-indexes.md) | resolved | 新增 `docs/context`、`docs/testing`、`docs/plans`、`docs/specs`、`experiments` 五个索引；5 篇翻译草案状态行标 superseded；`docs/INDEX.md` 9,566 → 2,980 字符 |
 
 ## 8. 待用户裁定
 
