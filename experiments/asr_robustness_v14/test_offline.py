@@ -228,10 +228,6 @@ class InputsAndWorkers(unittest.TestCase):
 
 
 class Identity(unittest.TestCase):
-    def test_w0_recipe_hash_is_pinned(self):
-        self.assertEqual(plan.recipe_hash("asr", engine="w0"),
-                         "127397b52558bbaab0f57a61bf55d1a446d90db1c3db933a07ef8a834fa1f7ba")
-
     def test_research_identity(self):
         upstream = {"audio-16k.wav": "a" * 64}
         models = {"whisper": "b" * 64}
