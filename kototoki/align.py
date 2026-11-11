@@ -6,7 +6,9 @@
 - TorchAudio 版本要求放宽为 ≥2.10（`forced_align`／`merge_tokens` 仍在），实际版本记入 metadata；
 - 字典只取 id < `model.config.vocab_size` 的词表项：transformers 5.x 的 `Wav2Vec2CTCTokenizer`
   把词分隔符 `|` 作为 added token（id 2268）放进词表，超出模型 2268 类（票据 01 smoke #1）；
-  不过滤会让 `character_targets` 把 `|` 当词表内字符、通配符列号也随之错位。
+  不过滤会让 `character_targets` 把 `|` 当词表内字符、通配符列号也随之错位；
+- 不收 offset：units 输出 WAV 本地秒，offset 由日文 cue 加；
+- 窗口一律是整数样本（ASR 适配器先 `schema.validate_windows`），研究期旧窗口的分支（按秒裁剪、按秒乘采样率）不移植。
 
 不做原生 WhisperX trellis、断句、插值或 cue。导入本模块不加载 torch，构造 `MmsAligner` 时才加载。
 """
@@ -20,9 +22,8 @@ import math
 from pathlib import Path
 from typing import Any, Iterator
 
-from kototoki.recipes import MMS
+from kototoki.recipes import MMS, SAMPLE_RATE
 
-SAMPLE_RATE = 16000
 TIME_SEMANTICS = MMS["time_semantics"]
 VOCAB_SIZE = 2268
 MIN_TORCHAUDIO = (2, 10)
@@ -95,17 +96,8 @@ def character_targets(text: str, dictionary: dict[str, int], wildcard_id: int) -
     return targets
 
 
-def clamp_window(start: float, end: float, duration: float) -> tuple[float, float]:
-    if (any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
-            for value in (start, end, duration)) or end < start or duration < 0):
-        raise ValueError("Alignment window must have finite ordered bounds")
-    return min(duration, max(0.0, start)), min(duration, max(0.0, end))
-
-
-def sample_window(segment: dict, audio_samples: int) -> tuple[int, int] | None:
-    """Validate optional exact source bounds without changing legacy windows."""
-    if "start_sample" not in segment and "end_sample" not in segment:
-        return None
+def sample_window(segment: dict, audio_samples: int) -> tuple[int, int]:
+    """Validate the exact integer source bounds of a window."""
     start, end = segment.get("start_sample"), segment.get("end_sample")
     if (any(isinstance(value, bool) or not isinstance(value, int) for value in (start, end))
             or not 0 <= start < end <= audio_samples):
@@ -146,16 +138,13 @@ def normalize_window(waveform: Any, extractor: Any) -> tuple[Any, dict]:
     }
 
 
-def map_records(segments: list[dict], records: list[dict], offset: float = 0) -> dict:
-    """Map merged nonblank spans using source duration/frame count, round then offset.
+def map_records(segments: list[dict], records: list[dict]) -> dict:
+    """Map merged nonblank spans using source duration/frame count, then round.
 
     Frame ends are exclusive. These spans are evidence from a CTC path, not
     measured acoustic character durations. Repeated characters map by index.
-    Derived segments use local time; only evaluator units use source offset.
-    产品恒传 offset 0（WAV sample 0 即视频 0 秒），参数保留以兼容非零 offset 的测试。
+    units 与 derived segments 都是 WAV 本地秒；offset 只由日文 cue 加一次。
     """
-    if not math.isfinite(offset) or offset < 0:
-        raise ValueError("Source offset must be finite and nonnegative")
     by_index = {record["segment_index"]: record for record in records}
     units, derived, base = [], [], 0
     for index, segment in enumerate(segments):
@@ -177,8 +166,7 @@ def map_records(segments: list[dict], records: list[dict], offset: float = 0) ->
                           "evidence_kind": token["evidence_kind"] if token else "missing",
                           "time_semantics": TIME_SEMANTICS})
             units.append({"char_start": base + position, "char_end": base + position + 1,
-                          "start": begin + offset if valid else None,
-                          "end": finish + offset if valid else None,
+                          "start": begin, "end": finish,
                           "granularity": "character", "time_source": "api",
                           "status": "ok" if valid else "text_only", "time_semantics": TIME_SEMANTICS,
                           "experimental_not_acoustic_duration": True})
@@ -251,7 +239,7 @@ class MmsAligner:
                                  for name in ("torch", "torchaudio", "transformers", "numpy")},
         }
 
-    def _align_segment(self, audio: Any, start: float, end: float, text: str, record: dict) -> None:
+    def _align_segment(self, audio: Any, text: str, record: dict) -> None:
         import torch
         from torchaudio.functional import forced_align, merge_tokens
 
@@ -259,10 +247,7 @@ class MmsAligner:
         if not targets:
             record["skip_reason"] = "no_eligible_characters"
             return
-        if "window_start_sample" in record:
-            f1, f2 = record["window_start_sample"], record["window_end_sample"]
-        else:
-            f1, f2 = int(start * SAMPLE_RATE), int(end * SAMPLE_RATE)
+        f1, f2 = record["window_start_sample"], record["window_end_sample"]
         waveform = audio[f1:f2]
         values, normalization = normalize_window(waveform, self.processor.feature_extractor)
         tensor = torch.from_numpy(values.copy()).unsqueeze(0).to(self.device)
@@ -305,7 +290,7 @@ class MmsAligner:
                  "token_probability": float(span.score)}
                 for index, (target, span) in enumerate(zip(targets, spans))]
 
-    def align(self, audio: Any, segments: list[dict], offset: float = 0) -> dict:
+    def align(self, audio: Any, segments: list[dict]) -> dict:
         """逐窗对齐 → `{text, units, records, derived_segments}`。
 
         单窗抛 `RuntimeError`／`ValueError` 时记入该窗 `failure`、tokens 置空并继续，
@@ -317,26 +302,19 @@ class MmsAligner:
             raise ValueError("MMS audio must be a mono 16 kHz NumPy float32 array")
         if not np.isfinite(audio).all():
             raise ValueError("MMS audio contains non-finite samples")
-        if not math.isfinite(offset) or offset < 0:
-            raise ValueError("Source offset must be finite and nonnegative")
-        records, duration = [], len(audio) / SAMPLE_RATE
+        records = []
         for index, segment in enumerate(segments):
             if not isinstance(segment.get("text"), str):
                 raise ValueError("Each MMS segment requires original text")
-            samples = sample_window(segment, len(audio))
-            if samples is None:
-                start, end = clamp_window(segment["start"], segment["end"], duration)
-            else:
-                start, end = (sample / SAMPLE_RATE for sample in samples)
-            record = {"segment_index": index, "window_start": start, "window_end": end,
-                      "blank_id": self.blank_id, "tokens": [], "failure": None}
-            if samples is not None:
-                record.update(window_start_sample=samples[0], window_end_sample=samples[1])
+            start_sample, end_sample = sample_window(segment, len(audio))
+            record = {"segment_index": index, "window_start": start_sample / SAMPLE_RATE,
+                      "window_end": end_sample / SAMPLE_RATE, "blank_id": self.blank_id, "tokens": [], "failure": None,
+                      "window_start_sample": start_sample, "window_end_sample": end_sample}
             records.append(record)
             try:
-                self._align_segment(audio, start, end, segment["text"], record)
+                self._align_segment(audio, segment["text"], record)
             except (RuntimeError, ValueError) as error:
                 # Failed CUDA operations are recorded and never retried on CPU.
                 record["tokens"] = []
                 record["failure"] = f"{type(error).__name__}: {error}"
-        return map_records(segments, records, offset)
+        return map_records(segments, records)

@@ -120,14 +120,16 @@ class ValidateWindowsTests(unittest.TestCase):
 
 
 class ValidateUnitsTests(unittest.TestCase):
+    """units 是 WAV 本地秒：`unit_doc` 的 `offset_s` 为 10，范围仍是 [0, duration]。"""
+
     def test_accepts_exact_coverage_with_timed_units(self):
-        validate_units(unit_doc([timed(0, 1, 10.0, 11.0), timed(1, 2, 11.0, 12.0)]))
+        validate_units(unit_doc([timed(0, 1, 0.0, 1.0), timed(1, 2, 1.0, 2.0)]))
 
     def test_accepts_one_unit_spanning_several_characters(self):
-        validate_units(unit_doc([timed(0, 2, 10.0, 12.0)]))
+        validate_units(unit_doc([timed(0, 2, 0.0, 2.0)]))
 
     def test_text_only_units_need_no_times(self):
-        validate_units(unit_doc([text_only(0, 1), timed(1, 2, 11.0, 12.0)]))
+        validate_units(unit_doc([text_only(0, 1), timed(1, 2, 1.0, 2.0)]))
         validate_units(unit_doc([text_only(0, 1), text_only(1, 2)]))
 
     def test_empty_text_with_no_units_is_valid(self):
@@ -135,28 +137,44 @@ class ValidateUnitsTests(unittest.TestCase):
 
     def test_missing_coverage_is_rejected(self):
         with self.assertRaises(ValueError):
-            validate_units(unit_doc([timed(0, 1, 10.0, 11.0)]))
+            validate_units(unit_doc([timed(0, 1, 0.0, 1.0)]))
         with self.assertRaises(ValueError):
             validate_units(unit_doc([]))
 
     def test_duplicate_coverage_is_rejected(self):
         with self.assertRaises(ValueError):
-            validate_units(unit_doc([timed(0, 2, 10.0, 12.0), text_only(1, 2)]))
+            validate_units(unit_doc([timed(0, 2, 0.0, 2.0), text_only(1, 2)]))
         with self.assertRaises(ValueError):
             validate_units(unit_doc([text_only(0, 1), text_only(0, 1), text_only(1, 2)]))
 
     def test_timed_unit_outside_source_range_is_rejected(self):
-        for start, end in ((9.9, 11.0), (10.0, 15.01), (12.0, 11.0), (20.0, 21.0)):
+        for start, end in ((-0.1, 1.0), (0.0, 5.01), (2.0, 1.0), (10.0, 11.0)):
             with self.subTest(start=start, end=end), self.assertRaises(ValueError):
                 validate_units(unit_doc([timed(0, 1, start, end), text_only(1, 2)]))
 
     def test_end_slack_of_one_millisecond_is_allowed(self):
-        validate_units(unit_doc([timed(0, 1, 10.0, 15.0), timed(1, 2, 14.0, 15.001)]))
+        validate_units(unit_doc([timed(0, 1, 0.0, 5.0), timed(1, 2, 4.0, 5.001)]))
 
     def test_timed_unit_without_finite_times_is_rejected(self):
-        for start, end in ((None, None), (float("nan"), 11.0), (10.0, float("inf")), (True, 11.0)):
+        for start, end in ((None, None), (float("nan"), 1.0), (0.0, float("inf")), (True, 1.0)):
             with self.subTest(start=start, end=end), self.assertRaises(ValueError):
                 validate_units(unit_doc([timed(0, 1, start, end), text_only(1, 2)]))
+
+
+class SampleRateConstantTests(unittest.TestCase):
+    def test_sample_rate_and_window_limit_are_defined_only_in_recipes(self):
+        import ast
+        from pathlib import Path
+
+        package = Path(__file__).resolve().parents[2] / "kototoki"
+        owners = sorted(
+            str(path.relative_to(package)).replace("\\", "/")
+            for path in package.rglob("*.py")
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id in ("SAMPLE_RATE", "MAX_WINDOW_SAMPLES")
+                    for target in node.targets))
+        self.assertEqual(owners, ["recipes.py", "recipes.py"])
 
 
 if __name__ == "__main__":

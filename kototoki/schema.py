@@ -1,7 +1,7 @@
 """STT 产物的数据契约：`validate_transcript`（复制自 `kototoki_eval/schema.py`）、源窗口与 units 校验。
 
-基础层：只依赖标准库，编排器与各 worker 都可直接导入。窗口与 units 的坐标约定见
-`kototoki.artifacts` 模块文档：窗口是 WAV 本地整数样本与秒，`units[].start/end` 含 `offset_s`。
+基础层：只依赖标准库与 `recipes`（`SAMPLE_RATE`、`MAX_WINDOW_SAMPLES`），编排器与各 worker 都可直接导入。
+窗口是 WAV 本地整数样本与秒，`units[].start/end` 也是 WAV 本地秒（不含 `offset_s`，offset 由日文 cue 加）。
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from collections.abc import Mapping, Sequence
 import math
 from typing import Any
 
-SAMPLE_RATE = 16000
-MAX_WINDOW_SAMPLES = 30 * SAMPLE_RATE
+from kototoki.recipes import MAX_WINDOW_SAMPLES, SAMPLE_RATE
+
 # 有时间的 unit 允许超出源末尾的量（秒），与 W0 pipeline 的历史判据相同（毫秒取整）。
 UNIT_END_SLACK_S = 0.001
 
@@ -64,15 +64,15 @@ def validate_windows(chunks: Sequence[Mapping[str, Any]], samples: int) -> None:
 
 
 def validate_units(document: Mapping[str, Any]) -> None:
-    """对齐结果的不变量（取自 W0 pipeline）：每个字符恰好一个 unit；有时间的 unit 落在源范围内。"""
-    text, offset, duration = document["text"], document["offset_s"], document["duration_seconds"]
+    """对齐结果的不变量（取自 W0 pipeline）：每个字符恰好一个 unit；有时间的 unit 落在源范围内（WAV 本地秒）。"""
+    text, duration = document["text"], document["duration_seconds"]
     covered = [0] * len(text)
     for unit in document["units"]:
         for index in range(unit["char_start"], unit["char_end"]):
             covered[index] += 1
         if unit["status"] == "ok" and not (
                 finite_time(unit.get("start")) and finite_time(unit.get("end"))
-                and offset <= unit["start"] <= unit["end"] <= offset + duration + UNIT_END_SLACK_S):
+                and 0 <= unit["start"] <= unit["end"] <= duration + UNIT_END_SLACK_S):
             raise ValueError("Timed units must remain inside the source input")
     if any(count != 1 for count in covered):
         raise ValueError("Alignment units must account for every original character exactly once")

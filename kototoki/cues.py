@@ -3,9 +3,8 @@
 `build_cues(align, rules)` 是纯函数：输入已解析的 `align.json` 内容与 `[cues]`
 规则表，返回 `ja-cues.json` 的 payload 与 `ja.srt` 文本，不读写文件。
 
-坐标：`units[].start/end` 已含 `offset_s`；窗口（`original_segments`）与 VAD 子段
-（`chunks[].segments`）是 WAV 本地秒，用到时加一次 `offset_s`。这是时间轴上唯一
-加 offset 的地方（规格 §4）。
+坐标：`units[].start/end`、窗口（`original_segments`）与 VAD 子段（`chunks[].segments`）
+都是 WAV 本地秒，用到时各加一次 `offset_s`。这是时间轴上唯一加 offset 的地方（规格 §4）。
 
 顺序：先回填无时间字符（窗内插值、窗边外推、整窗按 VAD 子段 `fallback`），再按
 句末标点与间隔断句、超限时在软断点后切、仍超限则硬切，最后加 `lead_out_s` 与
@@ -23,7 +22,7 @@ import unicodedata
 from typing import Any, cast
 
 from kototoki import recipes
-from kototoki.srt import format_srt, milliseconds
+from kototoki.srt import format_srt_ms, milliseconds
 
 RULE_KEYS = frozenset({"max_chars", "max_duration_s", "min_duration_s", "max_gap_s",
                        "sentence_endings", "soft_breaks", "lead_out_s"})
@@ -103,8 +102,9 @@ def _backfill(align: Mapping[str, Any]) -> tuple[list[Interval], list[str], list
     if len(units) != len(text) or any(
             unit["char_start"] != i or unit["char_end"] != i + 1 for i, unit in enumerate(units)):
         raise ValueError("align.json units must be one contiguous character unit per text character")
+    offset = align["offset_s"]
     times: list[Interval | None] = [
-        (unit["start"], unit["end"]) if unit["status"] == "ok" else None for unit in units]
+        (unit["start"] + offset, unit["end"] + offset) if unit["status"] == "ok" else None for unit in units]
     sources = [unit.get("time_source", "native") if unit["status"] == "ok" else "" for unit in units]
     fallback_windows = []
     for index, (lo, hi, bounds, spans) in enumerate(_windows(align)):
@@ -207,7 +207,7 @@ def build_cues(align: Mapping[str, Any], rules: Mapping[str, Any]) -> tuple[dict
         char_start, char_end = split[a], split[b]
         body = " ".join(text[char_start:char_end].split())
         counts = Counter(sources[char_start:char_end])
-        entries.append((start_ms / 1000, end_ms / 1000, body))
+        entries.append((start_ms, end_ms, body))
         cues.append({"index": k + 1, "start_ms": start_ms, "end_ms": end_ms, "text": body,
                      "char_start": char_start, "char_end": char_end,
                      "unit_start": char_start, "unit_end": char_end,
@@ -222,7 +222,7 @@ def build_cues(align: Mapping[str, Any], rules: Mapping[str, Any]) -> tuple[dict
         "fallback_windows": fallback_windows,
         "unrendered_chars": len(text) if not cues else 0,
     }
-    return payload, format_srt(entries)
+    return payload, format_srt_ms(entries)
 
 
 def _runs(sources: Sequence[str]) -> list[dict[str, Any]]:

@@ -43,7 +43,7 @@
 
 **`ja-cues.json` 的 `ja_srt_sha256`**：cue 阶段的 payload 也记写出的 `ja.srt` 的 SHA256；阶段计划据此判定 `ja.srt` 是否仍是 cue 阶段的输出。两条路径因此不靠删文件互相隔离：内嵌路径改写 `ja.srt` 后 `ja-cues.json` 不再当前，cue 阶段改写后 `ja-embedded.json` 不再当前。没有该字段的旧 `ja-cues.json` 视为不当前、重建一次。这类文件的 `probe.json` 里 `extract` 为 null（没有提取音频），工作目录里没有 `audio-16k.wav`、`vad.json`、`asr.json`、`align.json`、`ja-cues.json`。
 
-**SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。另有整数毫秒入口（时间已是整数毫秒的条目直接渲染，不经秒），日文 cue 与内嵌字幕清洗都用它，毫秒格式化只有 `srt` 一处实现。`write_srt` 原子写出、拒绝覆盖源文件；是否发布由编排按源文件旁字幕是否存在判定。
+**SRT**（`kototoki/srt.py`）：解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。`format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。另有整数毫秒入口 `format_srt_ms([(start_ms, end_ms, text), ...])`（时间已是整数毫秒的条目直接渲染，不经秒；`format_srt` 取整后也走它），日文 cue 与内嵌字幕清洗都用它；时间行四段到整数毫秒是 `time_parts_ms`，解析与内嵌字幕清洗共用，毫秒格式化只有 `srt` 一处实现。`write_srt` 原子写出、拒绝覆盖源文件；是否发布由编排按源文件旁字幕是否存在判定。
 
 ## 接口与依赖
 

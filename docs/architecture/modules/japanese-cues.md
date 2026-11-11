@@ -30,7 +30,7 @@
 
 非词汇串在第一个空白或开括号（类别 Ps／Pi）处分开：前半附着前一条 cue，后半附着后一条；全文首尾的串附着首末 cue。cue 文本的空白折叠为单个空格并去掉首尾空白。
 
-**时间修饰**：cue 起止取其首个词汇字符的 `start` 与末个词汇字符的 `end`；先加 `lead_out_s`，再把不足 `min_duration_s` 的延长到该值，两步都不越过下一条起点，也不缩短原时长。毫秒取整用 `srt.milliseconds`，渲染走 `srt` 的整数毫秒入口；取整后时长为零时补 1 ms（只在下一条同毫秒起始时可能与其重叠 1 ms）。
+**时间修饰**：cue 起止取其首个词汇字符的 `start` 与末个词汇字符的 `end`；先加 `lead_out_s`，再把不足 `min_duration_s` 的延长到该值，两步都不越过下一条起点，也不缩短原时长。毫秒取整用 `srt.milliseconds`，渲染走 `srt` 的整数毫秒入口 `format_srt_ms`；取整后时长为零时补 1 ms（只在下一条同毫秒起始时可能与其重叠 1 ms）。
 
 **输出**：
 
@@ -39,12 +39,12 @@
 
 ## 接口与依赖
 
-只依赖标准库、`kototoki.srt`（整数毫秒渲染入口、`milliseconds`）与 `kototoki.recipes`（`CUES["fallback_max_char_s"]`）；属基础层之上的纯函数模块，编排器直接调用（[模块边界](../module-boundaries.md#依赖方向)）。cue 规则的取值与默认由配置模块提供；整窗回退的每字符时长上限是会改变输出的值，只在 `recipes.CUES` 里（进 cue 配方 hash），本模块直接读，没有自己的常量。
+只依赖标准库、`kototoki.srt`（整数毫秒渲染入口 `format_srt_ms`、`milliseconds`）与 `kototoki.recipes`（`CUES["fallback_max_char_s"]`）；属基础层之上的纯函数模块，编排器直接调用（[模块边界](../module-boundaries.md#依赖方向)）。cue 规则的取值与默认由配置模块提供；整窗回退的每字符时长上限是会改变输出的值，只在 `recipes.CUES` 里（进 cue 配方 hash），本模块直接读，没有自己的常量。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/cues.py`（`build_cues`、`is_lexical`）。
-- 测试（core，`just test`）：`tests/core/test_cues.py`——插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、句末与全文末单个超限字符不再切、lead-out 不重叠、min-duration、间隔断句（跨子段切、同一子段内不切、子段相接与跨窗口照切）、空输入、全 `text_only` 窗、纯标点、♪ 附着、非零 `offset_s` 对窗口、子段与 units 各只加一次、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。
+- 测试（core，`just test`）：`tests/core/test_cues.py`——插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、句末与全文末单个超限字符不再切、lead-out 不重叠、min-duration、间隔断句（跨子段切、同一子段内不切、子段相接与跨窗口照切）、空输入、全 `text_only` 窗、纯标点、♪ 附着、非零 `offset_s` 对窗口、子段与 units 各只加一次（另有一条 `align.map_records` → `build_cues` 整链用例，期望值取自 offset 挪到 cue 之前的代码，证明结果不变）、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。
 - 离线观感（2026-10-14，规格 §5.2 原初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（规格 §5.2）。记录见票据 04 Comments。
 - x0 标点密度离线对照（2026-10-14，票据 07；现有同窗 X0／W0 研究期 `result.json`，hf-ii／hf-iii 各 6 个冻结窗口中两引擎都有结果的 11 个，同一组 101 个 VAD 窗口，默认 `[cues]`）：x0 每 100 个词汇字符有 7.7 个句末标点、2.5 个逗号，w0 为 2.3 与 0.6；cue 数 626 对 591，平均每条 9.9 对 9.8 字、p90 均为 18、触及 24 字上限 4 对 3 条，平均时长 1.84 s 对 1.99 s；以句末标点收尾的 cue 占 69% 对 20%，w0 其余多在时间间隔或硬切处断开。结论：x0 的标点主要改变断点位置（更多落在句末），不改变条目长度，现有初值无需按引擎区分。
 - 票据 12 离线重算（2026-10-15，整片验收 `align.json`，初值 `[cues]`）：跨 VAD 子段才断句后，cue 数 w0／II 1056→1048、w0／III 1188→1181、x0／II 1154→1150、x0／III 1263→1257，≤2 字条目 113→110、124→118、115→114、95→90，重叠与 >6 s 条目数不变。建票样本（HF II w0 约 1969 s 的两字词）仍为两条：两字都落在 VAD 子段之外（Pyannote 漏检了约 2.4 s 的拖长音），本规则无法判定；词边界方案由票据 13 调研，结论见下一条。

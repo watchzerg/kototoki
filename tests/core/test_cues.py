@@ -1,7 +1,11 @@
 """kototoki.cues 的离线测试：时间回填、断句三级切分、lead_out／min_duration、offset 与 SRT 一致性。"""
 
+import hashlib
+import json
 import unittest
 
+from kototoki import config
+from kototoki.align import map_records
 from kototoki.cues import build_cues
 from kototoki.srt import parse_srt
 
@@ -39,7 +43,7 @@ def window(start, end, chars, segments=None):
 
 
 def make_align(windows, offset=0.0):
-    """由紧凑描述构造 align 字典：只有 units 的时间加 offset，窗口与 VAD 子段保持本地秒。"""
+    """由紧凑描述构造 align 字典：units、窗口与 VAD 子段都是 WAV 本地秒，offset 只记在 `offset_s`。"""
     text, units, original_segments, chunks = "", [], [], []
     for win in windows:
         window_text = "".join(item[0] for item in win["chars"])
@@ -48,8 +52,8 @@ def make_align(windows, offset=0.0):
             ok = len(item) == 3 and item[1] is not None
             units.append({
                 "char_start": i, "char_end": i + 1,
-                "start": item[1] + offset if ok else None,
-                "end": item[2] + offset if ok else None,
+                "start": item[1] if ok else None,
+                "end": item[2] if ok else None,
                 "status": "ok" if ok else "text_only",
                 "time_source": "api", "granularity": "character",
             })
@@ -326,6 +330,58 @@ class OffsetAndSrtTests(CueTestCase):
                                  list(range(1, len(payload["cues"]) + 1)))
                 self.assertWellFormed(payload, srt_text)
                 self.assertEqual(len(parse_srt(srt_text).cues), len(payload["cues"]))
+
+
+def token(position, start, end, known=True):
+    return {"original_position": position, "lexical_interval_accepted": known,
+            "evidence_kind": "vocabulary_token" if known else "wildcard",
+            "start_frame": start, "end_frame": end, "token_probability": 0.5}
+
+
+# 非零 offset 的整链（`align.map_records` → `build_cues`）：窗 0 首尾外推，窗 1 对齐失败整窗 fallback（两个 VAD 子段），
+# 窗 2 有一个通配符字符与跨子段间隔。
+OFFSET = 351.402125
+SEGMENTS = [{"text": "かあいき、", "start": 0.9, "end": 1.5},
+            {"text": "うえお。", "start": 10.0, "end": 12.0},
+            {"text": "そうだね", "start": 12.5, "end": 14.0}]
+CHUNKS = [{"start": 0.9, "end": 1.5, "segments": [[0.9, 1.5]]},
+          {"start": 10.0, "end": 12.0, "segments": [[10.0, 10.4], [11.2, 12.0]]},
+          {"start": 12.5, "end": 14.0, "segments": [[12.5, 13.1], [13.6, 14.0]]}]
+RECORDS = [{"segment_index": 0, "window_start": 0.9, "window_end": 1.5, "frame_count": 30, "failure": None,
+            "tokens": [token(1, 5, 8), token(2, 9, 12)]},
+           {"segment_index": 1, "window_start": 10.0, "window_end": 12.0, "frame_count": 100,
+            "failure": "RuntimeError: boom", "tokens": []},
+           {"segment_index": 2, "window_start": 12.5, "window_end": 14.0, "frame_count": 75, "failure": None,
+            "tokens": [token(0, 1, 3), token(1, 4, 6), token(2, 40, 43), token(3, 44, 47, known=False)]}]
+# 期望值取自 2026-11-11 架构整理票据 08 改动前的代码（offset 由 `map_records` 加给 units、由 cue 加给窗口与子段）：
+# payload 的 `json.dumps(ensure_ascii=False)` sha256、cue 区间与 SRT 文本。
+PINNED_OFFSET_OUTPUT = {
+    "defaults": ("2a23fef671b80b97b0b4dba18c5509be0f79c739cac45c9ae1dd6eedd74fcfe3",
+                 [(352332, 353132, "かあいき、"), (361402, 363402, "うえお。"), (363922, 365342, "そうだね")],
+                 "1\n00:05:52,332 --> 00:05:53,132\nかあいき、\n\n2\n00:06:01,402 --> 00:06:03,402\nうえお。\n\n"
+                 "3\n00:06:03,922 --> 00:06:05,342\nそうだね\n"),
+    "plain": ("af26a8df308b21a585e51e5571f26ddf58a777214d7e895bae4b7f61bad20190",
+              [(352332, 352542, "かあい"), (352542, 352612, "き、"), (361402, 362852, "うえ"), (362852, 363102, "お。"),
+               (363922, 364022, "そう"), (364702, 365042, "だね")], None),
+}
+
+
+class NonzeroOffsetChainTests(CueTestCase):
+    def test_offset_added_once_in_cues_matches_the_previous_split(self):
+        aligned = map_records(SEGMENTS, RECORDS)  # units 为 WAV 本地秒
+        align = {"text": aligned["text"], "offset_s": OFFSET, "units": aligned["units"],
+                 "original_segments": SEGMENTS, "chunks": CHUNKS}
+        defaults = config.DEFAULTS["cues"]
+        for name, rules_ in (("defaults", defaults),
+                             ("plain", {**defaults, "lead_out_s": 0.0, "min_duration_s": 0.0, "max_chars": 3})):
+            with self.subTest(rules=name):
+                payload, srt_text = build_cues(align, rules_)
+                digest, expected_spans, expected_srt = PINNED_OFFSET_OUTPUT[name]
+                self.assertEqual(spans(payload), expected_spans)
+                self.assertEqual(hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode()).hexdigest(), digest)
+                if expected_srt is not None:
+                    self.assertEqual(srt_text, expected_srt)
+                self.assertWellFormed(payload, srt_text)
 
 
 class RuleValidationTests(unittest.TestCase):

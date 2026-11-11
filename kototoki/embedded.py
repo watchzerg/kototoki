@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from kototoki.srt import format_srt
+from kototoki.srt import format_srt_ms, time_parts_ms
 
 _TIME = re.compile(r"(\d+):(\d{2}):(\d{2})[,.](\d{3})[ \t]+-->[ \t]+(\d+):(\d{2}):(\d{2})[,.](\d{3})")
 _TAG = re.compile(r"</?(?:i|b|u|s|font)\b[^>]*>", re.IGNORECASE)
@@ -18,11 +18,6 @@ _OVERRIDE = re.compile(r"\{\\[^}]*\}")
 _HARD_BREAK = re.compile(r"\\[hNn]")
 # ASS 绘图指令（`{\p1}m 0 0 l 100 0 …`）去掉标签后的样子：以 m 开头，只有指令字母、数字与空白。
 _DRAWING = re.compile(r"m(?:\s+-?\d+(?:\.\d+)?){2}(?:\s+(?:[mnlbspc]|-?\d+(?:\.\d+)?))*")
-
-
-def _ms(parts: tuple[str, ...]) -> int:
-    hours, minutes, seconds, millis = map(int, parts)
-    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
 
 
 def _text(lines: list[str]) -> str:
@@ -48,7 +43,8 @@ def clean(text: str) -> tuple[str, dict[str, int]]:
     for head, following in zip(heads, [*heads[1:], len(lines) + 1]):
         match = _TIME.fullmatch(lines[head].strip())
         assert match is not None
-        cue = (_ms(match.groups()[:4]), _ms(match.groups()[4:]), _text(lines[head + 1:following - 1]))
+        start, end = time_parts_ms(match.groups()[:4]), time_parts_ms(match.groups()[4:])
+        cue = (start, end, _text(lines[head + 1:following - 1]))
         if not cue[2]:
             stats["dropped_empty"] += 1
         elif _DRAWING.fullmatch(cue[2]):
@@ -62,4 +58,4 @@ def clean(text: str) -> tuple[str, dict[str, int]]:
             kept.append(cue)
     kept.sort(key=lambda cue: cue[:2])
     stats["cues"] = len(kept)
-    return format_srt([(start / 1000, end / 1000, body) for start, end, body in kept]), stats
+    return format_srt_ms(kept), stats

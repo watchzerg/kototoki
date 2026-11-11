@@ -37,8 +37,8 @@ def compute(vad: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Com
         logger.info("[%s] %s: %d window(s), inference %.1fs", STAGE, job.id, len(chunks), inference_s)
         payload = {
             "schema_version": 1, "offset_s": recipes.MEDIA["offset_s"],
-            "input": {"pcm_sha256": pcm_sha256, "samples": len(audio), "sample_rate": gpu.SAMPLE_RATE,
-                      "duration_s": len(audio) / gpu.SAMPLE_RATE},
+            "input": {"pcm_sha256": pcm_sha256, "samples": len(audio), "sample_rate": recipes.SAMPLE_RATE,
+                      "duration_s": len(audio) / recipes.SAMPLE_RATE},
             "chunks": chunks, **accounting, "metadata": vad.metadata,
             "stages": {"load_s": load_s, "inference_s": inference_s},
         }

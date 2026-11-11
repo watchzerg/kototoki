@@ -2,7 +2,8 @@
 
 读取容忍 UTF-8 BOM，写出一律 UTF-8 无 BOM、LF。秒到毫秒的取整沿用
 `experiments/display/replay.py` 的 `floor(x*1000+0.5)`（不用 Python `round`
-的银行家舍入），见规格 §5.2。
+的银行家舍入），见规格 §5.2。时间已是整数毫秒的条目走 `format_srt_ms`，不经秒；
+时间行四段（时、分、秒、毫秒）到整数毫秒是 `time_parts_ms`，毫秒格式化只在本模块实现。
 """
 
 from __future__ import annotations
@@ -57,7 +58,8 @@ def srt_time(ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{fraction:03d}"
 
 
-def _milliseconds(parts: tuple[str, ...]) -> int:
+def time_parts_ms(parts: Sequence[str]) -> int:
+    """时间行的（时, 分, 秒, 毫秒）四段数字 → 整数毫秒。"""
     hours, minutes, seconds, millis = map(int, parts)
     return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
 
@@ -100,8 +102,8 @@ def parse_srt(text: str, *, source_sha256: str | None = None, encoding: str = "u
         match = _TIME.fullmatch(lines[1])
         if match is None:
             raise ValueError(f"Cue {ordinal}: invalid SRT time line")
-        start = _milliseconds(match.groups()[:4])
-        end = _milliseconds(match.groups()[4:])
+        start = time_parts_ms(match.groups()[:4])
+        end = time_parts_ms(match.groups()[4:])
         if end <= start:
             raise ValueError(f"Cue {ordinal}: end time must be after start time")
         body = "\n".join(lines[2:])
@@ -126,10 +128,14 @@ def read_srt(path: Path | str, *, encoding: str = "utf-8-sig") -> SourceDocument
 
 
 def format_srt(entries: Sequence[tuple[float, float, str]]) -> str:
-    """把 (start_s, end_s, text) 序列写成 SRT 文本，编号从 1 起；零条目得到空串。"""
+    """把 (start_s, end_s, text) 序列写成 SRT 文本，编号从 1 起；零条目得到空串。秒按 `milliseconds` 取整。"""
+    return format_srt_ms([(milliseconds(start_s), milliseconds(end_s), text) for start_s, end_s, text in entries])
+
+
+def format_srt_ms(entries: Sequence[tuple[int, int, str]]) -> str:
+    """把 (start_ms, end_ms, text) 序列（整数毫秒）写成 SRT 文本，编号从 1 起；零条目得到空串。"""
     blocks = []
-    for number, (start_s, end_s, text) in enumerate(entries, 1):
-        start, end = milliseconds(start_s), milliseconds(end_s)
+    for number, (start, end, text) in enumerate(entries, 1):
         if start < 0 or end <= start:
             raise ValueError(f"Cue {number}: rounded end time must be after a nonnegative start")
         blocks.append(f"{number}\n{srt_time(start)} --> {srt_time(end)}\n{_check_text(text, f'Cue {number}')}")

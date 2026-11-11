@@ -14,9 +14,8 @@ from numbers import Real
 from pathlib import Path
 from typing import Any
 
-from kototoki.recipes import VAD
+from kototoki.recipes import SAMPLE_RATE, VAD
 
-SAMPLE_RATE = 16000
 MAX_CHUNK_SAMPLES = VAD["chunk_policy"]["max_chunk_samples"]
 DEVICE = VAD["device"]
 

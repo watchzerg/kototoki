@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 
 from kototoki.align import (
-    character_targets, clamp_window, map_records, mms_numeric_policy, model_dictionary,
+    MmsAligner, character_targets, map_records, mms_numeric_policy, model_dictionary,
     normalize_window, sample_window, torchaudio_supported,
 )
 
@@ -136,24 +136,16 @@ class MapRecordsTests(unittest.TestCase):
         self.assertTrue(all(u["granularity"] == "character" and u["time_source"] == "api"
                             for u in result["units"]))
 
-    def test_zero_offset_units_equal_local_times(self):
-        result = map_records(self.SEGMENTS, self.RECORDS, 0)
+    def test_units_are_wav_local_seconds(self):
+        result = map_records(self.SEGMENTS, self.RECORDS)
         first = result["units"][1]
         self.assertEqual((first["start"], first["end"]), (1.0, 1.2))
         chars = result["derived_segments"][0]["chars"]
         self.assertEqual((chars[1]["start"], chars[1]["end"]), (first["start"], first["end"]))
 
-    def test_offset_applies_to_units_only(self):
-        local = map_records(self.SEGMENTS, self.RECORDS, 0)
-        shifted = map_records(self.SEGMENTS, self.RECORDS, 100.0)
-        for before, after in zip(local["units"], shifted["units"]):
-            if before["status"] == "ok":
-                self.assertAlmostEqual(after["start"], before["start"] + 100.0)
-                self.assertAlmostEqual(after["end"], before["end"] + 100.0)
-            else:
-                self.assertIsNone(after["start"])
-        self.assertEqual(shifted["derived_segments"], local["derived_segments"])
-        self.assertEqual(shifted["records"], local["records"])
+    def test_takes_no_offset(self):  # offset 只由日文 cue 加
+        with self.assertRaises(TypeError):
+            map_records(self.SEGMENTS, self.RECORDS, 100.0)
 
     def test_failed_or_invalid_records_become_text_only(self):
         segments = [{"text": "日日日", "start": 0, "end": 1}, {"text": "日", "start": 1, "end": 2}]
@@ -176,28 +168,17 @@ class MapRecordsTests(unittest.TestCase):
                              [{"segment_index": 0, "frame_count": 0, "tokens": [token(0, 0, 1)]}])
         self.assertEqual(result["units"][0]["status"], "text_only")
 
-    def test_invalid_offset_raises(self):
-        for offset in (-1, float("inf"), float("nan")):
-            with self.subTest(offset=offset), self.assertRaises(ValueError):
-                map_records(self.SEGMENTS, self.RECORDS, offset)
-
 
 class WindowTests(unittest.TestCase):
     def segment(self, start=0, end=1001):
         return {"text": "日", "start": start / 16000, "end": end / 16000,
                 "start_sample": start, "end_sample": end}
 
-    def test_clamp_window_bounds_and_invalid(self):
-        self.assertEqual(clamp_window(-2, 4, 2), (0, 2))
-        self.assertEqual(clamp_window(4, 5, 2), (2, 2))
-        for values in ((1, 0, 2), (0, float("nan"), 2), (0, 1, -2), (True, 1, 2)):
-            with self.subTest(values=values), self.assertRaises(ValueError):
-                clamp_window(*values)
-
-    def test_sample_window_accepts_exact_bounds_and_legacy_windows(self):
+    def test_sample_window_accepts_exact_bounds_and_rejects_windows_without_samples(self):
         self.assertEqual(sample_window(self.segment(), 1001), (0, 1001))
         self.assertEqual(sample_window(self.segment(480000, 481001), 481001), (480000, 481001))
-        self.assertIsNone(sample_window({"start": -10, "end": 100}, 1001))
+        with self.assertRaisesRegex(ValueError, "integer"):  # 研究期旧窗口（只有秒）不再支持
+            sample_window({"start": -10, "end": 100}, 1001)
 
     def test_sample_window_rejects_bad_sample_bounds(self):
         for updates in ({"start_sample": True}, {"end_sample": 1001.0}, {"start_sample": -1},
@@ -214,6 +195,42 @@ class WindowTests(unittest.TestCase):
                         {"end": True}, {"end": "0.0625625"}):
             with self.subTest(updates=updates), self.assertRaisesRegex(ValueError, "seconds must match"):
                 sample_window({**self.segment(), **updates}, 1001)
+
+
+class AlignLoopTests(unittest.TestCase):
+    """`MmsAligner.align` 的逐窗循环：不加载模型，`_align_segment` 换成伪实现。"""
+
+    def aligner(self, calls):
+        aligner = MmsAligner.__new__(MmsAligner)
+        aligner.blank_id = 0
+
+        def align_segment(audio, text, record):
+            calls.append((len(audio), text, record["window_start_sample"], record["window_end_sample"]))
+            if text == "壊":
+                raise RuntimeError("boom")
+            record.update(frame_count=10, tokens=[token(0, 2, 4)])
+        aligner._align_segment = align_segment
+        return aligner
+
+    def segment(self, text, start, end):
+        return {"text": text, "start": start / 16000, "end": end / 16000, "start_sample": start, "end_sample": end}
+
+    def test_records_use_sample_bounds_and_units_stay_local(self):
+        calls = []
+        audio = np.zeros(32000, dtype=np.float32)
+        result = self.aligner(calls).align(audio, [self.segment("日", 16000, 32000), self.segment("壊", 0, 1600)])
+        self.assertEqual(calls, [(32000, "日", 16000, 32000), (32000, "壊", 0, 1600)])
+        first, second = result["records"]
+        self.assertEqual((first["window_start"], first["window_end"]), (1.0, 2.0))
+        self.assertEqual(list(first)[:8], ["segment_index", "window_start", "window_end", "blank_id", "tokens",
+                                           "failure", "window_start_sample", "window_end_sample"])
+        self.assertEqual((result["units"][0]["start"], result["units"][0]["end"]), (1.2, 1.4))
+        self.assertEqual((second["failure"], second["tokens"], result["units"][1]["status"]),
+                         ("RuntimeError: boom", [], "text_only"))
+
+    def test_window_without_samples_fails_the_file(self):
+        with self.assertRaisesRegex(ValueError, "integer"):
+            self.aligner([]).align(np.zeros(1600, dtype=np.float32), [{"text": "日", "start": 0.0, "end": 0.1}])
 
 
 class NormalizeWindowTests(unittest.TestCase):

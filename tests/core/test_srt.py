@@ -7,8 +7,8 @@ import tempfile
 import unittest
 
 from kototoki.srt import (
-    IncompleteTranslationError, format_srt, milliseconds, parse_srt, read_srt,
-    render_srt, srt_time, validate_translations, write_srt,
+    IncompleteTranslationError, format_srt, format_srt_ms, milliseconds, parse_srt, read_srt,
+    render_srt, srt_time, time_parts_ms, validate_translations, write_srt,
 )
 
 EMPTY_SHA = hashlib.sha256(b"").hexdigest()
@@ -71,6 +71,20 @@ class FormatTests(unittest.TestCase):
             "1\n00:00:00,000 --> 00:00:01,500\n一\n\n2\n01:02:03,004 --> 01:02:04,000\n二\n行\n",
         )
         self.assertEqual([c.index for c in parse_srt(text).cues], [1, 2])
+
+    def test_integer_millisecond_entry_renders_the_same_blocks(self):
+        text = format_srt_ms([(0, 1500, "一"), (3_723_004, 3_724_000, "二\n行")])
+        self.assertEqual(text, format_srt([(0.0, 1.5, "一"), (3723.004, 3724, "二\n行")]))
+        self.assertEqual(format_srt_ms([]), "")
+        for entry in [(1000, 1000, "a"), (2000, 1000, "a"), (-1, 1000, "a")]:
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                format_srt_ms([entry])
+        with self.assertRaises(ValueError):  # 不接受秒
+            format_srt_ms([(0.0, 1.5, "a")])
+
+    def test_time_parts_to_milliseconds(self):
+        self.assertEqual(time_parts_ms(("01", "02", "03", "004")), 3_723_004)
+        self.assertEqual(time_parts_ms(("100", "00", "00", "001")), 360_000_001)
 
     def test_rejects_non_positive_rounded_duration(self):
         for entry in [(1.0001, 1.0004, "a"), (2.0, 1.0, "a"), (-1.0, 1.0, "a")]:

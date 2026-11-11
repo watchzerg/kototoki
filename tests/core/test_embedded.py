@@ -55,6 +55,13 @@ class CleanTests(unittest.TestCase):
         text = block(7, "00:00:05,000", "00:00:06,000", "後") + "\n" + block(3, "00:00:01,000", "00:00:02,000", "前")
         self.assertEqual(self.cues(text), [(1000, 2000, "前"), (5000, 6000, "後")])
 
+    def test_output_text_is_unchanged_by_the_integer_millisecond_entry(self) -> None:
+        # 期望文本取自 2026-11-11 架构整理票据 08 改动前的代码（经秒再取整的 `format_srt`）。
+        text = "\n".join((block(7, "00:00:05,000", "01:00:06,999", "後"),
+                          block(3, "00:00:01,001", "00:00:02,000", "<i>前</i>", "二")))
+        self.assertEqual(embedded.clean(text)[0],
+                         "1\n00:00:01,001 --> 00:00:02,000\n前 二\n\n2\n00:00:05,000 --> 01:00:06,999\n後\n")
+
     def test_blank_lines_inside_a_cue_and_crlf_do_not_split_it(self) -> None:
         text = "﻿1\r\n00:00:01,000 --> 00:00:02,000\r\n一行目\r\n\r\n二行目\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,000\r\n次\r\n"
         self.assertEqual(self.cues(text), [(1000, 2000, "一行目 二行目"), (3000, 4000, "次")])

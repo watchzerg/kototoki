@@ -18,9 +18,8 @@ import wave
 
 from kototoki import artifacts
 from kototoki.logs import RunFormatter
+from kototoki.recipes import SAMPLE_RATE
 from kototoki.workers.protocol import FatalWorkerError, FileJob, Jobs, run_worker
-
-SAMPLE_RATE = 16000
 
 # 一个要写出的产物：(路径, 身份, payload)
 Output = tuple[Path, Mapping[str, Any], Mapping[str, Any]]

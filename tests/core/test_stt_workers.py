@@ -137,7 +137,7 @@ class FakeAligner:
     """每个字符占 0.1 s，窗口内从窗口起点排开。"""
     metadata = {"device": "fake"}
 
-    def align(self, audio, segments, offset=0):
+    def align(self, audio, segments):
         records = []
         for index, segment in enumerate(segments):
             count = len(segment["text"])
@@ -146,7 +146,7 @@ class FakeAligner:
                             "tokens": [{"original_position": p, "lexical_interval_accepted": True,
                                         "evidence_kind": "vocabulary_token", "start_frame": 5 * p,
                                         "end_frame": 5 * p + 4, "token_probability": 0.9} for p in range(count)]})
-        return map_records(segments, records, offset)
+        return map_records(segments, records)
 
 
 def no_check() -> None:
@@ -623,8 +623,8 @@ class AlignWorkerTest(WorkerTestCase):
 
     def test_alignment_that_changes_text_fails_the_file(self):
         class Lossy(FakeAligner):
-            def align(self, audio, segments, offset=0):
-                result = super().align(audio, segments, offset)
+            def align(self, audio, segments):
+                result = super().align(audio, segments)
                 return {**result, "text": result["text"][:-1]}
         self.run_vad()
         self.run_asr()
@@ -632,6 +632,44 @@ class AlignWorkerTest(WorkerTestCase):
                                 {"wav": self.wav, "asr": self.work_dir / artifacts.ASR})
         self.assertEqual(status, EXIT_PARTIAL)
         self.assertFalse((self.work_dir / artifacts.ALIGN).exists())
+
+
+# 2026-11-11 架构整理票据 08 改动前（票据 06 提交之上、offset 仍由对齐加）的代码在 offset 0 的整链夹具上写出的字节
+# sha256：`align.json`、`ja-cues.json`（payload 以固定身份 {"fixed": 1} 写出）与 `ja.srt`；`time.perf_counter` 固定为 0.0。
+PINNED_CUE_CHAIN_BYTES = {
+    "w0": {"align.json": "28d07c9f1492bf7bcaaee0c75992832b676821a9458956669182aee58c6db026",
+           "ja-cues.json": "f3736e25d8c364e29f9679b3874acae9938b941f66b151e42722927ba025131e",
+           "ja.srt": "ea77acfaa498939d0c3d4fe1a42a22da36e21293aaeb738df053df626c17ca94"},
+    "cross": {"align.json": "d9776df4e7a447b50084fa9b233a74abf2368768ef043674d27b78106a862107",
+              "ja-cues.json": "fc6469779d1131b0b5c8b3b814b177de6bff13bfbe66aba551ab80024e3e27b4",
+              "ja.srt": "b75439e16c5e0172164e2561d7c0758f7921e8cfe4d7908757813bc7dad04615"},
+}
+
+
+class CueChainBytesTest(WorkerTestCase):
+    """offset 为 0 时 `align.json`、`ja-cues.json`、`ja.srt` 的字节在 offset 挪到 cue 前后不变（计划 §3 第 9 条）。"""
+
+    def test_align_and_cue_outputs_are_byte_identical_to_the_pinned_output(self):
+        scenarios = {
+            "w0": lambda: self.run_asr(FakeAsr(failures=[(1, "RuntimeError: boom")])),
+            "cross": lambda: self.run_cross(*BYTE_SCENARIOS["switch"]()),
+        }
+        with mock.patch("time.perf_counter", return_value=0.0):
+            for name, run_asr in scenarios.items():
+                with self.subTest(scenario=name):
+                    for artifact in (artifacts.ASR, artifacts.ALIGN):
+                        (self.work_dir / artifact).unlink(missing_ok=True)
+                    self.run_vad()
+                    self.assertEqual(run_asr(), EXIT_OK)
+                    self.assertEqual(self.run_align(), EXIT_OK)
+                    payload, srt_text = cues.build_cues(artifacts.read_json(self.work_dir / artifacts.ALIGN),
+                                                        config.DEFAULTS["cues"])
+                    path = self.root / "ja-cues.json"
+                    artifacts.write_artifact(path, {"fixed": 1}, payload)
+                    digests = {"align.json": hashlib.sha256((self.work_dir / artifacts.ALIGN).read_bytes()).hexdigest(),
+                               "ja-cues.json": hashlib.sha256(path.read_bytes()).hexdigest(),
+                               "ja.srt": hashlib.sha256(srt_text.encode("utf-8")).hexdigest()}
+                    self.assertEqual(digests, PINNED_CUE_CHAIN_BYTES[name])
 
 
 class CudaGuardTest(WorkerTestCase):
