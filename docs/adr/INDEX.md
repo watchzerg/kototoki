@@ -4,30 +4,30 @@
 
 2026-11-08 经用户授权做过一次合并精简：每个主题只保留一篇现行 ADR，正文只写仍有效的决定。被并掉的编号（0001、0002、0004、0006、0009、0011、0013、0016）只留两行跳转页，原文见 Git 历史（提交 f139e17 及之前）。历史摇摆只在本页的[演进链](#演进链)里体现。
 
-- 找"当前怎么做"：看 [当前有效决定](#当前有效决定)。表里每一行给出现行规则，以及权威 ADR 的哪一条。
+- 找"当前怎么做"：看 [当前有效决定](#当前有效决定)找主题与权威 ADR，完整定义（配方、hash、仍有效的条款）看 [CURRENT.md](CURRENT.md)。
 - 找"为什么变成这样"：看 [演进链](#演进链)，再按链接读当时的 ADR。
 - 要做或要记录一个新决定：按 [记录新决定](#记录新决定) 的步骤，在同一次提交里改完。
 - 研究轮次的过程与裁定时间线在[调研索引·决定与探索时间线](../research/INDEX.md#决定与探索时间线)。本页只收采纳的决定。
 
 ## 当前有效决定
 
-更新于 2026-11-11（ADR-0025：GPU 锁冲突一律进程级、产品不为研究侧留代码、核心测试不导入研究代码，同日采纳；同日 ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT，采纳并实现；ADR-0023 的 ASR 复读守卫已实现并验收）。此前 2026-11-10（ADR-0023 采纳）、2026-11-09（ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session）。2026-11-08 合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
+每行只给一句话和权威出处；配方 id、hash、参数与启动方式的完整定义在 [CURRENT.md](CURRENT.md)。
 
 | 主题 | 现行规则 | 权威出处 |
 | --- | --- | --- |
-| STT 基线 | **W0**：faster-whisper＋新 Pyannote VAD＋MMS `jpn` CTC。须用自有适配层移植 WhisperX 的切分合并与独立解码。**X0**：Qwen-ASR＋同一 VAD＋MMS。新 Pyannote＝`pyannote.audio 4.0.7`＋`pyannote/segmentation-3.0`（rev `e66f3d3b…`）。旧 PyanNet W0、fixed30、cut-merge 只作历史身份 | [0003](0003-new-pyannote-baselines.md) |
-| 设备 | ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU（产品固定 `cuda:0`） | [0003](0003-new-pyannote-baselines.md)、[0007](0007-bilingual-subtitle-pipeline-architecture.md) |
-| 产品 STT 引擎 | `[stt] engine` = `w0`（默认）｜`x0`｜`cross`（`cross-w0-x0-whisper-judge-v1`，Whisper 交叉打分，d > −1.0 取 x0）。改默认须新 ADR，并在全新隔离素材上确认 | [0012](0012-cross-asr-judge.md) |
-| 产品架构 | GPU 阶段按"阶段 × 整批"推进，每阶段一个子进程。阶段链为 `vad` → `asr` → `align`（MMS）→ `cues` → **`names`** → `translate` → publish。单一 CUDA 12.8 Python 3.13 环境；建表与翻译用同一个由产品自动启停的 Strata session，整批只启动一次，产品不起 llama-server。`kototoki.toml` 驱动，无 CLI。视频与音频都是输入（ffprobe 判定，音频不做流复制）。工作目录在 `[paths] work_dir`（默认 `.local/work/`）下按目标目录分子目录，每片一个工作目录，按身份与配方 hash 续跑；只发布 `<主名>.ja-zh.srt` 到源文件旁，已存在即跳过该文件 | [0007](0007-bilingual-subtitle-pipeline-architecture.md)；names 阶段见 [0014](0014-name-consistency-in-product.md)；翻译服务见 [0019](0019-product-translation-q2.md)；建表服务与共享 Strata session 见 [0022](0022-product-names-on-strata.md)；输入、工作目录与发布见 [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) |
-| 翻译基线（唯一） | **Q3** 是唯一翻译基线，新的翻译测试都以 Q3 为对照；引用 Q2、Q1、Q0、F1、H0 时须写明并说明理由。Q2 是前任身份；H0 不再是基线，只作历史对照的身份（身份见 0005、0010）。新增后缀命名须用户裁定 | [0021](0021-q3-strata-names-baseline.md)；对照规则沿用 [0018](0018-q2-sole-translation-baseline.md) 第 2、4 点；H0／Q0 身份见 [0015](0015-two-translation-baselines.md) |
-| 产品翻译 | 产品配方 `q2-degrade-v1`（`332649cf…`）＝ Q2 规则＋失败包按 10→5→1 降级、单条仍失败保留日文。切包 `dp10-cut`、邻文 `wide-context-v1`，请求与研究侧 Q2 逐字节相同。Strata 由产品启停（`strata launch --no-tui --model iq3_s`，接入检查同 ADR-0017），session 与 names 建表共用（0022），整批结束或出错都 `--stop` 并核实显存。翻译身份含注入行 SHA：手改表的 high 条目即重译 | [0019](0019-product-translation-q2.md) |
-| **翻译基线 Q3：身份** | Q2 的翻译规则不变，只换注入表的来源：表由同一个 Strata 实例上的 Flash-Next 建，建表配方 `names-strata-v4`（`38cb7bcd…`）＝产品 `BUILD` 去掉 llama.cpp 资产、`max_tokens` 8192＋context 24576（预算 15872）、不发 `response_format`、`enable_thinking: false`、`count_tokens` 预算检查，失败后依次换 seed 最多 5 次请求，取第一张合格的表（不挑选）。同一 session 先建表再翻译，不起 llama-server。产品自 0022 起按同一规则建表（配方 `q3-names-v1`）。dev 剧集 wrong-referent 显著变差、两次建表差别大，用户已知并接受 | [0021](0021-q3-strata-names-baseline.md) |
-| 翻译基线 Q2（前任）：身份 | Q1 的配方规则不变：`qwen-wide`，加产品 `names` 建表中 `confidence: high` 的专名注入，不做事后替换。模型换为 Strata 0.2.12 上的 `qwen3.8-flash-next-iq3_s`，服务用不加参数的 `strata launch`（DFlash2）。配方带 `strata_launch: "default"`，不用 grammar。每个输入一个实例。质量证据来自 v12 F1；Q2 的启动配置本身未跑过翻译 | [0017](0017-q2-strata-default-launch-baseline.md)（含 Q1 规则）；Q0 身份见 [0015](0015-two-translation-baselines.md) |
-| 方法禁区 | 不自动选用"翻译多次再挑选"（MBR、best-of-N、多次投票及更省的变体）：不提议、不列候选、不在无人值守时执行。两次可靠性重试与 10→5→1 降级不算在内。边界情况先问 | [0008](0008-no-multi-translation-selection.md) |
-| 专名一致性 | 研究线已结题，不开新轮次，建表配置冻结（no-think、提示 v5；v13 由用户明确要求重开，产出 Q3 的 Strata 建表配方；2026-11-10 用户再次明确要求在 v15 重开，范围限日文转写侧的表内写法替换；2026-11-11 用户裁定该替换不进产品，这次重开结束）。产品 `names` 阶段在与翻译共用的 Strata session 上用 Flash-Next 建表（配方 `q3-names-v1`，请求与 seed 序列与 Q3 的 `names-strata-v4` 逐字节一致，最多 5 次请求），必开，不起 llama-server；表只经翻译注入（high 条目）使用，没有发布时替换；表可手改，改到注入行即重译 | [0014](0014-name-consistency-in-product.md)；替换与开关的删除见 [0019](0019-product-translation-q2.md)；基线的建表见 [0021](0021-q3-strata-names-baseline.md)；产品建表与共享 session 见 [0022](0022-product-names-on-strata.md) |
-| ASR 复读守卫 | 产品 w0 路径（含 `cross` 的 w0 那一路；x0 不过守卫）在 `asr` 阶段解码后过守卫：规则 `repeat-strict`（规范化文本上周期 ≥2 的相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖 ≥50%），动作折叠（保留第一个单元），折叠后仍命中则按 `failed_windows` 置空（原因 `guard:repeat-strict`），trace 记 `guard`。只做后处理，不重解码；W0 基线身份不变，产品 W0 配方 id `w0-faster-whisper-large-v3-guard-v2`（2026-11-11 实现，旧 `asr.json` 重算） | [0023](0023-asr-repeat-guard.md) |
-| 内嵌日文字幕 | `[input] use_embedded_subtitles`（默认 `true`）开着且文件有可用的日文文本字幕轨（语言相符、`subrip`／`ass`／`ssa`／`mov_text`／`webvtt`、非 forced；多条取 default 再取索引最小）时，该文件不做 STT：probe → ffmpeg 抽轨转 SRT＋清洗（去标签、多行并一行、丢空条目／绘图指令／重复、按时间排序）写 `ja.srt` 与 `ja-embedded.json` → `names` → `translate` → publish，不提取音频。抽取失败或零条目回到 STT 链并告警。配方 `embedded-ja-subtitle-v1`。不读外挂字幕、不做位图 OCR、不检测内容语言、不过滤听障说明 | [0024](0024-embedded-japanese-subtitles.md) |
-| 产品包边界与失败级别 | 任何阶段撞 `.local/gpu.lock` 都以退出码 4 结束整批，不写逐文件 `failure.json`，已完成的 CPU 产物保留。产品不为研究侧导入方保留代码：`kototoki/llama_server.py` 拆掉，产品剩 `kototoki/local_client.py`（`LlamaClient`、`InfraFailure`、`explicit_oom`），llama-server 进程生命周期代码在 `experiments/translation_v3/llama_server.py`。产品符号移动或改名时同一提交里机械改研究侧导入行（Q3 实现的离线测试须仍通过）。`tests/core` 不导入 `experiments.*`：等价钉字面量／sha256，实时对照在 `tests/equivalence/`（`just test-equivalence`，属 `gate-full`） | [0025](0025-product-package-boundaries.md) |
+| STT 基线 | W0 为 faster-whisper、X0 为 Qwen-ASR，两路共用新 Pyannote VAD 与 MMS 日语对齐；旧 PyanNet、fixed30、cut-merge 只作历史身份。见 [CURRENT·STT 基线](CURRENT.md#stt-基线与产品-stt) | [0003](0003-new-pyannote-baselines.md) |
+| 设备 | ASR 与强制对齐只跑 GPU、不回退 CPU；VAD 可用 CPU 或 GPU，产品固定为 GPU。见 [CURRENT·设备](CURRENT.md#设备) | [0003](0003-new-pyannote-baselines.md)、[0007](0007-bilingual-subtitle-pipeline-architecture.md) |
+| 产品 STT 引擎 | `[stt] engine` 可选 `w0`（默认）、`x0`、`cross`（Whisper 交叉打分裁判）；改默认须新 ADR 并在全新隔离素材上确认。见 [CURRENT·产品 STT 引擎](CURRENT.md#产品-stt-引擎) | [0012](0012-cross-asr-judge.md) |
+| 产品架构 | 阶段 × 整批推进、每阶段一个子进程，配置文件驱动，按身份与配方 hash 续跑。见 [CURRENT·产品架构](CURRENT.md#产品架构)、[输入、工作目录与发布](CURRENT.md#输入工作目录与发布) | [0007](0007-bilingual-subtitle-pipeline-architecture.md)、[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) |
+| 翻译基线（唯一） | Q3 是唯一翻译基线，新测试都以它为对照；引用前任或历史身份（Q2、Q1、Q0、F1、H0）须写明并说明理由；新增后缀命名须用户裁定。见 [CURRENT·翻译基线 Q3](CURRENT.md#翻译基线-q3) | [0021](0021-q3-strata-names-baseline.md)；对照规则见 [0018](0018-q2-sole-translation-baseline.md)；H0／Q0 身份见 [0015](0015-two-translation-baselines.md) |
+| 产品翻译 | 产品配方 `q2-degrade-v1`＝Q2 规则＋失败包逐级拆批降级；Strata 由产品启停并与建表共用一个 session。见 [CURRENT·产品翻译](CURRENT.md#产品翻译) | [0019](0019-product-translation-q2.md)、[0022](0022-product-names-on-strata.md) |
+| 翻译基线 Q3：身份 | Q2 翻译规则不变，专名表改由同一 Strata 实例上的 Flash-Next 按 `names-strata-v4` 建，失败换 seed 重试、取第一张合格的表。见 [CURRENT·翻译基线 Q3](CURRENT.md#翻译基线-q3) | [0021](0021-q3-strata-names-baseline.md)、[0017](0017-q2-strata-default-launch-baseline.md) |
+| 翻译基线 Q2（前任）：身份 | Q1 配方规则＋Strata Flash-Next 默认启动，表由当时的产品 27B 建；只作前任身份。见 [CURRENT·前任 Q2](CURRENT.md#前任-q2) | [0017](0017-q2-strata-default-launch-baseline.md) |
+| 方法禁区 | 不自动选用"翻译多次再挑选"类方法：不提议、不列候选、不在无人值守时执行；可靠性重试与降级不算，边界情况先问。见 [CURRENT·方法禁区](CURRENT.md#方法禁区) | [0008](0008-no-multi-translation-selection.md) |
+| 专名一致性 | 研究线已结题，重开只由用户明确要求（v13、v15 两次重开均已结束，v15 的日文侧表内替换 2026-11-11 裁定不进产品）；产品 `names` 阶段按 `q3-names-v1` 在共用 Strata session 上建表，表只经翻译注入、不替换。见 [CURRENT·专名](CURRENT.md#专名)、[产品建表](CURRENT.md#产品建表) | [0014](0014-name-consistency-in-product.md)、[0019](0019-product-translation-q2.md)、[0021](0021-q3-strata-names-baseline.md)、[0022](0022-product-names-on-strata.md) |
+| ASR 复读守卫 | 产品 w0 路径在 `asr` 阶段解码后用 `repeat-strict` 折叠复读，仍命中则置空；只做后处理，W0 基线身份不变。见 [CURRENT·ASR 复读守卫](CURRENT.md#asr-复读守卫) | [0023](0023-asr-repeat-guard.md) |
+| 内嵌日文字幕 | 开关开着且有可用日文文本字幕轨时跳过 STT，字幕轨抽取清洗后从 `names` 起走原链；失败回到 STT。见 [CURRENT·内嵌日文字幕](CURRENT.md#内嵌日文字幕) | [0024](0024-embedded-japanese-subtitles.md) |
+| 产品包边界与失败级别 | GPU 锁冲突一律进程级结束整批；产品不为研究侧留代码；核心测试不导入研究代码，实时对照另设目录。见 [CURRENT·产品包边界与失败级别](CURRENT.md#产品包边界与失败级别) | [0025](0025-product-package-boundaries.md) |
 
 ### 未关闭项
 
@@ -126,14 +126,25 @@
 1. **新增 ADR**：`docs/adr/NNNN-<slug>.md`，编号顺延。写清状态、日期，以及替代了哪篇 ADR 的哪一点；写清身份（配方、hash、入口）、证据，以及未验证的部分。
 2. **处理旧 ADR**：默认只在被替代的 ADR 状态行末尾追加"某点自某日起由 ADR-NNNN 替代"，正文不动。只有用户授权合并精简时，才把旧篇改成跳转页、把有效条款并入新篇。
 3. **改本页**：
-   - 在"当前有效决定"里改对应行和"更新于"日期；
+   - 在"当前有效决定"里改对应行（一句话加权威链接），并在页尾"更新记录"加一行；
    - 在"演进链"的对应链末尾追加一环；
    - 在"全部 ADR"里加一行，并更新被替代那篇的状态；
    - 新发现的不一致或未关闭项写进"未关闭项"。
-4. **同步摘要入口**：
+4. **改 [CURRENT.md](CURRENT.md)**：把对应小节改写成新的完整现行定义（配方 id、hash、模型与启动方式、权威条款），并更新"部分被取代的 ADR 仍有效的条款"表；其中每个 hash 与配方 id 都要能在某篇 ADR 正文里逐字找到。
+5. **同步摘要入口**：
    - 基线变化时，改 [AGENTS.md](../../AGENTS.md)"冻结证据与基线身份"中的基线句；
    - 术语有变化时，改 [GLOSSARY.md](../../GLOSSARY.md)；
    - 来自研究轮次的决定，在[调研索引时间线](../research/INDEX.md#决定与探索时间线)加一行，并在该轮文档的待裁定项下注明裁定结果；
    - 涉及代码时，按[随交付同步](../agents/documentation.md#随交付同步)更新模块页与 README。
 
 不在本页记录的：研究过程、实验数据、未采纳的候选。这些放在 `docs/research/`。
+
+## 更新记录
+
+"当前有效决定"表的改动日志，新的一行加在最前。
+
+- 2026-11-11：表压成每行一句话，完整定义移到 [CURRENT.md](CURRENT.md)（文档架构整理）。
+- 2026-11-11：ADR-0025：GPU 锁冲突一律进程级、产品不为研究侧留代码、核心测试不导入研究代码，同日采纳；同日 ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT，采纳并实现；ADR-0023 的 ASR 复读守卫已实现并验收。
+- 2026-11-10：ADR-0023 采纳。
+- 2026-11-09：ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session。
+- 2026-11-08：合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。
