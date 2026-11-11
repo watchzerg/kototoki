@@ -1,0 +1,60 @@
+"""全仓库导入边界（ADR-0025 决定 4）：产品包 `kototoki/` 不导入 `experiments`、`kototoki_eval`；`tests/core/` 不导入
+`experiments`（与研究实现的对照放 `tests/equivalence/`）。AST 扫描，覆盖 `import`、`from ... import`，以及首参为字符串
+字面量的 `importlib.import_module` 与 `__import__`。"""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+import unittest
+
+REPO = Path(__file__).resolve().parents[2]
+RESEARCH = ("experiments", "kototoki_eval")
+
+
+def imported_roots(tree: ast.AST) -> set[str]:
+    """文件里被导入的顶层包名（相对导入不计）。"""
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module:
+                roots.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Call) and node.args:
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            first = node.args[0]
+            if name in ("import_module", "__import__") and isinstance(first, ast.Constant) \
+                    and isinstance(first.value, str):
+                roots.add(first.value.split(".")[0])
+    return roots
+
+
+def violations(directory: str, banned: tuple[str, ...]) -> list[str]:
+    found = []
+    for path in sorted((REPO / directory).rglob("*.py")):
+        roots = imported_roots(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        found.extend(f"{path.relative_to(REPO).as_posix()}: {root}" for root in sorted(roots & set(banned)))
+    return found
+
+
+class ScannerTests(unittest.TestCase):
+    def test_every_import_form_is_detected(self) -> None:
+        source = ("import experiments.x\nimport os, kototoki_eval\nfrom experiments import y\nfrom experiments.a.b import c\n"
+                  "import importlib\nimportlib.import_module('experiments.z')\n__import__('kototoki_eval.s')\n"
+                  "from . import experiments\nname = 'experiments'\nimportlib.import_module(name)\n")
+        self.assertEqual(imported_roots(ast.parse(source)), {"experiments", "kototoki_eval", "os", "importlib"})
+        self.assertEqual(imported_roots(ast.parse("from .experiments import a\nimport kototoki.guard\n")), {"kototoki"})
+
+
+class RepoBoundaryTests(unittest.TestCase):
+    def test_product_package_does_not_import_research_code(self) -> None:
+        self.assertEqual(violations("kototoki", RESEARCH), [])
+
+    def test_core_tests_do_not_import_experiments(self) -> None:
+        self.assertEqual(violations("tests/core", ("experiments",)), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

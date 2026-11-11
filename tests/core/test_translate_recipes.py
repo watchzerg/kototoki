@@ -1,15 +1,15 @@
 """产品配方 `q2-degrade-v1` 的身份钉子：配方 hash、与研究侧 Q2（`experiments/translation_v3/{qwen,strata}.py`＋
-`scene_batching_v6/v12.py::strata_recipe_data`）逐字节一致的切包、邻文、提示与请求体，注入行与研究
-`names11.py::product_tables` 的规则一致，回复校验。gap-pack-v2 切包用例移植自 `experiments/scene_batching_v6/test_v7.py`。
-产品代码不导入 experiments，测试可以导入作参照。"""
+`scene_batching_v6/v12.py::strata_recipe_data`）逐字节一致的切包、邻文、提示与请求体（摘要钉子），注入行与研究
+`names11.py::product_tables` 的规则一致（字面量钉子），回复校验。gap-pack-v2 切包用例移植自
+`experiments/scene_batching_v6/test_v7.py`。与研究实现的实时对照在 `tests/equivalence/test_translate_recipes.py`，
+本文件不导入 experiments。"""
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
-from pathlib import Path
 import random
-import tempfile
 import unittest
 from unittest import mock
 
@@ -63,17 +63,6 @@ def cost(scene: Scene, cuts: list[int], pack: dict, target: int = 10) -> float |
     return total
 
 
-def research_q2(rows: list[dict[str, str]]):
-    """研究侧 Q2 配方：Q1（`qwen-wide`＋`filter: window` 注入表）换成 Strata 默认启动，同 ADR-0017。"""
-    from experiments.scene_batching_v6.v12 import strata_recipe_data
-    from experiments.translation_v3 import recipes as RR
-
-    q1 = {"name": "q1", "base": "qwen-wide", "comment": "x",
-          "qwen_options": {"names": {"filter": "window", "tables": {"w": rows}}}}
-    data = strata_recipe_data(q1, "q2", "x", launch="default")
-    return RR.compose("q2", "qwen-wide", **{k: v for k, v in data.items() if k not in ("name", "base", "comment")})
-
-
 def random_cues(rng: random.Random, n: int) -> list[tuple[str, str, float, float]]:
     t, cues = 0.0, []
     for i in range(n):
@@ -105,52 +94,51 @@ class RecipeIdentityTests(unittest.TestCase):
         self.assertEqual(recipe["overflow"], "degrade-10-5-1-keep-source")
 
     def test_packing_is_the_v3_dp10_cut_pack(self) -> None:
-        from experiments.translation_v3 import recipes as V
-        self.assertEqual(R.DP10_CUT_PACK, V.BUILTIN["dp10-cut"].gap_pack)
-        self.assertEqual(R.RECIPE["packing"], {"version": "gap-pack-v2", "target": 10, **V.BUILTIN["dp10-cut"].gap_pack})
+        # 取自 2026-11-11 的 `experiments.translation_v3.recipes.BUILTIN["dp10-cut"].gap_pack`。
+        pack = {"min": 6, "max": 10, "soft_gap": 2.0, "hard_gap": 20.0, "soft_weight": 1.0, "small_penalty": 1000.0,
+                "group_gap": None, "group_max": 10, "context_both_below": 1.0, "context_before_below": 5.0,
+                "max_visible": 12, "cut_penalty": [[0.5, 6.0], [1.0, 3.0], [2.0, 1.0]]}
+        self.assertEqual(R.DP10_CUT_PACK, pack)
+        self.assertEqual(R.RECIPE["packing"], {"version": "gap-pack-v2", "target": 10, **pack})
 
 
 class Q2ByteIdentityTests(unittest.TestCase):
-    """产品的正常包请求必须与研究侧 Q2 逐字节相同（ADR-0019 第 1 点）。"""
+    """产品的正常包请求必须与研究侧 Q2 逐字节相同（ADR-0019 第 1 点）。钉值取自 2026-11-11 的研究实现
+    （`experiments.translation_v3.{batching,qwen,strata}` 与 `scene_batching_v6.v12.strata_recipe_data` 组出的 Q2），
+    由 `tests/equivalence/test_translate_recipes.py` 实时对照。"""
 
-    def test_batches_windows_and_request_bodies_match_research_q2(self) -> None:
-        from experiments.translation_v3 import batching as RB, data as RD, qwen, strata as RS
+    BATCHES_SHA256 = "b64af8526604f759934a18efec15f36645464a0018c4070ae326a6ba80944687"
+    PLAIN_BODY_SHA256 = "fa3ce2aa14439b779726b49e9ba61b97489611bdfac4fa399aa1ad70152f6a61"
 
+    def test_batches_windows_and_request_bodies_are_pinned(self) -> None:
         rows = [{"source": "セイバー", "translation": "Saber"}, {"source": "士郎", "translation": "士郎"},
                 {"source": "凛", "translation": "凛"}]
-        recipe = research_q2(rows)
         rng = random.Random(7)
-        compared = 0
+        observed, compared = [], 0
         for _ in range(30):
             cues = random_cues(rng, rng.randint(1, 120))
-            rscene = RD.Scene("srt-x", tuple(RD.Cue(*c) for c in cues), "w")
-            pscene = Scene("srt-x", tuple(Cue(*c) for c in cues))
-            theirs, ours = RB.build_batches(rscene, recipe), build_batches(pscene)
-            self.assertEqual([(b.target_ids, b.before_ids, b.after_ids) for b in ours],
-                             [(b.target_ids, b.before_ids, b.after_ids) for b in theirs])
-            for r, p in zip(theirs, ours):
-                window = r.to_window(rscene)
-                self.assertEqual(p.to_window(pscene), window)
-                for seed in (SEED, SEED + 1):
-                    expected = RS.request_body(qwen.messages(window, recipe, "w"), seed)
-                    actual = R.request_body(R.messages(window, rows), seed)
-                    self.assertEqual(json.dumps(actual, ensure_ascii=False), json.dumps(expected, ensure_ascii=False))
-                    compared += 1
+            scene = Scene("srt-x", tuple(Cue(*c) for c in cues))
+            batches = build_batches(scene)
+            observed.append([[(b.target_ids, b.before_ids, b.after_ids) for b in batches]])
+            for batch in batches:
+                window = batch.to_window(scene)
+                bodies = [json.dumps(R.request_body(R.messages(window, rows), seed), ensure_ascii=False)
+                          for seed in (SEED, SEED + 1)]
+                observed[-1].append([window, bodies])
+                compared += 2
         self.assertGreater(compared, 200)
+        digest = hashlib.sha256(json.dumps(observed, ensure_ascii=False).encode("utf-8")).hexdigest()
+        self.assertEqual(digest, self.BATCHES_SHA256)
 
     def test_no_names_means_the_plain_q2_system_message(self) -> None:
-        from experiments.translation_v3 import qwen, strata as RS
-        recipe = research_q2([])
         scene = scene_from_document(document(5))
         window = build_batches(scene)[0].to_window(scene)
         body = R.request_body(R.messages(window, []), SEED)
         self.assertEqual(body["messages"][0]["content"], R.SYSTEM_TEXT)
-        self.assertEqual(json.dumps(body, ensure_ascii=False),
-                         json.dumps(RS.request_body(qwen.messages(window, recipe, "w"), SEED), ensure_ascii=False))
+        text = json.dumps(body, ensure_ascii=False)
+        self.assertEqual(hashlib.sha256(text.encode("utf-8")).hexdigest(), self.PLAIN_BODY_SHA256)
 
     def test_name_rows_follow_the_research_product_table_rule(self) -> None:
-        from experiments.scene_batching_v6 import asr10, names11
-
         def entity(confidence: str, *forms: tuple[str, str]) -> dict:
             return {"entity_ja": forms[0][0], "kind": "person", "confidence": confidence, "zh": forms[0][1],
                     "forms": [{"ja": ja, "zh": zh} for ja, zh in forms], "zh_variants": [], "evidence": []}
@@ -158,13 +146,10 @@ class Q2ByteIdentityTests(unittest.TestCase):
         table = {"entries": [entity("high", ("セイバー", "Saber"), ("セイバ", "Saber")), entity("medium", ("士郎", "士郎")),
                              entity("high", ("セイバー", "塞巴"), ("凛", "凛")), entity("low", ("桜", "樱")),
                              entity("high", (" ", "空"), ("遠坂", " "))]}
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "name-table.json"
-            path.write_text(json.dumps(table, ensure_ascii=False), encoding="utf-8")
-            with mock.patch.object(asr10, "FILMS", {"F": {"table": path}}):
-                expected = names11.product_tables("high")["F"]
-        self.assertEqual(R.name_rows(table), expected)
-        self.assertEqual([r["source"] for r in expected], ["セイバー", "セイバ", "凛"])
+        # 取自 2026-11-11 的 `experiments.scene_batching_v6.names11.product_tables("high")` 在同一张表上的输出。
+        self.assertEqual(R.name_rows(table), [{"source": "セイバー", "translation": "Saber"},
+                                              {"source": "セイバ", "translation": "Saber"},
+                                              {"source": "凛", "translation": "凛"}])
 
     def test_request_body_shape(self) -> None:
         scene = scene_from_document(document(3))

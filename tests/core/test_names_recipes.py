@@ -4,7 +4,7 @@
 `SYSTEM_PROMPT_SHA256`、`RESPONSE_SCHEMA_SHA256` 取自 2026-10-19 的 `experiments/name_consistency/build_table.py`
 （冻结的研究期实现，ADR-0013）。`Q3_BUILD_HASH` 是 ADR-0021 记录的 `names-strata-v4` hash：用产品配方的四块
 （`build`、`model`、`runtime`、`request`）加上研究侧的两个说明字段拼回 v13 `s1_recipe("v4")` 的形状，hash 必须相等，
-这证明产品建表块与基线逐字节相同。改动提示、schema 或任何请求参数须出新配方名，并同时更新 hash 钉子。
+这证明产品建表块与基线逐字节相同（与 v13 实时对照在 `tests/equivalence/test_names.py`）。改动提示、schema 或任何请求参数须出新配方名，并同时更新 hash 钉子。
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import unittest
 
-from experiments.scene_batching_v6 import v13  # 只在测试里作对照；产品代码不导入 experiments
 from kototoki import strata
 from kototoki.artifacts import sha256_bytes
 from kototoki.names import recipes, table
@@ -24,7 +23,8 @@ RESPONSE_SCHEMA_SHA256 = "3004d26cef032d99f1088fcae1fc0e093b689b373490e633f6c6dc
 BUILD_HASH = "d3317926ee3b3096277faa9a5fbc0879d562336fb1fe89bf0ebd04c5b0be6b17"
 Q3_BUILD_HASH = "38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0"
 # v13 `s1_recipe("v4")` 里研究侧自己的说明字段（产品配方不含）；文字照抄，改动即与 ADR-0021 的 hash 不符。
-V13_PROMPT_BUDGET_CHECK = {"endpoint": v13.COUNT_TOKENS, "segments": ["system", "user"], "sum": True,
+# `endpoint` 与名字取自 2026-11-11 的 `experiments.scene_batching_v6.v13`（`COUNT_TOKENS`、`VARIANTS["v4"]["name"]`）。
+V13_PROMPT_BUDGET_CHECK = {"endpoint": "/v1/messages/count_tokens", "segments": ["system", "user"], "sum": True,
                            "fallback": "no precheck; usage.prompt_tokens recorded, over budget flagged"}
 V13_RETRIES = "build_table again with seed + 2k while it fails; at most attempts requests; first ok kept"
 
@@ -51,10 +51,9 @@ class BuildRecipeTests(unittest.TestCase):
 
     def test_build_block_model_runtime_and_request_equal_names_strata_v4(self):
         build = recipes.BUILD
-        v4 = {"name": v13.VARIANTS["v4"]["name"], "build": build["build"], "model": build["model"],
+        v4 = {"name": "names-strata-v4", "build": build["build"], "model": build["model"],
               "runtime": build["runtime"], "request": build["request"],
               "prompt_budget_check": V13_PROMPT_BUDGET_CHECK, "retries": V13_RETRIES}
-        self.assertEqual(v13.VARIANTS["v4"]["name"], "names-strata-v4")
         self.assertEqual(recipe_hash(v4), Q3_BUILD_HASH)
 
     def test_recipe_embeds_pinned_prompt_and_schema(self):

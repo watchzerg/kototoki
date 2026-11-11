@@ -111,6 +111,10 @@ typecheck:
 test-full *args:
     uv run --locked --offline python -m unittest discover -s tests/full -t . -v {{args}}
 
+# equivalence：产品与研究实现（experiments.*）的实时等价对照，根环境；不加载模型、不占 GPU、不持锁；参数同 test。
+test-equivalence *args:
+    uv run --locked --offline python -m unittest discover -s tests/equivalence -t . -v {{args}}
+
 # 真实模型验证（占 GPU、加载模型，每次须先经用户批准；不属于任何 gate）：每项独立子进程，持 .local/gpu.lock，
 # 结果写 .local/smoke/；可只跑指定项。
 smoke *args:
@@ -121,4 +125,4 @@ docs-check:
 
 gate-core: check-toolchain docs-check lint typecheck test
 
-gate-full: gate-core test-full
+gate-full: gate-core test-full test-equivalence
