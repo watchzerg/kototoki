@@ -224,6 +224,9 @@
 改动前基线（`c639b22`，2026-11-11）：`just test` 651 项通过；`just test-full` 17 项通过；`just docs-check` 44 处失败（全部是冻结文档外链）；`just check-toolchain` 失败（本机 uv 0.13.0，`mise.toml` 钉 0.12.22，见 §8）。研究侧离线测试（根 `.venv` 解释器，`unittest discover -s experiments/<包> -t .`）：`translation_v3` 90、`quality_v5` 101、`asr_robustness_v14` 49、`asr_robustness_v15` 32 项全过；`scene_batching_v6` 81 项里 `test_v13` 本就有 3 失败 1 错误（见 §8）。
 
 - 2026-11-11 **票据 01**：新增 [ADR-0025](../adr/0025-product-package-boundaries.md)（决定 1、3、4、5），ADR-0022 只追加状态行，决定索引同步（编号起点 0026）；模块边界、架构总览与 9 个模块页先行写入目标接口（`procs.py`、`classify_launch`、`ENGINE_PARTS`、`ja.srt` 新鲜度、`judge_file`、`Compute` 多产物、`Session.label`／`Session.client`、`local_client.py`、offset 只在 cue 加、`tests/equivalence/`），修掉 §2"文档漂移"的文档条目，`workflow.md` 与 `agents/testing.md` 加 `test-equivalence`。不含代码。`just docs-check` 失败清单与基线逐行相同，无新增。
+- 2026-11-11 **票据 03（第一步）**：`tests/core/test_recipes.py` 钉住 MEDIA、VAD、MMS、CUES、EMBEDDED 的 hash（值取自 `c639b22`），提前到其余代码票据之前，供并行 worktree 共用。
+- 2026-11-11 **票据 04**：`unavailable` 只由 `Session` 写（删 `generate.py` 的两处赋值；预检查保留，报错原文带 `Session` 写的原因，额度耗尽的原因含 "(start budget exhausted)"，与身份被拒可分）；`Session` 新增 `label` 与 `client(trace_dir, *, timeout)`，names 与翻译不再碰 `ordinal`、`runtime_root`、`client_factory`；`cache_state` 挪进 `translate/generate.py`（按 `Session` 对象与 `label` 记）。trace 目录布局、`run.json` 的 `server_session` 与 `cache_reset` 不变，有测试钉住。core 652 → 657 项全过。
+- 2026-11-11 **票据 05**：`kototoki/llama_server.py` 删除；产品留 `kototoki/local_client.py`（`LlamaClient` 无 `tokenize`／`complete`、`InfraFailure`、`explicit_oom`），`nvidia_smi`／`wait_for_free_vram` 并入 `kototoki/strata.py`，`list_llama_servers` 搬到 `scripts/smoke/smokelib.py`；llama-server 生命周期与其 15 项测试搬到 `experiments/translation_v3/llama_server.py`（客户端子类在研究侧补 `tokenize`／`complete`）。研究侧只改导入行：`translation_v3/qwen.py`、`translation_v3/strata.py`。core 646 项全过（24 项随代码搬走，新增 13 项）；`translation_v3` 105 项、`quality_v5` 101 项全过；`scene_batching_v6` 只有基线已有的 4 项失败。`git grep llama_server -- kototoki tests scripts` 只剩历史说明、已删配置键的测试与 smoke 结果字段名。
 
 ## 8. 待用户裁定
 
@@ -233,4 +236,6 @@
 - **`Session` 的客户端接口与 §4 票据 04 的写法不同**：计划写 `Session.client(trace_root, timeout)`，由 `Session` 决定子目录 `<trace_root>/<runtime_root.name>/session-NN`。但翻译现有的 trace 目录是 `<run 目录>/transport/session-<run 内序号>`，只有 names 用 `<runtime_root.name>/session-NN` 作目录；照计划的签名做，翻译 run 目录的布局就要变，违反 §3 第 9 条。执行时改为 `Session.label`（只读，`<runtime_root.name>/session-NN`）＋`Session.client(trace_dir, *, timeout)`（目录由调用方给）：两处布局都不变，names 与翻译同样不再碰 `ordinal`、`runtime_root`、`client_factory`。如不同意请指出。
 - ADR-0022 里"留在原文件、不挪不删"实际在决定第 6 点，不是 §2、§3 写的第 4 点；ADR-0025 与 ADR-0022 的状态行按实际出处写。
 - 票据 01 没改的两处：`docs/specs/bilingual-subtitle-pipeline.md` 的移植来源表里仍写 `llama_server`（票据 10 核对规格时处理）；`experiments/w0_demo/README.md` 对 `prepare_assets` 解释器的两种说法（§2 列为文档漂移，但它在研究代码目录里，哪一种说法对需要跑环境才能确认，未改）。
+- `scripts/with_lock.py` 在 Python 3.13 下编译不过（第 114 行 `except A, B:` 写法），是改动前就有的问题，本计划没碰这个文件。
+- `experiments/translation_v3/strata.py` 的 docstring 仍提到 `kototoki.llama_server.ManagedServer`：它是 Q3 基线实现，按"只改导入行"没有动。
 - （执行中遇到的事项追加在这里。）
