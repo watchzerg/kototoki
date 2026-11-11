@@ -4,10 +4,10 @@
 
 ## 冷启动阅读路径
 
-1. [架构总览](architecture/INDEX.md)：系统由什么组成、模块地图、依赖与不变量。
-2. [模块边界](architecture/module-boundaries.md)：职责归属与依赖方向；对照 [GLOSSARY.md](../GLOSSARY.md) 理解术语。
-3. 按需打开 `architecture/modules/` 中的模块页，再沿链接进代码与测试。
-4. 查当前有效决定与其演进时看[决定索引](adr/INDEX.md)；需要证据与研究轮次时查[调研索引](research/INDEX.md)。
+1. [现行决定](adr/CURRENT.md)：现在生效的基线身份与产品决定，一页读完；术语对照 [GLOSSARY.md](../GLOSSARY.md)。
+2. [架构总览](architecture/INDEX.md)：模块表（模块、代码路径、职责）、按任务找模块页、依赖与不变量。
+3. [模块边界](architecture/module-boundaries.md)：依赖方向、规则与接缝；再按需打开 `architecture/modules/` 中的模块页，沿链接进代码与测试。
+4. 决定的沿革看[决定索引](adr/INDEX.md)，等用户裁定的事项看[待用户裁定事项](pending-decisions.md)；需要证据与研究轮次时查[调研索引](research/INDEX.md)，只读命中主题的子索引。
 
 ## 入口分工
 
@@ -20,9 +20,10 @@
 | [架构总览](architecture/INDEX.md) | 系统现在怎样组成与运行 |
 | [模块边界](architecture/module-boundaries.md) | 规则归谁、依赖方向与状态所有权 |
 | `architecture/modules/` | 某个能力现在完整地怎样工作 |
-| `adr/` | 为什么做出重要决定；[决定索引](adr/INDEX.md)汇总当前有效决定与演进链 |
+| [现行决定](adr/CURRENT.md) | 现在生效的决定与基线身份的完整定义 |
+| `adr/` | 为什么做出重要决定；[决定索引](adr/INDEX.md)列全部 ADR 与演进链 |
 | [待用户裁定事项](pending-decisions.md) | 哪些问题还在等用户裁定，哪些只是未验证 |
-| [调研索引](research/INDEX.md) | 比较与验证的证据和适用条件；[决定与探索时间线](research/timeline.md) |
+| [调研索引](research/INDEX.md) | 比较与验证的证据和适用条件：按主题的现状、轮次登记与子索引；[决定与探索时间线](research/timeline.md) |
 | [规格索引](specs/INDEX.md) | 已接受的行为契约（产品技术设计、W0／X0 demo）与已取代的草案 |
 | [开发工作流](development/workflow.md)、[技术选型](development/technology-stack.md) | 怎么开发、构建和验证 |
 | [依赖布局与资产清单](development/dependencies.md) | 依赖放在哪、版本由谁锁定、哪个 recipe 安装或编译 |

@@ -1,6 +1,6 @@
 # 文档架构整理
 
-Status: claimed
+Status: resolved
 
 本文是这次整理的唯一计划：2026-11-11 文档审计发现的问题（§1）、与用户讨论后确定的决定（§2）、
 目标结构（§3）、票据（§4）、门与停止条件（§5）、不做的事（§6）。
@@ -300,6 +300,47 @@ Status: claimed
 | [09](issues/09-split-tech-design.md) | resolved | 技术设计 51,461 → 12,336 字符；配置参考拆成 `modules/config-reference.md`，历史原文存为冻结记录；与代码对不上的 7 处记在票据文件，需用户知道的记 §8 第 6 项 |
 | [10](issues/10-rewrite-module-pages.md) | resolved | 7 篇模块页重写到现状并进预算（如翻译子系统 21,389 → 11,858、STT worker 22,892 → 9,080、批次编排 20,637 → 11,993）；拆出 Strata session、STT ASR、运行日志与进程 3 篇新页；3 篇冻结记录保存移出的原文；与代码对不上的 12 处记在票据文件，§8 第 7 项 |
 | [11](issues/11-architecture-index-and-boundaries.md) | resolved | 架构总览 13,282 → 8,582 字符（产品与研究两张模块表、按任务找模块页表）；模块边界 19,491 → 11,078；26 个产品模块 docstring 加一行指向模块页；`just gate-core` 通过 |
+| [12](issues/12-wrap-up.md) | resolved | `docs/INDEX.md` 冷启动路径与入口分工更新；§7.2、§7.3 填写；本 spec 标 resolved |
+
+### 7.2 关键文件整理前后的字符数
+
+Unicode 字符数；括号内是最长行。"整理前"取分支起点（提交 8723148 之前）的数值。
+
+| 文件 | 整理前 | 整理后 | 上限 |
+| --- | --- | --- | --- |
+| `AGENTS.md` | 7,621（864） | 4,391（382） | 4,500 |
+| `GLOSSARY.md` | 7,766（532） | 5,238（441） | — |
+| `docs/INDEX.md` | 9,566（406），119 行 | 3,441（247），54 行 | 150 行 |
+| `docs/adr/INDEX.md` | 13,880（673） | 11,128（362） | 150 行 |
+| `docs/adr/CURRENT.md`（新） | — | 8,519（237） | 12,000 |
+| `docs/research/INDEX.md` | 47,341（736），318 行 | 4,979（231），74 行 | 150 行 |
+| `docs/architecture/INDEX.md` | 13,282（1,321） | 8,582（180），147 行 | 150 行 |
+| `docs/architecture/module-boundaries.md` | 19,491（1,664） | 11,078（476） | 12,000 |
+| `docs/specs/bilingual-subtitle-pipeline.md` | 51,461（820） | 12,336（475） | 15,000 |
+| `modules/translation-subsystem.md` | 21,389（2,261） | 11,858（546） | 12,000 |
+| `modules/stt-workers.md` | 22,892（1,967） | 9,080（315） | 12,000 |
+| `modules/batch-orchestration.md` | 20,637（1,253） | 11,993（458） | 12,000 |
+| `modules/name-consistency.md` | 13,318（1,150） | 9,107（333） | 12,000 |
+| `modules/config-and-media.md` | 13,301（895） | 11,232（399） | 12,000 |
+| `modules/stage-plan.md` | 10,506（832） | 9,262（551） | 12,000 |
+| `modules/artifact-contract.md` | 9,775（887） | 9,078（468） | 12,000 |
+| `docs/development/workflow.md` | 7,721（1,313） | 7,723（568） | 12,000 |
+| `docs/pending-decisions.md`（新） | — | 7,492（412） | 12,000 |
+
+拆出的新活页：`modules/config-reference.md` 5,416、`modules/strata-session.md` 7,841、`modules/stt-asr.md` 10,735、
+`modules/run-logging-and-processes.md` 8,245、`docs/agents/translation-evaluation.md` 5,875；`docs/research/topics/` 7 篇子索引与 `timeline.md`。
+冷启动读 `AGENTS.md` ＋ `CURRENT.md` ＋ 架构总览合计约 21,500 字符（整理前 `AGENTS.md` ＋ 决定索引 ＋ 架构总览约 34,800，且读不到完整的现行决定）。
+
+### 7.3 门与未验证项
+
+- `just gate-core` 通过（716 个测试）；`just docs-check` 通过，0 条告警，检查 498 篇文档。
+- 预算白名单剩 2 行：`docs/agents/subtitle-translation-evaluation.md`（字节被代码校验，永久）、`docs/development/dependencies.md`（一行长单元格，§8 第 6 项）。
+- 全程没有占 GPU、加载模型或改环境；没有 push。代码改动只有 `scripts/check_docs.py`、`tests/core/test_check_docs.py` 与 26 个产品模块的 docstring。
+- 未验证：
+  - 模块页"规则对照代码"是子 agent 的阅读核对，主 agent 只抽查；没有为这些规则新增测试。
+  - 没有用一个新 session 实测冷启动读取量与找模块页的路径是否顺手。
+  - 架构总览的 mermaid 图改了写法，没有在渲染器里看过。
+  - 冻结文件：`check_docs.py` 不比较基线；收尾时用 `git diff --stat` 对分支起点核对过 `docs/research/20*`、`docs/context`、`docs/plans`、ADR 正文、`docs/testing/2026-*`、`docs/archive` 与旧裁判链，只有新增文件，没有既有文件被改。
 
 ## 8. 待用户裁定
 
