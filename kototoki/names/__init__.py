@@ -12,8 +12,8 @@ Strata 的生命周期归中间层 `kototoki.strata`：编排器持有共享 `Se
 `/v1/messages/count_tokens`（Strata 没有 `/tokenize`），端点不可用时该影片不再预检、计数按 0（v13 的退路）。
 不做同调用内重启：传输失败、HTTP 错误、OOM 停掉 Strata（下一部需要模型的影片再启动）并抛 `NamesError`。
 
-依赖方向：只依赖基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata` 与 `kototoki.llama_server`
-（`explicit_oom`）；不导入 torch、`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、
+依赖方向：只依赖基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata` 与 `kototoki.local_client`
+（`InfraFailure`、`explicit_oom`）；不导入 torch、`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、
 不打含条目文字的日志。见 docs/architecture/modules/name-consistency.md。
 """
 
@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 
-from kototoki.llama_server import InfraFailure, explicit_oom
+from kototoki.local_client import InfraFailure, explicit_oom
 from kototoki.srt import SourceDocument
 from kototoki.strata import MODEL, Session, StrataRefused
 

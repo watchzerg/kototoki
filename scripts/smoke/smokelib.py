@@ -1,4 +1,4 @@
-"""环境 smoke 的共用小工具：结果输出、进程已加载模块清单、仓库路径。
+"""环境 smoke 的共用小工具：结果输出、进程已加载模块清单、仓库路径、正在运行的 llama-server 进程。
 
 每个 smoke 脚本由 `run_all.py` 在独立子进程中以 `python scripts/smoke/<name>.py --out <dir>` 启动，
 结束时调用 `finish()` 写 `<dir>/<name>.json` 并在 stdout 打印一行 `SMOKE_RESULT <json>`。
@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 from typing import Any
@@ -83,6 +84,24 @@ class Timer:
     def mark(self, label: str) -> float:
         self.marks[label] = round(time.perf_counter() - self.started, 3)
         return self.marks[label]
+
+
+def list_llama_servers() -> list[int]:
+    """正在运行的 `llama-server.exe` 的 pid（非 Windows 为空）。ADR-0025 起从产品 `kototoki/llama_server.py` 搬来，
+    产品已不起 llama-server，只有 smoke 用它核实全程没有 llama-server。"""
+    if sys.platform != "win32":
+        return []
+    try:
+        result = subprocess.run(["tasklist", "/FI", "IMAGENAME eq llama-server.exe", "/FO", "CSV", "/NH"],
+                                capture_output=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    pids = []
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
+        parts = [part.strip('"') for part in line.split('","')]
+        if len(parts) > 1 and parts[0].lower().startswith("llama-server") and parts[1].isdigit():
+            pids.append(int(parts[1]))
+    return pids
 
 
 def finish(out: Path, name: str, result: dict[str, Any]) -> int:

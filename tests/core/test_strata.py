@@ -18,8 +18,8 @@ from types import SimpleNamespace
 from kototoki import artifacts
 from kototoki import strata as S
 from kototoki.artifacts import read_json
-from kototoki.llama_server import InfraFailure
-from kototoki.strata import Session, StrataRefused, StrataServer
+from kototoki.local_client import InfraFailure
+from kototoki.strata import Session, StrataRefused, StrataServer, wait_for_free_vram
 
 # 0.2.12 的默认启动真实写下的参数形状：总带 `--mtp <权重目录>`，DFlash2 不在 run config 里（2026-11-08 smoke）。
 DEFAULT_ARGS = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--mtp", "D:/mtp/rt", "--max-context", "131072",
@@ -298,6 +298,61 @@ class StrataServerTests(unittest.TestCase):
     def test_status_parses_only_the_json_line(self) -> None:
         self.assertEqual(S.running(lambda *a: '{"running": []}\nNo launches running.\n'), [])
         self.assertEqual(S.running(lambda *a: '{"running": [{"name": "a"}]}\n'), [{"name": "a"}])
+
+
+class WaitForFreeVramTests(unittest.TestCase):
+    """空闲显存轮询（ADR-0025 起从 `llama_server.py` 并入本模块；测试随之从 `test_llama_server.py` 搬来）。"""
+
+    def setUp(self):
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def _sleep(self, seconds: float) -> None:
+        # 假睡眠只推进假时钟，不真正等待
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def _wait(self, readings, timeout=10.0, **kwargs):
+        iterator = iter(readings)
+        last = [None]
+
+        def query():
+            last[0] = next(iterator, last[0])
+            return last[0]
+
+        return wait_for_free_vram(14300, timeout, query=query, sleep=self._sleep, clock=lambda: self.now, **kwargs)
+
+    def test_returns_reading_once_threshold_reached(self):
+        self.assertEqual(self._wait([1000, 5000, 14500, 16000]), 14500)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_long_wait_logs_one_warning(self):
+        with self.assertLogs("kototoki.strata", level="INFO") as logs:
+            self.assertEqual(self._wait([1000] * 20 + [14500], timeout=120.0), 14500)
+        (record,) = logs.records
+        self.assertEqual(record.levelname, "WARNING")
+        self.assertIn("1000 MiB < 14300 MiB", record.getMessage())
+
+    def test_warning_carries_the_stage_prefix(self):
+        with self.assertLogs("kototoki.strata", level="WARNING") as logs:
+            self._wait([1000] * 20 + [14500], timeout=120.0, stage="translate")
+        self.assertTrue(logs.records[0].getMessage().startswith("[translate] waiting for free GPU memory: "))
+
+    def test_short_wait_logs_nothing(self):
+        with self.assertNoLogs("kototoki.strata", level="INFO"):
+            self._wait([1000, 14500])
+
+    def test_timeout_raises_with_last_reading(self):
+        with self.assertRaises(InfraFailure) as caught:
+            self._wait([1000, 2000, 3456])
+        self.assertIn("3456", str(caught.exception))
+
+    def test_unknown_reading_message(self):
+        with self.assertRaises(InfraFailure) as caught:
+            self._wait([None])
+        message = str(caught.exception).lower()
+        self.assertIn("unknown", message)
+        self.assertIn("nvidia-smi failed", message)
 
 
 class SessionTests(unittest.TestCase):

@@ -30,7 +30,6 @@ import smokelib
 sys.path.insert(0, str(smokelib.REPO))
 
 from kototoki import artifacts, config, names, plan, srt, strata  # noqa: E402
-from kototoki.llama_server import list_llama_servers  # noqa: E402
 from kototoki.names import recipes as names_recipes  # noqa: E402
 from kototoki.translate import recipes as translate_recipes  # noqa: E402
 
@@ -90,7 +89,7 @@ def main() -> int:
     identity = plan.names_identity(document.source_sha256, cfg)
     result: dict[str, Any] = {
         "recipe": names_recipes.RECIPE_NAME, "recipe_hash": names.BUILD_RECIPE_HASH, "seed": cfg.names.seed,
-        "model": strata.MODEL, "llama_servers_before": len(list_llama_servers()),
+        "model": strata.MODEL, "llama_servers_before": len(smokelib.list_llama_servers()),
         "input": {"cues": len(document.cues), "source_sha256": document.source_sha256, "synthetic": True}}
     if result["llama_servers_before"]:
         failures.append("a llama-server process was already running before the smoke")
@@ -99,7 +98,7 @@ def main() -> int:
     try:
         with strata.Session(cfg) as session:
             built = names.build_document(work_dir, document, session, cfg.names.seed)
-            result["llama_servers_during"] = len(list_llama_servers())
+            result["llama_servers_during"] = len(smokelib.list_llama_servers())
     except Exception as error:  # 记录失败类别后照常写结果
         failures.append(f"build {type(error).__name__}: {str(error)[:500]}")
     timer.mark("build")

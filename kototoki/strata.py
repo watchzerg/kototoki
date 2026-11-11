@@ -1,6 +1,7 @@
 """Strata 服务与共享 session：产品唯一的推理服务，names 建表与翻译共用（ADR-0019、ADR-0022）。只有这一个实现，不抽象后端协议。
 
-中间层（与 `llama_server` 同层，不属基础层）：起停 Strata 进程（`strata` CLI）、核对身份、持有整批共用的 session。
+中间层（与 `local_client` 同层，不属基础层）：起停 Strata 进程（`strata` CLI）、轮询空闲显存（`nvidia_smi`、
+`wait_for_free_vram`，ADR-0025 起从原 `llama_server.py` 并入本模块）、核对身份、持有整批共用的 session。
 `names` 与翻译子系统都单向依赖本模块；本模块不导入它们。Strata 的身份常量（模型名、版本、引擎 build、默认启动的
 解析值）也在这里，翻译配方与建表配方都从这里取值。
 
@@ -55,15 +56,15 @@ from urllib.request import ProxyHandler, Request, build_opener
 from kototoki import artifacts
 from kototoki.artifacts import atomic_write_json, utc_now
 from kototoki.config import Config
-from kototoki.llama_server import InfraFailure, LlamaClient, nvidia_smi, wait_for_free_vram
+from kototoki.local_client import InfraFailure, LlamaClient
 
 __all__ = [
     "ARENA_LOCKED", "ENGINE_LOG_DIR", "HOST", "LAUNCH_ARGS", "LOG_DIR", "LOG_EVENTS", "MAX_START_FAILURES",
     "MIN_AVAILABLE_RAM_GIB", "MIN_FREE_MIB", "MMAP_MARKERS", "MODEL", "POLL_S", "PORT", "RAM_WAIT_S",
     "SESSIONS_DIR", "STATUS_ARGS", "STOP_ARGS", "STRATA_ENGINE_BUILD", "STRATA_LAUNCH", "STRATA_RESOLVED",
     "STRATA_VERSION", "ResourceSampler", "Session", "StrataRefused", "StrataServer", "available_ram_gib",
-    "drafting_from_log", "expert_arena", "http_get", "log_events", "log_sizes", "probe", "read_from", "run_cli",
-    "running", "strata_cmd",
+    "drafting_from_log", "expert_arena", "http_get", "log_events", "log_sizes", "nvidia_smi", "probe", "read_from",
+    "run_cli", "running", "strata_cmd", "wait_for_free_vram",
 ]
 
 # Strata 服务身份（ADR-0017"服务"一节）：产品用 `strata launch --no-tui --model iq3_s` 启动，`probe` 逐项核对。
@@ -100,7 +101,47 @@ LOG_EVENTS = {"reasoning_recoveries": "repeated reasoning detected", "nonfinite_
 SESSIONS_DIR = "strata-sessions"   # 工作根下 session 证据的根（ADR-0022 前为 translate-sessions）
 MAX_START_FAILURES = 3              # 整批 Strata 启动失败的上限（与翻译"3 次连续 server_start 即放弃"、names 旧规则"整批 3 次"同量）
 
+FREE_VRAM_TIMEOUT_SECONDS = 120.0
+FREE_VRAM_POLL_SECONDS = 2.0
+FREE_VRAM_WARN_SECONDS = 30.0  # 等显存超过这么久记一次 warning
+
 log = logging.getLogger(__name__)
+
+
+def nvidia_smi(query: str) -> int | None:
+    try:
+        result = subprocess.run(["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+                                capture_output=True, text=True, timeout=10,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    first = result.stdout.split()[0] if result.returncode == 0 and result.stdout.strip() else ""
+    return int(first) if first.isdigit() else None
+
+
+def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS, *, stage: str = "llama-server",
+                       query: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
+                       sleep: Callable[[float], None] = time.sleep,
+                       clock: Callable[[], float] = time.monotonic) -> int:
+    """轮询 `nvidia-smi memory.free` 直到不低于阈值；超时抛 `InfraFailure` 并写明最后一次读数。
+
+    产品只有 `StrataServer` 调用（`stage="strata"`）；研究侧 `experiments/translation_v3/llama_server.py` 也导入。"""
+    started = clock()
+    deadline = started + timeout
+    warned = False
+    while True:
+        free = query()
+        if free is not None and free >= min_mib:
+            return free
+        seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
+        if not warned and clock() - started > FREE_VRAM_WARN_SECONDS:
+            warned = True
+            log.warning(f"[{stage}] waiting for free GPU memory: %s < %d MiB after %.0f s", seen, min_mib,
+                        clock() - started)
+        if clock() >= deadline:
+            raise InfraFailure(f"Free GPU memory {seen} stayed below {min_mib} MiB for {timeout:.0f} s; "
+                               "another process may hold the GPU")
+        sleep(FREE_VRAM_POLL_SECONDS)
 
 
 class StrataRefused(RuntimeError):

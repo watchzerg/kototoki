@@ -40,7 +40,7 @@ from kototoki.artifacts import atomic_write_json, object_hash, read_json, sha256
 from kototoki.config import Config
 from kototoki.srt import SourceDocument
 
-from kototoki.llama_server import InfraFailure, explicit_oom
+from kototoki.local_client import InfraFailure, explicit_oom
 from kototoki.strata import Session, StrataRefused
 
 from . import degrade

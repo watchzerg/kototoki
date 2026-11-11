@@ -7,7 +7,7 @@ context), the user message is the read-only context and the target JSON. The req
 constraint text as the control, so validation stays ``recipes.parse_translation`` plus the key order check).
 The input budget is measured on the server-rendered chat prompt (``/apply-template`` + ``/tokenize``).
 
-Server: ``kototoki.llama_server.ManagedServer`` with the names-stage ``ServerSpec`` values (official b11669
+Server: ``experiments.translation_v3.llama_server.ManagedServer`` with the names-stage ``ServerSpec`` values (official b11669
 build, ``-b 512 -ub 512 -fa on --jinja --reasoning off``, 99 layers) and the v9 context; the v3 GPU lock and a
 KILL_ON_JOB_CLOSE job are added here. Model identity and server values are copied from
 ``kototoki/names/recipes.py`` (2026-10-21) so a product change does not move the v9 recipe hashes.
@@ -393,7 +393,7 @@ def run_step(client: Any, messages_: list[dict[str, str]], grammar: str, seed: i
 
 
 def server_spec(recipe: R.Recipe):
-    from kototoki.llama_server import ServerSpec
+    from .llama_server import ServerSpec
     return ServerSpec(stage="v9-translate", candidate=MODEL, model_asset=dict(MODEL_ASSET), layers=LAYERS,
                       context=context_size(recipe), extra_args=extra_args(recipe), min_free_mib=MIN_FREE_MIB,
                       load_timeout_s=LOAD_TIMEOUT_SECONDS)
@@ -410,7 +410,7 @@ def session_factory(root: Path, run_id: str, recipe: R.Recipe, *, port: int = 80
 
     @contextmanager
     def factory(run_dir: Path, index: int) -> Iterator[Any]:
-        from kototoki.llama_server import LlamaClient, ManagedServer
+        from .llama_server import LlamaClient, ManagedServer
         from .generate import SessionHandle
         from .procs import KillOnCloseJob, process_created
         from .server import GpuLock

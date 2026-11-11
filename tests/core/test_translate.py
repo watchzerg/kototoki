@@ -14,9 +14,9 @@ from urllib.error import HTTPError, URLError
 
 from kototoki import artifacts
 from kototoki.artifacts import read_json
-from kototoki.llama_server import InfraFailure, wait_for_free_vram
+from kototoki.local_client import InfraFailure
 from kototoki.srt import format_srt, parse_srt
-from kototoki.strata import Session, StrataRefused
+from kototoki.strata import Session, StrataRefused, wait_for_free_vram
 from kototoki.translate import RECIPE_HASH, TranslateError, TranslatePlan, translate_document
 from kototoki.translate import plan as translate_plan
 from kototoki.translate import recipes as R

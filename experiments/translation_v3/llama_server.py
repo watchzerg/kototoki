@@ -1,16 +1,16 @@
-"""受管 llama-server 与本机 HTTP 客户端：按 `ServerSpec` 组命令行、模型与引擎身份核对、启动前空闲显存轮询、驻留证据校验。
+"""受管 llama-server（研究侧）：按 `ServerSpec` 组命令行、模型与引擎身份核对、启动前空闲显存轮询、驻留证据校验，
+以及补上 `/tokenize`、`/completion` 的本机客户端。
 
-中间层，不属基础层。产品（ADR-0022 起 names 与翻译都在 Strata 上）只用本机回环客户端 `LlamaClient`、空闲显存轮询
-`wait_for_free_vram`／`nvidia_smi` 与 OOM 识别 `explicit_oom`；整套 llama-server 生命周期（`ManagedServer` 等）产品不再
-使用，只剩研究侧 `experiments/translation_v3/{qwen,strata}.py` 等导入，位置因此不动、不删除。
+2026-11-11 架构整理票据 05（ADR-0025）从产品 `kototoki/llama_server.py` 原样搬来：产品（ADR-0022 起 names 与翻译都在
+Strata 上）不再使用 llama-server 的生命周期，唯一使用者是本包的 `qwen.py`（Q0／Q1 路径）。行为不变；只改了导入来源：
+本机客户端、`InfraFailure`、`explicit_oom` 取自产品 `kototoki.local_client`，显存轮询 `nvidia_smi`／`wait_for_free_vram`
+取自产品 `kototoki.strata`，`list_llama_servers` 用本包 `procs.py` 的同一实现（产品那份是它的复制）。
 
-来源（2026-10-19 票据 02 从翻译子系统原样抽出，行为不变）：
+更早的来源（2026-10-19 票据 02 从翻译子系统原样抽出）：
 - `ManagedServer`、`server_command`、`port_free`、`check_model`、`check_engine` 来自 `kototoki/translate/server.py`，
-  其源头是 `experiments/translation_v3/server.py`（去掉 `GpuLock`，GPU 锁归编排器；资产清单改为 spec 里的冻结常量）；
-  命令行的固定部分与翻译 `-c`／`-np`／`-ngl` 之后的参数拆进 `ServerSpec.extra_args`，翻译命令行逐字节不变。
-- 驻留解析 `residency_evidence`／`validate_residency`／`loader_logs` 复制自 `experiments/translation_demo_runtime.py`，
-  `explicit_oom` 复制自 `translation_demo/run.py`；`list_llama_servers` 来自 `translate/procs.py`（源头 `translation_v3/procs.py`）。
-- `LlamaClient` 来自 `kototoki/translate/client.py`（源头 `experiments/translation_demo/client.py`），新增 `chat_completion`。
+  其源头是 `experiments/translation_v3/server.py`（去掉 `GpuLock`，GPU 锁归调用方；资产清单改为 spec 里的冻结常量）；
+  命令行的固定部分与 `-c`／`-np`／`-ngl` 之后的参数拆进 `ServerSpec.extra_args`。
+- 驻留解析 `residency_evidence`／`validate_residency`／`loader_logs` 复制自 `experiments/translation_demo_runtime.py`。
 """
 
 from __future__ import annotations
@@ -22,24 +22,19 @@ from pathlib import Path
 import re
 import socket
 import subprocess
-import sys
 import threading
 import time
 from typing import Any, Callable
-from urllib.error import HTTPError
-from urllib.parse import urlparse
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import ProxyHandler, build_opener
 
+from kototoki import local_client
 from kototoki.artifacts import atomic_write_json, read_json, sha256_file, utc_now, verify_model
+from kototoki.local_client import InfraFailure, explicit_oom
+from kototoki.strata import nvidia_smi, wait_for_free_vram
 
-FREE_VRAM_TIMEOUT_SECONDS = 120.0
-FREE_VRAM_POLL_SECONDS = 2.0
-FREE_VRAM_WARN_SECONDS = 30.0  # 等显存超过这么久记一次 warning
+from .procs import list_llama_servers
 
 log = logging.getLogger(__name__)
-
-_OOM = re.compile(r"out of memory|cuda_error_out_of_memory|cudaerrormemoryallocation|vk_error_out_of_device_memory|std::bad_alloc",
-                  re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -53,48 +48,6 @@ class ServerSpec:
     extra_args: tuple[str, ...]       # 放在 `-c`／`-np`／`-ngl` 之后、`--no-webui`／`--log-file`／`-lv` 之前
     min_free_mib: int
     load_timeout_s: int
-
-
-class InfraFailure(RuntimeError):
-    """可通过重启 server 重试的基础设施失败（加载期退出／超时、显存不足）。"""
-
-
-def explicit_oom(message: str) -> bool:
-    return bool(_OOM.search(message))
-
-
-def nvidia_smi(query: str) -> int | None:
-    try:
-        result = subprocess.run(["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
-                                capture_output=True, text=True, timeout=10,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    first = result.stdout.split()[0] if result.returncode == 0 and result.stdout.strip() else ""
-    return int(first) if first.isdigit() else None
-
-
-def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS, *, stage: str = "llama-server",
-                       query: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
-                       sleep: Callable[[float], None] = time.sleep,
-                       clock: Callable[[], float] = time.monotonic) -> int:
-    """轮询 `nvidia-smi memory.free` 直到不低于阈值；超时抛 `InfraFailure` 并写明最后一次读数。"""
-    started = clock()
-    deadline = started + timeout
-    warned = False
-    while True:
-        free = query()
-        if free is not None and free >= min_mib:
-            return free
-        seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
-        if not warned and clock() - started > FREE_VRAM_WARN_SECONDS:
-            warned = True
-            log.warning(f"[{stage}] waiting for free GPU memory: %s < %d MiB after %.0f s", seen, min_mib,
-                        clock() - started)
-        if clock() >= deadline:
-            raise InfraFailure(f"Free GPU memory {seen} stayed below {min_mib} MiB for {timeout:.0f} s; "
-                               "another process may hold the GPU")
-        sleep(FREE_VRAM_POLL_SECONDS)
 
 
 # --- 驻留证据（stock 引擎加载日志） ------------------------------------------------------------
@@ -116,7 +69,7 @@ def residency_evidence(log: str) -> dict[str, Any]:
 
 
 def validate_residency(evidence: dict[str, Any], requested_layers: int) -> None:
-    """缺少 GPU 证据或出现部分层留在 CPU 时拒绝（产品不允许 CPU 回退）。"""
+    """缺少 GPU 证据或出现部分层留在 CPU 时拒绝（不允许 CPU 回退）。"""
     loaded, total = evidence['gpu_layers_offloaded'], evidence['model_layers_total']
     if loaded is None or total is None or not 0 < loaded <= total:
         raise RuntimeError('Loader did not prove positive GPU layer offload; inspect runtime logs')
@@ -147,22 +100,6 @@ def port_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
         return sock.connect_ex(("127.0.0.1", port)) != 0
-
-
-def list_llama_servers() -> list[int]:
-    if sys.platform != "win32":
-        return []
-    try:
-        result = subprocess.run(["tasklist", "/FI", "IMAGENAME eq llama-server.exe", "/FO", "CSV", "/NH"],
-                                capture_output=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    pids = []
-    for line in result.stdout.decode("utf-8", "replace").splitlines():
-        parts = [part.strip('"') for part in line.split('","')]
-        if len(parts) > 1 and parts[0].lower().startswith("llama-server") and parts[1].isdigit():
-            pids.append(int(parts[1]))
-    return pids
 
 
 def check_model(model: Path, spec: ServerSpec, cache_path: Path) -> dict[str, Any]:
@@ -292,65 +229,11 @@ class ManagedServer:
 
 # --- client ------------------------------------------------------------------------------
 
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise ValueError("Local inference requests may not redirect")
+class LlamaClient(local_client.LlamaClient):
+    """产品本机客户端加上 llama.cpp 原生的 `/tokenize` 与 `/completion`（产品只用 `chat_completion`）。
 
-
-class LlamaClient:
-    """只连本机回环的 llama.cpp HTTP 客户端；不走系统代理、不跟随重定向。
-
-    `trace_dir` 给出时每个请求写一个交换目录（`request.json`、`response.raw`、`transport.json`）：
-    `/tokenize`、`/completion` 的目录名是 5 位序号，`chat_completion` 的是 `chat-NN`（同一序号计数）。
-    内部接缝：测试用伪客户端替换本类（`Session(client_factory=...)`）。
+    交换目录命名不变：`/tokenize`、`/completion` 是 5 位序号，`chat_completion` 是 `chat-NN`（同一序号计数）。
     """
-
-    def __init__(self, url: str, timeout: float = 180.0, trace_dir: Path | None = None):
-        parsed = urlparse(url)
-        if parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1") or parsed.username or parsed.password:
-            raise ValueError("Only an unauthenticated local loopback HTTP server is allowed")
-        self.url = url.rstrip("/")
-        self.timeout = timeout
-        self.opener = build_opener(ProxyHandler({}), NoRedirect())
-        self.trace_dir = trace_dir
-        self.sequence = 0
-        self.last_exchange: str | None = None
-
-    def request(self, endpoint: str, data: dict[str, Any] | None = None, *,
-                trace_label: str | None = None) -> dict[str, Any]:
-        payload = None if data is None else json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.sequence += 1
-        trace = None
-        if self.trace_dir is not None:
-            name = f"{self.sequence:05d}" if trace_label is None else f"{trace_label}-{self.sequence:02d}"
-            trace = self.trace_dir / name
-            trace.mkdir(parents=True, exist_ok=False)
-            (trace / "request.json").write_bytes(json.dumps({"endpoint": endpoint, "body": data}, ensure_ascii=False).encode("utf-8"))
-            self.last_exchange = str(trace)
-        request = Request(self.url + endpoint, data=payload, headers={"Content-Type": "application/json"})
-        start = time.perf_counter()
-        raw_bytes = b""
-        error = None
-        status = None
-        try:
-            with self.opener.open(request, timeout=self.timeout) as response:
-                status = response.status
-                raw_bytes = response.read()
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            if isinstance(exc, HTTPError):
-                status = exc.code
-                raw_bytes = exc.read()
-            raise
-        finally:
-            if trace is not None:
-                (trace / "response.raw").write_bytes(raw_bytes)
-                (trace / "transport.json").write_text(json.dumps({"status": status, "elapsed_seconds": time.perf_counter() - start, "error": error}, ensure_ascii=False), encoding="utf-8")
-        raw = raw_bytes.decode("utf-8")
-        result = json.loads(raw)
-        if not isinstance(result, dict):
-            raise ValueError("Expected server JSON object")
-        return result
 
     def tokenize(self, prompt: str) -> list[int]:
         # 原生提示已含显式 BOS。
@@ -363,6 +246,3 @@ class LlamaClient:
 
     def complete(self, request: dict[str, Any]) -> dict[str, Any]:
         return self.request("/completion", request)
-
-    def chat_completion(self, body: dict[str, Any]) -> dict[str, Any]:
-        return self.request("/v1/chat/completions", body, trace_label="chat")

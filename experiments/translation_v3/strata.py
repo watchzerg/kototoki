@@ -332,7 +332,7 @@ def session_factory(root: Path, run_id: str, recipe: R.Recipe, *, port: int = 80
 
     @contextmanager
     def factory(run_dir: Path, index: int) -> Iterator[Any]:
-        from kototoki.llama_server import LlamaClient
+        from kototoki.local_client import LlamaClient
         from .generate import SessionHandle
         from .server import GpuLock
         lock = GpuLock(run_id)

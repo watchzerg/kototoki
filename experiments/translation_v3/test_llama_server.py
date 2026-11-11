@@ -1,6 +1,8 @@
-"""kototoki.llama_server 的纯函数测试：驻留证据、显存轮询、OOM 识别、命令行拼装、引擎核对、`server_stop` 标注、客户端 trace。
+"""`experiments.translation_v3.llama_server` 的离线测试：驻留证据、命令行拼装、引擎核对、`server_stop` 标注、
+`/tokenize`／`/completion` 客户端的交换目录命名。
 
-翻译特有的用例（冻结命令行、模型核对、stderr 送 DEVNULL）在 `test_translate_server.py`。
+2026-11-11 架构整理票据 05（ADR-0025）随代码从产品 `tests/core/test_llama_server.py` 搬来，断言不变；
+产品客户端、OOM 识别的测试在 `tests/core/test_local_client.py`，显存轮询的测试在 `tests/core/test_strata.py`。
 """
 
 from __future__ import annotations
@@ -11,11 +13,10 @@ import subprocess
 import tempfile
 import unittest
 
-from kototoki.artifacts import read_json, sha256_bytes
-from kototoki.llama_server import (
-    InfraFailure, LlamaClient, ManagedServer, ServerSpec, check_engine, explicit_oom, residency_evidence,
-    server_command, validate_residency, wait_for_free_vram,
+from experiments.translation_v3.llama_server import (
+    LlamaClient, ManagedServer, ServerSpec, check_engine, residency_evidence, server_command, validate_residency,
 )
+from kototoki.artifacts import read_json, sha256_bytes
 
 # 环境 smoke 中 stock llama.cpp b11583 的真实加载日志节选
 LOADER_LOG = """\
@@ -23,6 +24,11 @@ LOADER_LOG = """\
 0.01.277.194 I load_tensors:   CPU_Mapped model buffer size =   132.75 MiB
 0.01.277.195 I load_tensors:        CUDA0 model buffer size = 14201.67 MiB
 """
+
+SPEC = ServerSpec(stage="names", candidate="toy", model_asset={"file": "toy.gguf", "size": 1, "sha256": "0" * 64},
+                  layers=64, context=20480, extra_args=("--jinja", "--reasoning", "off"), min_free_mib=12000,
+                  load_timeout_s=300)
+
 
 SPEC = ServerSpec(stage="names", candidate="toy", model_asset={"file": "toy.gguf", "size": 1, "sha256": "0" * 64},
                   layers=64, context=20480, extra_args=("--jinja", "--reasoning", "off"), min_free_mib=12000,
@@ -55,69 +61,6 @@ class ResidencyTests(unittest.TestCase):
         log = "\n".join(line for line in LOADER_LOG.splitlines() if "CUDA0" not in line)
         with self.assertRaisesRegex(RuntimeError, "GPU model buffer"):
             validate_residency(residency_evidence(log), 99)
-
-
-class WaitForFreeVramTests(unittest.TestCase):
-    def setUp(self):
-        self.now = 0.0
-        self.sleeps: list[float] = []
-
-    def _sleep(self, seconds: float) -> None:
-        # 假睡眠只推进假时钟，不真正等待
-        self.sleeps.append(seconds)
-        self.now += seconds
-
-    def _wait(self, readings, timeout=10.0, **kwargs):
-        iterator = iter(readings)
-        last = [None]
-
-        def query():
-            last[0] = next(iterator, last[0])
-            return last[0]
-
-        return wait_for_free_vram(14300, timeout, query=query, sleep=self._sleep, clock=lambda: self.now, **kwargs)
-
-    def test_returns_reading_once_threshold_reached(self):
-        self.assertEqual(self._wait([1000, 5000, 14500, 16000]), 14500)
-        self.assertEqual(len(self.sleeps), 2)
-
-    def test_long_wait_logs_one_warning(self):
-        with self.assertLogs("kototoki.llama_server", level="INFO") as logs:
-            self.assertEqual(self._wait([1000] * 20 + [14500], timeout=120.0), 14500)
-        (record,) = logs.records
-        self.assertEqual(record.levelname, "WARNING")
-        self.assertIn("1000 MiB < 14300 MiB", record.getMessage())
-
-    def test_warning_carries_the_stage_prefix(self):
-        with self.assertLogs("kototoki.llama_server", level="WARNING") as logs:
-            self._wait([1000] * 20 + [14500], timeout=120.0, stage="translate")
-        self.assertTrue(logs.records[0].getMessage().startswith("[translate] waiting for free GPU memory: "))
-
-    def test_short_wait_logs_nothing(self):
-        with self.assertNoLogs("kototoki.llama_server", level="INFO"):
-            self._wait([1000, 14500])
-
-    def test_timeout_raises_with_last_reading(self):
-        with self.assertRaises(InfraFailure) as caught:
-            self._wait([1000, 2000, 3456])
-        self.assertIn("3456", str(caught.exception))
-
-    def test_unknown_reading_message(self):
-        with self.assertRaises(InfraFailure) as caught:
-            self._wait([None])
-        message = str(caught.exception).lower()
-        self.assertIn("unknown", message)
-        self.assertIn("nvidia-smi failed", message)
-
-
-class ExplicitOomTests(unittest.TestCase):
-    def test_oom_messages_detected(self):
-        for message in ("CUDA error: out of memory", "cudaErrorMemoryAllocation"):
-            with self.subTest(message=message):
-                self.assertTrue(explicit_oom(message))
-
-    def test_non_oom_message_not_detected(self):
-        self.assertFalse(explicit_oom("context size exceeded"))
 
 
 class ServerCommandTests(unittest.TestCase):
@@ -264,30 +207,21 @@ class LlamaClientTraceTests(unittest.TestCase):
         self.trace = Path(tmp.name) / "transport"
         self.client = LlamaClient("http://127.0.0.1:8081", trace_dir=self.trace)
 
-    def test_chat_completion_posts_to_the_openai_endpoint_and_traces_as_chat(self):
-        reply = {"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}]}
-        self.client.opener = FakeOpener(json.dumps(reply).encode("utf-8"))
-        body = {"messages": [{"role": "user", "content": "x"}], "seed": 1}
-        self.assertEqual(self.client.chat_completion(body), reply)
-        (request,) = self.client.opener.requests
-        self.assertEqual(request.full_url, "http://127.0.0.1:8081/v1/chat/completions")
-        self.assertEqual(json.loads(request.data), body)
-        exchange = self.trace / "chat-01"
-        self.assertEqual(self.client.last_exchange, str(exchange))
-        self.assertEqual(json.loads((exchange / "request.json").read_bytes()),
-                         {"endpoint": "/v1/chat/completions", "body": body})
-        self.assertEqual(json.loads((exchange / "response.raw").read_bytes()), reply)
-        self.assertEqual(read_json(exchange / "transport.json")["status"], 200)
-
     def test_completion_trace_keeps_the_numeric_name(self):
         self.client.opener = FakeOpener(b'{"content": "x"}')
         self.client.complete({"prompt": [1]})
         self.client.chat_completion({"messages": []})
         self.assertEqual(sorted(p.name for p in self.trace.iterdir()), ["00001", "chat-02"])
 
-    def test_non_loopback_url_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "loopback"):
-            LlamaClient("http://example.com:8081")
+    def test_tokenize_posts_the_native_prompt_and_checks_the_ids(self):
+        self.client.opener = FakeOpener(b'{"tokens": [1, 2, 3]}')
+        self.assertEqual(self.client.tokenize("<s>x"), [1, 2, 3])
+        (request,) = self.client.opener.requests
+        self.assertEqual(request.full_url, "http://127.0.0.1:8081/tokenize")
+        self.assertEqual(json.loads(request.data), {"content": "<s>x", "add_special": False, "parse_special": True})
+        self.client.opener = FakeOpener(b'{"tokens": []}')
+        with self.assertRaisesRegex(ValueError, "nonempty integer"):
+            self.client.tokenize("x")
 
 
 if __name__ == "__main__":

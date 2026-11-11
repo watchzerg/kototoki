@@ -18,7 +18,7 @@ from urllib.error import HTTPError, URLError
 
 from experiments.scene_batching_v6 import v13
 from kototoki import names
-from kototoki.llama_server import InfraFailure
+from kototoki.local_client import InfraFailure
 from kototoki.names import table
 from kototoki.srt import parse_srt
 from kototoki.strata import MODEL, Session, StrataRefused
