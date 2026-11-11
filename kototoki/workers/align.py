@@ -27,7 +27,7 @@ logger = logging.getLogger(f"kototoki.workers.{STAGE}")  # 以 `python -m` 运�
 
 
 def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Compute:
-    def run(job: FileJob) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    def run(job: FileJob) -> tuple[list[gpu.Output], dict[str, Any]]:
         audio, pcm_sha256 = gpu.read_wav(job.inputs["wav"])
         asr, asr_sha256 = gpu.read_input_artifact(job.inputs["asr"], pcm_sha256)
         validate_failed_windows(asr)
@@ -58,7 +58,8 @@ def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu
         logger.info("[%s] %s: %d window(s), %d failed alignment, %d text-only unit(s), inference %.1fs",
                     STAGE, job.id, fields["windows"], fields["failed_alignment_windows"], fields["text_only_units"],
                     inference_s)
-        return job.work_dir / artifacts.ALIGN, plan.align_identity(pcm_sha256, asr_sha256, model_sha256), document, fields
+        return [(job.work_dir / artifacts.ALIGN, plan.align_identity(pcm_sha256, asr_sha256, model_sha256), document)], \
+            fields
     return run
 
 

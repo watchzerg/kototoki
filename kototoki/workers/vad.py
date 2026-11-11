@@ -28,7 +28,7 @@ logger = logging.getLogger(f"kototoki.workers.{STAGE}")  # 以 `python -m` 运�
 
 
 def compute(vad: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Compute:
-    def run(job: FileJob) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    def run(job: FileJob) -> tuple[list[gpu.Output], dict[str, Any]]:
         audio, pcm_sha256 = gpu.read_wav(job.inputs["wav"])
         started = time.perf_counter()
         chunks, accounting = vad.segment(audio)
@@ -42,7 +42,8 @@ def compute(vad: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu.Com
             "chunks": chunks, **accounting, "metadata": vad.metadata,
             "stages": {"load_s": load_s, "inference_s": inference_s},
         }
-        return job.work_dir / artifacts.VAD, plan.vad_identity(pcm_sha256, model_sha256), payload, {"windows": len(chunks)}
+        return [(job.work_dir / artifacts.VAD, plan.vad_identity(pcm_sha256, model_sha256), payload)], \
+            {"windows": len(chunks)}
     return run
 
 

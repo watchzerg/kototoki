@@ -475,6 +475,20 @@ class AsrEngineTests(unittest.TestCase):
         self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="w0")), len(plan.W0_FILES) + 1)
         self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="x0")), len(plan.X0_FILES))
 
+    def test_engine_parts_table(self) -> None:
+        from kototoki import config
+
+        self.assertEqual(plan.ENGINE_PARTS, {"w0": ("w0",), "x0": ("x0",), "cross": ("w0", "x0")})
+        self.assertEqual(set(plan.ENGINE_PARTS), set(plan.ASR_RECIPES))
+        self.assertEqual(set(plan.ENGINE_PARTS), set(config.ENGINES))  # 配置接受的引擎都有组成
+
+    def test_model_files_follow_engine_parts_in_order(self) -> None:
+        for engine, parts in plan.ENGINE_PARTS.items():
+            with self.subTest(engine=engine):
+                files = list(plan.model_files("asr", self.WORKER_MODELS, engine=engine))
+                expected = [name for part in parts for name in plan.model_files("asr", self.WORKER_MODELS, engine=part)]
+                self.assertEqual(files, expected)  # 次序同 ENGINE_PARTS：cross 先 w0 后 x0
+
     def test_worker_models_pass_both_asr_entries_for_cross(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             toml = Path(tmp) / "kototoki.toml"

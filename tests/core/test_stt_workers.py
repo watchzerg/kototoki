@@ -4,7 +4,7 @@
 身份实现）、输入身份重验、`failed_windows` 记账、退出码 0／1／2、CUDA 守卫、三阶段串起来的 `align.json`
 能被 `cues.build_cues` 消费、worker 进程的 stderr 日志与 stdout 协议行分离，以及壳模块导入时不加载 torch。
 cross 引擎（伪 Whisper／Qwen）：四个产物、裁判切换与 margin 边界、相同窗口不打分、两路失败窗口与打分出错的处理、
-x0 空白清理、合并结果被 align 消费、启动时先 Whisper 后 Qwen。
+x0 空白清理、合并结果被 align 消费、启动时先 Whisper 后 Qwen；`asr.json` 与三个审计产物的字节钉成改动前的 sha256。
 """
 
 from __future__ import annotations
@@ -184,7 +184,7 @@ class WorkerTestCase(unittest.TestCase):
                               {"wav": self.wav, "vad": self.work_dir / artifacts.VAD})
 
     def run_cross(self, whisper, qwen) -> int:
-        compute = asr_worker.compute_cross(whisper, qwen, CROSS_SHA, W0_SHA, X0_SHA, LOADS, check=no_check)
+        compute = asr_worker.compute_cross(whisper, qwen, CROSS_SHA, W0_SHA, X0_SHA, LOADS)
         return self.run_stage(compute, {"wav": self.wav, "vad": self.work_dir / artifacts.VAD})
 
     def run_align(self) -> int:
@@ -449,6 +449,14 @@ class CrossAsrWorkerTest(WorkerTestCase):
         self.assertEqual(document["metadata"]["judge"]["score_error"], 1)
         self.assertEqual(self.read(artifacts.ASR_JUDGE)["windows"][1]["decision"], "score_error")
 
+    def test_failure_after_the_w0_pass_writes_no_artifact(self):
+        class Broken(FakeEngine):
+            def transcribe(self, audio, chunks):
+                raise TypeError("qwen broke")
+        self.assertEqual(self.run_cross(FakeWhisper(W0_TEXTS), Broken("x0", ())), EXIT_PARTIAL)
+        for name in (artifacts.ASR, artifacts.ASR_W0, artifacts.ASR_X0, artifacts.ASR_JUDGE):
+            self.assertFalse((self.work_dir / name).exists(), name)
+
     def test_score_count_mismatch_is_a_score_error(self):
         class Short(FakeWhisper):
             def score(self, audio, chunk, texts, max_batch=16):
@@ -458,10 +466,70 @@ class CrossAsrWorkerTest(WorkerTestCase):
         self.assertEqual(document["text"], "こんにちは。元気？はい")
         self.assertEqual(document["metadata"]["judge"]["score_error"], 1)
 
-    def test_clean_x0_drops_whitespace_next_to_non_ascii(self):
-        self.assertEqual(asr_worker.clean_x0(" げん き 、OK  Google\nです "), "げんき、OK Googleです")
-        self.assertEqual(asr_worker.clean_x0("a \t b"), "a b")
-        self.assertEqual(asr_worker.clean_x0(""), "")
+
+CROSS_OTHER = COLLAPSED.replace("だめ", "ダメ")
+# 四个 cross 场景（同上面各测试的夹具）与两个单引擎场景。
+BYTE_SCENARIOS = {
+    "switch": lambda: (FakeWhisper(W0_TEXTS, scores={"げんき？": -9.5}),
+                       FakeEngine("x0", ("こんにちは", "げん き？", "ええ"), X0_TOKEN_LIMIT)),
+    "w0_failed": lambda: (FakeWhisper(W0_TEXTS, failures=[(1, "RuntimeError: boom")], scores={"げんき？": 0.0}),
+                          FakeEngine("x0", ("こんにちは", "げんき？", "はい"), ())),
+    "guard": lambda: (FakeWhisper((REPEATED, RECURRING, "はい"), scores={CROSS_OTHER: -9.5, "はい": 0.0}),
+                      FakeEngine("x0", (CROSS_OTHER, "たすけて", "はい" + "うっ" * 22), ())),
+    "score_error": lambda: (FakeWhisper(("こんにちは。", SECRET, "はい"), error="align returned a different number"),
+                            FakeEngine("x0", ("こんにちは", "ひみつのまど", "はい"), ())),
+}
+# 2026-11-11 架构整理票据 06 改动前（提交 c04f21d）的代码在这些夹具上写出的产物字节 sha256，
+# `time.perf_counter` 固定为 0.0（`stages`、`score_s` 是墙钟）。重构不得改变任何一个。
+PINNED_ASR_BYTES = {
+    "switch": {"asr.json": "e57539391666718e406c5787c3b40b520ac5221b0b6159ca8f9c6f4e8237a5db",
+               "asr-w0.json": "c1bdc0ca835ad3133ae4ac10f9631c96dc190f4a39d4b06f838644a829da742f",
+               "asr-x0.json": "9d6440c199073ee87a5be7e9860d1159004e7bccb20c93a225aed4cfa2a0f691",
+               "asr-judge.json": "4e98582f8df24dfbea884be3a967cda28c6bb68ef69eff3887d5d33f696a3274"},
+    "w0_failed": {"asr.json": "f4763538ee3af457ccfd222c20dc3c19069580df83d3b789c367b12d3f0d1a5b",
+                  "asr-w0.json": "c1ae25eacd4adac5b5c466a2065260ccdfa4ea40b08d30faa7ac8ed9745d6ac7",
+                  "asr-x0.json": "ea2aa241a794e3bd57ad2e469b596d64cf14bea24d4277462b9db94afa4f579a",
+                  "asr-judge.json": "2947f72b66910e8ee4973e30fd685c32a00f0f100cf7b4b44458bc0ad0a28f5d"},
+    "guard": {"asr.json": "81ee13a730182b5a0f547ebc5f93a32b02b0e43c7024e81337ccb1dc34eef888",
+              "asr-w0.json": "42b81885c448d2de8cf598cd58134a19a515de86a42656b8c63ad472332914d0",
+              "asr-x0.json": "d9f45b6263b3115eeb54087de5bfec6b9ebfe93d273e0dc7ccc069fa5b9bc7ce",
+              "asr-judge.json": "443ee83e35661ca294f48ac644671f8a2fa845415401ab7d30009ae35ee6f321"},
+    "score_error": {"asr.json": "ce142e830684b5de5fd7e785bea75963c9618921001af140a2e88ad6e415299c",
+                    "asr-w0.json": "fe42630bcb9505f083146b6c74f73bcb769b85f12316f7b1464f8eb38e7ddfdc",
+                    "asr-x0.json": "6bff8762369cd17250f8305ea0b310a3769f58c849eb347900d54cb91e21bcad",
+                    "asr-judge.json": "96e56ae2f02259a2f4864e6380b0e9217b596dc9404191c190148fe41666c57d"},
+    "w0": "a893c653f8e736a1cbb3604a02b3d7f224f36511e5b38a901b092a46d17644f0",
+    "x0": "9d8561a7ac2eaac4877319ebcbce42f362b16e97317717b8e1429821aba22ee4",
+}
+
+
+class AsrArtifactBytesTest(WorkerTestCase):
+    """`asr.json` 与三个 cross 审计产物的字节在重构前后不变（计划 architecture-cleanup §3 第 9 条）。"""
+
+    def digest(self, name):
+        return hashlib.sha256((self.work_dir / name).read_bytes()).hexdigest()
+
+    def test_cross_artifacts_are_byte_identical_to_the_pinned_output(self):
+        names = (artifacts.ASR, artifacts.ASR_W0, artifacts.ASR_X0, artifacts.ASR_JUDGE)
+        with mock.patch("time.perf_counter", return_value=0.0):
+            for scenario, make in BYTE_SCENARIOS.items():
+                with self.subTest(scenario=scenario):
+                    for name in names:
+                        (self.work_dir / name).unlink(missing_ok=True)
+                    self.run_vad()
+                    self.assertEqual(self.run_cross(*make()), EXIT_OK)
+                    self.assertEqual({name: self.digest(name) for name in names}, PINNED_ASR_BYTES[scenario])
+
+    def test_single_engine_asr_is_byte_identical_to_the_pinned_output(self):
+        engines = {"w0": FakeEngine("w0", ("こんにちは。", REPEATED, RECURRING), [(0, "RuntimeError: boom")]),
+                   "x0": FakeEngine("x0", (REPEATED, "げん き？", "ええ"), X0_TOKEN_LIMIT)}
+        with mock.patch("time.perf_counter", return_value=0.0):
+            for engine, asr in engines.items():
+                with self.subTest(engine=engine):
+                    (self.work_dir / artifacts.ASR).unlink(missing_ok=True)
+                    self.run_vad()
+                    self.assertEqual(self.run_asr(asr, engine=engine), EXIT_OK)
+                    self.assertEqual(self.digest(artifacts.ASR), PINNED_ASR_BYTES[engine])
 
 
 class CrossStartupTest(unittest.TestCase):
@@ -490,6 +558,34 @@ class CrossStartupTest(unittest.TestCase):
         self.assertEqual(set(w0_sha256), set(plan.model_files("asr", models, engine="w0")))
         self.assertEqual(set(x0_sha256), set(plan.model_files("asr", models, engine="x0")))
         self.assertEqual(set(loads), {"load_s", "load_w0_s", "load_x0_s"})
+
+    def test_single_engine_loads_only_its_own_part(self):
+        for engine, models, expected in (("w0", {"w0": "w", "w0_mel_assets": "m"}, [("w0", (Path("w"), Path("m")))]),
+                                         ("x0", {"x0": "x"}, [("x0", (Path("x"),))])):
+            with self.subTest(engine=engine):
+                order = []
+
+                def adapter(name):
+                    def init(self, *paths):
+                        order.append((name, paths))
+                        self.metadata = {}
+                    return type(name, (), {"__init__": init})
+                whisper_module, qwen_module = (types.ModuleType("kototoki.asr_whisper"),
+                                               types.ModuleType("kototoki.asr_qwen"))
+                whisper_module.WhisperAsr, qwen_module.QwenAsr = adapter("w0"), adapter("x0")
+                jobs = Jobs("asr", plan.recipe_hash("asr", engine=engine),
+                            {"engine": engine, "models": models, "model_cache": "cache"}, ())
+                verified = {name: "e" * 64 for name in plan.model_files("asr", models, engine=engine)}
+                with mock.patch.dict(sys.modules, {"kototoki.asr_whisper": whisper_module,
+                                                   "kototoki.asr_qwen": qwen_module}), \
+                        mock.patch.object(gpu, "verify_models", return_value=verified), \
+                        mock.patch.object(asr_worker, "compute", wraps=asr_worker.compute) as compute, \
+                        self.assertLogs("kototoki.workers.asr", "INFO") as logs:
+                    asr_worker.start(jobs)
+                self.assertEqual(order, expected)
+                self.assertEqual(compute.call_args.args[1:3], (engine, verified))
+                self.assertTrue(any(line.startswith("INFO:kototoki.workers.asr:[asr] model loaded in ")
+                                    for line in logs.output), logs.output)
 
 
 class AlignWorkerTest(WorkerTestCase):
@@ -682,6 +778,22 @@ class GpuHelpersTest(unittest.TestCase):
         self.assertEqual(w0["w0-assets/mel_filters.npz"][1], recipes.W0["features"]["mel_sha256"])
         self.assertIn("qwen3-asr-1.7b-hf/model.safetensors", plan.model_files("asr", models, engine="x0"))
         self.assertIn("mms-1b-all/adapter.jpn.safetensors", plan.model_files("align", models))
+
+    def test_file_processor_checks_cuda_once_then_writes_every_output_in_order(self):
+        written, checks = [], []
+        outputs = [(self.root / name, {"n": index}, {"offset_s": 0}) for index, name in enumerate(("a.json", "b.json"))]
+        with mock.patch.object(artifacts, "write_artifact", side_effect=lambda path, *_: written.append(path.name)):
+            fields = gpu.file_processor(lambda job: (outputs, {"windows": 2}),
+                                        check=lambda: checks.append(list(written)))(None)
+        self.assertEqual((fields, written, checks), ({"windows": 2}, ["a.json", "b.json"], [[]]))
+
+    def test_file_processor_writes_nothing_when_cuda_is_broken(self):
+        def broken():
+            raise FatalWorkerError("CUDA context is unusable")
+        outputs = [(self.root / "a.json", {}, {}), (self.root / "b.json", {}, {})]
+        with self.assertRaises(FatalWorkerError):
+            gpu.file_processor(lambda job: (outputs, {}), check=broken)(None)
+        self.assertEqual(list(self.root.iterdir()), [])
 
     def test_shells_hold_no_identity_of_their_own(self):
         for shell in (vad_worker, asr_worker, align_worker):

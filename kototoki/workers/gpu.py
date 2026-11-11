@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import hashlib
 import json
 import logging
@@ -22,8 +22,10 @@ from kototoki.workers.protocol import FatalWorkerError, FileJob, Jobs, run_worke
 
 SAMPLE_RATE = 16000
 
-# compute(job) -> (产物路径, 身份, payload, 进度行附加字段)
-Compute = Callable[[FileJob], tuple[Path, Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]]]
+# 一个要写出的产物：(路径, 身份, payload)
+Output = tuple[Path, Mapping[str, Any], Mapping[str, Any]]
+# compute(job) -> (按写出顺序排列的产物，阶段产物在最后, 进度行附加字段)
+Compute = Callable[[FileJob], tuple[Sequence[Output], Mapping[str, Any]]]
 
 
 def main(start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]],
@@ -93,21 +95,22 @@ def check_cuda() -> None:
 
 def file_processor(compute: Compute, *, check: Callable[[], None] = check_cuda
                    ) -> Callable[[FileJob], Mapping[str, Any]]:
-    """把 `compute` 包成协议的逐文件处理函数：算完先确认 CUDA 仍可用再写产物。
+    """把 `compute` 包成协议的逐文件处理函数：算完先确认 CUDA 仍可用，再按顺序写出全部产物。
 
     模块内部按窗口吞掉的错误也可能来自粘性错误，所以写产物前无论成败都检查一次；
     `compute` 抛异常时同样检查，上下文已坏即升级为 `FatalWorkerError`（退出码 2），
-    否则原样抛出，由协议记为单文件失败。
+    否则原样抛出，由协议记为单文件失败。阶段产物排在最后，中途失败时没有新的阶段产物。
     """
     def process(job: FileJob) -> Mapping[str, Any]:
         try:
-            path, identity, payload, fields = compute(job)
+            outputs, fields = compute(job)
         except FatalWorkerError:
             raise
         except Exception:
             check()
             raise
         check()
-        artifacts.write_artifact(path, identity, payload)
+        for path, identity, payload in outputs:
+            artifacts.write_artifact(path, identity, payload)
         return fields
     return process

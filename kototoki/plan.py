@@ -55,6 +55,9 @@ IDENTITY_KEY = {"vad": "vad", "asr": "asr", "align": "align", "cues": "ja_cues",
 EMBEDDED_KEY = "ja_embedded"
 
 ASR_RECIPES = {"w0": recipes.W0, "x0": recipes.X0, "cross": recipes.CROSS}
+# 一个 ASR 引擎由哪些部件（模型）组成，按加载顺序（先 Whisper 后 Qwen）；唯一出处：`model_files`、
+# worker 壳加载哪些适配器、复读守卫的判定（这一路是不是 w0）都读它。
+ENGINE_PARTS = {"w0": ("w0",), "x0": ("x0",), "cross": ("w0", "x0")}
 
 # --- 模型文件：路径键（`Config.models` 的同名键）与固定 SHA256 ----------------------------------------
 
@@ -108,14 +111,15 @@ def model_files(stage: str, models: Mapping[str, str], *, engine: str | None = N
     if engine not in ASR_RECIPES:
         raise ValueError(f"ASR engine {engine!r} is not available")
     files: dict[str, tuple[Path, str]] = {}
-    if engine in ("w0", "cross"):
-        files |= {f"faster-whisper-large-v3/{name}": (Path(models["w0"]) / name, sha256)
-                  for name, sha256 in W0_FILES.items()}
-        files["w0-assets/mel_filters.npz"] = (Path(models["w0_mel_assets"]) / "mel_filters.npz",
-                                              recipes.W0["features"]["mel_sha256"])
-    if engine in ("x0", "cross"):
-        files |= {f"qwen3-asr-1.7b-hf/{name}": (Path(models["x0"]) / name, sha256)
-                  for name, sha256 in X0_FILES.items()}
+    for part in ENGINE_PARTS[engine]:
+        if part == "w0":
+            files |= {f"faster-whisper-large-v3/{name}": (Path(models["w0"]) / name, sha256)
+                      for name, sha256 in W0_FILES.items()}
+            files["w0-assets/mel_filters.npz"] = (Path(models["w0_mel_assets"]) / "mel_filters.npz",
+                                                  recipes.W0["features"]["mel_sha256"])
+        else:
+            files |= {f"qwen3-asr-1.7b-hf/{name}": (Path(models["x0"]) / name, sha256)
+                      for name, sha256 in X0_FILES.items()}
     return files
 
 

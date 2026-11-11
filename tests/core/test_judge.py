@@ -1,4 +1,5 @@
-"""kototoki.judge 的离线测试：分歧区间、raw／normalized 假设、判定边界、分批打分、合并、守卫与汇总，
+"""kototoki.judge 的离线测试：分歧区间、raw／normalized 假设、判定边界、分批打分、合并、守卫与汇总、
+x0 清洗与整文件裁判 `judge_file` 的逐窗决策，
 以及与研究脚本 `experiments/quality_v5` 在合成样例上的逐项对照（只在测试内导入研究模块）。"""
 
 from __future__ import annotations
@@ -225,6 +226,72 @@ class SummarizeTests(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(J.summarize([])["windows"], 0)
+
+
+class CleanX0Tests(unittest.TestCase):
+    def test_drops_whitespace_next_to_non_ascii(self):
+        self.assertEqual(J.clean_x0(" げん き 、OK  Google\nです "), "げんき、OK Googleです")
+        self.assertEqual(J.clean_x0("a \t b"), "a b")
+        self.assertEqual(J.clean_x0(""), "")
+
+
+class JudgeFileTests(unittest.TestCase):
+    """整文件裁判的逐窗决策规则，直接给文本、失败窗口与打分回调，不经 worker 伪对象。"""
+
+    def judge_file(self, texts_w, texts_x, failed_w=(), failed_x=(), scores=None, errors=()):
+        self.calls, self.errors = [], []
+
+        def score_for(index):
+            def score(texts):
+                self.calls.append((index, list(texts)))
+                if index in errors:
+                    raise RuntimeError("scorer broke")
+                return [0.0 if not text else (scores or {}).get(text, -10.0) for text in texts]
+            return score
+        return J.judge_file(texts_w, texts_x, set(failed_w), set(failed_x), score_for, margin=MARGIN, max_batch=16,
+                            on_score_error=lambda index, error: self.errors.append((index, type(error).__name__)))
+
+    def test_decisions_and_counts(self):
+        # 0 相同；1 分歧并切换（x0 空白先清理）；2 w0 失败；3 x0 失败；4 打分出错；5 分歧但保持 w0
+        result = self.judge_file(["そう。", "元気？", "失敗", "はい", "秘密", "そうか。"],
+                                 ["そう", "げん き？", "x", "", "ひみつ", "そうだ。"],
+                                 failed_w={2}, failed_x={3}, errors={4}, scores={"げんき？": -9.5, "そうか。": 0.0})
+        self.assertEqual([r["decision"] for r in result.records],
+                         ["identical", "judged", "w0_failed", "x0_failed", "score_error", "judged"])
+        self.assertEqual(result.texts, ["そう。", "げんき？", "失敗", "はい", "秘密", "そうか。"])
+        self.assertEqual(self.errors, [(4, "RuntimeError")])
+        self.assertEqual([index for index, _ in self.calls], [1, 4, 5])  # 相同与失败窗口不打分
+        self.assertEqual(self.calls[0], (1, ["元気？", "げんき？"]))
+        self.assertEqual({k: result.summary[k] for k in ("windows", "identical", "scored", "intervals", "switched",
+                                                         "w0_failed", "x0_failed", "score_error")},
+                         {"windows": 6, "identical": 1, "scored": 2, "intervals": 2, "switched": 1,
+                          "w0_failed": 1, "x0_failed": 1, "score_error": 1})
+        self.assertEqual(list(result.summary)[:1], ["windows"])
+
+    def test_w0_failure_wins_over_x0_failure(self):
+        result = self.judge_file(["a"], ["b"], failed_w={0}, failed_x={0})
+        self.assertEqual((result.records[0]["decision"], result.summary["w0_failed"], result.summary["x0_failed"]),
+                         ("w0_failed", 1, 0))
+
+    def test_count_mismatch_is_a_score_error(self):
+        result = J.judge_file(["そうか。"], ["そうだ。"], set(), set(), lambda index: lambda texts: [0.0],
+                              margin=MARGIN, max_batch=16)
+        self.assertEqual((result.texts, result.records[0]["decision"], result.summary["score_error"]),
+                         (["そうか。"], "score_error", 1))
+
+    def test_window_records(self):
+        result = self.judge_file(["元気？", "x"], ["げん き？", "y"], failed_x={1}, scores={"げんき？": -9.5})
+        self.assertEqual(result.records, [
+            {"index": 0, "identical": False, "text_form": "raw", "guard": None, "w0_text": "元気？",
+             "x0_text": "げん き？", "intervals": [{"w": "元気", "x": "げんき", "kind": "substitution", "score_w": -10.0,
+                                                  "score_x": -9.5, "d": 0.5, "switched": True}],
+             "decision": "judged"},
+            {"index": 1, "identical": False, "text_form": "unscored", "guard": None, "w0_text": "x", "x0_text": "y",
+             "intervals": [], "decision": "x0_failed"}])
+
+    def test_texts_of_both_routes_must_align(self):
+        with self.assertRaises(ValueError):
+            J.judge_file(["a", "b"], ["a"], set(), set(), lambda index: lambda texts: [], margin=MARGIN, max_batch=16)
 
 
 class ResearchEquivalenceTests(unittest.TestCase):

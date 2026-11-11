@@ -10,15 +10,21 @@
   - 原文偏移映射与 raw 假设（`_raw_span`、`_raw_hypothesis`）：`experiments/quality_v5/asr_pair_cross_score.py`。
 研究以 cue 并集为单元并先用 `join_raw` 拼接 SRT cue；这里单元是单个窗口的 ASR 原文，不拼接，也不改写空白，
 hyp_w 就是 w0 窗口原文（§2.2 第 3 条）。
+
+整文件裁判 `judge_file`：逐窗按"w0 失败 → x0 失败 → 裁判（打分出错取 w0）"分类、计数，给出合并文本、
+`asr-judge.json` 的逐窗记录与汇总；进入裁判前 x0 原文先经 `clean_x0`。打分回调由 worker 壳按窗口提供。
 """
 
 from __future__ import annotations
 
+import re
 import unicodedata
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Container, Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 KINDS = ("substitution", "w0_extra", "x0_extra")
+_SPACE = re.compile(r"\s+")
 
 
 # ---------- 规范化（复制自 kototoki_eval/schema.py，保持逐字一致） ----------
@@ -272,3 +278,74 @@ def summarize(judgements: Iterable[WindowJudgement]) -> dict:
             summary["by_kind"][record["kind"]]["total"] += 1
             summary["by_kind"][record["kind"]]["switched"] += record["switched"]
     return summary
+
+
+# ---------- 整文件裁判 ----------
+
+def clean_x0(text: str) -> str:
+    """x0 原文去掉与非 ASCII 字符相邻的空白（两侧都是 ASCII 时保留为一个空格，首尾去掉），同研究 `join_raw`。
+
+    Qwen 在日文字符之间会输出空格；不清理时 raw 假设会把这些空格一并换进 w0 原文。只用于 x0，w0 原文不动。
+    """
+    out, last = [], 0
+    for match in _SPACE.finditer(text):
+        out.append(text[last:match.start()])
+        before = text[match.start() - 1] if match.start() else ""
+        after = text[match.end()] if match.end() < len(text) else ""
+        if before and after and before.isascii() and after.isascii():
+            out.append(" ")
+        last = match.end()
+    out.append(text[last:])
+    return "".join(out).strip()
+
+
+def window_record(index: int, decision: str, raw_w: str, raw_x: str,
+                  judgement: WindowJudgement | None = None) -> dict[str, Any]:
+    """`asr-judge.json` 的一条窗口记录；未进入裁判（失败或打分出错）的窗口不带 judgement。"""
+    return {"index": index, "identical": judgement.identical if judgement else False,
+            "text_form": judgement.text_form if judgement else "unscored",
+            "guard": judgement.guard if judgement else None, "w0_text": raw_w, "x0_text": raw_x,
+            "intervals": list(judgement.intervals) if judgement else [], "decision": decision}
+
+
+@dataclass(frozen=True)
+class FileJudgement:
+    texts: list[str]               # 每窗合并文本；失败与打分出错的窗口为 w0 原文
+    records: list[dict[str, Any]]  # `asr-judge.json` 的 `windows`
+    summary: dict[str, Any]        # `summarize` 的计数（只含进入裁判的窗口），`windows` 为全部窗口，另有三项计数
+
+
+def judge_file(texts_w: Sequence[str], texts_x: Sequence[str], failed_w: Container[int], failed_x: Container[int],
+               score_for: Callable[[int], Callable[[list[str]], list[float]]], *, margin: float, max_batch: int,
+               on_score_error: Callable[[int, Exception], None] = lambda index, error: None) -> FileJudgement:
+    """裁判一个文件的全部窗口。两路文本按窗口一一对应，`failed_w`／`failed_x` 为各自失败窗口的序号。
+
+    w0 失败的窗口仍记失败、不以 x0 替代（文字由调用方的 `fail_window` 移出）；x0 失败的窗口取 w0；
+    其余窗口用 `score_for(index)` 打分裁判，打分抛 `RuntimeError`／`ValueError`（含数量不符）时取 w0、
+    调用 `on_score_error(index, error)`，不算窗口级失败。
+    """
+    texts: list[str] = []
+    records: list[dict[str, Any]] = []
+    judgements: list[WindowJudgement] = []
+    counts = {"w0_failed": 0, "x0_failed": 0, "score_error": 0}
+    for index, (raw_w, raw_x) in enumerate(zip(texts_w, texts_x, strict=True)):
+        if index in failed_w:
+            decision = "w0_failed"
+        elif index in failed_x:
+            decision = "x0_failed"
+        else:
+            try:
+                judgement = judge_window(raw_w, clean_x0(raw_x), score_for(index), margin=margin, max_batch=max_batch)
+            except (RuntimeError, ValueError) as error:
+                on_score_error(index, error)
+                decision = "score_error"
+            else:
+                judgements.append(judgement)
+                texts.append(judgement.text)
+                records.append(window_record(index, "identical" if judgement.identical else "judged",
+                                             raw_w, raw_x, judgement))
+                continue
+        counts[decision] += 1
+        texts.append(raw_w)
+        records.append(window_record(index, decision, raw_w, raw_x))
+    return FileJudgement(texts, records, {**summarize(judgements), "windows": len(texts), **counts})
