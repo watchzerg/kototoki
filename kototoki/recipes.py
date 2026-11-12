@@ -212,10 +212,12 @@ CUES: dict[str, Any] = {
 # --- 内嵌日文字幕（ADR-0024；有可用文本字幕轨的文件跳过 STT，`ja.srt` 直接取自字幕轨） ------------------------
 
 EMBEDDED: dict[str, Any] = {
-    "id": "embedded-ja-subtitle-v1",
+    "id": "embedded-ja-subtitle-v2",
     # 文本字幕编码白名单（ffprobe `codec_name`）；位图字幕（PGS、VobSub、DVB）不在其中，视为没有字幕轨
     "codecs": ["ass", "mov_text", "ssa", "subrip", "webvtt"],
-    "select": "language matches, codec listed, not forced; default disposition first, then lowest stream index",
+    # v2（2026-11-12）：forced 也认标题里的 "forced"（v1 只看 disposition）
+    "select": "language matches, codec listed, not forced (forced disposition, or 'forced' in the title, "
+              "case-insensitive); default disposition first, then lowest stream index",
     "convert": "ffmpeg -map 0:<index> -c:s srt -f srt",
     # 实现在 kototoki/embedded.py；规则按 ffmpeg n9.0.2 对 ASS／SubRip／mov_text 的实际输出定
     "clean": ["strip <i>/<b>/<u>/<s>/<font> tags and {\\...} override blocks", "literal \\h and \\N become spaces",

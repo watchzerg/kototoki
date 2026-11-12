@@ -90,7 +90,7 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(recipes.recipe_hash(recipes.CUES),
                          "cad2355caf19cf25d43065c800042f0f03ef42f7062f8bdbcb2f9bd06cf18243")
         self.assertEqual(recipes.recipe_hash(recipes.EMBEDDED),
-                         "7c82c08b3256f09c0df4f7c7511a95a5aaca2f988eb3fae819bed4c71187f2b2")
+                         "351da4b1adb3adf65641c17c2a7aac998fb6c49ee2e6aa9e307145d731e7e276")  # v2；v1 为 7c82c08b…
 
     def test_cross_nests_both_sub_recipes_and_judge_parameters(self) -> None:
         self.assertIs(recipes.CROSS["w0"], recipes.W0)

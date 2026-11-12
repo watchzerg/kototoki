@@ -452,7 +452,7 @@ class BuildTableTests(unittest.TestCase):
         self.assertEqual(body["messages"], bt.build_messages(document()))
         self.assertEqual((body["temperature"], body["top_p"], body["top_k"], body["min_p"], body["presence_penalty"]),
                          (0.7, 0.8, 20, 0.0, 1.5))
-        self.assertEqual((body["seed"], body["max_tokens"], body["stream"]), (20261019, 8192, False))
+        self.assertEqual((body["seed"], body["max_tokens"], body["stream"]), (20261019, 16384, False))
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
         self.assertEqual(body["model"], "qwen3.8-flash-next-iq3_s")
         self.assertNotIn("response_format", body)  # Strata 会据此改写提示（v13 §4.0），不发
@@ -578,7 +578,7 @@ class BuildTableTests(unittest.TestCase):
         self.assertEqual(result.payload["schema"], "name-table-v2")
 
     def test_budget_is_context_minus_output_minus_guard(self):
-        self.assertEqual(bt.PROMPT_BUDGET, 20480 - 4096 - 512)
+        self.assertEqual(bt.PROMPT_BUDGET, 49152 - 16384 - 512)  # 32256（ADR-0026；此前 15872）
 
 
 

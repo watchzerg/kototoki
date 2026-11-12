@@ -161,7 +161,7 @@ class BuildDocumentTests(Case):
         self.assertEqual(self.h.count_bodies, [json.dumps({"model": MODEL, "messages": [{"role": "user", "content": m["content"]}]},
                                                           ensure_ascii=False) for m in messages])
         body = json.loads(self.h.bodies[0])
-        self.assertEqual((body["seed"], body["max_tokens"], body["model"]), (7, 8192, MODEL))
+        self.assertEqual((body["seed"], body["max_tokens"], body["model"]), (7, 16384, MODEL))
         self.assertNotIn("response_format", body)
 
     def test_first_attempt_fails_then_the_next_seed_succeeds(self) -> None:
@@ -261,7 +261,8 @@ class BuildDocumentTests(Case):
 class V13PinTests(Case):
     """同一份文档、同一串伪回复：产品 `build_document` 发出的建表请求体、count_tokens 请求体、状态、尝试数与表项
     的 sha256 钉死，seed 序列写死。钉值取自 2026-11-11 的研究侧 `experiments.scene_batching_v6.v13`
-    `NamesClient`＋`build_one`（`names-strata-v4`）在同一输入上的输出，由 `tests/equivalence/test_names.py` 实时对照。"""
+    `NamesClient`＋`build_one`（`names-strata-v4`）在同一输入上的输出，由 `tests/equivalence/test_names.py` 实时对照。
+    ADR-0026 起产品请求只有 `max_tokens` 与 v4 不同（16384 对 8192）：算摘要前把它换回 8192，钉值不变。"""
 
     def run_digest(self, replies: list[dict[str, Any]], seed: int, *, count_error: Exception | None = None) -> str:
         self.h = Harness(self.h.root)
@@ -269,7 +270,12 @@ class V13PinTests(Case):
         self.h.count_result = count_error
         with self.h.session() as session:
             result = names.build_document(self.work, self.doc, session, seed)
-        observed = [self.h.bodies, self.h.count_bodies, result.status, result.attempts, result.payload["entries"]]
+        bodies = []
+        for text in self.h.bodies:
+            body = json.loads(text)
+            self.assertEqual(body["max_tokens"], 16384)
+            bodies.append(json.dumps(body | {"max_tokens": 8192}, ensure_ascii=False))
+        observed = [bodies, self.h.count_bodies, result.status, result.attempts, result.payload["entries"]]
         return hashlib.sha256(json.dumps(observed, ensure_ascii=False).encode("utf-8")).hexdigest()
 
     def test_first_attempt_ok(self) -> None:
@@ -298,9 +304,9 @@ class V13PinTests(Case):
         self.assertEqual(list(body), ["messages", "temperature", "top_p", "top_k", "min_p", "presence_penalty", "seed",
                                       "max_tokens", "chat_template_kwargs", "stream", "model"])
         self.assertEqual((body["max_tokens"], body["model"], body["chat_template_kwargs"], body["stream"]),
-                         (8192, MODEL, {"enable_thinking": False}, False))
+                         (16384, MODEL, {"enable_thinking": False}, False))
         self.assertEqual(MODEL, "qwen3.8-flash-next-iq3_s")
-        self.assertEqual((table.MAX_TOKENS, table.CONTEXT_SIZE, table.ATTEMPTS), (8192, 24576, 5))
+        self.assertEqual((table.MAX_TOKENS, table.CONTEXT_SIZE, table.ATTEMPTS), (16384, 49152, 5))
 
 
 if __name__ == "__main__":

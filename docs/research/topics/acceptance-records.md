@@ -4,6 +4,7 @@
 
 条目格式：`[主题 日期](../acceptance/文件.md)：验收范围与未覆盖项`
 
+- [产品全流程验收（强制走 ASR）2026-11-12](../acceptance/2026-11-12-product-fullflow-acceptance.md)：HF II／III 以 w0、`use_embedded_subtitles = false` 整批运行 `python -m kototoki`，退出码 0，全阶段 0 失败，翻译 296 批全部 `stop`、降级与回退 0、无拒答，锁与 Strata 正常释放；非语义产物校验与续跑（全跳过、只删字幕后读回并逐字节重发布）通过；记录 HF III 建表 2 次截断在 8192 token（实体过多，不是复读循环）。同日追加 ADR-0026（`q3-names-v2`）验证：Black Panther 2 万 token 提示在新预算下建表成功；HF III 在 16384 下仍有 2 次无限罗列截断，第 4 次 11K token 成功；并修复内嵌字幕选轨漏判标题 forced（`embedded-ja-subtitle-v2`），Black Panther 内嵌字幕路径真实运行通过。未覆盖：剧集（网络盘未挂载）、x0／cross、质量、失败路径
 - [模块页拆出的历史记录：翻译子系统与专名 2026-11-11](../acceptance/2026-11-11-module-page-history-translation-names.md)：重写模块页时原文移出的 Q2 首次 smoke 与整片记录（含 mmap 诊断）；不是新的验收
 - [模块页拆出的历史记录：STT worker、阶段计划与产物契约 2026-11-11](../acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md)：原文移出的冻结窗口首跑、cross 显存与共驻表、x0 在 transformers 5.19 下的全等记录；不是新的验收
 - [模块页拆出的历史记录：批次编排、配置与媒体、开发工作流 2026-11-11](../acceptance/2026-11-11-module-page-history-orchestration-config.md)：原文移出的状态行变更记录、真实运行核对、重采样削波实测、门禁耗时与用例数；不是新的验收

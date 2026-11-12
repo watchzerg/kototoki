@@ -72,7 +72,7 @@
 - 只有 Strata 这一个后端实现，不抽后端协议。服务进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
 - `strata` 在 PATH 上是 PowerShell 脚本，子进程优先用 `%LOCALAPPDATA%\Strata\terminal\current\bin\strata.cmd`（`strata_cmd`）。
 - `probe` 改编自研究侧 `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数，起草方式改读服务日志。
-- Strata 身份常量（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、`STRATA_LAUNCH`、`STRATA_RESOLVED`）只在这里定义，翻译配方 `q2-degrade-v1` 与建表配方 `q3-names-v1` 的运行时身份都取这些值。
+- Strata 身份常量（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、`STRATA_LAUNCH`、`STRATA_RESOLVED`）只在这里定义，翻译配方 `q2-degrade-v1` 与建表配方 `q3-names-v2` 的运行时身份都取这些值。
 - `Session` 的状态（`server`、`ordinal`、`start_failures`、`unavailable`、`runtime_root`）归它自己；`runtime_root` 在构造时按 UTC 时间戳与 pid 定下。
 - `LlamaClient` 源自 `experiments/translation_demo/client.py`（产品新增 `chat_completion`），`explicit_oom` 复制自 `translation_demo/run.py`；只复制不导入。llama-server 的进程生命周期与 `tokenize`／`complete` 只在研究侧 `experiments/translation_v3/llama_server.py`（ADR-0025）。
 

@@ -68,7 +68,7 @@
 
 **内嵌日文字幕**（配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`，进 `ja-embedded.json` 的身份；开关 `[input] use_embedded_subtitles`）：
 
-- `media.select_subtitle(subtitles, language) -> (stream | None, warnings)`：从 `Probe.subtitles` 里选可用的字幕轨。可用 = 语言标签归一后等于 `language`（编排传 `input.audio_language`）、`codec_name` 在 `EMBEDDED["codecs"]`（`ass`、`mov_text`、`ssa`、`subrip`、`webvtt`）、不是 forced。多条可用时取 default 的，再取流索引最小的，并返回一条告警。位图字幕（PGS、VobSub、DVB）与没有语言标签的轨不可用。只看元数据，不看内容。
+- `media.select_subtitle(subtitles, language) -> (stream | None, warnings)`：从 `Probe.subtitles` 里选可用的字幕轨。可用 = 语言标签归一后等于 `language`（编排传 `input.audio_language`）、`codec_name` 在 `EMBEDDED["codecs"]`（`ass`、`mov_text`、`ssa`、`subrip`、`webvtt`）、不是 forced（`parse_probe` 记录的 `forced`：disposition 标了 forced，或 `tags.title` 含 "forced"、不分大小写；不少片源只在标题里写，如 `ja--forced--`）。多条可用时取 default 的，再取流索引最小的，并返回一条告警。位图字幕（PGS、VobSub、DVB）与没有语言标签的轨不可用。只看元数据，不看内容。
 - `media.extract_subtitle(video, index, ffmpeg) -> str`：`ffmpeg -map 0:<index> -c:s srt -f srt pipe:1`，返回 SRT 文本，不写文件；ffmpeg 非零退出报 `MediaError`。字幕时间与派生 WAV 一样以 ffmpeg 的输入零点为准（容器起点不为 0 时两者同样平移）。
 - `embedded.clean(text) -> (srt_text, stats)`（纯函数，只依赖 `srt` 的整数毫秒入口，毫秒格式化不自写）：
   - 自己宽松分条：时间行且上一行是纯数字编号即一条的开头；文字里的空行与数字行不会断条；不用 `srt.parse_srt`。

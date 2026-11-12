@@ -69,7 +69,11 @@ T0, T1 = "q2-names-27b", "q2-names-s1"
 S1_NAME = VARIANTS[CANDIDATE]["name"]
 S1_MAX_TOKENS = 8192
 FIRST_S1_ATTEMPTS = 2  # attempts of v1 and v2 (the 27B-era product value); more than this is recorded as ``retries``
-S1_CONTEXT = 24576  # context - max_tokens - 512 = 15872, the product prompt budget
+S1_CONTEXT = 24576  # context - max_tokens - 512 = 15872, the product prompt budget until ADR-0026
+# S1's own prompt budget. The product raised max_tokens / context / budget to 16384 / 49152 / 32256 on 2026-11-12
+# (ADR-0026); S1 pins its values here so its recipe hash stays as recorded in ADR-0021. ``build_table`` (imported from
+# the product) now pre-checks against the product budget 32256, which only matters for prompts above 15872 (none in v13).
+S1_PROMPT_BUDGET = 15872
 MAIN_SEEDS = v9.MAIN_SEEDS
 PRODUCT_SEEDS = v11.PRODUCT_SEEDS
 FILMS = asr10.FILMS
@@ -92,12 +96,13 @@ def s1_recipe(variant: str = CANDIDATE) -> dict[str, Any]:
     (``max_tokens`` 8192, context 24576, so the prompt budget stays 15872), plus the Strata identity and the request
     changes of §4.0."""
     from kototoki.names.recipes import BUILD
-    from kototoki.names.table import PROMPT_BUDGET, PROMPT_GUARD_TOKENS
-    assert S1_CONTEXT - S1_MAX_TOKENS - PROMPT_GUARD_TOKENS == PROMPT_BUDGET
+    from kototoki.names.table import PROMPT_GUARD_TOKENS
+    assert S1_CONTEXT - S1_MAX_TOKENS - PROMPT_GUARD_TOKENS == S1_PROMPT_BUDGET
     v = VARIANTS[variant]
-    # Since ADR-0022 the product ``BUILD`` is itself the Strata recipe and its ``build`` block is the S1 v4 block; the
-    # variants differ from it in ``attempts`` only (the 27B-era product recipe S1 was derived from had 2).
-    build = dict(BUILD["build"]) | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT, "attempts": v["attempts"]}
+    # Since ADR-0022 the product ``BUILD`` is itself the Strata recipe; its ``build`` block is the S1 v4 block except the
+    # three values ADR-0026 raised (pinned back here). The variants differ in ``attempts`` (the 27B-era product had 2).
+    build = dict(BUILD["build"]) | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT,
+                                    "prompt_budget": S1_PROMPT_BUDGET, "attempts": v["attempts"]}
     request: dict[str, Any] = {"response_format": None, "chat_template_kwargs": {"enable_thinking": False},
                                "model": strata.MODEL}
     if v["response_format"]:
@@ -223,7 +228,6 @@ class NamesClient:
 def build_record(result: Any, requests: list[dict[str, Any]], counts: list[int], seconds: float,
                  peak: dict[str, Any] | None, client: NamesClient) -> dict[str, Any]:
     """Counts of one build (no table content)."""
-    from kototoki.names.table import PROMPT_BUDGET
     accepted = requests[-1] if result.status == "ok" and requests else None
     prompt_tokens = next((q.get("prompt_tokens") for q in ([accepted] if accepted else []) + requests[::-1]
                           if q.get("prompt_tokens") is not None), None)
@@ -239,7 +243,7 @@ def build_record(result: Any, requests: list[dict[str, Any]], counts: list[int],
             "count_tokens_error": client.count_tokens_error,
             "prompt_tokens": prompt_tokens,
             "prompt_tokens_minus_count": prompt_tokens - count if type(prompt_tokens) is int and count else None,
-            "over_budget_by_usage": type(prompt_tokens) is int and prompt_tokens > PROMPT_BUDGET,
+            "over_budget_by_usage": type(prompt_tokens) is int and prompt_tokens > S1_PROMPT_BUDGET,
             "completion_tokens": (accepted or {}).get("completion_tokens"),
             "reasoning_chars": sum(r.get("reasoning_chars") or 0 for r in requests),
             "think_tags": sum(bool(r.get("think_tag")) for r in requests),

@@ -1,11 +1,12 @@
-"""专名建表配方 `q3-names-v1`：`BUILD`／`BUILD_RECIPE_HASH`（ADR-0022）。
+"""专名建表配方 `q3-names-v2`：`BUILD`／`BUILD_RECIPE_HASH`（ADR-0022、ADR-0026）。
 
 与基线 Q3 的 `names-strata-v4`（[ADR-0021]；`experiments/scene_batching_v6/v13.py` 的 `s1_recipe("v4")`，hash
-`38cb7bcd…`）**相同**的是建表块 `build`（提示 v5、采样、schema、`max_tokens` 8192、context 24576、预算 15872、归一规则、
-`attempts` 5、`seed_step` 1）、`model`、运行时身份 `runtime`（Strata 版本、引擎 build、默认启动及其解析值、kv）与请求形状
-`request`（无 `response_format`、`enable_thinking: false`、`model`），取值全部来自 `names.table` 与中间层 `kototoki.strata`；
-**不同**的只是配方名，以及不含研究侧的说明字段（`prompt_budget_check`、`retries` 文字）与 llama.cpp 的 `model_asset`，
-所以 hash 不同。`tests/core/test_names_recipes.py` 钉住 hash，并用上述四块拼回 `names-strata-v4` 核对其 hash。
+`38cb7bcd…`）**相同**的是建表块 `build` 里的提示 v5、采样、schema、归一规则、`attempts` 5、`seed_step` 1，以及 `model`、
+运行时身份 `runtime`（Strata 版本、引擎 build、默认启动及其解析值、kv）与请求形状 `request`（无 `response_format`、
+`enable_thinking: false`、`model`），取值全部来自 `names.table` 与中间层 `kototoki.strata`；
+**不同**的是 ADR-0026 放宽的三项（`max_tokens` 16384 对 8192、context 49152 对 24576、预算 32256 对 15872）、配方名，
+以及不含研究侧的说明字段（`prompt_budget_check`、`retries` 文字）与 llama.cpp 的 `model_asset`，所以 hash 不同。
+`tests/core/test_names_recipes.py` 钉住 hash，并把这三项换回 v4 的值、拼回 `names-strata-v4` 核对其 hash。
 
 改动 `BUILD` 任何一项即得到新的 `BUILD_RECIPE_HASH`，已有 `name-table.json` 按产物契约失效重建。发布时替换已删除
 （ADR-0019）：表只经翻译注入使用，注入规则归翻译子系统。
@@ -22,7 +23,7 @@ from kototoki.strata import MODEL, STRATA_ENGINE_BUILD, STRATA_LAUNCH, STRATA_RE
 
 from . import table
 
-RECIPE_NAME = "q3-names-v1"
+RECIPE_NAME = "q3-names-v2"
 KV = "int8"   # 默认启动的 KV 精度（v13 接入时观测；产品只记进配方，不单独核对）
 
 BUILD: dict[str, Any] = {

@@ -1,5 +1,6 @@
 """专名建表（`kototoki.names`）与研究侧 `experiments.scene_batching_v6.v13`（基线 Q3 的 `names-strata-v4`）的实时对照：
-配方块与 hash、请求体、count_tokens 请求与 seed 序列。core 侧只钉字面量与摘要
+配方块与 hash、请求体、count_tokens 请求与 seed 序列。产品自 ADR-0026 起只在 `max_tokens`／context／提示预算三项上
+与 v4 不同：对照时把产品请求体的 `max_tokens` 换成 v13 的值，其余仍须逐字节相同。core 侧只钉字面量与摘要
 （`tests/core/test_names_recipes.py`、`tests/core/test_names_session.py`）。"""
 
 from __future__ import annotations
@@ -12,14 +13,24 @@ from experiments.scene_batching_v6 import v13
 from kototoki import names
 from kototoki.names import recipes, table
 from kototoki.recipes import recipe_hash
-from tests.core.test_names_recipes import Q3_BUILD_HASH, V13_PROMPT_BUDGET_CHECK, V13_RETRIES
+from tests.core.test_names_recipes import Q3_BUILD_HASH, V13_PROMPT_BUDGET_CHECK, V13_RETRIES, V4_LIMITS
 from tests.core.test_names_session import Case, Harness, http_error, reply
 
 
+def as_v13(body_json: str) -> str:
+    """产品建表请求体换回 v13 的 `max_tokens`（ADR-0026 的唯一请求差异），键序不变。"""
+    body = json.loads(body_json)
+    assert body["max_tokens"] == table.MAX_TOKENS
+    body["max_tokens"] = v13.S1_MAX_TOKENS
+    return json.dumps(body, ensure_ascii=False)
+
+
 class BuildRecipeEquivalenceTests(unittest.TestCase):
-    def test_build_block_model_runtime_and_request_equal_names_strata_v4(self):
+    def test_build_block_model_runtime_and_request_equal_names_strata_v4_except_limits(self):
         build = recipes.BUILD
-        v4 = {"name": v13.VARIANTS["v4"]["name"], "build": build["build"], "model": build["model"],
+        self.assertEqual(V4_LIMITS, {"max_tokens": v13.S1_MAX_TOKENS, "context": v13.S1_CONTEXT,
+                                     "prompt_budget": v13.S1_PROMPT_BUDGET})
+        v4 = {"name": v13.VARIANTS["v4"]["name"], "build": build["build"] | V4_LIMITS, "model": build["model"],
               "runtime": build["runtime"], "request": build["request"],
               "prompt_budget_check": {"endpoint": v13.COUNT_TOKENS, "segments": ["system", "user"], "sum": True,
                                       "fallback": "no precheck; usage.prompt_tokens recorded, over budget flagged"},
@@ -64,7 +75,7 @@ class V13ByteExactTests(Case):
     def compare(self, replies: list[dict[str, Any]], seed: int, *, count_error: Exception | None = None) -> None:
         theirs = self.v13_run(list(replies), seed, count_error=count_error)
         ours = self.product_run(list(replies), seed, count_error=count_error)
-        self.assertEqual(ours[0], theirs[0])  # 建表请求体（JSON 文本）
+        self.assertEqual([as_v13(b) for b in ours[0]], theirs[0])  # 建表请求体（JSON 文本，max_tokens 换回 v13）
         self.assertEqual(ours[1], theirs[1])  # count_tokens 请求体
         self.assertEqual((ours[2].status, ours[2].attempts), (theirs[2].status, theirs[2].attempts))
         self.assertEqual(ours[2].payload["entries"], theirs[2].payload["entries"])
@@ -72,7 +83,7 @@ class V13ByteExactTests(Case):
     def test_first_attempt_ok(self) -> None:
         self.compare([reply()], 20261019)
         self.assertEqual(self.seeds(), [20261019])
-        self.assertEqual(json.loads(self.h.bodies[0]),
+        self.assertEqual(json.loads(as_v13(self.h.bodies[0])),
                          v13.strata_body(table._request_body(table.build_messages(self.doc), 20261019)))
 
     def test_two_failures_then_ok(self) -> None:
@@ -94,7 +105,8 @@ class V13ByteExactTests(Case):
                                       "max_tokens", "chat_template_kwargs", "stream", "model"])
         self.assertEqual((body["max_tokens"], body["model"], body["chat_template_kwargs"], body["stream"]),
                          (v13.S1_MAX_TOKENS, v13.strata.MODEL, {"enable_thinking": False}, False))
-        self.assertEqual((table.MAX_TOKENS, table.CONTEXT_SIZE), (v13.S1_MAX_TOKENS, v13.S1_CONTEXT))
+        self.assertEqual((table.MAX_TOKENS, table.CONTEXT_SIZE, table.PROMPT_BUDGET), (16384, 49152, 32256))
+        self.assertEqual((v13.S1_MAX_TOKENS, v13.S1_CONTEXT, v13.S1_PROMPT_BUDGET), (8192, 24576, 15872))
         self.assertEqual(table.ATTEMPTS, v13.VARIANTS["v4"]["attempts"])
 
 

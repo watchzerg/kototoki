@@ -228,12 +228,20 @@ def parse_probe(ffprobe: dict[str, Any], language: str) -> Probe:
     subtitles = tuple({"index": int(stream["index"]), "codec_name": stream.get("codec_name"),
                        "language": (stream.get("tags") or {}).get("language"),
                        "default": bool((stream.get("disposition") or {}).get("default")),
-                       "forced": bool((stream.get("disposition") or {}).get("forced"))}
+                       "forced": _subtitle_forced(stream)}
                       for stream in streams if stream.get("codec_type") == "subtitle")
     return Probe(ffprobe=ffprobe, audio=chosen, audio_tracks=tracks, has_video=bool(videos), duration_s=duration,
                  duration_source=source,
                  container_start_time=_float((ffprobe.get("format") or {}).get("start_time")),
                  subtitles=subtitles, warnings=tuple(warnings))
+
+
+def _subtitle_forced(stream: Mapping[str, Any]) -> bool:
+    """forced = disposition 标了 forced，或标题里含 "forced"（不分大小写）。不少片源只在标题里写
+    （如 `ja--forced--`），disposition 为 0；漏判会选中只有外语对白的部分字幕轨。"""
+    title = (stream.get("tags") or {}).get("title")
+    return bool((stream.get("disposition") or {}).get("forced")) or (
+        isinstance(title, str) and "forced" in title.casefold())
 
 
 def select_subtitle(subtitles: Sequence[Mapping[str, Any]], language: str) -> tuple[dict[str, Any] | None, list[str]]:

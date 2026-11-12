@@ -15,9 +15,10 @@ from experiments.translation_v3.recipes import load_recipe
 
 from . import names11, v10, v11, v12, v13
 
-# q3-names-v1 (ADR-0022). The 27B-era product recipe S1 was derived from was 5b8d1b76…; since ADR-0022 the product
-# ``BUILD["build"]`` is the S1 v4 block itself.
-PRODUCT_BUILD_HASH = "d3317926ee3b3096277faa9a5fbc0879d562336fb1fe89bf0ebd04c5b0be6b17"
+# q3-names-v2 (ADR-0026; q3-names-v1 was d3317926…). The 27B-era product recipe S1 was derived from was 5b8d1b76…;
+# the product ``BUILD["build"]`` is the S1 v4 block except max_tokens / context / prompt_budget (ADR-0026).
+PRODUCT_BUILD_HASH = "2dbd324e5ee847d0a0171840d4a064cd6b45a3df4c2123b7075cfe1a38b379ba"
+S1_LIMITS = {"max_tokens": 8192, "context": 24576, "prompt_budget": 15872}
 Q3_BUILD_HASH = "38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0"  # names-strata-v4, ADR-0021
 Q2_DEV_HASH = "4c3d0f70a94e43207dbe439893284d078993a041bf5ebb3dd378aefeb42b0499"      # ADR-0017
 Q2_PRODUCT_HASH = "86b61ec93da4ad38fc0ff709bb973a8b659660ab6dc1b3be08f068b91be908b7"  # ADR-0017
@@ -56,8 +57,9 @@ class IdentityTest(unittest.TestCase):
         from kototoki.names.recipes import BUILD, BUILD_RECIPE_HASH
         self.assertEqual(BUILD_RECIPE_HASH, PRODUCT_BUILD_HASH)
         s1 = v13.s1_recipe("v2")
-        self.assertEqual(s1["build"], BUILD["build"] | {"attempts": 2})
-        self.assertEqual(v13.s1_recipe("v4")["build"], BUILD["build"])
+        self.assertEqual(s1["build"], BUILD["build"] | S1_LIMITS | {"attempts": 2})
+        self.assertEqual(v13.s1_recipe("v4")["build"], BUILD["build"] | S1_LIMITS)
+        self.assertEqual(v13.s1_hash("v4"), Q3_BUILD_HASH)
         self.assertEqual((s1["build"]["max_tokens"], s1["build"]["context"], s1["build"]["prompt_budget"]),
                          (8192, 24576, 15872))  # 24576 - 8192 - 512
         self.assertEqual((s1["model"], s1["runtime"]["launch"], s1["request"]["response_format"]),

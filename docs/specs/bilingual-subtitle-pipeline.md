@@ -23,7 +23,7 @@
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
 | 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2） | [显示契约](../testing/demo-display-contract.md)为起点 |
 | 翻译 | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，`strata launch --no-tui --model iq3_s`，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`；`confidence: high` 的专名注入；每批最多两次（seed、seed+1）；产品配方 `q2-degrade-v1` | [ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) |
-| 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，不合格依次换 seed 最多 5 次请求（配方 `q3-names-v1`，与 Q3 的 `names-strata-v4` 逐字节一致）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[专名一致性][names] |
+| 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，不合格依次换 seed 最多 5 次请求（配方 `q3-names-v2`，与 Q3 的 `names-strata-v4` 只差输出上限 16384 与提示预算 32256）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0026](../adr/0026-names-output-and-prompt-budget.md)、[专名一致性][names] |
 | 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文就是翻译结果 | 用户裁定 |
 
 ### 1.2 已裁定

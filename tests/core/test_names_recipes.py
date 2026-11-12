@@ -1,10 +1,11 @@
-"""专名建表配方 `q3-names-v1` 的身份钉子：提示、schema 与整份配方的 sha256 写死在这里，并与基线 Q3 的
-`names-strata-v4` 对照（ADR-0021、ADR-0022）。
+"""专名建表配方 `q3-names-v2` 的身份钉子：提示、schema 与整份配方的 sha256 写死在这里，并与基线 Q3 的
+`names-strata-v4` 对照（ADR-0021、ADR-0022、ADR-0026）。
 
 `SYSTEM_PROMPT_SHA256`、`RESPONSE_SCHEMA_SHA256` 取自 2026-10-19 的 `experiments/name_consistency/build_table.py`
 （冻结的研究期实现，ADR-0013）。`Q3_BUILD_HASH` 是 ADR-0021 记录的 `names-strata-v4` hash：用产品配方的四块
-（`build`、`model`、`runtime`、`request`）加上研究侧的两个说明字段拼回 v13 `s1_recipe("v4")` 的形状，hash 必须相等，
-这证明产品建表块与基线逐字节相同（与 v13 实时对照在 `tests/equivalence/test_names.py`）。改动提示、schema 或任何请求参数须出新配方名，并同时更新 hash 钉子。
+（`build`、`model`、`runtime`、`request`），把 ADR-0026 放宽的三项（`V4_LIMITS`）换回 v4 的值，再加上研究侧的两个
+说明字段拼回 v13 `s1_recipe("v4")` 的形状，hash 必须相等，这证明产品建表块与基线只差这三项（与 v13 实时对照在
+`tests/equivalence/test_names.py`）。改动提示、schema 或任何请求参数须出新配方名，并同时更新 hash 钉子。
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ from kototoki.translate import recipes as translate_recipes
 
 SYSTEM_PROMPT_SHA256 = "d8e16c0441b611129ba2bcab11a9a41ae7afe53bf1632d56ae9740b7f905dd78"
 RESPONSE_SCHEMA_SHA256 = "3004d26cef032d99f1088fcae1fc0e093b689b373490e633f6c6dcfad23117ff"
-BUILD_HASH = "d3317926ee3b3096277faa9a5fbc0879d562336fb1fe89bf0ebd04c5b0be6b17"
+BUILD_HASH = "2dbd324e5ee847d0a0171840d4a064cd6b45a3df4c2123b7075cfe1a38b379ba"  # q3-names-v1 为 d3317926…
+# `names-strata-v4` 的三项（ADR-0021）；产品自 ADR-0026 起为 16384、49152、32256。
+V4_LIMITS = {"max_tokens": 8192, "context": 24576, "prompt_budget": 15872}
 Q3_BUILD_HASH = "38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0"
 # v13 `s1_recipe("v4")` 里研究侧自己的说明字段（产品配方不含）；文字照抄，改动即与 ADR-0021 的 hash 不符。
 # `endpoint` 与名字取自 2026-11-11 的 `experiments.scene_batching_v6.v13`（`COUNT_TOKENS`、`VARIANTS["v4"]["name"]`）。
@@ -47,11 +50,11 @@ class BuildRecipeTests(unittest.TestCase):
     def test_hash_pinned(self):
         self.assertEqual(recipes.BUILD_RECIPE_HASH, BUILD_HASH)
         self.assertEqual(recipes.BUILD_RECIPE_HASH, recipe_hash(recipes.BUILD))
-        self.assertEqual(recipes.BUILD["name"], "q3-names-v1")
+        self.assertEqual(recipes.BUILD["name"], "q3-names-v2")
 
-    def test_build_block_model_runtime_and_request_equal_names_strata_v4(self):
+    def test_build_block_model_runtime_and_request_equal_names_strata_v4_except_limits(self):
         build = recipes.BUILD
-        v4 = {"name": "names-strata-v4", "build": build["build"], "model": build["model"],
+        v4 = {"name": "names-strata-v4", "build": build["build"] | V4_LIMITS, "model": build["model"],
               "runtime": build["runtime"], "request": build["request"],
               "prompt_budget_check": V13_PROMPT_BUDGET_CHECK, "retries": V13_RETRIES}
         self.assertEqual(recipe_hash(v4), Q3_BUILD_HASH)
@@ -64,9 +67,8 @@ class BuildRecipeTests(unittest.TestCase):
 
     def test_frozen_request_values(self):
         build = recipes.BUILD["build"]
-        self.assertEqual((build["max_tokens"], build["reasoning"], build["context"]), (8192, "off", 24576))
-        self.assertEqual(build["prompt_budget"], 24576 - 8192 - 512)
-        self.assertEqual(build["prompt_budget"], 20480 - 4096 - 512)  # 与 27B 时期的预算相同
+        self.assertEqual((build["max_tokens"], build["reasoning"], build["context"]), (16384, "off", 49152))
+        self.assertEqual(build["prompt_budget"], 49152 - 16384 - 512)  # 32256（ADR-0026）
         self.assertEqual((build["attempts"], build["seed_step"]), (5, 1))
         self.assertNotIn("model_asset", build)
         self.assertEqual(recipes.BUILD["request"],

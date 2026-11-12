@@ -1,6 +1,6 @@
 # ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT
 
-状态：已接受（2026-11-11，用户裁定：按方案默认开启、ASS 进第一版、听障说明原样保留、外挂字幕不做）、**已实现（2026-11-11）**：`kototoki/embedded.py`（清洗）、`kototoki/media.py`（选轨与抽取）、`kototoki/plan.py`（身份与计划起点）、`kototoki/job.py`（接入 CPU 阶段）；配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`。验证见"依据"与"未验证"。不替代任何 ADR：[ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 的阶段链对没有可用字幕轨的文件不变，本 ADR 给有字幕轨的文件另加一条不经 STT 的路径；[ADR-0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 的输入、工作目录与发布规则不变；[ADR-0019](0019-product-translation-q2.md)、[ADR-0022](0022-product-names-on-strata.md) 的翻译与建表不变。  
+状态：已接受（2026-11-11，用户裁定：按方案默认开启、ASS 进第一版、听障说明原样保留、外挂字幕不做）、**已实现（2026-11-11）**：`kototoki/embedded.py`（清洗）、`kototoki/media.py`（选轨与抽取）、`kototoki/plan.py`（身份与计划起点）、`kototoki/job.py`（接入 CPU 阶段）；配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`。验证见"依据"与"未验证"。不替代任何 ADR：[ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 的阶段链对没有可用字幕轨的文件不变，本 ADR 给有字幕轨的文件另加一条不经 STT 的路径；[ADR-0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 的输入、工作目录与发布规则不变；[ADR-0019](0019-product-translation-q2.md)、[ADR-0022](0022-product-names-on-strata.md) 的翻译与建表不变。2026-11-12 补漏：第 2 点的"不是 `forced`"在实现上也认标题里的 "forced"（不分大小写；真实片源 Black Panther 的两条 jpn 轨 disposition 都为 0、forced 只写在标题 `ja--forced--` 里，v1 选中了只有 224 条的部分字幕），配方 id 升为 `embedded-ja-subtitle-v2`，见[产品全流程验收](../research/acceptance/2026-11-12-product-fullflow-acceptance.md)。  
 范围：产品包 `kototoki/`。不改 W0／X0／`cross`、cue 规则、翻译与建表配方，不改研究侧。
 
 ## 决定

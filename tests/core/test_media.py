@@ -270,6 +270,19 @@ class SubtitleSelectionTests(unittest.TestCase):
             "format": {"duration": "100.5"}}, "jpn")
         self.assertEqual(media.select_subtitle(probe.subtitles, "jpn")[0]["index"], 3)
 
+    def test_forced_in_title_only_is_forced(self) -> None:
+        # 真实片源（2026-11-12 验收）：两条 jpn 轨 disposition 都为 0，forced 只写在标题里
+        probe = media.parse_probe({"streams": [
+            VIDEO, audio(1, "jpn"),
+            stream(31, "subtitle", codec_name="subrip", tags={"language": "jpn", "title": "ja--forced--"},
+                   disposition={"default": 0, "forced": 0}),
+            stream(32, "subtitle", codec_name="subrip", tags={"language": "jpn", "title": "Japanese"},
+                   disposition={"default": 0, "forced": 0}),
+            stream(33, "subtitle", codec_name="subrip", tags={"language": "jpn", "title": "Forced Narrative"})],
+            "format": {"duration": "100.5"}}, "jpn")
+        self.assertEqual([s["forced"] for s in probe.subtitles], [True, False, True])
+        self.assertEqual(media.select_subtitle(probe.subtitles, "jpn"), (probe.subtitles[1] | {}, []))
+
 
 class CommandTests(unittest.TestCase):
     ffmpeg = Path("D:/tools dir/ffmpeg.exe")
