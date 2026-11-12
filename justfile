@@ -62,6 +62,11 @@ translation-flow-test:
 translation-flow-v2-test:
     {{legacy}} python -m unittest experiments.translation_flow.test_v2_prepare experiments.translation_flow.test_v2_common_source experiments.translation_flow.test_v2_output_budget experiments.translation_flow.test_v2_ordered_text experiments.translation_flow.test_combined_stage experiments.translation_flow.test_v2_prepare_integrity experiments.translation_flow.test_v2_worker experiments.translation_flow.test_v2_semantic experiments.translation_flow.test_v2_delivery experiments.translation_flow.test_v2_reproject experiments.translation_flow.test_v2_statistics experiments.translation_flow.test_v2_timing experiments.translation_flow.test_v2_evaluation experiments.translation_flow.test_v2_trial experiments.translation_flow.test_v2_confirmation experiments.translation_flow.test_v2_confirmation_dispatch experiments.translation_flow.test_v2_universal_review experiments.translation_flow.test_v2_matched_evaluation experiments.translation_flow.test_v2_fluency_runner experiments.translation_flow.test_v2_consistency experiments.translation_flow.test_v2_consistency_custody experiments.translation_flow.test_v2_consistency_runner experiments.translation_flow.test_v2_unit_diagnostics experiments.translation_flow.test_v2_unit_custody experiments.translation_flow.test_v2_unit_main_proof experiments.translation_flow.test_v2_review_evaluation experiments.translation_flow.test_v2_judge_dispatch experiments.translation_flow.test_v2_risk_reconciliation experiments.translation_flow.test_v2_risk_runner experiments.translation_flow.test_v2_risk_transport_runner -v
 
+# 用默认配置为 DIR（相对路径按调用目录解析）下的视频与音频生成双语字幕：占 GPU、加载模型、可能跑数小时（须先问）。
+# 只设 input_dir，其余取默认；要改其他键请写 kototoki.toml 并用 python -m kototoki（scripts/subtitles.py）。退出码同产品入口。
+subtitles dir:
+    uv run --locked --offline python scripts/subtitles.py '{{replace(join(invocation_directory_native(), dir), "'", "''")}}'; exit $LASTEXITCODE
+
 check:
     uv run --locked --offline python -m compileall -q kototoki kototoki_eval experiments scripts tests
 

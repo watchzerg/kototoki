@@ -121,7 +121,7 @@ flowchart TB
 
 | 入口 | 解释器 | 模块 |
 | --- | --- | --- |
-| `python -m kototoki [kototoki.toml]` | 根 `.venv`；GPU 阶段以同一解释器起子进程 worker；建表与翻译共用本机 Strata（须预先安装并备好模型） | [批次编排](modules/batch-orchestration.md) |
+| `python -m kototoki [kototoki.toml]`；默认配置的便捷入口 `just subtitles <目录>`（`scripts/subtitles.py`，写只含 `input_dir` 的配置到 `.local/run-configs/` 再调同一入口；测试 `tests/core/test_subtitles_script.py`） | 根 `.venv`；GPU 阶段以同一解释器起子进程 worker；建表与翻译共用本机 Strata（须预先安装并备好模型） | [批次编排](modules/batch-orchestration.md) |
 | `python -m experiments.vad_comparison.vad_stage` | `.local/envs/vad-pyannote-gpu-v1` | 外部 VAD 阶段 |
 | `python -m experiments.w0_demo.run` | `.local/envs/whisper-latest` | W0 pipeline |
 | `python -m experiments.x0_demo.run`／`just x0-demo` | 父进程 `legacy` 解释器，子进程 `qwen-hf-final` 与 `whisper-latest` | X0 pipeline |
