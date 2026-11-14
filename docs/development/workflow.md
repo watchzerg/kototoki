@@ -42,7 +42,7 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 `smoke` 的细节：
 
 - 各项是 `scripts/smoke/<名称>.py`，列在 `scripts/smoke/run_all.py` 的 `SMOKES`，省略名称时按其顺序全跑；每项在独立子进程中以 `--out <dir>` 运行，子进程 PATH 去掉 `whisper-runtime-provisional`、设离线变量；运行期间持有 `.local/gpu.lock`，结果写 `.local/smoke/<UTC 时间>/`；每项打印开始行与结束行（PASS／FAIL、耗时、`.log` 路径），中途异常或 Ctrl+C 时先回收子进程再删锁，汇总照常打印；父进程输出编不了的字符转义，重定向到非 UTF-8 也不崩溃。
-- 其中包括：四项环境 smoke（`forced_align`、`vad_pyannote`、`ct2_after_torch`、`llama_stock`）；冻结窗口门禁 `stt_frozen_window`（见 [STT worker](../architecture/modules/stt-workers.md)）与 x0 同窗门禁 `x0_frozen_window`。
+- 其中包括：三项环境 smoke（`forced_align`、`vad_pyannote`、`ct2_after_torch`；llama-server 的 `llama_stock` 随产品不再用 llama.cpp 于 2026-11-14 移除）；冻结窗口门禁 `stt_frozen_window`（见 [STT worker](../architecture/modules/stt-workers.md)）与 x0 同窗门禁 `x0_frozen_window`。
 - Q2 首用 smoke `translate_product`：产品 `kototoki.translate` 的 plan → Session → `translate_document`，经 Strata 自动启停与外部前置的 Strata 0.2.12／build 0.1.58，产品配方 `q2-degrade-v1`；只记计数、哈希与耗时，见[翻译子系统](../architecture/modules/translation-subsystem.md)；运行前须没有别的 Strata launch 在服务。
 - 产品专名 smoke `names_product`：产品 `kototoki.names` 的 `names_identity` → 共享 `strata.Session` → `build_document` → `write_artifact`，在产品自动启停的 Strata 上按 Q3 规则建表（配方 `q3-names-v1`，ADR-0022），输入为脚本内置的 12 条合成日语短句；通过条件含专家区锁进内存、`build.status == ok`、至少一条 person、全程无 llama-server、`--stop` 后显存释放；只记计数、哈希、耗时与资源峰值，见[专名一致性](../architecture/modules/name-consistency.md)。
 - 各项实测耗时记在对应的验收记录与计划里（如[架构整理计划](../plans/architecture-cleanup.md) §7），不写在本页。
