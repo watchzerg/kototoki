@@ -1,6 +1,6 @@
 # 01 跨盘发布失败与审计顺序
 
-Status: needs-triage
+Status: resolved
 Type: task
 Blocked by: —
 
@@ -40,3 +40,26 @@ OSError: [WinError 17] The system cannot move the file to a different disk drive
 - 台账 §B1。
 
 ## Comments
+
+### 2026-11-16 方向已定（用户拍板）
+
+1. **发布实现**：双语字幕直接用 `atomic_write_text` 写到源文件旁，也就是先在目标目录写临时文件、fsync，再原子替换。只有一条代码路径，不判断是否跨盘，也不依赖 WinError 17／EXDEV 映射。只有最终的 `<stem>.ja-zh.srt` 写到目标目录；音频、VAD 等中间产物仍只写在工作目录。
+2. **工作目录暂存保留**：`<work_id>/publish/<名>.ja-zh.srt` 照写，作为工作目录内的副本，供人工恢复和 sha256 对照。
+3. **审计顺序**：`record_published`（`published.json`）改到源文件旁的字幕写成功之后再写；写字幕失败时不写审计记录。
+4. **工作目录不跟随输入盘**：默认布局不变。输入常在外接盘或 NAS，中间产物不能回写到远端。原候选方向里的这一项删除，不另开票。
+
+已核实：没有代码读取 `published.json`（ADR-0020），所以失败时留下的错误审计记录不会影响续跑；续跑时计划直接走到 publish，不跑 GPU。ADR-0020 只规定字幕发布到源文件旁，没规定经工作目录中转，因此不需要新 ADR。
+
+完成标准：
+- `job.publish()` 按 1–3 实现。
+- 测试断言：最终字幕的临时文件与最终字幕在同一目录；写字幕失败时不产生 `published.json`；`publish/` 下的副本仍然存在。
+- 同步更新文档：技术设计 §发布、`docs/architecture/modules/artifact-contract.md`（`record_published` 的时机）、`docs/architecture/modules/batch-orchestration.md`（publish 步骤）。
+- `just test` 通过。
+
+## Answer
+
+2026-11-16 已实现：
+- `job.publish()`：先 `write_srt` 写副本到 `<work_id>/publish/`，再 `write_srt` 原子写到源文件旁（临时文件建在目标目录内），成功后才 `record_published`，记录的 sha256 取自源文件旁那份。
+- 测试 `tests/core/test_job.py` `PublishTests`：工作目录副本保留且 sha256 一致；打桩"跨目录替换即抛 EXDEV"时发布仍成功、目标目录不留 `.tmp`；写源文件旁失败时记 publish 失败、不写 `published.json`、副本仍在。这三处断言在旧代码上都失败（已验证）。
+- 文档：技术设计 §发布与工作目录树、模块边界、`batch-orchestration.md`、`artifact-contract.md`。
+- 自动检查：`just gate-core` 通过。未验证：没有实际在跨盘输入上跑产品入口（要占 GPU，未申请）；本批 228 份字幕已经人工拷出，不需要补发布。

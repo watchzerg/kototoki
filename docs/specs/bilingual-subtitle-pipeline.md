@@ -105,6 +105,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
       ja-cues.json 或 ja-embedded.json（内嵌字幕路径）、ja.srt
       name-table.json、names/transport/…
       translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>/   翻译 run，可续跑
+      publish/<stem>.ja-zh.srt   发布字幕的工作目录副本
       published.json       审计记录，不参与是否发布的判定
       failure.json         任一阶段失败时写
 ```
@@ -114,7 +115,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 - **每个产物带输入身份与配方 hash**；身份匹配即跳过，不匹配时原地原子替换（`translate/` 按键另开目录，旧目录保留）。输入文件身份 = 相对路径＋大小＋修改时间＋ffprobe 指纹；派生产物身份 = 上游产物 SHA256＋配方 hash＋模型文件 SHA256＋影响输出的配置键；绝对路径不参与身份。组成规则在[产物契约][art]，各阶段的期望身份在[阶段计划][plan]。
 - **坐标系**：`vad.json`、`asr.json`、`align.json` 一律 WAV 本地秒／整数样本，顶层带 `offset_s`（产品恒为 0）；offset 只在 ja-cues 阶段加一次，cue 时间即最终 SRT 时间。
 - 所有产物保留，不自动删除。
-- **发布**：merge 阶段先写工作目录暂存、再原子移动到源文件旁，并写 `published.json`。扫描时源文件旁已有 `<stem>.ja-zh.srt`（只看文件名）即跳过该文件；要重做就删掉这份字幕，中间产物按身份续跑。主名相同的两个输入争用同一字幕路径时，相对路径排序靠后的那个在扫描阶段失败。
+- **发布**：merge 阶段写一份副本到工作目录 `publish/`，再原子写到源文件旁（临时文件在目标目录内，工作目录与输入可在不同卷），成功后写 `published.json`。扫描时源文件旁已有 `<stem>.ja-zh.srt`（只看文件名）即跳过该文件；要重做就删掉这份字幕，中间产物按身份续跑。主名相同的两个输入争用同一字幕路径时，相对路径排序靠后的那个在扫描阶段失败。
 - **专名表可人工校对**：跳过只比 `identity`，改 `entries` 不触发重建；改到会被注入的条目会改变 `names_sha256` 与翻译身份，删掉该片的 `*.ja-zh.srt` 后再运行即重译；只改 medium／low 条目不触发重译（[专名一致性][names]）。
 - 工作目录之外只写源文件旁的双语字幕；控制台只输出进度、计数与耗时；专名表条目是转写内容，日志只记计数。
 

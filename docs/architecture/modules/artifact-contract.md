@@ -32,7 +32,7 @@
 **失败与发布**：
 
 - `write_failure(work_dir, stage, error)` 写 `failure.json`：阶段、异常类型与消息、当时已存在的阶段产物（`completed`，按 `STAGE_ARTIFACTS`），不含音频与转写内容。`failure.json` 的清理归编排器（[批次编排](batch-orchestration.md)）：成功发布后删除，运行期间源文件旁才出现字幕而放弃发布时也删除；扫描时源文件旁已有字幕的文件不进任何阶段，它工作目录里以前留下的 `failure.json` 不清理。
-- `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在移动双语字幕**之前**写 `published.json`：最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录（`translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。它只是审计记录，不参与任何判定。
+- `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在双语字幕写到源文件旁**之后**写 `published.json`：最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录（`translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。它只是审计记录，不参与任何判定。
 - 是否需要发布只看源文件旁的 `<主名>.ja-zh.srt` 是否存在（只看文件名，编排在扫描阶段判定，ADR-0020）；要重做就删掉该字幕。
 
 **原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；Windows `PermissionError`（播放器或扫描器占用）时最多尝试 20 次、间隔递增至 0.5 s（`replace_with_retry`）；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。

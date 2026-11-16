@@ -61,7 +61,7 @@ EXIT_CONFIG = 2           # 配置文件、输入目录或工作目录不可用�
 EXIT_WORK_LOCKED = 3      # 同一目标目录已有编排器在运行
 EXIT_GPU_LOCKED = 4       # `.local/gpu.lock` 被其他作业持有或残留
 
-PUBLISH_DIR = "publish"    # 双语字幕的暂存目录（工作目录内），写完后原子移动到源文件旁
+PUBLISH_DIR = "publish"    # 工作目录内的双语字幕副本（供人工恢复与 sha256 对照）；发布到源文件旁的那份另行原子写
 
 # worker 子进程的离线环境（沿用 experiments setup_runtime 的变量，不加私有 DLL 目录）。
 OFFLINE_ENV = {"PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
@@ -639,21 +639,21 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
 
 
 def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, fallback: int) -> bool:
-    """双语字幕先写到工作目录暂存 → `record_published`（审计）→ 原子移动到源文件旁；成功后删 failure.json。
+    """双语字幕写一份到工作目录 `publish/`（副本）→ 原子写到源文件旁 → `record_published`（审计）；成功后删 failure.json。
 
-    运行期间源文件旁出现了同名字幕（用户或别的工具写的）时不覆盖，按"已存在"跳过（ADR-0020）。
+    源文件旁那份用 `write_srt` 原子写：临时文件建在目标目录内再替换，工作目录与输入不在同一卷时也不会跨卷移动。
+    审计记录只在写成功之后写。运行期间源文件旁出现了同名字幕（用户或别的工具写的）时不覆盖，按"已存在"跳过（ADR-0020）。
     """
     if video.final.exists():
         ctx.summary.existing.append(video.relative)
         (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
         logger.warning(f"[publish] {video.relative}: {video.final.name} appeared during the run, not overwritten")
         return False
-    staged = video.work_dir / PUBLISH_DIR / video.final.name
-    srt.write_srt(text, staged)
     assert video.plan is not None
-    artifacts.record_published(video.work_dir, video.final, artifacts.sha256_file(staged),
+    srt.write_srt(text, video.work_dir / PUBLISH_DIR / video.final.name)
+    srt.write_srt(text, video.final)
+    artifacts.record_published(video.work_dir, video.final, artifacts.sha256_file(video.final),
                                video.plan.sources | {"translate_fallback_cues": fallback}, translate_dir)
-    artifacts.replace_with_retry(staged, video.final)
     (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
     ctx.summary.published.append(video.relative)
     if video.embedded is not None:

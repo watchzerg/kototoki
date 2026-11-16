@@ -301,7 +301,7 @@ def write_failure(work_dir: Path, stage: str, error: BaseException) -> None:
 
 def record_published(work_dir: Path, final_path: Path, sha256: str, sources: Mapping[str, Any],
                      translate_dir: str) -> None:
-    """移动双语字幕之前写 `published.json`（审计记录：字幕路径与 SHA256、来源身份、翻译 run 目录）。
+    """双语字幕写到源文件旁之后写 `published.json`（审计记录：字幕路径与 SHA256、来源身份、翻译 run 目录）。
 
     是否需要发布只看源文件旁的字幕是否存在（ADR-0020），本记录不参与判定。
     """

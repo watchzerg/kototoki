@@ -863,8 +863,43 @@ class PublishTests(JobCase):
             self.assertEqual(record["sources"]["translate_fallback_cues"], 1)
             self.assertTrue(record["translate_dir"].startswith("translate/srt-"))
             self.assertRegex(record["translate_dir"], rf"/fake__s{self.config.translate.seed}__n[0-9a-f]{{12}}$")
-            self.assertEqual(list((self.work_dir(rel) / job.PUBLISH_DIR).iterdir()), [])
+            copy = self.work_dir(rel) / job.PUBLISH_DIR / self.final(rel).name  # 工作目录副本保留
+            self.assertEqual(artifacts.sha256_file(copy), record["sha256"])
         self.assertIn("[summary] 2 file(s): 2 published", console.getvalue())
+
+    def test_publish_never_moves_across_directories(self) -> None:
+        """回归：工作目录与输入不在同一卷时 `os.replace` 跨卷失败（WinError 17）。
+        打桩成"跨目录替换即抛 EXDEV"，发布仍须成功：临时文件建在目标目录内。"""
+        self.make_inputs("a.mkv")
+        real = artifacts.replace_with_retry
+
+        def same_volume_only(source, target, **kwargs):
+            if Path(source).parent != Path(target).parent:
+                raise OSError(18, "The system cannot move the file to a different disk drive")
+            return real(source, target, **kwargs)
+
+        with mock.patch.object(artifacts, "replace_with_retry", side_effect=same_volume_only):
+            summary = self.run_job()
+        self.assertEqual((summary.published, summary.failed), (["a.mkv"], {}))
+        self.assertEqual(self.published("a.mkv")["sha256"], artifacts.sha256_file(self.final("a.mkv")))
+        self.assertEqual([p.name for p in self.input.iterdir() if p.name.endswith(".tmp")], [])
+
+    def test_failed_publish_writes_no_audit_record(self) -> None:
+        self.make_inputs("a.mkv")
+        real = artifacts.replace_with_retry
+        final = self.final("a.mkv")
+
+        def locked_final(source, target, **kwargs):
+            if Path(target) == final.resolve():
+                raise PermissionError("locked")
+            return real(source, target, **kwargs)
+
+        with mock.patch.object(artifacts, "replace_with_retry", side_effect=locked_final):
+            summary = self.run_job()
+        self.assertEqual(summary.failed, {"a.mkv": "publish"})
+        self.assertFalse(final.exists())
+        self.assertFalse((self.work_dir("a.mkv") / artifacts.PUBLISHED).exists())
+        self.assertTrue((self.work_dir("a.mkv") / job.PUBLISH_DIR / final.name).is_file())  # 副本可人工恢复
 
     def test_no_speech_publishes_empty_subtitle_and_skips_later_stages(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
