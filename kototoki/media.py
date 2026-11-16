@@ -61,6 +61,7 @@ _DECODE_ERRORS = re.compile(r"Input stream #0:(\d+) \(audio\):.* (\d+) decode er
 ERROR_LEVELS = ("panic", "fatal", "error")
 LOG_HEAD_TAIL = 100                     # error／warning 行与 swr 补偿行在 extract.log 里各保留的前、后条数
 DIAGNOSTIC_MESSAGES = 20                # `diagnostics.messages` 收录的 error／warning 类型数
+MAX_OVERLONG_RATIO = 1.5                # 视频输入解码时长超过参照的这么多倍判失败（只判失败、不改 PCM，不进 `MEDIA`）
 DECODE_LOG_CACHE = 50_000               # 只计数的 verbose 行按原文缓存的条目上限
 _SEXAGESIMAL = re.compile(r"(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)")
 
@@ -481,7 +482,8 @@ def error_lines(diagnostics: Mapping[str, Any]) -> int:
 def check_duration(decoded_s: float, reference_s: float, *, has_video: bool) -> list[str]:
     """解码与参照时长（视频流或音频输入的所选音轨）偏差超过容差时：视频输入短于参照判失败（`MediaError`，
     字幕会对不上画面）；音频输入短于参照只返回告警——没有画面要对齐，且 VBR MP3 缺 Xing 头时 ffprobe 的
-    时长是按码率估的、不可信（ADR-0020）。长于参照一律只返回告警。"""
+    时长是按码率估的、不可信（ADR-0020）。长于参照返回告警；视频输入超过参照 `MAX_OVERLONG_RATIO` 倍判失败
+    （时间戳严重断裂，`aresample=async` 补出数小时静音）。"""
     tolerance = recipes.MEDIA["duration_tolerance_s"]
     if reference_s - decoded_s > tolerance:
         message = (f"Decoded audio is {reference_s - decoded_s:.3f} s shorter than the input duration "
@@ -490,7 +492,11 @@ def check_duration(decoded_s: float, reference_s: float, *, has_video: bool) -> 
             return [f"{message}; audio input, continuing (the duration may be an estimate)"]
         raise MediaError(f"{message}; treating it as truncated")
     if decoded_s - reference_s > tolerance:
-        return [f"Decoded audio is {decoded_s - reference_s:.3f} s longer than the input duration"]
+        message = (f"Decoded audio is {decoded_s - reference_s:.3f} s longer than the input duration "
+                   f"({decoded_s:.3f} s vs {reference_s:.3f} s)")
+        if has_video and decoded_s > reference_s * MAX_OVERLONG_RATIO:
+            raise MediaError(f"{message}; more than {MAX_OVERLONG_RATIO}x, treating the timestamps as broken")
+        return [message]
     return []
 
 

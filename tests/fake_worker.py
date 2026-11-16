@@ -6,7 +6,8 @@ PCM SHA256 与真 worker 一样由 `gpu.read_wav` 从 `audio-16k.wav` 算出。
 环境变量：
 - `KOTOTOKI_FAKE_PLAN`：JSON `{stage: {相对路径或 work id: 动作}}`，缺省动作 `ok`。
   动作：`ok`、`fail`（普通异常）、`fatal`（FatalWorkerError）、`crash`（写产物前 `os._exit(3)`）、
-  `startup`（`start()` 中抛错）、`empty`（仅 vad：无语音）。
+  `startup`（`start()` 中抛错）、`empty`（仅 vad：无语音）、
+  `quiet`（仅 vad：有窗口但语音只占 0.5%）。
 - `KOTOTOKI_FAKE_LOG`：每行一条 JSON 记录——`launch`（pid、文件 id、子进程环境、GPU 锁快照）与 `file`（逐文件）。
 - `KOTOTOKI_FAKE_GPU_LOCK`：GPU 锁路径；launch 记录里带锁内容（等编排器写入本 worker 的 pid 后再读）。
 """
@@ -85,6 +86,8 @@ def main(argv: list[str]) -> int:
             payload: dict = {"offset_s": 0}
             if stage == "vad":
                 payload["chunks"] = [] if action == "empty" else [{"start_s": 0.0, "end_s": 1.0}]
+                speech_s = {"empty": 0.0, "quiet": 0.05}.get(action, 1.0)  # 伪 probe 时长 10 s：quiet 为 0.5%
+                payload["accounting"] = {"speech_samples": int(speech_s * 16000)}
             _, pcm = gpu.read_wav(job.inputs["wav"])  # 与真 worker 一样从 WAV 算 PCM SHA256
             if stage == "vad":
                 identity = plan.vad_identity(pcm, FAKE_MODELS)

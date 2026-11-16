@@ -45,7 +45,7 @@ import time
 from typing import Any, TextIO
 import warnings
 
-from kototoki import artifacts, cues, embedded, media, merge, names, plan, srt, strata, translate
+from kototoki import artifacts, cues, embedded, media, merge, names, plan, recipes, srt, strata, translate
 from kototoki.config import REPO_ROOT, Config
 from kototoki.logs import RunFormatter
 from kototoki.names import BuildResult
@@ -94,8 +94,14 @@ class NotPublished(RuntimeError):
     """收尾时文件既未失败也未发布：它的计划阶段没有被任何执行器处理（不变量被破坏）。"""
 
 
+class TooLittleSpeech(RuntimeError):
+    """VAD 检出的语音不足参照时长的 `MIN_SPEECH_RATIO`：音频近乎无声或抽取坏了，不再往下识别。"""
+
+
 # 提取补偿（`probe.json` 的 `extract.compensation`）超过这么多秒时记 WARNING：净补入／丢弃与 swr 报告的丢弃样本。
 COMPENSATION_WARN_S = 0.1
+# VAD 语音时长（`accounting.speech_samples`）不足参照时长的这个比例时记该文件 vad 阶段失败（batch-run-fixes 04）。
+MIN_SPEECH_RATIO = 0.01
 
 
 # --- 运行日志 -----------------------------------------------------------------------------------
@@ -495,6 +501,20 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
     logger.info(f"[{stage}] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
 
 
+def speech_gate(ctx: _Context, batch: list[VideoFile]) -> None:
+    """计划停在 asr 的文件：`vad.json` 的语音时长不足参照时长的 `MIN_SPEECH_RATIO` 时记 vad 阶段失败。"""
+    for video in batch:
+        assert video.probe is not None
+        accounting = artifacts.read_json(video.work_dir / artifacts.VAD)["accounting"]
+        speech_s = accounting["speech_samples"] / recipes.SAMPLE_RATE
+        reference_s = video.probe.duration_s
+        if speech_s < reference_s * MIN_SPEECH_RATIO:
+            ctx.fail(video, "vad", TooLittleSpeech(
+                f"VAD found {speech_s:.1f} s of speech in {reference_s:.1f} s of input "
+                f"(below {MIN_SPEECH_RATIO:.0%}); the audio is nearly silent or the extraction is broken"),
+                traceback=False)
+
+
 def advance_or_fail(ctx: _Context, video: VideoFile, stage: str) -> bool:
     """`stage` 刚跑完：从它起继续核对；产物缺失或身份不符即记该阶段失败。返回是否推进成功。"""
     assert video.plan is not None and video.plan.stage == stage
@@ -771,6 +791,8 @@ def _run(ctx: _Context) -> None:
         return [video for video in live() if video.plan is not None and video.plan.stage == stage]
 
     for stage in GPU_STAGES:
+        if stage == "asr":
+            speech_gate(ctx, planned(stage))
         batch = planned(stage)
         if batch:
             ctx.ensure_gpu_lock()

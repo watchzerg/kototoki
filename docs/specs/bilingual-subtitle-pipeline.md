@@ -134,6 +134,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 - **文件级隔离**：一个文件在某阶段失败，写 `failure.json`，该文件退出后续阶段，批次继续；最终汇总打印失败清单，退出码非零。
 - **内嵌字幕不可用**（ADR-0024）：抽取失败或清洗后零条目，记一行 WARNING，该文件回到 STT 链，不写 `failure.json`，结果不缓存。
 - **无语音**：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布零条目 `ja-zh.srt` 并告警。
+- **抽取质量门**（batch-run-fixes 04）：视频输入解码时长超过参照时长 1.5 倍判 extract 失败；VAD 语音时长不足参照时长 1% 判 vad 失败。两者都写 `failure.json`。
 - **ASR 失败窗口**（w0／x0／cross 同一表示）：x0 生成触顶、w0 整窗复读守卫（`repeat-strict`，[ADR-0023](../adr/0023-asr-repeat-guard.md)）折叠后仍命中，都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker][stt]、[产物契约][art]）。
 - **Strata 基础设施失败与批次终态**（ADR-0019）：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、解析／校验失败、超出 context 是批次终态，进入降级；`StrataRefused` 不重试，本批其余需要模型的影片直接失败。
 - **翻译降级**（产品规则，配方另名 `q2-degrade-v1`）：批次两次尝试都失败 → 10→5→1 拆批 → 单条仍失败时该 cue 的中文位置保留日文；降级清单写 `report.json` 并在汇总给出回退数。可靠性重试与降级都不是"翻译多次再挑选"（ADR-0008）。见[翻译子系统][tr]。

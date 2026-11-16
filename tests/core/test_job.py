@@ -920,6 +920,22 @@ class PublishTests(JobCase):
         self.assertEqual(len(self.launches()), launches)
 
 
+    def test_nearly_silent_vad_result_fails_before_asr(self) -> None:
+        self.make_inputs("a.mkv", "b.mkv")
+        self.plan({"vad": {"b.mkv": "quiet"}})
+        summary = self.run_job()
+        self.assertEqual(summary.failed, {"b.mkv": "vad"})
+        self.assertEqual(summary.published, ["a.mkv"])
+        for stage in ("asr", "align"):
+            self.assertEqual(self.launches(stage)[0]["ids"], self.ids("a.mkv"))
+        self.assertEqual(self.failure("b.mkv")["error_type"], "TooLittleSpeech")
+        self.assertTrue((self.work_dir("b.mkv") / artifacts.VAD).is_file())
+
+        again = self.run_job()  # 重跑：vad.json 当前，不再跑 vad，仍在 asr 前判失败
+        self.assertEqual(again.failed, {"b.mkv": "vad"})
+        self.assertEqual([launch["ids"] for launch in self.launches("vad")], [self.ids("a.mkv", "b.mkv")])
+
+
 class PlanCallTests(JobCase):
     def test_next_stage_once_per_file_and_advance_once_per_stage_run(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")

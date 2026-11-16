@@ -222,13 +222,20 @@ class DownmixTests(MediaFfmpegCase):
 
 
 class DurationCheckTests(MediaFfmpegCase):
-    # 注：票据文字写作“视频比音频长 2 s（告警不失败）”，但规格实际实现的规则是：
-    # 解码时长短于视频流超过 1 s 判失败（截断），长于视频超过 1 s 只告警；这里测实现的规则。
+    # 规则：解码时长短于视频流超过 1 s 判失败（截断）；长于视频超过 1 s 告警，超过 1.5 倍判失败（时间戳断裂，
+    # batch-run-fixes 04）。
     def test_audio_longer_than_video_only_warns(self) -> None:
-        path = self.make_clip("long-audio.mkv", 3.0, [Audio(tone_src(dur=5.0))])
+        path = self.make_clip("long-audio.mkv", 4.0, [Audio(tone_src(dur=5.5))])
         _, extract = self.extract_clip(path)
         self.assertTrue(extract.warnings)
         self.assertTrue(extract.wav.is_file())
+
+    def test_audio_far_longer_than_video_fails_without_wav(self) -> None:
+        path = self.make_clip("overlong-audio.mkv", 3.0, [Audio(tone_src(dur=5.0))])
+        probe = media.probe(path, self.cfg)
+        with self.assertRaisesRegex(media.MediaError, "timestamps as broken"):
+            media.extract(path, self.work_dir, probe, self.cfg)
+        self.assertFalse((self.work_dir / "audio-16k.wav").exists())
 
     def test_audio_shorter_than_video_fails_without_wav(self) -> None:
         path = self.make_clip("short-audio.mkv", 4.0, [Audio(tone_src(dur=2.0))])

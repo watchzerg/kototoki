@@ -518,6 +518,15 @@ class LogAndDurationTests(unittest.TestCase):
         with self.assertRaisesRegex(media.MediaError, "shorter than the input duration.*truncated"):
             media.check_duration(98.9, 100.0, has_video=True)
 
+    def test_video_input_far_longer_than_reference_fails(self) -> None:
+        # 时间戳断裂被 aresample=async 补出数小时静音（batch-run-fixes 04）：视频输入超过 1.5 倍判失败
+        (warning,) = media.check_duration(150.0, 100.0, has_video=True)
+        self.assertIn("50.000 s longer than the input duration", warning)
+        with self.assertRaisesRegex(media.MediaError, "longer than the input duration.*timestamps as broken"):
+            media.check_duration(150.1, 100.0, has_video=True)
+        (warning,) = media.check_duration(400.0, 100.0, has_video=False)  # 音频输入只告警
+        self.assertIn("300.000 s longer than the input duration", warning)
+
     def test_audio_input_shorter_than_estimated_duration_only_warns(self) -> None:
         # VBR MP3 缺 Xing 头时 ffprobe 时长偏长：音频输入照常处理，只告警
         (warning,) = media.check_duration(95.0, 100.0, has_video=False)
