@@ -80,9 +80,10 @@ class RecipeHashTests(unittest.TestCase):
         # test_translate_recipes.py、test_names_recipes.py 钉住。
         # MEDIA 在票据 03 有意变一次：LAYOUT_BY_CHANNELS 与音轨选择规则（含 LANGUAGE_ALIASES）进 MEDIA，id 不变。
         # 改之前：58892e0a96afe3a876ba90959ce19ef649d5cd1052910c132bcd92055f971e1e
-        self.assertEqual(recipes.MEDIA["id"], "media-pcm16k-v1")
+        # 2026-11-16 batch-run-fixes 02 出 v2（采样率标错纠正）；v1 为 0d19d8d8…
+        self.assertEqual(recipes.MEDIA["id"], "media-pcm16k-v2")
         self.assertEqual(recipes.recipe_hash(recipes.MEDIA),
-                         "0d19d8d890e030abb42e9750dc1d3855b28554e2fe257a6ffd0f189cc7d731ad")
+                         "e6a9fa76fc3e07b4b81b8353eea5fe6b9a209c9a39bbcfbca957381b21208a84")
         self.assertEqual(recipes.recipe_hash(recipes.VAD),
                          "d940145d29b8bc4ba834d53fa2ac818fbf28aab8b2b9ce18af555c350733a60c")
         self.assertEqual(recipes.recipe_hash(recipes.MMS),
@@ -118,6 +119,15 @@ class RecipeHashTests(unittest.TestCase):
         self.assertNotEqual(recipes.recipe_hash(changed_pan), base)
         self.assertNotEqual(recipes.recipe_hash(changed_rate), base)
         self.assertIs(recipes.MEDIA["pan"], recipes.PAN)
+
+    def test_sample_rate_correction_rule_enters_the_media_hash(self) -> None:
+        rule = recipes.MEDIA["sample_rate_correction"]
+        self.assertEqual(rule["pairs"], [[48000, 44100], [44100, 48000]])
+        self.assertEqual(rule["relative_tolerance"], 0.01)
+        base = recipes.recipe_hash(recipes.MEDIA)
+        changed = copy.deepcopy(recipes.MEDIA)
+        changed["sample_rate_correction"]["relative_tolerance"] = 0.02
+        self.assertNotEqual(recipes.recipe_hash(changed), base)
 
     def test_layout_fallback_and_audio_selection_enter_the_media_hash(self) -> None:
         self.assertIs(recipes.MEDIA["layout_by_channels"], recipes.LAYOUT_BY_CHANNELS)

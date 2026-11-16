@@ -65,7 +65,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 
 ### 2.2 时间轴与下混
 
-- **时间零点只在媒体模块定义**：② 直接从输入容器解码（裸码流容器丢时间戳），`aresample=async=1:first_pts=0` 补齐起始静音，WAV 的 sample 0 即输入 0 秒，因此 `offset_s` 恒为 0；音轨 `start_time` 只进 `probe.json` 作诊断，下游阶段只传 `offset_s = 0`。
+- **时间零点只在媒体模块定义**：② 直接从输入容器解码（裸码流容器丢时间戳），`aresample=async=1:first_pts=0` 补齐起始静音（AAC 声明采样率与容器时间戳不符时先按真实采样率纠正，规则见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)），WAV 的 sample 0 即输入 0 秒，因此 `offset_s` 恒为 0；音轨 `start_time` 只进 `probe.json` 作诊断，下游阶段只传 `offset_s = 0`。
 - 时长校验、按声道布局的 `pan` 常量（进 `MEDIA` 配方 hash、禁止削波）与重采样器（ffmpeg 默认 swr）见[配置、配方与媒体提取][media]；swr／soxr 的频谱对比与改回 swr 的经过见[历史记录][hist-26]。
 - "无损"的边界：① 是严格无损（字节级流复制），只作归档；② 是推理输入，下混与重采样必然改变样本。
 

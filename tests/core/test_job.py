@@ -1305,8 +1305,10 @@ class IdentityTests(JobCase):
     def test_media_hash_change_with_same_pcm_keeps_vad_and_later_stages_current(self) -> None:
         # 票据 03：LAYOUT_BY_CHANNELS 与音轨选择规则进 MEDIA，MEDIA hash 变一次。旧工作目录的 probe.json 不再当前、
         # 重抽一次音频；派生 PCM 不变，vad、asr、align、cues 与专名表仍当前，不起 worker、不重建 cue。
+        # batch-run-fixes 02 又出 v2（加 sample_rate_correction）：一并去掉、id 还原，仍得到票据 03 之前的 MEDIA。
         legacy = {key: value for key, value in recipes.MEDIA.items()
-                  if key not in ("layout_by_channels", "audio_selection")}
+                  if key not in ("layout_by_channels", "audio_selection", "sample_rate_correction")}
+        legacy["id"] = "media-pcm16k-v1"
         self.assertEqual(recipes.recipe_hash(legacy),  # 改之前的 MEDIA（test_recipes.py 记着同一个值）
                          "58892e0a96afe3a876ba90959ce19ef649d5cd1052910c132bcd92055f971e1e")
         self.make_inputs("a.mkv")

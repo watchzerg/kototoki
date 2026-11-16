@@ -38,8 +38,17 @@ LAYOUT_BY_CHANNELS = {1: "mono", 2: "stereo", 6: "5.1", 8: "7.1"}
 LANGUAGE_ALIASES = {"ja": "jpn", "jp": "jpn", "jpn": "jpn"}
 
 MEDIA: dict[str, Any] = {
-    "id": "media-pcm16k-v1",
+    "id": "media-pcm16k-v2",
     "decode": "from the video container by absolute stream index",
+    # 采样率标错纠正（v2，batch-run-fixes 02）：AAC 头声明的采样率与容器时间戳不符时，按真实值解码。
+    # 只在探测阶段看元数据（nb_frames × 1024 ÷ 流时长），只认这两对；纠正滤镜放在 timeline_filter 前，
+    # asetrate 会按比例改写时间戳，asetpts 把它拉回容器时间，async 对齐因而照常工作。
+    "sample_rate_correction": {
+        "codec": "aac", "profile": "LC", "frame_samples": 1024,
+        "pairs": [[48000, 44100], [44100, 48000]],  # [声明值, 真实值]
+        "relative_tolerance": 0.01,                  # |实测 ÷ 真实值 − 1| 不超过此值即命中
+        "filter": "asetrate={true},asetpts=PTS*{true}/{declared}",
+    },
     # 起始静音补齐、间隙补零，sample 0 即视频 0 秒；offset_s 恒为 0
     "timeline_filter": "aresample=async=1:first_pts=0",
     "pan": PAN,

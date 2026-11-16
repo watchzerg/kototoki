@@ -44,12 +44,13 @@
 
 **下混常量**（`recipes.PAN`，进 `MEDIA` 因而进 hash）：单声道 `anull` 直通；双声道 `pan=mono|c0=0.5*c0+0.5*c1`（与基线证据相同）；`5.1`、`5.1(side)`、`6.1`、`7.1` 用前左右 1、中置 0.707、环绕 0.707、丢 LFE 的权重除以权重和、向下截到 6 位小数，系数和 ≤ 1，满幅同相输入不削波。表达式按声道序号引用；ffprobe 未给布局时按声道数取 `mono`／`stereo`／`5.1`／`7.1`（`recipes.LAYOUT_BY_CHANNELS`，嵌在 `MEDIA` 里）；其它布局（如 `5.0`、`quad`）报 `MediaError`。不用 `-ac 1`。
 
-**`MEDIA` 覆盖全部影响音频的规则**：下混常量、声道布局映射、重采样、时长容差与音轨选择条目（规则说明＋语言别名表 `LANGUAGE_ALIASES`；别名表定义在 `recipes.py`，`media.py` 读它，内嵌字幕选轨同用它）。
+**`MEDIA` 覆盖全部影响音频的规则**（id `media-pcm16k-v2`）：下混常量、声道布局映射、重采样、时长容差、采样率标错纠正规则（`sample_rate_correction`）与音轨选择条目（规则说明＋语言别名表 `LANGUAGE_ALIASES`；别名表定义在 `recipes.py`，`media.py` 读它，内嵌字幕选轨同用它）。
 
 **probe**（`kototoki/media.py`，`probe(path, config) -> Probe`）：ffprobe `-show_streams -show_format` 全部流；原始 JSON 保留在 `Probe.ffprobe`（供 `artifacts.video_identity` 取指纹，视频与音频同用），`Probe.payload()` 是 `probe.json` 的内容。
 
 - 音轨选择：语言标签归一化后（`jpn`／`ja`／`jp` 大小写不敏感视为 `jpn`，按 `recipes.LANGUAGE_ALIASES`，配置值同样归一化）等于 `input.audio_language` 且非 `disposition.comment` 的音轨优先，其中 `disposition.default` 优先、否则取第一条；多条匹配告警；无匹配取第一条音轨并告警；没有音轨报 `MediaError`。
-- 记录：所选与全部音轨的绝对流索引、编码、声道数与布局、采样率、语言、default／comment、`start_time` 与时长（只作诊断，不进时间轴）；容器 `start_time`；字幕流清单（索引、编码、语言、default、forced，供内嵌日文字幕选轨）；告警列表。
+- 记录：所选与全部音轨的绝对流索引、编码、声道数与布局、采样率、语言、default／comment、`start_time` 与时长（只作诊断，不进时间轴）、`measured_sample_rate` 与 `corrected_sample_rate`（见下条）；容器 `start_time`；字幕流清单（索引、编码、语言、default、forced，供内嵌日文字幕选轨）；告警列表。
+- 采样率标错（`media.sample_rate_check`，规则 `MEDIA["sample_rate_correction"]`）：AAC-LC 且有 `nb_frames` 与流 `duration` 时，`measured_sample_rate` = `nb_frames × 1024 ÷ duration`；声明 48000、实测在 44100 的 ±1% 内（或反过来）时 `corrected_sample_rate` 取真实值，所选音轨命中另记告警；其余不纠正。只认这一对（共用 AAC 的 SFB 表，改标签即无损）。
 - `has_video`：除封面图（`attached_pic`）外没有视频流即为音频输入（`Probe.has_video = False`）。
 - 参照时长：视频输入取第一条非封面视频流，音频输入取所选音轨。取其 `duration`；没有时先取精确的 Matroska 标签 `DURATION`（大小写不敏感），再取 mkvmerge 统计标签 `DURATION-<lang>`；都没有时退回容器时长并告警；时长全无报 `MediaError`。
 - 流时长与 `format.duration` 相差超过 `MEDIA["duration_tolerance_s"]` 时取较小者并写入 `Probe.warnings`，`duration_source` 记实际来源。`probe.json` 的字段是 `has_video`、`duration_s`、`duration_source`。
@@ -60,9 +61,9 @@
    - `flac`→`.flac`；`aac`／`alac`→`.m4a`；`ac3`→`.ac3`；`eac3`→`.eac3`；`dts`→`.dts`；`opus`→`.opus`；`vorbis`→`.ogg`；`mp3`→`.mp3`；
    - 小端 PCM（`pcm_s16le`／`s24le`／`s32le`／`f32le`）→`.wav`（`-rf64 auto`）；
    - 其余（大端 PCM、`pcm_bluray`、`pcm_dvd`、`aac_latm`、`truehd` 等）→`.mka`。
-2. `derive_pcm16k`：**从输入容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`（ffmpeg 默认 swr）、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、`-loglevel verbose`；两条命令行与 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即输入 0 秒，`Extract.offset_s` 恒为 0。
+2. `derive_pcm16k`：**从输入容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`（采样率标错时最前面加 `asetrate=<真实>,asetpts=PTS*<真实>/<声明>`，`asetpts` 把被 `asetrate` 缩放的时间戳拉回容器时间；未纠正的音轨命令与 v1 相同）（ffmpeg 默认 swr）、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、`-loglevel verbose`；两条命令行与 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即输入 0 秒，`Extract.offset_s` 恒为 0。
 3. 时长校验对参照时长（字段 `Extract.duration_s`）：视频输入解码短于参照超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；音频输入短于参照只记告警、照常往下走（`check_duration(…, has_video=False)`；VBR MP3 缺 Xing 头时 ffprobe 的时长是估算值）；长于参照超过 1 s 一律只记告警。
-4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 在 verbose 下报告的"adding N audio samples of silence"／"discarding N audio samples"之和（输入采样率，含起始补齐），以及按 ffmpeg 结束统计的输入样本数算出的净补偿秒数 `net_padding_s`（派生时长 − 解码出的输入时长）。swr 只报告一部分补偿，因此以 `net_padding_s` 为准，swr 计数只作参考。超过 0.1 s 时的 WARNING 由编排写（`job.compensation_warnings`）。
+4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 在 verbose 下报告的"adding N audio samples of silence"／"discarding N audio samples"之和（输入采样率，含起始补齐），以及按 ffmpeg 结束统计的输入样本数算出的净补偿秒数 `net_padding_s`（派生时长 − 解码出的输入时长；已纠正时输入时长按纠正后的采样率算）。swr 只报告一部分补偿，因此以 `net_padding_s` 为准，swr 计数只作参考。超过 0.1 s 时的 WARNING 由编排写（`job.compensation_warnings`）。
 
 子进程一律参数列表、`stdin=DEVNULL`（ffmpeg 另加 `-nostdin`；ffprobe 不认 `-nostdin`）、UTF-8 解码。
 
@@ -89,14 +90,15 @@
 - 代码：`kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py`、`kototoki.toml.example`。
 - 测试（core，`just test`）：
   - `tests/core/test_config.py`：默认值、两种相对路径基准、模型路径、未知键与已删除键、类型、环境变量破锁、示例文件覆盖全部键。
-  - `tests/core/test_recipes.py`：`pan` 系数与归一化、不削波、`pan`／重采样参数、`LAYOUT_BY_CHANNELS` 与音轨选择规则（含 `LANGUAGE_ALIASES`）进 hash、固定值、无翻译配方；`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 的 hash 全部钉住。
-  - `tests/core/test_media.py`：语言归一化、音轨选择含 commentary／多条匹配／无匹配、时长来源（含音频输入）、容器映射、命令行构造、补偿解析、时长校验含音频输入偏短只告警；字幕轨选择、抽取命令行与抽取失败。
+  - `tests/core/test_recipes.py`：`pan` 系数与归一化、不削波、`pan`／重采样参数、`LAYOUT_BY_CHANNELS`、音轨选择规则（含 `LANGUAGE_ALIASES`）与采样率纠正规则进 hash、固定值、无翻译配方；`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 的 hash 全部钉住。
+  - `tests/core/test_media.py`：语言归一化、音轨选择含 commentary／多条匹配／无匹配、时长来源（含音频输入）、容器映射、命令行构造、补偿解析、采样率标错的检测、纠正滤镜与净补偿、时长校验含音频输入偏短只告警；字幕轨选择、抽取命令行与抽取失败。
   - `tests/core/test_embedded.py`：标签与覆盖块、多行与空行、绘图／空／重复／非正时长条目、排序与重新编号、清洗结果过 `srt.parse_srt`。
 - 测试（full，`just test-full`）：
   - `tests/full/test_media_ffmpeg.py`：用 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、流复制容器、多音轨选择；临时目录含空格与非 ASCII。需要配置默认路径的 `ffmpeg.exe`、`ffprobe.exe`，缺失时测试失败而不是跳过。
   - `tests/full/test_job_ffmpeg.py`：真实 ffmpeg 合成带 SubRip、ASS、mov_text 字幕轨的片段走完整批次编排，含容器起点 +2 s。
 - 未验证：
   - 内嵌字幕：真实片源（流媒体片源、字幕组 ASS 的卡拉 OK 与屏幕字噪声）、假名注音、标签与内容语言不符的字幕轨。
+  - 采样率纠正无合成测试，只离线验证过 10 个真实音轨（票据 02）；纠正后识别质量未验证；无 `nb_frames` 的容器检测不到。
   - 广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本。
   - cue 时间等于视频时间只在 WAV 样本层断言（`sample / 16000 + offset_s`），cue 侧只由[日文 cue](japanese-cues.md)的离线测试断言 offset 只加一次；整片验收没有与视频画面对时。
 - 已知限制：日本广播双单声道（主／副音声）按双声道处理；`pan` 保证下混本身不削波，但其后的降采样滤波（48 kHz→16 kHz）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）。
@@ -108,5 +110,5 @@
 - 计划 [`architecture-cleanup`](../../plans/architecture-cleanup.md)（§3 决定 2：`MEDIA` 补入布局映射与音轨选择规则）
 - 验收：[两部整片](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[swr 回归](../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)、[cross 产品路径](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[ffmpeg 9.0 升级](../../research/acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)
 - [模块页拆出的历史记录](../../research/acceptance/2026-11-11-module-page-history-orchestration-config.md)（真实视频核对与削波实测）
-- 票据：`.scratch/bilingual-subtitle-pipeline/issues/02-config-and-media.md`、`10-resampler-swr.md`、`11-duration-tag.md`；`.scratch/cross-asr-judge/`；`.scratch/name-consistency-product/issues/05-config-assets-plan.md`；`.scratch/architecture-cleanup/`
+- 票据：`.scratch/bilingual-subtitle-pipeline/issues/02-config-and-media.md`、`10-resampler-swr.md`、`11-duration-tag.md`；`.scratch/cross-asr-judge/`；`.scratch/name-consistency-product/issues/05-config-assets-plan.md`；`.scratch/architecture-cleanup/`；`.scratch/batch-run-fixes/`（02：`MEDIA` v2）
 - 常量来源：`experiments/corpus/prepare_round2.py`（下混与重采样）、`experiments/w0_demo/`（`vad_candidates.py`、`asr.py`、`alignment.py`）、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`

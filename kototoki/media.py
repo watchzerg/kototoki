@@ -71,6 +71,8 @@ class AudioTrack:
     comment: bool
     start_time: float | None    # 诊断用，不进时间轴
     duration: float | None
+    measured_sample_rate: float | None = None   # nb_frames × 1024 ÷ 流时长（只算 AAC-LC，诊断用）
+    corrected_sample_rate: int | None = None    # 采样率标错时按此值解码；None 即按声明值
 
 
 @dataclass(frozen=True)
@@ -121,7 +123,8 @@ def _track_dict(track: AudioTrack) -> dict[str, Any]:
     return {"index": track.index, "codec_name": track.codec_name, "channels": track.channels,
             "channel_layout": track.channel_layout, "sample_rate": track.sample_rate,
             "language": track.language, "default": track.default, "comment": track.comment,
-            "start_time": track.start_time, "duration": track.duration}
+            "start_time": track.start_time, "duration": track.duration,
+            "measured_sample_rate": track.measured_sample_rate, "corrected_sample_rate": track.corrected_sample_rate}
 
 
 # --- 纯函数：解析、选择、映射、命令行 ------------------------------------------------------------
@@ -169,16 +172,32 @@ def _stream_duration(stream: Mapping[str, Any]) -> tuple[float | None, str]:
     return _tag_duration(stream), "stream.tags.DURATION"
 
 
+def sample_rate_check(stream: Mapping[str, Any], declared: int | None) -> tuple[float | None, int | None]:
+    """（实测采样率, 纠正后的采样率）。实测 = nb_frames × 1024 ÷ 流时长，只对 AAC-LC 且元数据齐全时算；
+    实测落在 `recipes.MEDIA["sample_rate_correction"]` 某一对的真实值容差内时返回该真实值，否则为 None。"""
+    rule = recipes.MEDIA["sample_rate_correction"]
+    frames, duration = _float(stream.get("nb_frames")), _float(stream.get("duration"))
+    if (stream.get("codec_name") != rule["codec"] or stream.get("profile") != rule["profile"]
+            or not declared or not frames or not duration):
+        return None, None
+    measured = round(frames * rule["frame_samples"] / duration, 1)
+    corrected = next((true for listed, true in rule["pairs"]
+                      if listed == declared and abs(measured / true - 1) <= rule["relative_tolerance"]), None)
+    return measured, corrected
+
+
 def _audio_track(stream: Mapping[str, Any]) -> AudioTrack:
     disposition = stream.get("disposition") or {}
     sample_rate = _float(stream.get("sample_rate"))
+    measured, corrected = sample_rate_check(stream, int(sample_rate) if sample_rate else None)
     return AudioTrack(
         index=int(stream["index"]), codec_name=str(stream.get("codec_name", "")),
         channels=int(stream.get("channels") or 0), channel_layout=str(stream.get("channel_layout") or ""),
         sample_rate=int(sample_rate) if sample_rate else None,
         language=(stream.get("tags") or {}).get("language"),
         default=bool(disposition.get("default")), comment=bool(disposition.get("comment")),
-        start_time=_float(stream.get("start_time")), duration=_stream_duration(stream)[0])
+        start_time=_float(stream.get("start_time")), duration=_stream_duration(stream)[0],
+        measured_sample_rate=measured, corrected_sample_rate=corrected)
 
 
 def select_audio(tracks: Sequence[AudioTrack], language: str) -> tuple[AudioTrack, list[str]]:
@@ -206,6 +225,9 @@ def parse_probe(ffprobe: dict[str, Any], language: str) -> Probe:
     streams = ffprobe.get("streams") or []
     tracks = tuple(_audio_track(stream) for stream in streams if stream.get("codec_type") == "audio")
     chosen, warnings = select_audio(tracks, language)
+    if chosen.corrected_sample_rate:
+        warnings.append(f"Audio stream {chosen.index} declares {chosen.sample_rate} Hz but its frames imply "
+                        f"{chosen.measured_sample_rate} Hz; decoding it as {chosen.corrected_sample_rate} Hz")
     videos = [stream for stream in streams if stream.get("codec_type") == "video"
               and not (stream.get("disposition") or {}).get("attached_pic")]
     kind = "Video" if videos else "Audio"
@@ -301,7 +323,10 @@ def copy_command(ffmpeg: Path, video: Path, track: AudioTrack, output: Path) -> 
 
 def derive_filter(track: AudioTrack) -> str:
     media = recipes.MEDIA
-    return ",".join((media["timeline_filter"], pan_filter(track), media["resample_filter"]))
+    correction = ([media["sample_rate_correction"]["filter"].format(true=track.corrected_sample_rate,
+                                                                    declared=track.sample_rate)]
+                  if track.corrected_sample_rate else [])
+    return ",".join((*correction, media["timeline_filter"], pan_filter(track), media["resample_filter"]))
 
 
 def derive_command(ffmpeg: Path, video: Path, track: AudioTrack, output: Path) -> list[str]:
@@ -313,12 +338,14 @@ def derive_command(ffmpeg: Path, video: Path, track: AudioTrack, output: Path) -
 
 def parse_compensation(log: str, track: AudioTrack, decoded_s: float) -> dict[str, Any]:
     """补偿统计（只作诊断）：swr 报告的补入／丢弃样本数（输入采样率，含起始静音补齐，不完整），
-    以及按 ffmpeg 结束统计算出的净补偿秒数（派生时长 − 解码出的输入时长，正为补入、负为丢弃）。"""
+    以及按 ffmpeg 结束统计算出的净补偿秒数（派生时长 − 解码出的输入时长，正为补入、负为丢弃）。
+    采样率标错已纠正时，输入时长按纠正后的采样率算。"""
     input_samples = next((int(samples) for index, samples in _INPUT_SAMPLES.findall(log)
                           if int(index) == track.index), None)
+    rate = track.corrected_sample_rate or track.sample_rate
     net = None
-    if input_samples is not None and track.sample_rate:
-        net = round(decoded_s - input_samples / track.sample_rate, 6)
+    if input_samples is not None and rate:
+        net = round(decoded_s - input_samples / rate, 6)
     return {"swr_reported_silence_samples": sum(int(n) for n in _SWR_ADDED.findall(log)),
             "swr_reported_discarded_samples": sum(int(n) for n in _SWR_DROPPED.findall(log)),
             "input_samples": input_samples, "net_padding_s": net}

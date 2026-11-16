@@ -94,6 +94,58 @@ class SelectionTests(unittest.TestCase):
         self.assertIs(payload["ffprobe"], probe.ffprobe)
 
 
+class SampleRateCheckTests(unittest.TestCase):
+    """采样率标错（batch-run-fixes 02）：nb_frames × 1024 ÷ 流时长与声明值不符时按真实值解码。"""
+
+    @staticmethod
+    def aac(rate: str, frames: str | None, duration: str | None, **fields: object) -> dict[str, object]:
+        extra = {key: value for key, value in (("nb_frames", frames), ("duration", duration)) if value is not None}
+        return {**audio(1, "jpn"), "profile": "LC", "sample_rate": rate, **extra, **fields}
+
+    def check(self, stream: dict[str, object]) -> tuple[float | None, int | None]:
+        rate = stream.get("sample_rate")
+        return media.sample_rate_check(stream, int(rate) if rate else None)
+
+    def test_both_mislabeled_directions_are_corrected(self) -> None:
+        # 封存样本的元数据：声明 48k、帧数对应 ≈44115；声明 44.1k、帧数对应 ≈47940
+        self.assertEqual(self.check(self.aac("48000", "345119", "8010.916187")), (44115.0, 44100))
+        self.assertEqual(self.check(self.aac("44100", "440106", "9400.760181")), (47939.6, 48000))
+
+    def test_consistent_or_out_of_tolerance_rates_are_left_alone(self) -> None:
+        self.assertEqual(self.check(self.aac("48000", "4687", "99.99")), (47999.7, None))
+        # 偏离真实值超过 1%（如时间戳断裂）不算标错
+        self.assertIsNone(self.check(self.aac("48000", "4000", "100.0"))[1])
+        # 其它比例不纠正
+        self.assertIsNone(self.check(self.aac("48000", "3125", "100.0"))[1])
+
+    def test_only_aac_lc_with_frame_count_and_duration_is_measured(self) -> None:
+        self.assertEqual(self.check(self.aac("48000", None, "100.0")), (None, None))
+        self.assertEqual(self.check(self.aac("48000", "4307", None)), (None, None))
+        self.assertEqual(self.check(self.aac("48000", "4307", "100.0", profile="HE-AAC")), (None, None))
+        self.assertEqual(self.check(self.aac("48000", "4307", "100.0", codec_name="opus")), (None, None))
+
+    def test_probe_records_correction_and_warns_for_the_chosen_track(self) -> None:
+        probe = media.parse_probe({"streams": [VIDEO, self.aac("48000", "4307", "100.0")],
+                                   "format": {"duration": "100.0"}}, "jpn")
+        self.assertEqual((probe.audio.measured_sample_rate, probe.audio.corrected_sample_rate), (44103.7, 44100))
+        (warning,) = probe.warnings
+        self.assertIn("declares 48000 Hz", warning)
+        self.assertIn("decoding it as 44100 Hz", warning)
+        self.assertEqual(probe.payload()["selected_audio"]["corrected_sample_rate"], 44100)
+
+    def test_correction_filter_precedes_timeline_alignment(self) -> None:
+        self.assertEqual(media.derive_filter(track(sample_rate=48000, corrected_sample_rate=44100)),
+                         "asetrate=44100,asetpts=PTS*44100/48000,aresample=async=1:first_pts=0,"
+                         "pan=mono|c0=0.5*c0+0.5*c1,aresample=16000")
+        self.assertEqual(media.derive_filter(track()),
+                         "aresample=async=1:first_pts=0,pan=mono|c0=0.5*c0+0.5*c1,aresample=16000")
+
+    def test_compensation_uses_the_corrected_rate(self) -> None:
+        log = "  Input stream #0:1 (audio): 10 packets read; (441000 samples);\n"
+        stats = media.parse_compensation(log, track(index=1, sample_rate=48000, corrected_sample_rate=44100), 10.0)
+        self.assertEqual(stats["net_padding_s"], 0.0)
+
+
 class VideoDurationTests(unittest.TestCase):
     def duration(self, video: dict[str, object], fmt: dict[str, object] | None = None) -> tuple[float, str]:
         probe = media.parse_probe({"streams": [video, audio(1, "jpn")], "format": fmt or {}}, "jpn")
