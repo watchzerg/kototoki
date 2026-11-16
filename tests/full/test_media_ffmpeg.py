@@ -296,5 +296,41 @@ class TrackSelectionTests(MediaFfmpegCase):
         self.assertAlmostEqual(peak(read_wav(extract.wav)[2]) / FULL_SCALE, 0.6, delta=0.05)
 
 
+class DecodeLogTests(MediaFfmpegCase):
+    """真实 ffmpeg 的 `level+verbose` 输出经 `digest_decode_log` 精简、计数（batch-run-fixes 03）。"""
+
+    def test_clean_clip_has_no_errors_and_keeps_end_statistics(self) -> None:
+        path = self.make_clip("clean.mkv", 2.0, [Audio(tone_src(dur=2.0))])
+        probe, extract = self.extract_clip(path)
+        self.assertEqual(extract.diagnostics["decode_errors"], 0)
+        self.assertEqual(media.error_lines(extract.diagnostics), 0)
+        self.assertGreater(extract.diagnostics["levels"]["verbose"], 0)
+        self.assertFalse(any("error line(s)" in warning for warning in extract.warnings))
+        self.assertIsNotNone(extract.compensation["input_samples"])  # 结束统计行保留下来供补偿解析
+        body, table = extract.log.read_text(encoding="utf-8").split("[kototoki] message counts by level", 1)
+        self.assertIn("Input stream #0:", body)
+        self.assertIn("[kototoki] message types", table)
+        self.assertNotIn("[dec:flac", body)  # 解码器等上下文的 verbose 行只计数，只在类型表里出现
+        self.assertIn("[dec:flac", table)
+
+    def test_corrupted_aac_reports_decode_errors(self) -> None:
+        clean = self.media_dir / "clean.aac"
+        run([str(self.cfg.paths.ffmpeg), "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
+             "-i", "sine=d=4:sample_rate=48000", "-ac", "2", "-c:a", "aac", str(clean)])
+        data = bytearray(clean.read_bytes())
+        for offset in range(len(data) // 4, 3 * len(data) // 4, 997):  # 中段确定性地翻转若干字节
+            data[offset] ^= 0x5A
+        path = self.media_dir / "corrupted.aac"
+        path.write_bytes(bytes(data))
+        _, extract = self.extract_clip(path)
+        diagnostics = extract.diagnostics
+        self.assertGreater(diagnostics["decode_errors"], 0)
+        self.assertGreater(media.error_lines(diagnostics), 0)
+        self.assertTrue(diagnostics["messages"])
+        self.assertTrue(all(m["level"] in ("error", "warning") for m in diagnostics["messages"]))
+        self.assertIn(f"ffmpeg reported {media.error_lines(diagnostics)} error line(s) while decoding; "
+                      "see extract.log", extract.warnings)
+
+
 if __name__ == "__main__":
     unittest.main()

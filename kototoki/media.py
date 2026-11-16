@@ -17,7 +17,8 @@ ffmpeg 把它转成 SRT 文本返回；是否采用、清洗与落盘归编排�
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections import Counter, deque
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 import json
@@ -25,7 +26,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
-from typing import Any
+from typing import IO, Any
 import wave
 
 from kototoki import recipes
@@ -52,6 +53,15 @@ FALLBACK_CONTAINER = ".mka"
 _SWR_ADDED = re.compile(r"adding (\d+) audio samples of silence")
 _SWR_DROPPED = re.compile(r"discarding (\d+) audio samples")
 _INPUT_SAMPLES = re.compile(r"Input stream #0:(\d+) \(audio\):.*\((\d+) samples\)")
+# ffmpeg `-loglevel level+verbose` 的一行：零到多个 `[上下文 @ 地址] ` 前缀，然后是 `[级别] `。
+_LEVEL_LINE = re.compile(r"((?:\[[^\]]*\] )*?)\[(panic|fatal|error|warning|info|verbose|debug|trace)\] (.*)", re.S)
+_ADDRESS = re.compile(r" @ [0-9A-Fa-fx]+")
+_DIGITS = re.compile(r"\d+")
+_DECODE_ERRORS = re.compile(r"Input stream #0:(\d+) \(audio\):.* (\d+) decode errors")
+ERROR_LEVELS = ("panic", "fatal", "error")
+LOG_HEAD_TAIL = 100                     # error／warning 行与 swr 补偿行在 extract.log 里各保留的前、后条数
+DIAGNOSTIC_MESSAGES = 20                # `diagnostics.messages` 收录的 error／warning 类型数
+DECODE_LOG_CACHE = 50_000               # 只计数的 verbose 行按原文缓存的条目上限
 _SEXAGESIMAL = re.compile(r"(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)")
 
 
@@ -110,13 +120,14 @@ class Extract:
     pan: str
     compensation: dict[str, Any]
     warnings: tuple[str, ...]
+    diagnostics: dict[str, Any] | None = None   # 解码日志的统计（`digest_decode_log`），只作诊断
 
     def payload(self) -> dict[str, Any]:
         return {"audio_copy": self.audio_copy.name if self.audio_copy else None, "wav": self.wav.name, "log": self.log.name,
                 "sample_rate": self.sample_rate, "samples": self.samples, "pcm_sha256": self.pcm_sha256,
                 "decoded_duration_s": self.decoded_duration_s, "duration_s": self.duration_s,
                 "offset_s": self.offset_s, "pan": self.pan, "compensation": dict(self.compensation),
-                "warnings": list(self.warnings)}
+                "diagnostics": self.diagnostics, "warnings": list(self.warnings)}
 
 
 def _track_dict(track: AudioTrack) -> dict[str, Any]:
@@ -331,24 +342,140 @@ def derive_filter(track: AudioTrack) -> str:
 
 def derive_command(ffmpeg: Path, video: Path, track: AudioTrack, output: Path) -> list[str]:
     media = recipes.MEDIA
-    return [str(ffmpeg), "-hide_banner", "-nostdin", "-loglevel", "verbose", "-y", "-i", str(video),
+    return [str(ffmpeg), "-hide_banner", "-nostdin", "-loglevel", "level+verbose", "-y", "-i", str(video),
             "-map", f"0:{track.index}", "-vn", "-sn", "-dn", "-af", derive_filter(track),
             "-c:a", media["codec"], *media["output_flags"], str(output)]
 
 
-def parse_compensation(log: str, track: AudioTrack, decoded_s: float) -> dict[str, Any]:
-    """补偿统计（只作诊断）：swr 报告的补入／丢弃样本数（输入采样率，含起始静音补齐，不完整），
-    以及按 ffmpeg 结束统计算出的净补偿秒数（派生时长 − 解码出的输入时长，正为补入、负为丢弃）。
-    采样率标错已纠正时，输入时长按纠正后的采样率算。"""
+def parse_compensation(log: str, swr_samples: tuple[int, int], track: AudioTrack,
+                       decoded_s: float) -> dict[str, Any]:
+    """补偿统计（只作诊断）：swr 报告的（补入, 丢弃）样本数（`digest_decode_log` 边读边累加；输入采样率，
+    含起始静音补齐，不完整），以及按 `log` 里 ffmpeg 结束统计算出的净补偿秒数（派生时长 − 解码出的输入时长，
+    正为补入、负为丢弃）。采样率标错已纠正时，输入时长按纠正后的采样率算。"""
     input_samples = next((int(samples) for index, samples in _INPUT_SAMPLES.findall(log)
                           if int(index) == track.index), None)
     rate = track.corrected_sample_rate or track.sample_rate
     net = None
     if input_samples is not None and rate:
         net = round(decoded_s - input_samples / rate, 6)
-    return {"swr_reported_silence_samples": sum(int(n) for n in _SWR_ADDED.findall(log)),
-            "swr_reported_discarded_samples": sum(int(n) for n in _SWR_DROPPED.findall(log)),
+    return {"swr_reported_silence_samples": swr_samples[0], "swr_reported_discarded_samples": swr_samples[1],
             "input_samples": input_samples, "net_padding_s": net}
+
+
+class _HeadTail:
+    """按到达顺序写前 `LOG_HEAD_TAIL` 条，之后只留最后 `LOG_HEAD_TAIL` 条，结束时写出省略条数与这些行。"""
+
+    def __init__(self, label: str, out: IO[str]) -> None:
+        self.label, self.out, self.seen = label, out, 0
+        self.tail: deque[str] = deque(maxlen=LOG_HEAD_TAIL)
+
+    def add(self, line: str) -> None:
+        self.seen += 1
+        if self.seen <= LOG_HEAD_TAIL:
+            self.out.write(line + "\n")
+        else:
+            self.tail.append(line)
+
+    def finish(self) -> None:
+        if not self.tail:
+            return
+        omitted = self.seen - LOG_HEAD_TAIL - len(self.tail)
+        self.out.write(f"[kototoki] {omitted} {self.label} line(s) omitted; the last {len(self.tail)} follow\n"
+                       if omitted else f"[kototoki] {self.label} lines after the first {LOG_HEAD_TAIL} follow\n")
+        self.out.writelines(line + "\n" for line in self.tail)
+
+
+def digest_decode_log(lines: Iterable[str], out: IO[str],
+                      track: AudioTrack) -> tuple[str, tuple[int, int], dict[str, Any]]:
+    """边读 `-loglevel level+verbose` 的 stderr 边写精简日志到 `out`；返回原样保留的行（含结束统计，供
+    `parse_compensation`）、swr 报告的（补入, 丢弃）样本数之和与诊断统计。规则见模块页"解码日志"：info 行、
+    无上下文行、`in#`／`out#` 行原样保留；error／warning 行与 swr 补偿行各留前后 100 条；其余 verbose 行只计数；
+    末尾附消息类型计数表。"""
+    kept: list[str] = []
+    types: Counter[tuple[str, str]] = Counter()
+    examples: dict[tuple[str, str], str] = {}
+    flagged, swr = _HeadTail("error/warning", out), _HeadTail("resampler compensation", out)
+    swr_added = swr_dropped = 0
+    # 刷屏的 verbose 行几乎都是逐字重复的少数几种（每秒可达数十万行）：按原文缓存其类型、只计原文条数，
+    # 结束时再并入类型计数，免得逐行跑正则拖慢 ffmpeg。缓存与原文计数都设上限。
+    counted: dict[str, tuple[str, str]] = {}
+    pending: Counter[str] = Counter()
+
+    def classify(line: str) -> tuple[str, str, str] | None:
+        """(级别, 类型模式, 去向)；去向为 flag（error／warning）、swr、keep（原样写）或 count（只计数）。"""
+        match = _LEVEL_LINE.fullmatch(line)
+        if match is None:
+            return None
+        context, level, message = match.groups()
+        pattern = _DIGITS.sub("N", _ADDRESS.sub("", context) + message)
+        if level in ERROR_LEVELS or level == "warning":
+            return level, pattern, "flag"
+        if _SWR_ADDED.search(message) or _SWR_DROPPED.search(message):
+            return level, pattern, "swr"
+        if level == "info" or not context or context.startswith(("[in#", "[out#")):
+            return level, pattern, "keep"
+        return level, pattern, "count"
+
+    def flush() -> None:
+        for text, count in pending.items():
+            types[counted[text]] += count
+        pending.clear()
+
+    for raw in lines:
+        line = raw.rstrip("\r\n")
+        if line in counted:
+            pending[line] += 1
+            continue
+        if not line.strip():
+            continue
+        result = classify(line)
+        if result is None:  # 没有级别标签（level+ 下不应出现）：原样保留
+            out.write(line + "\n")
+            kept.append(line)
+            continue
+        level, pattern, route = result
+        key = (level, pattern)
+        examples.setdefault(key, line)
+        if route == "count":
+            if len(counted) >= DECODE_LOG_CACHE:
+                flush()
+                counted.clear()
+            counted[line] = key
+            pending[line] += 1
+            continue
+        types[key] += 1
+        if route == "flag":
+            flagged.add(line)
+        elif route == "swr":
+            swr.add(line)
+            swr_added += sum(int(n) for n in _SWR_ADDED.findall(line))
+            swr_dropped += sum(int(n) for n in _SWR_DROPPED.findall(line))
+        else:
+            out.write(line + "\n")
+            kept.append(line)
+    flush()
+    levels: Counter[str] = Counter()
+    for (level, _), count in types.items():
+        levels[level] += count
+    flagged.finish()
+    swr.finish()
+    ranked = sorted(types.items(), key=lambda item: (-item[1], item[0]))
+    out.write(f"[kototoki] message counts by level: {dict(sorted(levels.items()))}\n")
+    out.write("[kototoki] message types (count, [level] pattern, first example):\n")
+    for (level, pattern), count in ranked:
+        out.write(f"{count:>10}  [{level}] {pattern}\n            e.g. {examples[level, pattern]}\n")
+    text = "\n".join(kept)
+    decode_errors = next((int(errors) for index, errors in _DECODE_ERRORS.findall(text)
+                          if int(index) == track.index), None)
+    messages = [{"level": level, "count": count, "pattern": pattern, "example": examples[level, pattern]}
+                for (level, pattern), count in ranked if level in ERROR_LEVELS or level == "warning"]
+    return text, (swr_added, swr_dropped), {"levels": dict(sorted(levels.items())), "decode_errors": decode_errors,
+                  "messages": messages[:DIAGNOSTIC_MESSAGES]}
+
+
+def error_lines(diagnostics: Mapping[str, Any]) -> int:
+    """诊断统计里 error 级（含 fatal、panic）的行数。"""
+    return sum(diagnostics["levels"].get(level, 0) for level in ERROR_LEVELS)
 
 
 def check_duration(decoded_s: float, reference_s: float, *, has_video: bool) -> list[str]:
@@ -372,6 +499,23 @@ def check_duration(decoded_s: float, reference_s: float, *, has_video: bool) -> 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
                           errors="replace", check=False)
+
+
+def _run_decode(command: list[str], log_path: Path, log_head: str,
+                track: AudioTrack) -> tuple[int, str, tuple[int, int], dict[str, Any]]:
+    """运行解码命令，stderr 流式经 `digest_decode_log` 写进 `log_path`（不整段读进内存）；返回退出码与
+    `digest_decode_log` 的三项结果。"""
+    with open(log_path, "w", encoding="utf-8", newline="\n") as log, \
+            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                             encoding="utf-8", errors="replace") as process:
+        log.write(f"{log_head}$ {subprocess.list2cmdline(command)}\n")
+        assert process.stderr is not None
+        try:
+            kept, swr_samples, diagnostics = digest_decode_log(process.stderr, log, track)
+        except BaseException:
+            process.kill()
+            raise
+        return process.wait(), kept, swr_samples, diagnostics
 
 
 def _partial(path: Path) -> Path:
@@ -424,7 +568,7 @@ def extract_original(video: Path, work_dir: Path, track: AudioTrack, ffmpeg: Pat
 
 def derive_pcm16k(video: Path, work_dir: Path, probe_result: Probe, ffmpeg: Path, *, audio_copy: Path | None,
                   log_head: str = "") -> Extract:
-    """从输入容器按绝对流索引解码，补齐时间轴、下混、重采样为 `audio-16k.wav`，verbose 日志写 `extract.log`。
+    """从输入容器按绝对流索引解码，补齐时间轴、下混、重采样为 `audio-16k.wav`，精简后的解码日志写 `extract.log`。
 
     时长校验在替换目标之前完成：截断时不留下 `audio-16k.wav`，只留日志。
     """
@@ -434,24 +578,24 @@ def derive_pcm16k(video: Path, work_dir: Path, probe_result: Probe, ffmpeg: Path
     track = probe_result.audio
     command = derive_command(ffmpeg, Path(video), track, partial)
     try:
-        result = _run(command)
-        log_path.write_text(f"{log_head}$ {subprocess.list2cmdline(command)}\n{result.stderr}",
-                            encoding="utf-8", newline="\n")
-        if result.returncode != 0:
-            raise MediaError(f"ffmpeg decode failed ({result.returncode}); see {EXTRACT_LOG}")
+        returncode, kept, swr_samples, diagnostics = _run_decode(command, log_path, log_head, track)
+        if returncode != 0:
+            raise MediaError(f"ffmpeg decode failed ({returncode}); see {EXTRACT_LOG}")
         rate, samples, pcm_sha256 = _wav_pcm(partial)
         if rate != recipes.SAMPLE_RATE:
             raise MediaError(f"Derived WAV sample rate is {rate}, expected {recipes.SAMPLE_RATE}")
         decoded_s = samples / rate
         warnings = check_duration(decoded_s, probe_result.duration_s, has_video=probe_result.has_video)
+        if errors := error_lines(diagnostics):
+            warnings.append(f"ffmpeg reported {errors} error line(s) while decoding; see {EXTRACT_LOG}")
         replace_with_retry(partial, target)
     finally:
         partial.unlink(missing_ok=True)
     return Extract(audio_copy=audio_copy, wav=target, log=log_path, sample_rate=rate, samples=samples,
                    pcm_sha256=pcm_sha256, decoded_duration_s=decoded_s,
                    duration_s=probe_result.duration_s, offset_s=float(recipes.MEDIA["offset_s"]),
-                   pan=pan_filter(track), compensation=parse_compensation(result.stderr, track, decoded_s),
-                   warnings=tuple(warnings))
+                   pan=pan_filter(track), compensation=parse_compensation(kept, swr_samples, track, decoded_s),
+                   warnings=tuple(warnings), diagnostics=diagnostics)
 
 
 def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> Extract:

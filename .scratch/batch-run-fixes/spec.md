@@ -28,7 +28,7 @@ Status: in-progress
 | --- | --- | --- | --- | --- |
 | 01 | [跨盘发布失败与审计顺序](issues/01-cross-drive-publish.md) | 1、2 | — | resolved |
 | 02 | [音轨采样率标错](issues/02-sample-rate-mislabel.md) | 3 | — | resolved |
-| 03 | [extract 诊断：按级别统计解码错误、限制日志体积](issues/03-extract-diagnostics.md) | 7、10 | — | needs-triage |
+| 03 | [extract 诊断：按级别统计解码错误、限制日志体积](issues/03-extract-diagnostics.md) | 7、10 | — | resolved |
 | 04 | [抽取质量门：解码远超视频时长、近乎全静音](issues/04-extract-quality-gate.md) | 4、5 | 03（软依赖：可能用到真实错误数） | needs-triage |
 | 05 | [归档音轨流复制失败导致整片失败](issues/05-archive-copy-failure.md) | 6 | — | needs-triage |
 | 06 | [运行日志与汇总修正](issues/06-run-log-and-summary.md) | 8、9、11、12、13 | — | needs-triage |

@@ -1,6 +1,6 @@
 # 03 extract 诊断：按级别统计解码错误、限制日志体积
 
-Status: needs-triage
+Status: resolved
 Type: task
 Blocked by: —
 
@@ -34,3 +34,33 @@ Blocked by: —
 - 台账 §A2、§A3 与"2026-11-16 复查"。
 
 ## Comments
+
+### 2026-11-16 方向已定（用户拍板）
+
+1. **ffmpeg 日志级别**：`derive_command` 改用 `-loglevel level+verbose`，每行带级别标签；`parse_compensation` 的正则不锚定行首，不受影响。
+2. **流式读取 stderr**：边读边统计、边写 `extract.log`，不再把整段 stderr 读进内存。
+3. **统计内容**：按级别计条数（error、warning）；按消息类型计数（去掉地址与数字后归一），每类留首条样例。不推算"真实声道元素缺失帧数"（只对立体声好做）；不另算丢包时长（丢包造成的时间戳间隙已由 `aresample=async=1` 补齐并计入 `net_padding_s`）。
+4. **`extract.log` 写法**：命令行、ffmpeg 头部信息、swr 补偿行、结束统计行全部保留；error／warning 行只留前 100 条与后 100 条，中间写省略条数；verbose 行不逐行写，末尾附按类型的计数表。不加写全量原始日志的开关。
+5. **诊断落点**：计数写进 `probe.json` 的 `extract.diagnostics`（产物契约变化，先改模块页）；error 条数 > 0 的文件在运行日志里各写一条 **WARNING**。判失败与阈值留给 04。
+6. **不升 `MEDIA` 版本**：日志级别与日志格式不在 `recipes.MEDIA` 里，PCM 不变；已有工作目录跳过 extract，不补 `diagnostics`。03 的诊断只写不读，不需要兼容旧数据；04 若要读再定。
+7. **现有日志**：`.local/work/jav_best_copy-15fff3e12253/` 下各工作目录的 `extract.log` 直接删除（只删这个文件）；封存目录 `D:\jav_best_copy_work\` 不动。
+
+## Answer
+
+2026-11-16 已实现：
+- `media.derive_command` 改 `-loglevel level+verbose`；`derive_pcm16k` 经 `_run_decode` 用 `Popen` 流式读 stderr，`digest_decode_log` 边读边写精简的 `extract.log`、按级别与类型计数（逐字重复的 verbose 行按原文缓存，只计条数，上限 5 万条）。swr 补偿样本数改为边读边累加，`parse_compensation` 只从保留行里取结束统计，结果不变。
+- `Extract.diagnostics` → `probe.json` 的 `extract.diagnostics`：`levels`、`decode_errors`（ffmpeg 结束统计）、前 20 类 error／warning `messages`（`level`、`count`、`pattern`、`example`）。有 error 行时 `Extract.warnings` 加 `ffmpeg reported N error line(s) while decoding; see extract.log`，编排照常写成运行日志 WARNING（跳过 extract 时从 `probe.json` 重放）。
+- `MEDIA` 不变（仍 `media-pcm16k-v2`），PCM 不变。
+- 文档：`docs/architecture/modules/config-and-media.md`（"解码日志"一段；为守住 12000 字预算顺带压缩了几处措辞，内容不变）。
+- 测试：`tests/core/test_media.py` `DecodeLogTests`（刷屏 verbose 只计数、结束统计与 swr 行保留并供补偿解析、error／warning 前后各 100 条、≤200 条全写、类型排序与上限、缓存溢出后计数不丢、`\r` 进度行与无级别行）；`tests/full/test_media_ffmpeg.py` `DecodeLogTests`（真实 ffmpeg：干净片段 0 错误且结束统计保留；确定性损坏的 AAC 报出 `decode_errors` 与告警）。
+- 离线验证（产品 `probe` + `derive_pcm16k`，封存的 `audio.m4a`，纯 CPU）：
+
+  | work_id | 原 `extract.log` | 新 `extract.log` | error 行 | warning 行 | `decode_errors` |
+  | --- | --- | --- | --- | --- | --- |
+  | d99fbd9dfb8d（正常） | — | 17 KB | 0 | 0 | 0 |
+  | 6a3f71d9853f（verbose 刷屏 3668 万行） | 1.96 GB | 74 KB | 87 | 10 | 37 |
+  | 7c97f3c8abd1（最严重） | — | 164 KB | 158314 | 1364220 | 63923 |
+
+- 决定 4 的修订（2026-11-17，用户拍板）：swr 补偿行原定全部保留，最严重文件因此仍有 40 MB；改为与 error／warning 一样留前后各 100 条（样本数全数累加），该文件降到 164 KB，补偿统计与改前逐位相同。
+- 耗时：精简本身几乎不加时（1 h 切片：只读管道 64 s，读管道并精简 62 s）；慢在 ffmpeg 自己输出数百万行 verbose（同一切片 stderr 丢弃 24 s、写文件 104 s）。旧实现同样整段走管道，因此不是回归；要拿 swr 与结束统计就得开 verbose。
+- 自动检查：`just test`（766）、`just check`、`just docs-check` 通过；`just test-full`（19）通过。

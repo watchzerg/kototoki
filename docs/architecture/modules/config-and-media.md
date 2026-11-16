@@ -42,7 +42,7 @@
 - `x0_text_cleaning`：只清 x0 原文中与非 ASCII 字符相邻的空白，w0 原文不动，实现为 `judge.clean_x0`。
 - 裁判参数是配方常量而非配置项，一个 `recipe_hash(CROSS)` 覆盖全部，任一子配方或参数变化即新身份。
 
-**下混常量**（`recipes.PAN`，进 `MEDIA` 因而进 hash）：单声道 `anull` 直通；双声道 `pan=mono|c0=0.5*c0+0.5*c1`（与基线证据相同）；`5.1`、`5.1(side)`、`6.1`、`7.1` 用前左右 1、中置 0.707、环绕 0.707、丢 LFE 的权重除以权重和、向下截到 6 位小数，系数和 ≤ 1，满幅同相输入不削波。表达式按声道序号引用；ffprobe 未给布局时按声道数取 `mono`／`stereo`／`5.1`／`7.1`（`recipes.LAYOUT_BY_CHANNELS`，嵌在 `MEDIA` 里）；其它布局（如 `5.0`、`quad`）报 `MediaError`。不用 `-ac 1`。
+**下混常量**（`recipes.PAN`，进 `MEDIA` 因而进 hash）：单声道 `anull` 直通；双声道 `pan=mono|c0=0.5*c0+0.5*c1`；`5.1`、`5.1(side)`、`6.1`、`7.1` 用前左右 1、中置 0.707、环绕 0.707、丢 LFE 的权重除以权重和、向下截到 6 位小数，系数和 ≤ 1，满幅同相输入不削波。ffprobe 未给布局时按声道数取 `mono`／`stereo`／`5.1`／`7.1`（`recipes.LAYOUT_BY_CHANNELS`，嵌在 `MEDIA` 里）；其它布局（如 `5.0`、`quad`）报 `MediaError`。不用 `-ac 1`。
 
 **`MEDIA` 覆盖全部影响音频的规则**（id `media-pcm16k-v2`）：下混常量、声道布局映射、重采样、时长容差、采样率标错纠正规则（`sample_rate_correction`）与音轨选择条目（规则说明＋语言别名表 `LANGUAGE_ALIASES`；别名表定义在 `recipes.py`，`media.py` 读它，内嵌字幕选轨同用它）。
 
@@ -50,26 +50,28 @@
 
 - 音轨选择：语言标签归一化后（`jpn`／`ja`／`jp` 大小写不敏感视为 `jpn`，按 `recipes.LANGUAGE_ALIASES`，配置值同样归一化）等于 `input.audio_language` 且非 `disposition.comment` 的音轨优先，其中 `disposition.default` 优先、否则取第一条；多条匹配告警；无匹配取第一条音轨并告警；没有音轨报 `MediaError`。
 - 记录：所选与全部音轨的绝对流索引、编码、声道数与布局、采样率、语言、default／comment、`start_time` 与时长（只作诊断，不进时间轴）、`measured_sample_rate` 与 `corrected_sample_rate`（见下条）；容器 `start_time`；字幕流清单（索引、编码、语言、default、forced，供内嵌日文字幕选轨）；告警列表。
-- 采样率标错（`media.sample_rate_check`，规则 `MEDIA["sample_rate_correction"]`）：AAC-LC 且有 `nb_frames` 与流 `duration` 时，`measured_sample_rate` = `nb_frames × 1024 ÷ duration`；声明 48000、实测在 44100 的 ±1% 内（或反过来）时 `corrected_sample_rate` 取真实值，所选音轨命中另记告警；其余不纠正。只认这一对（共用 AAC 的 SFB 表，改标签即无损）。
+- 采样率标错（`media.sample_rate_check`，规则 `MEDIA["sample_rate_correction"]`）：AAC-LC 且有 `nb_frames` 与流 `duration` 时实测 `nb_frames × 1024 ÷ duration`；声明 48000 而实测在 44100 的 ±1% 内（或反之）时 `corrected_sample_rate` 取真实值，所选音轨命中记告警。只认这一对（共用 SFB 表，改标签无损）。
 - `has_video`：除封面图（`attached_pic`）外没有视频流即为音频输入（`Probe.has_video = False`）。
 - 参照时长：视频输入取第一条非封面视频流，音频输入取所选音轨。取其 `duration`；没有时先取精确的 Matroska 标签 `DURATION`（大小写不敏感），再取 mkvmerge 统计标签 `DURATION-<lang>`；都没有时退回容器时长并告警；时长全无报 `MediaError`。
 - 流时长与 `format.duration` 相差超过 `MEDIA["duration_tolerance_s"]` 时取较小者并写入 `Probe.warnings`，`duration_source` 记实际来源。`probe.json` 的字段是 `has_video`、`duration_s`、`duration_source`。
 
 **extract**（`extract(path, work_dir, probe, config) -> Extract`）：先校验下混布局，再依次运行 ffmpeg 命令（视频两条，音频输入只有第 2 条），各写同目录临时文件（保留扩展名）后原子替换目标。
 
-1. `extract_original`（仅 `has_video`；音频输入跳过，`Extract.audio_copy` 与 `extract.audio_copy` 为 null，工作目录无 `audio.<ext>`）：`-map 0:<绝对索引> -c:a copy` 写出 `audio.<ext>`，容器映射：
+1. `extract_original`（仅视频输入；音频输入时 `audio_copy` 为 null、无 `audio.<ext>`）：`-map 0:<绝对索引> -c:a copy` 写出 `audio.<ext>`，容器映射：
    - `flac`→`.flac`；`aac`／`alac`→`.m4a`；`ac3`→`.ac3`；`eac3`→`.eac3`；`dts`→`.dts`；`opus`→`.opus`；`vorbis`→`.ogg`；`mp3`→`.mp3`；
    - 小端 PCM（`pcm_s16le`／`s24le`／`s32le`／`f32le`）→`.wav`（`-rf64 auto`）；
    - 其余（大端 PCM、`pcm_bluray`、`pcm_dvd`、`aac_latm`、`truehd` 等）→`.mka`。
-2. `derive_pcm16k`：**从输入容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`（采样率标错时最前面加 `asetrate=<真实>,asetpts=PTS*<真实>/<声明>`，`asetpts` 把被 `asetrate` 缩放的时间戳拉回容器时间；未纠正的音轨命令与 v1 相同）（ffmpeg 默认 swr）、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、`-loglevel verbose`；两条命令行与 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即输入 0 秒，`Extract.offset_s` 恒为 0。
-3. 时长校验对参照时长（字段 `Extract.duration_s`）：视频输入解码短于参照超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；音频输入短于参照只记告警、照常往下走（`check_duration(…, has_video=False)`；VBR MP3 缺 Xing 头时 ffprobe 的时长是估算值）；长于参照超过 1 s 一律只记告警。
-4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 在 verbose 下报告的"adding N audio samples of silence"／"discarding N audio samples"之和（输入采样率，含起始补齐），以及按 ffmpeg 结束统计的输入样本数算出的净补偿秒数 `net_padding_s`（派生时长 − 解码出的输入时长；已纠正时输入时长按纠正后的采样率算）。swr 只报告一部分补偿，因此以 `net_padding_s` 为准，swr 计数只作参考。超过 0.1 s 时的 WARNING 由编排写（`job.compensation_warnings`）。
+2. `derive_pcm16k`：**从输入容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`（采样率标错时最前面加 `asetrate=<真实>,asetpts=PTS*<真实>/<声明>`，后者把时间戳拉回容器时间）（ffmpeg 默认 swr）、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、`-loglevel level+verbose`（每行带级别标签；不进 `MEDIA` hash）；两条命令行与精简后的 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即输入 0 秒，`Extract.offset_s` 恒为 0。
+3. 时长校验对参照时长（字段 `Extract.duration_s`）：视频输入解码短于参照超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；音频输入短于参照只记告警、照常往下走（VBR MP3 缺 Xing 头时 ffprobe 时长是估算值）；长于参照超过 1 s 一律只记告警。
+4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 报告的补入／丢弃样本数之和（输入采样率，含起始补齐，不完整，仅作参考）与净补偿秒数 `net_padding_s`（派生时长 − ffmpeg 结束统计的输入时长，已纠正时按纠正后的采样率，以它为准）。超过 0.1 s 时的 WARNING 由编排写（`job.compensation_warnings`）。
 
-子进程一律参数列表、`stdin=DEVNULL`（ffmpeg 另加 `-nostdin`；ffprobe 不认 `-nostdin`）、UTF-8 解码。
+**解码日志**（batch-run-fixes 03）：`derive_pcm16k` 流式读 stderr，不整段进内存，经 `digest_decode_log` 写精简的 `extract.log`：info、无上下文、`in#`／`out#` 行原样写；error（含 fatal）、warning 行与 swr 补偿行各留前后 100 条（样本数全数累加）；其余 verbose 行（如坏 AAC 每帧一条的 `ChannelElement missing`）只计数；末尾附消息类型计数表。`Extract.diagnostics`（进 `probe.json`，只作诊断）含各级别条数 `levels`、所选音轨的 `decode_errors` 与前 20 类 error／warning `messages`；有 error 行时 `Extract.warnings` 加一条（不判失败）。
+
+子进程一律参数列表、`stdin=DEVNULL`（ffmpeg 另加 `-nostdin`）、UTF-8 解码。
 
 **内嵌日文字幕**（配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`，进 `ja-embedded.json` 的身份；开关 `[input] use_embedded_subtitles`）：
 
-- `media.select_subtitle(subtitles, language) -> (stream | None, warnings)`：从 `Probe.subtitles` 里选可用的字幕轨。可用 = 语言标签归一后等于 `language`（编排传 `input.audio_language`）、`codec_name` 在 `EMBEDDED["codecs"]`（`ass`、`mov_text`、`ssa`、`subrip`、`webvtt`）、不是 forced（`parse_probe` 记录的 `forced`：disposition 标了 forced，或 `tags.title` 含 "forced"、不分大小写；不少片源只在标题里写，如 `ja--forced--`）。多条可用时取 default 的，再取流索引最小的，并返回一条告警。位图字幕（PGS、VobSub、DVB）与没有语言标签的轨不可用。只看元数据，不看内容。
+- `media.select_subtitle(subtitles, language) -> (stream | None, warnings)`：从 `Probe.subtitles` 里选可用的字幕轨。可用 = 语言标签归一后等于 `language`（编排传 `input.audio_language`）、`codec_name` 在 `EMBEDDED["codecs"]`（`ass`、`mov_text`、`ssa`、`subrip`、`webvtt`）、不是 forced（`parse_probe` 记录的 `forced`：disposition 标了 forced，或 `tags.title` 含 "forced"、不分大小写）。多条可用时取 default 的，再取流索引最小的，并返回一条告警。位图字幕（PGS、VobSub、DVB）与没有语言标签的轨不可用。只看元数据，不看内容。
 - `media.extract_subtitle(video, index, ffmpeg) -> str`：`ffmpeg -map 0:<index> -c:s srt -f srt pipe:1`，返回 SRT 文本，不写文件；ffmpeg 非零退出报 `MediaError`。字幕时间与派生 WAV 一样以 ffmpeg 的输入零点为准（容器起点不为 0 时两者同样平移）。
 - `embedded.clean(text) -> (srt_text, stats)`（纯函数，只依赖 `srt` 的整数毫秒入口，毫秒格式化不自写）：
   - 自己宽松分条：时间行且上一行是纯数字编号即一条的开头；文字里的空行与数字行不会断条；不用 `srt.parse_srt`。
@@ -90,18 +92,18 @@
 - 代码：`kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py`、`kototoki.toml.example`。
 - 测试（core，`just test`）：
   - `tests/core/test_config.py`：默认值、两种相对路径基准、模型路径、未知键与已删除键、类型、环境变量破锁、示例文件覆盖全部键。
-  - `tests/core/test_recipes.py`：`pan` 系数与归一化、不削波、`pan`／重采样参数、`LAYOUT_BY_CHANNELS`、音轨选择规则（含 `LANGUAGE_ALIASES`）与采样率纠正规则进 hash、固定值、无翻译配方；`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 的 hash 全部钉住。
-  - `tests/core/test_media.py`：语言归一化、音轨选择含 commentary／多条匹配／无匹配、时长来源（含音频输入）、容器映射、命令行构造、补偿解析、采样率标错的检测、纠正滤镜与净补偿、时长校验含音频输入偏短只告警；字幕轨选择、抽取命令行与抽取失败。
+  - `tests/core/test_recipes.py`：`pan` 系数与归一化、不削波、重采样参数、`LAYOUT_BY_CHANNELS`、音轨选择（含 `LANGUAGE_ALIASES`）与采样率纠正规则进 hash、固定值、无翻译配方；`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 的 hash 全部钉住。
+  - `tests/core/test_media.py`：语言归一化、音轨选择各分支、时长来源（含音频输入）、容器映射、命令行构造、补偿解析、解码日志精简与计数、采样率标错纠正、时长校验含音频输入偏短只告警；字幕轨选择、抽取命令行与抽取失败。
   - `tests/core/test_embedded.py`：标签与覆盖块、多行与空行、绘图／空／重复／非正时长条目、排序与重新编号、清洗结果过 `srt.parse_srt`。
 - 测试（full，`just test-full`）：
-  - `tests/full/test_media_ffmpeg.py`：用 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、流复制容器、多音轨选择；临时目录含空格与非 ASCII。需要配置默认路径的 `ffmpeg.exe`、`ffprobe.exe`，缺失时测试失败而不是跳过。
+  - `tests/full/test_media_ffmpeg.py`：用 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、流复制容器、多音轨选择、解码日志（干净与损坏的 AAC）；临时目录含空格与非 ASCII。默认路径的 ffmpeg／ffprobe 缺失时失败而不跳过。
   - `tests/full/test_job_ffmpeg.py`：真实 ffmpeg 合成带 SubRip、ASS、mov_text 字幕轨的片段走完整批次编排，含容器起点 +2 s。
 - 未验证：
-  - 内嵌字幕：真实片源（流媒体片源、字幕组 ASS 的卡拉 OK 与屏幕字噪声）、假名注音、标签与内容语言不符的字幕轨。
+  - 内嵌字幕：真实片源（流媒体、字幕组 ASS 特效）、假名注音、标签与内容语言不符的轨。
   - 采样率纠正无合成测试，只离线验证过 10 个真实音轨（票据 02）；纠正后识别质量未验证；无 `nb_frames` 的容器检测不到。
   - 广播 `.ts`（音轨绝对 `start_time`、PTS 回绕、音频先于视频的负延迟）只按 ffmpeg 默认零点推理，没有真实样本；`6.1`／`7.1` 常量无真实样本。
-  - cue 时间等于视频时间只在 WAV 样本层断言（`sample / 16000 + offset_s`），cue 侧只由[日文 cue](japanese-cues.md)的离线测试断言 offset 只加一次；整片验收没有与视频画面对时。
-- 已知限制：日本广播双单声道（主／副音声）按双声道处理；`pan` 保证下混本身不削波，但其后的降采样滤波（48 kHz→16 kHz）对满幅方波这类信号会过冲到 −32768（合成测试因此用 16 kHz 源单独验证下混系数）。
+  - cue 时间等于视频时间只在 WAV 样本层断言，cue 侧只由[日文 cue](japanese-cues.md)的离线测试断言 offset 只加一次；整片验收没有与视频画面对时。
+- 已知限制：日本广播双单声道（主／副音声）按双声道处理；`pan` 保证下混本身不削波，但其后 48→16 kHz 降采样对满幅方波会过冲到 −32768（合成测试因此用 16 kHz 源验证下混系数）。
 
 ## 变更与决策来源
 

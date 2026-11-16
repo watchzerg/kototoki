@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -142,7 +143,8 @@ class SampleRateCheckTests(unittest.TestCase):
 
     def test_compensation_uses_the_corrected_rate(self) -> None:
         log = "  Input stream #0:1 (audio): 10 packets read; (441000 samples);\n"
-        stats = media.parse_compensation(log, track(index=1, sample_rate=48000, corrected_sample_rate=44100), 10.0)
+        stats = media.parse_compensation(log, (0, 0), track(index=1, sample_rate=48000, corrected_sample_rate=44100),
+                                         10.0)
         self.assertEqual(stats["net_padding_s"], 0.0)
 
 
@@ -256,6 +258,7 @@ class ExtractTests(unittest.TestCase):
         payload = result.payload()
         self.assertIsNone(payload["audio_copy"])
         self.assertEqual(payload["duration_s"], 1.0)
+        self.assertIn("diagnostics", payload)
 
 
 class ContainerTests(unittest.TestCase):
@@ -359,7 +362,7 @@ class CommandTests(unittest.TestCase):
         command = media.derive_command(self.ffmpeg, self.video, track(index=3), Path("out/.a.partial.wav"))
         self.assertEqual(command[0], str(self.ffmpeg))
         self.assertIn("-nostdin", command)
-        self.assertEqual(command[command.index("-loglevel") + 1], "verbose")
+        self.assertEqual(command[command.index("-loglevel") + 1], "level+verbose")
         self.assertEqual(command[command.index("-i") + 1], str(self.video))
         self.assertEqual(command[command.index("-map") + 1], "0:3")
         self.assertEqual(command[command.index("-af") + 1],
@@ -386,18 +389,125 @@ class CommandTests(unittest.TestCase):
         self.assertIn("-show_format", command)
 
 
+def level_line(level: str, message: str, context: str = "[aac @ 000002aed2d0fd00] ") -> str:
+    """`-loglevel level+verbose` 格式的一行（样式取自 ffmpeg n9.0.2 实际输出）。"""
+    return f"{context}[{level}] {message}\n"
+
+
+SWR = "[Parsed_aresample_0 @ 000002aed5ab9180] [SWR @ 000002aed2d1c180] "
+IN = "[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001a1e8a13ec0] "
+
+
+class DecodeLogTests(unittest.TestCase):
+    """`digest_decode_log`：精简 `extract.log`、按级别与类型计数（batch-run-fixes 03）。"""
+
+    def digest(self, lines: list[str], index: int = 0) -> tuple[str, str, dict[str, object]]:
+        out = io.StringIO()
+        kept, self.swr, diagnostics = media.digest_decode_log(lines, out, track(index=index))
+        return out.getvalue(), kept, diagnostics
+
+    def test_verbose_flood_is_counted_not_written(self) -> None:
+        lines = [level_line("verbose", f"ChannelElement 2.{n % 15} missing ") for n in range(5000)]
+        log, kept, diagnostics = self.digest(lines)
+        self.assertEqual(diagnostics["levels"], {"verbose": 5000})
+        self.assertEqual(diagnostics["messages"], [])  # 只收 error／warning 类型
+        self.assertEqual(kept, "")
+        self.assertLess(len(log.splitlines()), 10)
+        self.assertIn("5000  [verbose] [aac] ChannelElement N.N missing", log)
+        self.assertIn("e.g. [aac @ 000002aed2d0fd00] [verbose] ChannelElement 2.0 missing", log)
+        self.assertEqual(media.error_lines(diagnostics), 0)
+
+    def test_counts_survive_cache_overflow(self) -> None:
+        lines = [level_line("verbose", f"ChannelElement 2.{n % 7} missing ") for n in range(700)]
+        lines += [level_line("verbose", f"unique {n}", context="[af#0:0 @ 0001] ") for n in range(30)]
+        with mock.patch.object(media, "DECODE_LOG_CACHE", 3):
+            log, _, diagnostics = self.digest(lines)
+        self.assertEqual(diagnostics["levels"], {"verbose": 730})
+        self.assertIn("       700  [verbose] [aac] ChannelElement N.N missing", log)
+        self.assertIn("        30  [verbose] [af#N:N] unique N", log)
+
+    def test_info_end_statistics_and_swr_lines_are_kept_for_compensation(self) -> None:
+        lines = [level_line("info", "Input #0, mov,mp4,m4a, from 'a.m4a':", context=""),
+                 level_line("verbose", "Starting thread...", context="[af#0:0 @ 000002aed2cbcf00] "),
+                 level_line("verbose", "adding 24000 audio samples of silence", context=SWR),
+                 level_line("verbose", "discarding 10 audio samples", context=SWR),
+                 level_line("verbose", "  Input stream #0:1 (audio): 188 packets read (67954 bytes); 188 frames "
+                                       "decoded; 3 decode errors (144000 samples); ", context=IN),
+                 level_line("verbose", "Exiting with exit code 0", context="")]
+        log, kept, diagnostics = self.digest(lines, index=1)
+        self.assertNotIn("Starting thread", kept)
+        self.assertEqual(len(kept.splitlines()), 3)  # info、结束统计、无上下文行；swr 行另计
+        self.assertIn("adding 24000 audio samples of silence", log)
+        self.assertEqual(diagnostics["decode_errors"], 3)
+        self.assertEqual(self.swr, (24000, 10))
+        stats = media.parse_compensation(kept, self.swr, track(index=1), 3.5)
+        self.assertEqual(stats, {"swr_reported_silence_samples": 24000, "swr_reported_discarded_samples": 10,
+                                 "input_samples": 144000, "net_padding_s": 0.5})
+
+    def test_swr_lines_keep_first_and_last_hundred_but_sum_all(self) -> None:
+        lines = [level_line("verbose", f"adding {n + 1} audio samples of silence", context=SWR) for n in range(500)]
+        lines.append(level_line("verbose", "discarding 7 audio samples", context=SWR))
+        log, _, _ = self.digest(lines)
+        self.assertEqual(self.swr, (sum(range(1, 501)), 7))
+        self.assertIn("adding 100 audio samples of silence\n", log)
+        self.assertNotIn("adding 101 audio samples of silence\n", log)
+        self.assertIn("[kototoki] 301 resampler compensation line(s) omitted; the last 100 follow\n", log)
+        self.assertIn("adding 500 audio samples of silence\n", log)
+        self.assertIn("discarding 7 audio samples\n", log)
+
+    def test_error_and_warning_lines_keep_first_and_last_hundred(self) -> None:
+        lines = [level_line("error" if n % 2 else "warning", f"bad packet {n}") for n in range(1000)]
+        log, _, diagnostics = self.digest(lines)
+        self.assertEqual(diagnostics["levels"], {"error": 500, "warning": 500})
+        self.assertEqual(media.error_lines(diagnostics), 500)
+        self.assertIn("bad packet 99\n", log)
+        self.assertNotIn("bad packet 100\n", log)
+        self.assertNotIn("bad packet 899\n", log)
+        self.assertIn("[kototoki] 800 error/warning line(s) omitted; the last 100 follow\n", log)
+        self.assertIn("bad packet 900\n", log)
+        self.assertIn("bad packet 999\n", log)
+
+    def test_up_to_two_hundred_lines_are_all_written(self) -> None:
+        log, _, _ = self.digest([level_line("error", f"bad packet {n}") for n in range(150)])
+        self.assertNotIn("omitted", log)
+        self.assertIn("error/warning lines after the first 100 follow", log)
+        self.assertEqual(sum(f"bad packet {n}\n" in log for n in range(150)), 150)
+
+    def test_messages_rank_error_and_warning_types_with_examples(self) -> None:
+        dec = "[aist#0:0/aac @ 000002aed2cbb980] [dec:aac @ 000002aed5b10e40] "
+        lines = ([level_line("error", "Reserved bit set.")] * 3
+                 + [level_line("error", "Error submitting packet to decoder: Invalid data", context=dec)] * 5
+                 + [level_line("fatal", "boom", context="")]
+                 + [level_line("verbose", "ChannelElement 1.0 missing ")] * 50)
+        _, _, diagnostics = self.digest(lines)
+        self.assertEqual(media.error_lines(diagnostics), 9)
+        self.assertEqual([(m["level"], m["count"], m["pattern"]) for m in diagnostics["messages"]],
+                         [("error", 5, "[aist#N:N/aac] [dec:aac] Error submitting packet to decoder: Invalid data"),
+                          ("error", 3, "[aac] Reserved bit set."), ("fatal", 1, "boom")])
+        self.assertTrue(diagnostics["messages"][0]["example"].startswith("[aist#0:0/aac @ 000002aed2cbb980]"))
+
+    def test_messages_are_capped(self) -> None:
+        lines = [level_line("error", f"kind {chr(65 + n)}") for n in range(media.DIAGNOSTIC_MESSAGES + 5)]
+        _, _, diagnostics = self.digest(lines)
+        self.assertEqual(len(diagnostics["messages"]), media.DIAGNOSTIC_MESSAGES)
+
+    def test_carriage_return_progress_and_blank_lines(self) -> None:
+        log, _, diagnostics = self.digest(["[info] size=   1KiB time=00:00:01.00\r\n", "\n",
+                                           "no level tag at all\n"])
+        self.assertEqual(diagnostics["levels"], {"info": 1})
+        self.assertIn("size=   1KiB", log)
+        self.assertIn("no level tag at all\n", log)
+
+
 class LogAndDurationTests(unittest.TestCase):
-    def test_compensation_parses_swr_lines_and_input_samples(self) -> None:
-        log = ("[SWR @ 0x1] adding 24000 audio samples of silence\n"
-               "[SWR @ 0x1] adding 100 audio samples of silence\n"
-               "[SWR @ 0x1] discarding 10 audio samples\n"
-               "[in#0/matroska] Input stream #0:0 (video): 10 packets read\n"
+    def test_compensation_takes_swr_sums_and_parses_input_samples(self) -> None:
+        log = ("[in#0/matroska] Input stream #0:0 (video): 10 packets read\n"
                "[in#0/matroska]   Input stream #0:1 (audio): 188 packets read (67954 bytes); 188 frames decoded;"
                " 0 decode errors (144000 samples);\n")
-        stats = media.parse_compensation(log, track(index=1), 3.5)
+        stats = media.parse_compensation(log, (24100, 10), track(index=1), 3.5)
         self.assertEqual(stats, {"swr_reported_silence_samples": 24100, "swr_reported_discarded_samples": 10,
                                  "input_samples": 144000, "net_padding_s": 0.5})
-        self.assertIsNone(media.parse_compensation("", track(), 1.0)["net_padding_s"])
+        self.assertIsNone(media.parse_compensation("", (0, 0), track(), 1.0)["net_padding_s"])
 
     def test_duration_check_against_input_duration(self) -> None:
         for has_video in (True, False):
