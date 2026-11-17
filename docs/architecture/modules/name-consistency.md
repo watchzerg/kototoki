@@ -1,6 +1,6 @@
 # 专名一致性（建表；译法经翻译注入使用）
 
-状态：current；权威决定：[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)（部分被取代）、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+状态：current；权威决定：[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)（部分被取代）、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
@@ -18,7 +18,7 @@
 - 否则 `session.ensure_started()` 取运行中的 Strata（必要时启动），以 `session.client(<work_dir>/names/transport/<session.label>, timeout=1800)` 建客户端；交换目录因此是 `<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`。
 - 整份 `ja.srt` 渲染成"SRT 编号<TAB>文本"一次送入（cue 内换行替换为空格，时间轴丢弃）。
 - 预算检查走 `/v1/messages/count_tokens`：system 与 user 两段各作一条 user 消息计数再相加，超过 32256（49152 − 16384 − 512；49152 只用于算预算、不随请求发出，ADR-0026）时不请求，返回 `too_long` 空表。
-- 否则请求 `/v1/chat/completions`；回复截断（`finish_reason == "length"`）或解析／校验失败即换 seed 重试：依次用 seed、seed＋1、…、seed＋4，最多 5 个请求，取第一张合格的表即停（`table.ATTEMPTS = 5`）。仍失败返回 `failed` 空表（原因取最后一次错误的首行，`meta.attempt` 为 5）。
+- 否则请求 `/v1/chat/completions`；只有回复格式不合格（截断 `finish_reason == "length"`、非 JSON、顶层不是对象、`entries` 不是列表）才换 seed 重试（ADR-0028，配方 `retry_on: "malformed"`）：`entries` 为空列表、或条目在归一中全被丢弃，都接受为 `status = ok` 的空表（`dropped_*` 照常记录）。重试依次用 seed、seed＋1、…、seed＋4，最多 5 个请求，取第一张合格的表即停（`table.ATTEMPTS = 5`）。仍失败返回 `failed` 空表（原因取最后一次错误的首行，`meta.attempt` 为 5）。
 - 成功时 payload 为 `name-table-v2`：`work_guess`、`entries[]`、`meta`（实际 seed 与尝试序号、`dropped_shape`／`dropped_honorific`／`dropped_ja_shape`、`prompt_tokens`／`completion_tokens`、秒数）、`build`（`status`、`reason`，以及 `build_document` 补上的 `prompt_check`——`count_tokens` 或 `skipped (<错误>)`——与 `over_budget_by_usage`）。
 - **请求体**（`table._request_body`）：`messages`、采样 temperature 0.7／top_p 0.8／top_k 20／`min_p` 0／`presence_penalty` 1.5、`seed`、`max_tokens` 16384、`chat_template_kwargs.enable_thinking: false`、非流式、`model`；无 `response_format`。除 `max_tokens`（v13 为 8192，ADR-0026）外与研究侧 v13 `NamesClient.chat` 逐字节相同。`seed` 由配置保证为正整数。
 - **`count_tokens` 退路**：该端点返回 HTTP／传输错误或响应形状不符（没有整数 `input_tokens`）时，该影片内不再预检、计数按 0，运行日志一行 WARNING；每部影片一个客户端，下一部重新尝试该端点。此时只记录回复的 `usage.prompt_tokens`，超预算只在 `build.over_budget_by_usage` 标记、不失败；不得因此放宽预算。
@@ -29,7 +29,7 @@
 
 | 情况 | 结果 |
 | --- | --- |
-| 超预算（`too_long`）、5 次尝试都失败（`failed`） | 写空表（`build.status` 记原因），运行日志一行 WARNING，影片照常翻译与发布（空表不注入） |
+| 超预算（`too_long`）、5 次回复格式都不合格（`failed`） | 写空表（`build.status` 记原因），运行日志一行 WARNING，影片照常翻译与发布（空表不注入） |
 | Strata 起不来或被拒绝、OOM、HTTP 错误、传输失败 | 该影片在 `names` 阶段文件级失败（`failure.json`）；重跑同一命令对它再建表 |
 
 **表可人工校对，也是译法的唯一入口**：
@@ -44,7 +44,7 @@
 - `[names] start: N file(s)`；`[names] end: N done, M failed, T.Ts`。
 - Strata 的启动、等显存与内存、接入检查、停止来自 `kototoki.strata`，前缀 `[strata]`。
 - 每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T.Ts`，第 2 次及以后的尝试才成功时追加 `, attempt n/5`（上限取包顶层导出的 `ATTEMPTS`）；零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`。
-- 每次不合格的尝试（回复被截断、非 JSON、无有效条目）在该行之前各记一行 WARNING `[names] attempt n/5 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）。
+- 每次不合格的尝试（回复被截断、非 JSON、`entries` 不是列表）在该行之前各记一行 WARNING `[names] attempt n/5 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）。
 - `count_tokens` 不可用时一行 WARNING。
 - 传输失败、HTTP 错误或 OOM 停掉 Strata 前一行 WARNING `[names] stopping Strata after <HTTP 状态 (类别) | 传输异常类型>`（来自包顶层）。
 - Strata 不可用之后其余影片的 FAILED 行不带 traceback（原因已由 `[strata]` ERROR 行记过一次），行尾带异常消息首行。
@@ -52,8 +52,8 @@
 
 ## 实现设计
 
-- **配方与身份**：`BUILD`（配方 `q3-names-v2`）一个字典，含提示 v5 的 sha256、采样、schema sha256、`max_tokens` 16384、`reasoning off`、context 49152 与预算 32256、归一规则与常量、`attempts` 5 与 `seed_step` 1、模型、运行时身份（Strata 版本、引擎 build、默认启动及其解析值、kv `int8`，常量来自 `kototoki.strata`，与翻译配方的 `runtime` 取值相同）、请求形状。hash 用 `kototoki.recipes.recipe_hash`（`BUILD_RECIPE_HASH`，测试钉住）。
-- 与 Q3 的 `names-strata-v4` 相同的是模型、运行时身份、请求形状与建表块中除 `max_tokens`／context／预算以外的各项（这三项由 [ADR-0026](../../adr/0026-names-output-and-prompt-budget.md) 放宽，v4 为 8192／24576／15872）；另不含研究侧的说明字段与 llama.cpp 的 `model_asset`，所以 hash 不同。测试把三项换回 v4 的值后核对 v4 的 hash。
+- **配方与身份**：`BUILD`（配方 `q3-names-v3`）一个字典，含提示 v5 的 sha256、采样、schema sha256、`max_tokens` 16384、`reasoning off`、context 49152 与预算 32256、归一规则与常量、`attempts` 5、`seed_step` 1 与 `retry_on`（`malformed`）、模型、运行时身份（Strata 版本、引擎 build、默认启动及其解析值、kv `int8`，常量来自 `kototoki.strata`，与翻译配方的 `runtime` 取值相同）、请求形状。hash 用 `kototoki.recipes.recipe_hash`（`BUILD_RECIPE_HASH`，测试钉住）。
+- 与 Q3 的 `names-strata-v4` 相同的是模型、运行时身份、请求形状与建表块中除 `max_tokens`／context／预算以外的各项（这三项由 [ADR-0026](../../adr/0026-names-output-and-prompt-budget.md) 放宽，v4 为 8192／24576／15872）；另有 [ADR-0028](../../adr/0028-names-accept-empty-table.md) 新增的 `retry_on`（v4 把空表当不合格），不含研究侧的说明字段与 llama.cpp 的 `model_asset`，所以 hash 不同。测试把三项换回 v4 的值、去掉 `retry_on` 后核对 v4 的 hash。
 - 表的身份 `{ja_srt_sha256, recipe_hash: BUILD, seed}` 由[阶段计划](stage-plan.md)计算，以 `names` 键进 `published.json.sources`（审计记录）。表的内容经翻译身份的 `names_sha256` 影响译文。
 - **Strata 回调**：`build_table` 的 `chat` 回调是 `session.client()` 返回的 `LlamaClient.chat_completion`；`tokenize` 回调是 `_TokenCounter`（`/v1/messages/count_tokens`，带退路，写法与 `experiments/scene_batching_v6/v13.py` 的 `NamesClient.tokenize` 相同，复制不导入）。5 次尝试在 `build_table` 内完成。请求体与 seed 序列的等价：core 测试钉 sha256，与 v13 的实时逐字节对照在 `tests/equivalence/`。
 - **资源所有权**：Strata session 的证据在共用的 `<work root>/strata-sessions/`（[Strata 服务与共享 session](strata-session.md)）。每部影片的原始交换在 `<work root>/<id>/names/transport/<UTC戳>-<pid>/session-NN/`（`count-NN` 为两段提示的计数请求，`chat-NN` 为建表请求），按运行分目录，重建时不与旧交换撞名。本模块不取 GPU 锁、不写 `name-table.json`（编排写）、不启停 Strata（只调 `ensure_started()`／`stop()`）。
@@ -70,7 +70,7 @@
 
 - 代码：`kototoki/names/__init__.py`（`build_document`、`NamesError`、`_TokenCounter`）、`kototoki/names/table.py`（`SYSTEM_PROMPT`、`USER_TEMPLATE`、`build_messages`、`parse_reply`、归一函数、`build_table`、`BuildResult`）、`kototoki/names/recipes.py`（`BUILD`、`BUILD_RECIPE_HASH`）；编排侧 `kototoki/job.py` 的 `names_batch`。
 - 测试（core，`just test`）：
-  - `tests/core/test_names_table.py`：渲染（`USER_TEMPLATE` 的 sha256 与一个固定的 cue 渲染输出各钉一条）、解析与归一、上限、zh 形状、称呼词黑名单、提示 v5、日文写法形状、confidence 降级、`build_table` 的请求体、预算、5 次尝试与 `too_long`／`failed` 空表、零条目。
+  - `tests/core/test_names_table.py`：渲染（`USER_TEMPLATE` 的 sha256 与一个固定的 cue 渲染输出各钉一条）、解析与归一、上限、zh 形状、称呼词黑名单、提示 v5、日文写法形状、confidence 降级、`build_table` 的请求体、预算、5 次尝试与 `too_long`／`failed` 空表、空回复与条目全被丢弃都一次接受、零条目。
   - `tests/core/test_names_recipes.py`：提示与 schema 的 sha256、`BUILD` hash 钉子、改值即改 hash、与 v13 `s1_recipe("v4")` 的逐项对应钉成字面量、运行时身份等于翻译配方。
   - `tests/core/test_names_session.py`：伪 Strata session／伪客户端：正常建表、首次不合格后换 seed 成功、5 次都失败写空表且恰好 5 个请求、`count_tokens` 退路、超预算不发送、传输失败与 HTTP 错误抛 `NamesError` 并停 Strata（停之前一行 WARNING）、被拒与启动失败抛 `NamesError`、零条目不碰 session；与 v13 一致的请求体与 seed 序列钉成 sha256。
   - `tests/core/test_job.py` 的 `NamesTests`：阶段顺序与锁里的 Strata pid、表与 `sources` 的 `names` 键、终态失败空表照常发布并记 WARNING、session 不可用只让有 cue 的影片失败、建表异常只影响该影片且重跑恢复、零条目不取锁不启动；`RunLogTests` 另测重试成功的 done 行带 attempt、Strata 不可用后其余 FAILED 行不带 traceback。

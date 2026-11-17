@@ -80,12 +80,20 @@ class ParseTests(unittest.TestCase):
         reply = "<think>{不是 json}</think>" + json.dumps(GOOD, ensure_ascii=False)
         self.assertEqual(len(bt.parse_reply(reply, 3)[1]), 1)
 
-    def test_invalid_raises(self):
-        bad_entry = '{"entries": [{"entity_ja": "", "zh": "x", "forms": []}]}'
-        no_forms = '{"entries": [{"entity_ja": "桜", "zh": "（樱）", "forms": [{"ja": "桜", "zh": "（樱）"}]}]}'
-        for reply in ("没有 JSON", "{坏掉的", '{"entries": []}', bad_entry, no_forms):
+    def test_malformed_raises(self):
+        for reply in ("没有 JSON", "{坏掉的", "[]", '{"work_guess": null}', '{"entries": null}', '{"entries": {}}'):
             with self.assertRaises(ValueError):
                 bt.parse_reply(reply, 3)
+
+    def test_empty_entries_accepted(self):
+        # ADR-0028：空列表是合法回答（影片里没有专名），不抛错
+        self.assertEqual(bt.parse_reply('{"work_guess": null, "entries": []}', 3), (None, []))
+
+    def test_all_entries_dropped_by_validation_accepted_as_empty(self):
+        bad_entry = '{"entries": [{"entity_ja": "", "zh": "x", "forms": []}]}'
+        no_forms = '{"entries": [{"entity_ja": "桜", "zh": "（樱）", "forms": [{"ja": "桜", "zh": "（樱）"}]}]}'
+        for reply in (bad_entry, no_forms):
+            self.assertEqual(bt.parse_reply(reply, 3)[1], [])
 
     def test_bad_kind_becomes_other_and_duplicate_entities_dropped(self):
         entry = {"entity_ja": "桜", "zh": "樱", "kind": "weird", "forms": [{"ja": "桜", "zh": "樱"}]}
@@ -341,10 +349,11 @@ class JaShapeTests(unittest.TestCase):
             {"entity_ja": "サーヴァント ライダー", "ja": "Rider"},
             {"entity_ja": "サーヴァント ライダー", "field": "entity", "ja": "サーヴァント ライダー"}])
 
-    def test_all_bad_raises_like_before(self):
+    def test_all_bad_gives_empty_entries_and_records_drops(self):
         entry = {"entity_ja": "アサシンと契約を結べ", "zh": "暗杀者", "forms": [{"ja": "アサシンと契約を結べ", "zh": "暗杀者"}]}
-        with self.assertRaises(ValueError):
-            self.parse([entry])
+        entries, ja_shape = self.parse([entry])
+        self.assertEqual(entries, [])
+        self.assertTrue(ja_shape)
 
     def test_cleaned_entity_collides_with_earlier_entity_dropped(self):
         a = {"entity_ja": "間桐桜", "zh": "间桐樱", "forms": [{"ja": "間桐桜", "zh": "间桐樱"}]}
@@ -507,6 +516,20 @@ class BuildTableTests(unittest.TestCase):
         self.assertNotIn("\n", payload["build"]["reason"])
         self.assertNotIn("第二行", payload["build"]["reason"])
         self.assertEqual((payload["meta"]["seed"], payload["meta"]["attempt"]), (104, 5))
+
+    def test_empty_reply_is_accepted_with_one_request(self):
+        server = FakeServer(response('{"work_guess": null, "entries": []}'), response(reply_text()))
+        with self.assertNoLogs("kototoki.names", level="WARNING"):
+            result = bt.build_table(document(), server.chat, server.tokenize, 100)
+        self.assertEqual((result.status, result.attempts, len(server.bodies)), ("ok", 1, 1))
+        self.assertEqual((result.payload["entries"], result.payload["build"]), ([], {"status": "ok", "reason": None}))
+
+    def test_reply_whose_entries_are_all_dropped_is_accepted(self):
+        reply = {"entries": [{"entity_ja": "父さん", "zh": "父亲", "forms": [{"ja": "父さん", "zh": "父亲"}]}]}
+        server = FakeServer(response(json.dumps(reply, ensure_ascii=False)), response(reply_text()))
+        result = bt.build_table(document(), server.chat, server.tokenize, 100)
+        self.assertEqual((result.status, result.attempts, result.payload["entries"]), ("ok", 1, []))
+        self.assertEqual(result.payload["meta"]["dropped_honorific"], [{"entity_ja": "父さん", "ja": "父さん"}])
 
     def test_fourth_attempt_succeeds(self):
         server = FakeServer(*[response("不是 JSON")] * 3, response(reply_text()))

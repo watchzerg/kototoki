@@ -24,7 +24,7 @@
 | 翻译基线 Q3：身份 | Q2 翻译规则不变，专名表改由同一 Strata 实例上的 Flash-Next 按 `names-strata-v4` 建，失败换 seed 重试、取第一张合格的表。见 [CURRENT·翻译基线 Q3](CURRENT.md#翻译基线-q3) | [0021](0021-q3-strata-names-baseline.md)、[0017](0017-q2-strata-default-launch-baseline.md) |
 | 翻译基线 Q2（前任）：身份 | Q1 配方规则＋Strata Flash-Next 默认启动，表由当时的产品 27B 建；只作前任身份。见 [CURRENT·前任 Q2](CURRENT.md#前任-q2) | [0017](0017-q2-strata-default-launch-baseline.md) |
 | 方法禁区 | 不自动选用"翻译多次再挑选"类方法：不提议、不列候选、不在无人值守时执行；可靠性重试与降级不算，边界情况先问。见 [CURRENT·方法禁区](CURRENT.md#方法禁区) | [0008](0008-no-multi-translation-selection.md) |
-| 专名一致性 | 研究线已结题，重开只由用户明确要求（v13、v15 两次重开均已结束）；产品 `names` 阶段按 `q3-names-v2`（Q3 建表规则，只放宽输出上限与提示预算）在共用 Strata session 上建表，表只经翻译注入、不替换。见 [CURRENT·专名](CURRENT.md#专名)、[产品建表](CURRENT.md#产品建表) | [0014](0014-name-consistency-in-product.md)、[0019](0019-product-translation-q2.md)、[0021](0021-q3-strata-names-baseline.md)、[0022](0022-product-names-on-strata.md)、[0026](0026-names-output-and-prompt-budget.md) |
+| 专名一致性 | 研究线已结题，重开只由用户明确要求（v13、v15 两次重开均已结束）；产品 `names` 阶段按 `q3-names-v3` 建表，表只经翻译注入、不替换。见 [CURRENT·专名](CURRENT.md#专名)、[产品建表](CURRENT.md#产品建表) | [0014](0014-name-consistency-in-product.md)、[0019](0019-product-translation-q2.md)、[0021](0021-q3-strata-names-baseline.md)、[0022](0022-product-names-on-strata.md)、[0026](0026-names-output-and-prompt-budget.md)、[0028](0028-names-accept-empty-table.md) |
 | ASR 复读守卫 | 产品 w0 路径在 `asr` 阶段解码后用 `repeat-strict` 折叠复读，仍命中则置空；只做后处理，W0 基线身份不变。见 [CURRENT·ASR 复读守卫](CURRENT.md#asr-复读守卫) | [0023](0023-asr-repeat-guard.md) |
 | 内嵌日文字幕 | 开关开着且有可用日文文本字幕轨时跳过 STT，字幕轨抽取清洗后从 `names` 起走原链；失败回到 STT。见 [CURRENT·内嵌日文字幕](CURRENT.md#内嵌日文字幕) | [0024](0024-embedded-japanese-subtitles.md) |
 | 产品包边界与失败级别 | GPU 锁冲突一律进程级结束整批；产品不为研究侧留代码；核心测试不导入研究代码，实时对照另设目录。见 [CURRENT·产品包边界与失败级别](CURRENT.md#产品包边界与失败级别) | [0025](0025-product-package-boundaries.md) |
@@ -74,6 +74,7 @@
   4. → [0019](0019-product-translation-q2.md)（11-08）：产品只注入、不替换，建表必开。
   5. → [0022](0022-product-names-on-strata.md)（11-09）：产品建表切到 Strata Flash-Next（`q3-names-v1`，与 Q3 的 `names-strata-v4` 逐字节一致，最多 5 次请求），names 与翻译共用一个 Strata session，产品不再起 llama-server、不加载 27B。
   6. → [0026](0026-names-output-and-prompt-budget.md)（11-12）：产品建表 `max_tokens` 8192 → 16384、提示预算 15872 → 32256（`q3-names-v2`），其余与 `names-strata-v4` 相同。
+  7. → [0028](0028-names-accept-empty-table.md)（11-17）：产品建表只在回复格式不合格时换 seed，空表是合法结果（`q3-names-v3`）。
 - **Q 线基线**：
   1. [0015](0015-two-translation-baselines.md)（10-21）：**Q0**＝Qwen3.8-27B＋`qwen-wide`（`719237b9…`），来自 v9。
   2. → [0016](0016-q1-translation-baseline.md)（已合并）（11-08）：**Q1**＝Q0＋只注入 high 条目的专名表，来自 v11。
@@ -104,14 +105,15 @@
 | [0019](0019-product-translation-q2.md) | 产品翻译切到 Q2 | 有效；第 2 点中的 llama-server 建表与"不同时驻留"由 0022 替代 |
 | [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) | 音频输入、工作目录移出目标目录、双语字幕发布到源文件旁 | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 唯一翻译基线 Q3（Q2 规则＋Strata 建表，最多 5 次请求） | 有效 |
-| [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效；第 6 点中 `llama_server.py`"不挪不删"与第 1 点中"由 `tests/core/` 导入 v13 对照"由 0025 替代；第 1、2 点中的 `max_tokens`、context／预算与配方名 `q3-names-v1` 由 0026 替代 |
+| [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效；第 6 点中 `llama_server.py`"不挪不删"与第 1 点中"由 `tests/core/` 导入 v13 对照"由 0025 替代；第 1、2 点中的 `max_tokens`、context／预算与配方名 `q3-names-v1` 由 0026 替代；第 1 点中把空表算作失败的部分由 0028 替代 |
 | [0023](0023-asr-repeat-guard.md) | ASR 阶段整窗复读守卫（`repeat-strict`＋折叠） | 已接受，2026-11-11 已实现 |
 | [0024](0024-embedded-japanese-subtitles.md) | 有内嵌日文文本字幕轨的文件跳过 STT | 已接受，2026-11-11 已实现；2026-11-12 真实片源（Black Panther）运行通过，forced 判定补认标题（`embedded-ja-subtitle-v2`） |
 | [0025](0025-product-package-boundaries.md) | 产品包边界与失败级别（GPU 锁冲突进程级、产品不为研究侧留代码、核心测试不导入研究代码） | 已接受（2026-11-11），实现见计划 `architecture-cleanup` §7 |
-| [0026](0026-names-output-and-prompt-budget.md) | 产品建表放宽输出上限与提示预算（`q3-names-v2`） | 已接受，2026-11-12 已实现 |
+| [0026](0026-names-output-and-prompt-budget.md) | 产品建表放宽输出上限与提示预算（`q3-names-v2`） | 已接受，2026-11-12 已实现；第 3 点配方名与 hash 由 0028 替代 |
 | [0027](0027-no-original-audio-copy.md) | 不再流复制原始音轨 | 已接受，2026-11-17 已实现 |
+| [0028](0028-names-accept-empty-table.md) | 产品建表只在回复格式不合格时重试，空表是合法结果（`q3-names-v3`） | 已接受，2026-11-17 已实现 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0028 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0029 起。
 
 ## 记录新决定
 
@@ -137,6 +139,7 @@
 
 "当前有效决定"表的改动日志，新的一行加在最前。
 
+- 2026-11-17：ADR-0028：产品建表空表不再重试（`q3-names-v3`，batch-run-fixes 07），采纳并实现；"专名一致性"行改配方名并加 0028。
 - 2026-11-17：ADR-0027：不再流复制原始音轨（batch-run-fixes 05），采纳并实现；"产品架构"行加 0027。
 - 2026-11-12：ADR-0026：产品建表放宽 `max_tokens` 与提示预算（`q3-names-v2`），采纳并实现。
 - 2026-11-11：文档架构整理 spec §8 的 7 项由用户委托 agent 裁定（结果见该 spec §9）：ADR-0007、0008、0010、0014、0015、0017、0019、0021 状态行追加过时条款的说明，现行表各行不变。

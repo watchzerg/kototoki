@@ -1,6 +1,6 @@
 # ADR-0026：产品建表放宽输出上限与提示预算（`q3-names-v2`）
 
-状态：已接受（2026-11-12，用户决定，依据[产品全流程验收](../research/acceptance/2026-11-12-product-fullflow-acceptance.md)的观察 1）、已实现（同日）。替代 [ADR-0022](0022-product-names-on-strata.md) 第 1 点中"`max_tokens` 8192、context 24576（提示预算 15872）"与"请求体与 v13 逐字节一致"中的 `max_tokens` 一项，以及第 2 点配方名 `q3-names-v1` 与"相同：…`max_tokens` 8192、context 24576 与预算 15872"。[ADR-0021](0021-q3-strata-names-baseline.md) 的基线 Q3（`names-strata-v4`）身份不变。  
+状态：已接受（2026-11-12，用户决定，依据[产品全流程验收](../research/acceptance/2026-11-12-product-fullflow-acceptance.md)的观察 1）、已实现（同日）。替代 [ADR-0022](0022-product-names-on-strata.md) 第 1 点中"`max_tokens` 8192、context 24576（提示预算 15872）"与"请求体与 v13 逐字节一致"中的 `max_tokens` 一项，以及第 2 点配方名 `q3-names-v1` 与"相同：…`max_tokens` 8192、context 24576 与预算 15872"。[ADR-0021](0021-q3-strata-names-baseline.md) 的基线 Q3（`names-strata-v4`）身份不变。第 3 点的配方名与 hash 自 2026-11-17 起由 [ADR-0028](0028-names-accept-empty-table.md) 替代（`q3-names-v3`）。  
 范围：产品包 `kototoki/names/` 的三个常量与配方名。不改提示、schema、采样、归一规则、尝试次数、seed 序列、请求形状与 Strata 启动方式。
 
 ## 决定

@@ -23,7 +23,7 @@
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
 | 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2） | [显示契约](../testing/demo-display-contract.md)为起点 |
 | 翻译 | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，`strata launch --no-tui --model iq3_s`，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`；`confidence: high` 的专名注入；每批最多两次（seed、seed+1）；产品配方 `q2-degrade-v1` | [ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) |
-| 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，不合格依次换 seed 最多 5 次请求（配方 `q3-names-v2`，与 Q3 的 `names-strata-v4` 只差输出上限 16384 与提示预算 32256）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0026](../adr/0026-names-output-and-prompt-budget.md)、[专名一致性][names] |
+| 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，回复格式不合格才依次换 seed、最多 5 次请求，空表直接接受（配方 `q3-names-v3`，与 Q3 的 `names-strata-v4` 只差输出上限 16384、提示预算 32256 与空表不重试）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0026](../adr/0026-names-output-and-prompt-budget.md)、[ADR-0028](../adr/0028-names-accept-empty-table.md)、[专名一致性][names] |
 | 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文就是翻译结果 | 用户裁定 |
 
 ### 1.2 已裁定
@@ -137,7 +137,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 - **ASR 失败窗口**（w0／x0／cross 同一表示）：x0 生成触顶、w0 整窗复读守卫（`repeat-strict`，[ADR-0023](../adr/0023-asr-repeat-guard.md)）折叠后仍命中，都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker][stt]、[产物契约][art]）。
 - **Strata 基础设施失败与批次终态**（ADR-0019）：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、解析／校验失败、超出 context 是批次终态，进入降级；`StrataRefused` 不重试，本批其余需要模型的影片直接失败。
 - **翻译降级**（产品规则，配方另名 `q2-degrade-v1`）：批次两次尝试都失败 → 10→5→1 拆批 → 单条仍失败时该 cue 的中文位置保留日文；降级清单写 `report.json` 并在汇总给出回退数。可靠性重试与降级都不是"翻译多次再挑选"（ADR-0008）。见[翻译子系统][tr]。
-- **专名建表失败**（ADR-0022）：超预算或 5 次回复都不合格写空表（`build.status` 为 `too_long`／`failed`），记 WARNING，影片照常翻译与发布；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（[专名一致性][names]）。
+- **专名建表失败**（ADR-0022）：超预算或 5 次回复格式都不合格写空表（模型回空表不算失败，ADR-0028）（`build.status` 为 `too_long`／`failed`），记 WARNING，影片照常翻译与发布；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（[专名一致性][names]）。
 - **续跑**：重跑同一命令即可，已完成的产物按身份跳过；翻译按批次增量落盘，中断后从未完成的批次继续。回退为日文的 cue 对该身份是终态；要重试须改 `[translate] seed`（另起 run 目录、整片重译）；要重做已发布的文件须先删掉其 `.ja-zh.srt`（ADR-0020）。
 
 ## 7. 进程、环境与依赖

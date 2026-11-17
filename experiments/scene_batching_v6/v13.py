@@ -100,8 +100,9 @@ def s1_recipe(variant: str = CANDIDATE) -> dict[str, Any]:
     assert S1_CONTEXT - S1_MAX_TOKENS - PROMPT_GUARD_TOKENS == S1_PROMPT_BUDGET
     v = VARIANTS[variant]
     # Since ADR-0022 the product ``BUILD`` is itself the Strata recipe; its ``build`` block is the S1 v4 block except the
-    # three values ADR-0026 raised (pinned back here). The variants differ in ``attempts`` (the 27B-era product had 2).
-    build = dict(BUILD["build"]) | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT,
+    # three values ADR-0026 raised (pinned back here) and the product-only ``retry_on`` added by ADR-0028 (dropped here;
+    # S1 treats an empty table as a failed attempt). The variants differ in ``attempts`` (the 27B-era product had 2).
+    build = {k: val for k, val in BUILD["build"].items() if k != "retry_on"} | {"max_tokens": S1_MAX_TOKENS, "context": S1_CONTEXT,
                                     "prompt_budget": S1_PROMPT_BUDGET, "attempts": v["attempts"]}
     request: dict[str, Any] = {"response_format": None, "chat_template_kwargs": {"enable_thinking": False},
                                "model": strata.MODEL}

@@ -13,7 +13,7 @@ from experiments.scene_batching_v6 import v13
 from kototoki import names
 from kototoki.names import recipes, table
 from kototoki.recipes import recipe_hash
-from tests.core.test_names_recipes import Q3_BUILD_HASH, V13_PROMPT_BUDGET_CHECK, V13_RETRIES, V4_LIMITS
+from tests.core.test_names_recipes import Q3_BUILD_HASH, V13_PROMPT_BUDGET_CHECK, V13_RETRIES, V4_LIMITS, v4_build_block
 from tests.core.test_names_session import Case, Harness, http_error, reply
 
 
@@ -30,7 +30,7 @@ class BuildRecipeEquivalenceTests(unittest.TestCase):
         build = recipes.BUILD
         self.assertEqual(V4_LIMITS, {"max_tokens": v13.S1_MAX_TOKENS, "context": v13.S1_CONTEXT,
                                      "prompt_budget": v13.S1_PROMPT_BUDGET})
-        v4 = {"name": v13.VARIANTS["v4"]["name"], "build": build["build"] | V4_LIMITS, "model": build["model"],
+        v4 = {"name": v13.VARIANTS["v4"]["name"], "build": v4_build_block(build["build"]), "model": build["model"],
               "runtime": build["runtime"], "request": build["request"],
               "prompt_budget_check": {"endpoint": v13.COUNT_TOKENS, "segments": ["system", "user"], "sum": True,
                                       "fallback": "no precheck; usage.prompt_tokens recorded, over budget flagged"},

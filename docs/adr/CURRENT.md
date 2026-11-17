@@ -60,12 +60,12 @@ Q1 规则＋上表模型与启动，表由产品当时的 27B 建表（`BUILD_RE
 
 ## 产品建表
 
-配方 `q3-names-v2`（`kototoki/names/recipes.py` 的 `BUILD`，hash `2dbd324e5ee847d0a0171840d4a064cd6b45a3df4c2123b7075cfe1a38b379ba`，由 `tests/core/test_names_recipes.py` 钉住）（[0026](0026-names-output-and-prompt-budget.md) 第 3 点；此前 `q3-names-v1`，[0022](0022-product-names-on-strata.md) 第 2 点）。
+配方 `q3-names-v3`（`kototoki/names/recipes.py` 的 `BUILD`，hash `d57ed0c6715f63fcb32bb034db03decf02650215af62c13ba95ae7bcdbcf33d7`，由 `tests/core/test_names_recipes.py` 钉住）（[0028](0028-names-accept-empty-table.md) 第 3 点；此前 `q3-names-v2`，[0026](0026-names-output-and-prompt-budget.md) 第 3 点；`q3-names-v1`，[0022](0022-product-names-on-strata.md) 第 2 点）。
 
-- 请求体与 seed 序列与 `names-strata-v4` 一致（提示 v5、schema、采样、无 `response_format`、`enable_thinking: false`、`count_tokens` 预检），只有 `max_tokens` 为 16384（v4 为 8192）；最多 5 个请求，取第一张合格的表（0022 第 1 点；0026 第 1 点）。
+- 请求体与 seed 序列与 `names-strata-v4` 一致（提示 v5、schema、采样、无 `response_format`、`enable_thinking: false`、`count_tokens` 预检），只有 `max_tokens` 为 16384（v4 为 8192）；最多 5 个请求，取第一张合格的表（0022 第 1 点；0026 第 1 点）。只有回复格式不合格（截断、非 JSON、顶层不是对象、`entries` 不是列表）才换 seed；`entries` 为空或条目全被归一丢弃都接受为空表，`build.status = ok`（0028 第 1、2 点）。
 - 提示预算 32256（context 按 49152 计，只用于算预算；v4 为 24576／15872）（0026 第 2 点）。
-- 与 `names-strata-v4` 的差别：上述三项、不含研究侧说明字段与 `model_asset`；三项换回 v4 的值后 hash 等于 `38cb7bcd…`（0022 第 2 点；0026 第 3 点）。
-- `count_tokens` 不可用时该片不再预检、计数按 0、只记 WARNING；5 次都失败写 `build.status = failed` 的空表，照常翻译、不注入（0022 第 1 点）。
+- 与 `names-strata-v4` 的差别：上述三项、建表块的 `retry_on: "malformed"`（v4 把空表当不合格重试）、不含研究侧说明字段与 `model_asset`；三项换回 v4 的值、去掉 `retry_on` 后 hash 等于 `38cb7bcd…`（0022 第 2 点；0026 第 3 点；0028 第 3 点）。
+- `count_tokens` 不可用时该片不再预检、计数按 0、只记 WARNING；5 次回复格式都不合格写 `build.status = failed` 的空表，照常翻译、不注入（0022 第 1 点；0028 第 2 点）。
 - 表身份 `{ja_srt_sha256, recipe_hash, seed}`（0022 第 2 点）。
 - 与翻译共用一个 Strata session，整批只启动一次，任何阶段不起 llama-server、不加载 27B；生命周期在 `kototoki/strata.py`（0022 第 3、4 点）。
 - 失败：传输／HTTP／OOM 停 Strata、该片 `names` 文件级失败；启动失败整批累计 3 次即 `unavailable`；`StrataRefused` 使两个阶段其余影片都失败（0022 第 5 点）。
@@ -132,4 +132,5 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 | [0015](0015-two-translation-baselines.md) | 第 2 点（H0 身份）、第 3 点（Q0 身份）、第 4 点其余测试规则、第 6、7 点 | 第 1 点、第 4 点"写明 H0 还是 Q2"、第 5 点基线含义 → 0018 |
 | [0017](0017-q2-strata-default-launch-baseline.md) | 第 3 点；身份节的 Q1 规则、Q2 两处改动、服务、请求、接入检查、配方身份（均为 Q3 组成部分） | 第 1 点 → 0021；第 2 点对照对象经 0018 第 2 点扩展、再由 0021 改为 Q3 |
 | [0018](0018-q2-sole-translation-baseline.md) | 第 2、4 点（改为针对 Q3）、第 3 点"H0 不再是基线"、第 5 点 | 第 1 点 → 0021；第 3 点"产品当前的翻译实现" → 0019 |
-| [0022](0022-product-names-on-strata.md) | 第 1 点其余（提示、采样、请求形状、预检、seed 序列与 5 次尝试）、第 3–5 点 | 第 1 点 `max_tokens` 8192、context 24576／预算 15872，第 2 点配方名 `q3-names-v1` → 0026；第 6 点与第 1 点"由 `tests/core/` 导入 v13 对照" → 0025 |
+| [0022](0022-product-names-on-strata.md) | 第 1 点其余（提示、采样、请求形状、预检、seed 序列与 5 次尝试）、第 3–5 点 | 第 1 点 `max_tokens` 8192、context 24576／预算 15872，第 2 点配方名 `q3-names-v1` → 0026；第 6 点与第 1 点"由 `tests/core/` 导入 v13 对照" → 0025；第 1 点把空表算作失败 → 0028 |
+| [0026](0026-names-output-and-prompt-budget.md) | 第 1、2、4 点 | 第 3 点配方名 `q3-names-v2` 与 hash → 0028 |

@@ -32,7 +32,7 @@ Status: in-progress
 | 04 | [抽取质量门：解码远超视频时长、近乎全静音](issues/04-extract-quality-gate.md) | 4、5 | 03（软依赖：可能用到真实错误数） | resolved |
 | 05 | [归档音轨流复制失败导致整片失败](issues/05-archive-copy-failure.md) | 6 | — | resolved（改为取消流复制，ADR-0027） |
 | 06 | [运行日志与汇总修正](issues/06-run-log-and-summary.md) | 8、9、11、12、13 | — | resolved |
-| 07 | [专名表把空列表判为不合格](issues/07-names-empty-list.md) | 14 | — | needs-triage |
+| 07 | [专名表把空列表判为不合格](issues/07-names-empty-list.md) | 14 | — | resolved（ADR-0028，`q3-names-v3`） |
 | 08 | [单字与语气词 cue 的翻译失败](issues/08-short-cue-translation.md) | 15 | — | needs-triage |
 | 09 | [极短窗口识别字数过多导致对齐失败](issues/09-short-window-asr-overflow.md) | 16 | — | needs-triage |
 

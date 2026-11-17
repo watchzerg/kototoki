@@ -4,7 +4,7 @@ ADR-0014、ADR-0022 与 `docs/architecture/modules/name-consistency.md`）。
 移植自 `experiments/name_consistency/build_table.py`（历史实现只复制，不导入），配置照抄 ADR-0013 冻结的最佳
 已知配置：提示 v5、no-think 官方采样、程序兜底全开（zh 形状、称呼词黑名单、evidence<3 的 person 降级、日文写法
 形状），不调参；请求参数按基线 Q3 的 `names-strata-v4`（ADR-0021），只有输出上限与提示预算按 ADR-0026 放宽：
-`max_tokens` 16384、上下文按 49152 计（提示预算 32256），最多 5 次尝试。`name-table-v2` 的 JSON schema 只是解析器校验的形状，不再随请求发出（Strata 的 `response_format` 会改写提示，
+`max_tokens` 16384、上下文按 49152 计（提示预算 32256），最多 5 次尝试；与 Q3 不同，空表不触发重试（ADR-0028）。`name-table-v2` 的 JSON schema 只是解析器校验的形状，不再随请求发出（Strata 的 `response_format` 会改写提示，
 v13 §4.0）；它的 sha256 仍是配方身份的一部分。`SYSTEM_PROMPT` 与研究脚本逐字节相同，`names.recipes` 的 sha256 钉子守护。
 
 本模块不碰服务、不写文件、不打含内容的日志：对 Strata 的调用只经两个注入的回调 `chat(body) -> dict`
@@ -68,13 +68,15 @@ _DE_NEXT_TO_KATAKANA = re.compile("的[ァ-ヺー]|[ァ-ヺー]的")
 # 请求与预算常量（配方 `names.recipes.BUILD` 引用）。ADR-0026 起与 Q3 的 `names-strata-v4`（8192、24576、预算 15872）
 # 只差两项：输出上限 16384；上下文按 49152 计（只用于算预算、不发给服务端，Strata 实际上下文 131072），减输出上限与
 # 512 余量得到提示预算 32256。`PROMPT_BUDGET` 是 system+user 两段文本的 token 总上限；512 余量留给 chat 模板与控制
-# token。最多 5 次尝试，seed 依次 +1，取第一张合格的表（ADR-0008：不挑选）。
+# token。最多 5 次尝试，seed 依次 +1，取第一张合格的表（ADR-0008：不挑选）。只有格式不合格（截断、非 JSON、
+# `entries` 不是列表）才重试；空表是合法结果（ADR-0028，`RETRY_ON` 进配方）。
 MAX_TOKENS = 16384
 CONTEXT_SIZE = 49152
 PROMPT_GUARD_TOKENS = 512
 PROMPT_BUDGET = CONTEXT_SIZE - MAX_TOKENS - PROMPT_GUARD_TOKENS
 ATTEMPTS = 5
 SEED_STEP = 1
+RETRY_ON = "malformed"
 HONORIFIC_VERSION = "honorific-blacklist-v1"
 
 SYSTEM_PROMPT = """你是日本动画／电影字幕的专名整理员。用户给出的是一部作品日语字幕轨的 ASR（自动语音识别）转写稿，每行格式为"cue 编号<TAB>日文台词"。
@@ -294,15 +296,17 @@ def parse_reply(reply: str, cue_count: int, dropped: list[dict[str, Any]] | None
                 dropped_honorific: list[dict[str, Any]] | None = None,
                 dropped_ja_shape: list[dict[str, Any]] | None = None
                 ) -> tuple[str | None, list[dict[str, Any]]]:
-    """解析并校验回复，返回 (work_guess, entries)。缺关键字段的条目丢弃，全部丢光则抛 ValueError。
+    """解析并校验回复，返回 (work_guess, entries)。只有格式不合格（非 JSON、顶层不是对象、`entries` 不是列表）才抛
+    ValueError；`entries` 为空列表、或条目在归一中全被丢弃，都是合法结果，返回空的 entries（ADR-0028：格式不合格
+    才重试，内容不挑）。缺关键字段的条目丢弃。
     因 zh 形状不合被丢的实体／写法／变体追加进 `dropped`（若给出）；日文写法是称呼词（HONORIFIC_JA）而被丢的
     写法追加进 `dropped_honorific`，丢光写法的实体整条丢弃。日文写法先过形状过滤（`_clean_ja`）再查称呼词，
     形状不合的写法追加进 `dropped_ja_shape`；entity_ja 本身不合格时，取清洗后的串（空白被去掉）或第一个保留写法的
     ja，一个写法都不剩则整条丢弃并以 field="entity" 记录。"""
     data = json.loads(_json_text(reply))
     raw_entries = data.get("entries") if isinstance(data, dict) else None
-    if not isinstance(raw_entries, list) or not raw_entries:
-        raise ValueError("entries must be a non-empty list")
+    if not isinstance(raw_entries, list):
+        raise ValueError("entries must be a list")
     guess = data.get("work_guess")
     guess = guess.strip() if isinstance(guess, str) and guess.strip() else None
     entries: list[dict[str, Any]] = []
@@ -343,8 +347,6 @@ def parse_reply(reply: str, cue_count: int, dropped: list[dict[str, Any]] | None
             "zh_variants": _zh_variants(raw.get("zh_variants"), entity, dropped),
             "evidence": sorted(set(evidence))[:MAX_ITEMS],
         }))
-    if not entries:
-        raise ValueError("no valid entries after validation")
     return guess, entries
 
 
@@ -398,7 +400,7 @@ def _request_body(messages: list[dict[str, str]], seed: int) -> dict[str, Any]:
 
 def build_table(document: SourceDocument, chat: Chat, tokenize: Tokenize, seed: int) -> BuildResult:
     """建表。零条目文档不请求；system+user 提示的 token 总数超预算返回 `too_long` 空表；否则最多 `ATTEMPTS` 次，第 N 次 seed 加
-    `(N-1) * SEED_STEP`，回复被截断（`finish_reason == length`）或 `parse_reply` 抛 `ValueError` 即重试，
+    `(N-1) * SEED_STEP`，回复被截断（`finish_reason == length`）或 `parse_reply` 抛 `ValueError`（格式不合格）即重试，
     全部失败返回 `failed` 空表（原因取最后一次错误的首行）。传输层异常不在此处理，直接抛给调用方。"""
     none_dropped: tuple[list, list, list] = ([], [], [])
     if not document.cues:
