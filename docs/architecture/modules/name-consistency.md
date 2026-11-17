@@ -47,7 +47,7 @@
 - 每次不合格的尝试（回复被截断、非 JSON、无有效条目）在该行之前各记一行 WARNING `[names] attempt n/5 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）。
 - `count_tokens` 不可用时一行 WARNING。
 - 传输失败、HTTP 错误或 OOM 停掉 Strata 前一行 WARNING `[names] stopping Strata after <HTTP 状态 (类别) | 传输异常类型>`（来自包顶层）。
-- Strata 不可用之后其余影片的 FAILED 行不带 traceback（原因已由 `[strata]` ERROR 行记过一次）。
+- Strata 不可用之后其余影片的 FAILED 行不带 traceback（原因已由 `[strata]` ERROR 行记过一次），行尾带异常消息首行。
 - 条目文字、`work_guess`、提示与回复正文不进日志，只在工作目录。
 
 ## 实现设计

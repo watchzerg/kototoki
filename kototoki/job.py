@@ -365,6 +365,16 @@ def child_env(config: Config) -> dict[str, str]:
     return {**os.environ, **OFFLINE_ENV, **QUIET_ENV, "HF_HOME": str(cache), "TORCH_HOME": str(cache)}
 
 
+def _failure_kind(stage: str, cause: BaseException) -> tuple[str, str, str | None, int | None]:
+    """失败类别：阶段、异常类型与抛出位置（最内层帧的文件与行号）。每个文件各抛一个新异常对象时（如发布的
+    `OSError`）也归为同一类；同类型但从别处抛出的仍算新的一类。没有 traceback 的异常位置为 None。"""
+    tb = cause.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno) if tb is not None else (None, None)
+    return (stage, f"{type(cause).__module__}.{type(cause).__qualname__}", *where)
+
+
 @dataclass
 class _Context:
     config: Config
@@ -376,13 +386,14 @@ class _Context:
     sleep: Callable[[float], None]
     models: ModelSha
     files: list[VideoFile] = field(default_factory=list)
-    traced: list[BaseException] = field(default_factory=list)  # 已带 traceback 记过的异常（同一原因只记一次）
+    traced: set[tuple[str, str, str | None, int | None]] = field(default_factory=set)  # 已带 traceback 记过的失败类别
 
     def fail(self, video: VideoFile, stage: str, error: BaseException | None = None, *,
              error_type: str | None = None, traceback: bool = True) -> None:
         """记该文件该阶段失败；`error` 为 None 时 failure.json 已由 worker 写出，类型取 worker 事件的 `error_type`。
 
-        同一个异常对象（含 `PlanError` 包着的同一缓存异常）只在第一次带 traceback。
+        同一类失败（`_failure_kind`：阶段、异常类型、抛出位置）只在第一次带 traceback；不带 traceback 的行改为
+        附上异常消息首行（截到 200 字符），原因不丢（batch-run-fixes 06.3）。
         """
         if error is not None:
             artifacts.write_failure(video.work_dir, stage, error)
@@ -390,12 +401,14 @@ class _Context:
         video.failed = stage
         self.summary.failed[video.relative] = stage
         cause = error.__cause__ if isinstance(error, PlanError) and error.__cause__ is not None else error
-        if cause is not None and any(cause is seen for seen in self.traced):
-            traceback = False
-        elif cause is not None and traceback:
-            self.traced.append(cause)
-        logger.error(f"[{stage}] FAILED {video.relative}" + (f": {error_type}" if error_type else ""),
-                     exc_info=error if traceback else None)
+        if cause is not None and traceback:
+            kind = _failure_kind(stage, cause)
+            traceback = kind not in self.traced
+            self.traced.add(kind)
+        line = f"[{stage}] FAILED {video.relative}" + (f": {error_type}" if error_type else "")
+        if error is not None and not traceback and (message := str(error).strip()):
+            line += f": {message.splitlines()[0][:200]}"
+        logger.error(line, exc_info=error if traceback else None)
 
     def ensure_gpu_lock(self) -> None:
         if self.gpu_lock.held:

@@ -1650,23 +1650,34 @@ class RunLogTests(JobCase):
         _, file = self.run_logged()
         self.assertTrue(any(re.fullmatch(r"\[vad\] worker exited with code 3, see run-\d{8}T\d{6}Z-vad\.stderr\.log", w)
                             for w in self.entries_at(file, "WARNING")))
-        self.assertEqual(self.entries_at(file, "ERROR"), ["[vad] FAILED a.mkv: WorkerCrashed"])
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[vad] FAILED a.mkv: WorkerCrashed: vad worker exited with code 3"])
 
     def test_startup_failure_is_logged_once(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
         self.plan({"asr": {"a.mkv": "startup"}})
         _, file = self.run_logged()
         self.assertEqual(self.entries_at(file, "ERROR"), ["[asr] worker startup failed: RuntimeError",
-                                                          "[asr] FAILED a.mkv: WorkerCrashed",
-                                                          "[asr] FAILED b.mkv: WorkerCrashed"])
+                                                          "[asr] FAILED a.mkv: WorkerCrashed: asr worker startup failed: RuntimeError",
+                                                          "[asr] FAILED b.mkv: WorkerCrashed: asr worker startup failed: RuntimeError"])
         self.assertNotIn("Traceback", "\n".join(file))
 
     def test_one_cached_cause_gets_one_traceback(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
         self.enterContext(mock.patch("kototoki.job.gpu.verify_models", side_effect=FileNotFoundError("model missing")))
         _, file = self.run_logged()
-        self.assertEqual(self.entries_at(file, "ERROR"), ["[vad] FAILED a.mkv: PlanError", "[vad] FAILED b.mkv: PlanError"])
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[vad] FAILED a.mkv: PlanError",
+                                                          "[vad] FAILED b.mkv: PlanError: FileNotFoundError: model missing"])
         self.assertEqual("\n".join(file).count("kototoki.plan.PlanError: FileNotFoundError: model missing"), 1)  # 链式 traceback 只出现一份
+
+    def test_same_kind_of_failure_gets_one_traceback(self) -> None:
+        """回归（batch-run-fixes 06.3）：每个文件各抛一个新异常、但阶段、类型与抛出位置相同，只第一次带 traceback，
+        其后一行带消息。"""
+        self.make_inputs("a.mkv", "b.mkv", "c.mkv")
+        self.extract_errors.update({"a.mkv", "b.mkv"})
+        _, file = self.run_logged()
+        self.assertEqual(self.entries_at(file, "ERROR"), ["[extract] FAILED a.mkv: MediaError",
+                                                          "[extract] FAILED b.mkv: MediaError: fake extract failure: b.mkv"])
+        self.assertEqual("\n".join(file).count("Traceback (most recent call last):"), 1)
 
     def test_cues_log_start_done_end_with_counts(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
@@ -1728,7 +1739,9 @@ class RunLogTests(JobCase):
         _, file = self.run_logged()
         errors = self.entries_at(file, "ERROR")
         self.assertEqual([e for e in errors if "FAILED" in e],
-                         [f"[names] FAILED {rel}: StrataRefused" for rel in ("a.mkv", "b.mkv", "c.mkv")])
+                         ["[names] FAILED a.mkv: StrataRefused"]
+                         + [f"[names] FAILED {rel}: StrataRefused: Strata is unavailable for the rest of this batch: "
+                            "another Strata launch is serving" for rel in ("b.mkv", "c.mkv")])
         self.assertEqual("\n".join(file).count("Traceback (most recent call last):"), 1)  # 只有触发拒绝的第一部
 
     def test_plan_line_counts_where_each_file_resumes(self) -> None:
