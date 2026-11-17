@@ -1,20 +1,20 @@
-# STT ASR：w0／x0 引擎、cross 裁判与复读守卫
+# STT ASR：w0／x0 引擎、cross 裁判与整窗守卫
 
-状态：current；权威决定：[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+状态：current；权威决定：[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)
 
 ## 定位与阅读
 
-负责 asr 阶段的内容：两个推理适配器（w0 = faster-whisper large-v3，x0 = Qwen3-ASR-1.7B-hf）、可选的 `cross` 引擎（同一进程两路转写＋Whisper 教师强制打分裁判）、w0 的整窗复读守卫，以及 ASR 壳 `workers/asr.py` 如何组合它们写出 `asr.json`。
+负责 asr 阶段的内容：两个推理适配器（w0 = faster-whisper large-v3，x0 = Qwen3-ASR-1.7B-hf）、可选的 `cross` 引擎（同一进程两路转写＋Whisper 教师强制打分裁判）、w0 的整窗守卫，以及 ASR 壳 `workers/asr.py` 如何组合它们写出 `asr.json`。
 
-worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分级、日志配置）、VAD 与对齐见 [STT worker](stt-workers.md)。现行引擎取值、`cross` 配方与守卫规则的完整定义见[现行决定](../../adr/CURRENT.md)（"产品 STT 引擎""ASR 复读守卫"两节）；配方常量见[配置、配方与媒体提取](config-and-media.md)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分级、日志配置）、VAD 与对齐见 [STT worker](stt-workers.md)。现行引擎取值、`cross` 配方与守卫规则的完整定义见[现行决定](../../adr/CURRENT.md)（"产品 STT 引擎""ASR 整窗守卫"两节）；配方常量见[配置、配方与媒体提取](config-and-media.md)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
-**引擎与模型键**：`config.engine` 取 `w0`（默认）、`x0` 或 `cross`。加载哪些适配器、读哪些模型键按 `plan.ENGINE_PARTS`：w0 只读 `w0`／`w0_mel_assets`，x0 只读 `x0`，cross 三者都读；`recipe_hash` 分别为 `recipes.W0`、`X0`、`CROSS` 的 hash。`W0` 含 `guard` 块（ADR-0023），`CROSS` 嵌套 `W0` 与 `X0`。
+**引擎与模型键**：`config.engine` 取 `w0`（默认）、`x0` 或 `cross`。加载哪些适配器、读哪些模型键按 `plan.ENGINE_PARTS`：w0 只读 `w0`／`w0_mel_assets`，x0 只读 `x0`，cross 三者都读；`recipe_hash` 分别为 `recipes.W0`、`X0`、`CROSS` 的 hash。`W0` 含 `guard` 块（ADR-0023、ADR-0030），`CROSS` 嵌套 `W0` 与 `X0`。
 
 **`asr.json`**（三种引擎同构）：`schema_version`、`engine`、`offset_s`、`input`、`chunks`（照抄 `vad.json`）、`original_segments`（与窗口一一对应：`text`、秒与整数样本、`avg_logprob`）、`asr_traces`、`failed_windows`、保留文本 `text`、`metadata`、`stages`。
 
-- `asr_traces` 是引擎自有的诊断：w0 为 tokens、prompt、解码参数、特征 SHA256，被复读守卫改动的窗口另有 `guard`。
+- `asr_traces` 是引擎自有的诊断：w0 为 tokens、prompt、解码参数、特征 SHA256，被整窗守卫改动的窗口另有 `guard`。
 - x0 为 tokens、`generated_tokens`、`token_limit_reached`、原始输出、检测语言、输入设备与形状证据、PCM SHA256 与逐窗耗时。
 - 解码抛 `RuntimeError` 的失败窗口 trace 为 `null`。
 
@@ -32,19 +32,24 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - 触顶（生成 token 数达到 4096）的窗口：段内保留截断文字、trace 照常记录，并以原因 `token_limit_reached: generated <n> tokens` 作为失败窗口返回；壳经 `protocol.fail_window` 把该窗 `text` 置空、截断文字移入 `failed_windows`，不进对齐、cue 与翻译（[技术设计](../../specs/bilingual-subtitle-pipeline.md) §6）。
 - 单窗生成抛 `RuntimeError` 的处理同 w0。段结构与 w0 相同，`avg_logprob` 为 `null`。
 
-### w0 复读守卫
+### w0 整窗守卫
 
-[ADR-0023](../../adr/0023-asr-repeat-guard.md)；纯逻辑 `kototoki/guard.py`，壳内 `workers.asr.apply_guard`。w0 转写返回之后、组装文档之前，壳对每个**未失败**的窗口调用 `guard.apply`：
+[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)；纯逻辑 `kototoki/guard.py`，壳内 `workers.asr.apply_guard`。w0 转写返回之后、组装文档之前，壳对每个**未失败**的窗口调用 `guard.apply(text, end − start)`。三条规则都在规范化文本（`judge.normalize`：NFKC、去标点与空白）上判定，参数在 `recipes.W0["guard"]`，不是配置项；无法规范化的文字（跨簇 NFKC 组合）三条都不命中。顺序：
 
-- 规则 `repeat-strict`，在规范化文本（`judge.normalize`：NFKC、去标点与空白）上判定：周期 ≥2 字的单元相邻重复 ≥10 份（同一字符连写按周期 2 计），或 ≥3 字的子串不重叠出现 ≥10 次；且重复部分覆盖该窗规范化文字 ≥50%（覆盖率四舍五入到 4 位小数）。
-- 参数在 `recipes.W0["guard"]`，不是配置项。无法规范化的文字（跨簇 NFKC 组合）按不命中处理。
-- 折叠（`action: collapse`）：在原文上保留覆盖最多的那段相邻重复的第一个单元，删掉其后各次重复所占的原文区间（含夹在其中的标点），其余照抄。
+1. **复读 `repeat-strict`**：周期 ≥2 字的单元相邻重复 ≥10 份（同一字符连写按周期 2 计），或 ≥3 字的子串不重叠出现 ≥10 次；且重复部分覆盖该窗规范化文字 ≥50%（覆盖率四舍五入到 4 位小数）。
+   - 折叠（`action: collapse`）：在原文上保留覆盖最多的那段相邻重复的第一个单元，删掉其后各次重复所占的原文区间（含夹在其中的标点），其余照抄。
+   - 置空（`action: blank`）：折叠后仍命中，或只有非相邻复现命中（没有可折叠的区段）。
+2. **语速 `speech-rate`**：对复读处理后（可能已折叠）的文字，规范化字数 ÷ 窗口时长 > 20 字/秒即置空。拦住 Whisper 在极短窗口（几十到几百毫秒）上编出的整句；也保证 MMS（每帧 20 ms）放得下全部字符。
+3. **已知幻听句 `hallucination-phrase`**：复读处理后的整窗规范化文字等于名单中的一句（`ご視聴ありがとうございました`、`チャンネル登録よろしくお願いします`、`byH`）即置空。只比整窗，这几句作为长句的一部分不拦。名单是 Whisper large-v3 的固定幻听，随模型而不是随内容；换模型时要重新整理。
+
+第一个置空的规则生效。处理结果：
+
 - 被折叠的段 `text` 换成折叠后的文字，`avg_logprob` 与 trace 里的 tokens 仍是解码原值（因此 tokens 与 `text` 不再对应）。
-- 置空（`action: blank`）：折叠后仍命中，或只有非相邻复现命中（没有可折叠的区段）时，该窗作为失败窗口追加，原因 `guard:repeat-strict`，经 `protocol.fail_window` 把原文移入 `failed_windows`、段文字置空，不进对齐、cue 与翻译。
-- 两种情况都在该窗 trace 写 `guard = {rule, action, period, copies, removed_raw_chars}`；置空时后三项描述被放弃的折叠，没有可折叠区段时为 `null`／`null`／0。
-- 只做后处理：不重解码、不温度回退，不看压缩比与 `avg_logprob`。解码抛错的失败窗口不过守卫。x0 引擎不过守卫。
+- 被置空的窗口作为失败窗口追加，原因 `guard:<规则名>`，经 `protocol.fail_window` 把原文（未折叠）移入 `failed_windows`、段文字置空，不进对齐、cue 与翻译。
+- 两种情况都在该窗 trace 写 `guard`，内容是生效规则的记录，不含文字：复读 `{rule, action, period, copies, removed_raw_chars}`（置空时后三项描述被放弃的折叠，没有可折叠区段时为 `null`／`null`／0）；语速 `{rule, action, chars, duration_s}`；幻听句 `{rule, action, phrase_index}`。复读折叠后又被语速或幻听句置空时，只记置空的那条。
+- 只做后处理：不重解码、不温度回退，不看压缩比、`avg_logprob` 与 `no_speech_prob`。解码抛错的失败窗口不过守卫。x0 引擎不过守卫。
 - 进度行与每文件 INFO 行带守卫改动的窗口数（`guarded_windows`／`N guarded`，折叠与置空都算；进度行的计数由编排抄进运行日志的 `[asr] done` 行）；每个被折叠的窗口一行 WARNING（窗口号、周期、份数、删去字符数），被置空的窗口走失败窗口的 WARNING 行；都不含文字。
-- 范围有限：低压缩比的插入套话不在守卫范围（ADR-0023）。
+- 范围有限：语速正常的长窗口里，名单外的套话与"整窗只转出一句"的漏转不在守卫范围（ADR-0030）。
 
 ### cross 引擎
 
@@ -52,7 +57,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 - **加载**：`models` 同时需要 `w0`、`w0_mel_assets`、`x0`，模型核对两路的全部文件。`start` 按 `ENGINE_PARTS` 次序先加载 `WhisperAsr`（CT2 fp16）再加载 `QwenAsr`（bf16），两者常驻到进程退出，分别记加载耗时；仍先 `import torch` 再导入 CT2。
 - **共驻**：产品只有两模型同进程共驻这一种路径，运行时不看显存、不回退。
-- **逐文件三步**：① Whisper 转写全部窗口，过复读守卫（同 w0 引擎），得 `asr-w0.json`；② Qwen 转写全部窗口，得 `asr-x0.json`；③ 裁判，得 `asr-judge.json` 与合并结果 `asr.json`。两路共用同一份 `vad.json`，窗口一一对应。
+- **逐文件三步**：① Whisper 转写全部窗口，过整窗守卫（同 w0 引擎），得 `asr-w0.json`；② Qwen 转写全部窗口，得 `asr-x0.json`；③ 裁判，得 `asr-judge.json` 与合并结果 `asr.json`。两路共用同一份 `vad.json`，窗口一一对应。
 - `compute_cross` 把四个产物作为 `(path, identity, payload)` 序列返回，`gpu.file_processor` 查一次 CUDA 后依次写出三个审计产物、最后写 `asr.json`；中途失败时没有新的 `asr.json`，阶段整段重算。
 
 **裁判**（纯逻辑在 `kototoki/judge.py`：整文件 `judge_file`，单窗 `judge_window`；打分由 `WhisperAsr.score` 提供，经壳作为回调传入）：
@@ -65,7 +70,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 **裁判的逐窗规则**（按顺序）：
 
-- w0 窗口失败（含被复读守卫置空）：窗口仍记失败，不以 x0 替代（`decision = w0_failed`）。
+- w0 窗口失败（含被整窗守卫置空）：窗口仍记失败，不以 x0 替代（`decision = w0_failed`）。
 - x0 窗口失败（含触顶）：取 w0，不裁判（`x0_failed`）。
 - 两路规范化后相同：取 w0，不打分（`identical`）。
 - 原文无法规范化：取 w0（`guard = normalize_failed`）；合并结果为空而 w0 非空：保持 w0（`guard = empty_result`）。
@@ -96,8 +101,9 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - `kototoki.judge.judge_window(...)`：纯函数，输入一个窗口的两路文本与打分函数，返回合并文本与该窗口的审计记录。
 - `kototoki.judge.judge_file(...)`：整文件纯函数，输入两路逐窗文本与各自的失败窗口、打分回调与 `CROSS` 参数，输出合并文本、逐窗记录（`window_record`）与计数；`clean_x0`、`normalize` 也在 `judge`。
 - `judge` 属基础层，只依赖标准库，不导入 torch、`experiments`、`kototoki_eval` 与任何推理模块；打分函数由壳传入。
-- `kototoki.guard` 属基础层，只导入 `recipes` 与 `judge.normalize`。`guard.RULE` 是规则名加五个参数（取自 `recipes.W0["guard"]`）；`guard.check(text) -> bool` 判断是否命中。
-- `guard.apply(text) -> (new_text, record | None)`：未命中返回原文与 `None`；命中返回记录 `{rule, action, period, copies, removed_raw_chars}`，`action` 为 `collapse` 时 `new_text` 是折叠后的文字，为 `blank` 时调用方应把该窗置空（`new_text` 仍是原文）。
+- `kototoki.guard` 属基础层，只导入 `recipes` 与 `judge.normalize`。`guard.REPEAT`、`guard.SPEECH_RATE`、`guard.PHRASES` 是三条规则的规则名与参数（取自 `recipes.W0["guard"]` 的三个子块）。
+- `guard.apply(text, duration_s) -> (new_text, record | None)`：按顺序过三条规则；未命中返回原文与 `None`；否则返回生效规则的记录，`action` 为 `collapse` 时 `new_text` 是折叠后的文字，为 `blank` 时调用方应把该窗置空（`new_text` 仍是原文）。`duration_s` 不为正抛 `ValueError`。
+- `guard.check_repeat(text) -> bool`、`guard.apply_repeat(text)`：只跑复读规则（`apply` 的第一步，也是与研究实现实时对照的入口）。
 - 守卫只处理字符串；改写段文字、写 trace 与失败窗口记账在壳 `workers/asr.py`。
 
 ## 代码与验证入口
@@ -106,9 +112,9 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - `tests/core/test_asr_whisper.py`：导入顺序（伪模块）、逐窗失败；`score`（伪模型：按输入顺序累加 log 概率、空文本得 0 且不送入 `align`、分批）。
 - `tests/core/test_asr_qwen.py`（伪 processor／模型）：配方生成参数、只取 prompt 之后的 token、触顶窗口保留截断文字并返回失败、`RuntimeError` 窗口、模型不在 CUDA 即失败；经壳串到对齐与 `build_cues`：触顶窗口置空、截断文字进 `failed_windows`、不进 cue；x0 模型文件清单与配方 hash。
 - `tests/core/test_judge.py`：规范化、编辑对齐与分歧区间、偏移映射、原文假设与规范化回退、相同窗口不打分、`d > m` 边界、多区间合并、空结果守卫、批切分、数量不符抛错、`clean_x0`、`judge_file` 的逐窗决策（w0 失败优先于 x0 失败、打分出错、窗口记录、计数）；与研究脚本合成样例的结果钉成 sha256。
-- `tests/core/test_guard.py`：10 份命中 9 份不命中、覆盖率边界、单字连写按周期 2、标点夹在重复之间时的原文区间、只有非相邻复现或折叠后仍命中即置空、无法规范化不命中、`guard.RULE` 等于配方块、不导入 torch／`experiments`；一组构造文本上的命中与折叠结果钉成 sha256。
+- `tests/core/test_guard.py`：复读——10 份命中 9 份不命中、覆盖率边界、单字连写按周期 2、标点夹在重复之间时的原文区间、只有非相邻复现或折叠后仍命中即置空、无法规范化不命中，一组构造文本上的命中与折叠结果钉成 sha256；整窗——恰好 20 字/秒不置空、超过即置空、标点不计字数、整窗幻听句置空而长句内与名单外的感谢不拦、复读先于后两条且后两条看折叠后的文字、时长不为正抛错；三个规则常量等于配方块、名单已是规范化形式、不导入 torch／`experiments`。
 - `tests/core/test_stt_workers.py` 的 ASR 部分：
-  - 守卫：折叠改写段文字并写 trace、置空进 `failed_windows`、已失败窗口不过守卫、x0 引擎不受影响、cross 的裁判拿到守卫后的 w0 文字而 x0 那一路不过守卫。
+  - 守卫：折叠改写段文字并写 trace、复读置空进 `failed_windows`、语速与幻听句置空的原因与 trace、已失败窗口不过守卫、x0 引擎不受影响、cross 的裁判拿到守卫后的 w0 文字而 x0 那一路不过守卫；日志不含文字。
   - `cross`：四个产物齐全且身份分别按单引擎／cross 计算、边界 d 保持 w0、偏好 x0 的区间被切换、w0 失败窗口仍记失败、x0 失败窗口取 w0、打分出错与数量不符取 w0 且日志不含文字、w0 那一路之后失败时四个产物都不写、合并结果被对齐消费。
   - 加载：先 Whisper 后 Qwen 并拆分两路模型身份、单引擎只加载自己的部件（`CrossStartupTest`）。
   - 字节：四个 cross 产物与单引擎 `asr.json` 钉成 sha256（`AsrArtifactBytesTest`，`time.perf_counter` 固定）。
@@ -120,9 +126,9 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 ## 变更与决策来源
 
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
-- 研究：[交叉打分](../../research/2026-10-19-asr-pair-cross-score.md)、[v15](../../research/2026-11-10-asr-robustness-v15.md)
+- 研究：[交叉打分](../../research/2026-10-19-asr-pair-cross-score.md)、[v15](../../research/2026-11-10-asr-robustness-v15.md)；`no_speech_prob` 测量（`experiments/asr_nospeech/`，票据 batch-run-fixes 09）
 - 验收：[cross 共驻探针](../../research/acceptance/2026-10-19-cross-coresidency-probe.md)、[cross 产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)
-- 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、`.scratch/cross-asr-judge/`、`.scratch/asr-repeat-guard/`、`.scratch/runtime-logging-gaps/`
+- 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、`.scratch/cross-asr-judge/`、`.scratch/asr-repeat-guard/`、`.scratch/batch-run-fixes/`（`issues/09-short-window-asr-overflow.md`）、`.scratch/runtime-logging-gaps/`
 - 计划：[`docs/plans/asr-repeat-guard.md`](../../plans/asr-repeat-guard.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
 - 历史记录：[模块页拆出的历史记录](../../research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md)
 - 来源代码：`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`、`experiments/asr_robustness_v15/repeat.py`、`experiments/quality_v5`

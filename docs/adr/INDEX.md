@@ -25,7 +25,7 @@
 | 翻译基线 Q2（前任）：身份 | Q1 配方规则＋Strata Flash-Next 默认启动，表由当时的产品 27B 建；只作前任身份。见 [CURRENT·前任 Q2](CURRENT.md#前任-q2) | [0017](0017-q2-strata-default-launch-baseline.md) |
 | 方法禁区 | 不自动选用"翻译多次再挑选"类方法：不提议、不列候选、不在无人值守时执行；可靠性重试、按条追问与拆分不算，边界情况先问。见 [CURRENT·方法禁区](CURRENT.md#方法禁区) | [0008](0008-no-multi-translation-selection.md) |
 | 专名一致性 | 研究线已结题，重开只由用户明确要求（v13、v15 两次重开均已结束）；产品 `names` 阶段按 `q3-names-v3` 建表，表只经翻译注入、不替换。见 [CURRENT·专名](CURRENT.md#专名)、[产品建表](CURRENT.md#产品建表) | [0014](0014-name-consistency-in-product.md)、[0019](0019-product-translation-q2.md)、[0021](0021-q3-strata-names-baseline.md)、[0022](0022-product-names-on-strata.md)、[0026](0026-names-output-and-prompt-budget.md)、[0028](0028-names-accept-empty-table.md) |
-| ASR 复读守卫 | 产品 w0 路径在 `asr` 阶段解码后用 `repeat-strict` 折叠复读，仍命中则置空；只做后处理，W0 基线身份不变。见 [CURRENT·ASR 复读守卫](CURRENT.md#asr-复读守卫) | [0023](0023-asr-repeat-guard.md) |
+| ASR 整窗守卫 | 产品 w0 路径在 `asr` 阶段解码后依次过三条规则：`repeat-strict` 折叠复读（仍命中则置空）、语速 > 20 字/秒置空、整窗是已知 Whisper 幻听句置空；只做后处理，W0 基线身份不变。见 [CURRENT·ASR 整窗守卫](CURRENT.md#asr-整窗守卫) | [0023](0023-asr-repeat-guard.md)、[0030](0030-asr-window-plausibility-guard.md) |
 | 内嵌日文字幕 | 开关开着且有可用日文文本字幕轨时跳过 STT，字幕轨抽取清洗后从 `names` 起走原链；失败回到 STT。见 [CURRENT·内嵌日文字幕](CURRENT.md#内嵌日文字幕) | [0024](0024-embedded-japanese-subtitles.md) |
 | 产品包边界与失败级别 | GPU 锁冲突一律进程级结束整批；产品不为研究侧留代码；核心测试不导入研究代码，实时对照另设目录。见 [CURRENT·产品包边界与失败级别](CURRENT.md#产品包边界与失败级别) | [0025](0025-product-package-boundaries.md) |
 
@@ -44,6 +44,7 @@
   4. → [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13／14）：进产品，VAD 固定 `cuda:0`。
   5. → [0012](0012-cross-asr-judge.md)（10-19）：增加可选引擎 `cross`，默认仍 w0。
   6. → [0023](0023-asr-repeat-guard.md)（11-10 采纳，11-11 实现）：产品 w0 路径加整窗复读守卫（`repeat-strict`＋折叠），产品 W0 配方换 id；基线身份不变。
+  7. → [0030](0030-asr-window-plausibility-guard.md)（11-18）：守卫加语速（> 20 字/秒）与已知幻听句两条置空规则，产品 W0 配方 `guard-v3`；基线身份不变。
 - **翻译模型与采样（H0）**：
   1. [0004](0004-hy-mt2-translation-baseline.md)（已合并）（10-06）：Q3_K_M，greedy，上下文 4096。
   2. → [0005](0005-apex-i-compact-translation-baseline.md)（10-07）：APEX-I-Compact；10-08 改为 `official30b-cached-v1`。
@@ -107,15 +108,16 @@
 | [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) | 音频输入、工作目录移出目标目录、双语字幕发布到源文件旁 | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 唯一翻译基线 Q3（Q2 规则＋Strata 建表，最多 5 次请求） | 有效 |
 | [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效；第 6 点中 `llama_server.py`"不挪不删"与第 1 点中"由 `tests/core/` 导入 v13 对照"由 0025 替代；第 1、2 点中的 `max_tokens`、context／预算与配方名 `q3-names-v1` 由 0026 替代；第 1 点中把空表算作失败的部分由 0028 替代 |
-| [0023](0023-asr-repeat-guard.md) | ASR 阶段整窗复读守卫（`repeat-strict`＋折叠） | 已接受，2026-11-11 已实现 |
+| [0023](0023-asr-repeat-guard.md) | ASR 阶段整窗复读守卫（`repeat-strict`＋折叠） | 已接受，2026-11-11 已实现；第 4 点配方 id／hash 与第 5 点"不管插入套话"由 0030 替代 |
 | [0024](0024-embedded-japanese-subtitles.md) | 有内嵌日文文本字幕轨的文件跳过 STT | 已接受，2026-11-11 已实现；2026-11-12 真实片源（Black Panther）运行通过，forced 判定补认标题（`embedded-ja-subtitle-v2`） |
 | [0025](0025-product-package-boundaries.md) | 产品包边界与失败级别（GPU 锁冲突进程级、产品不为研究侧留代码、核心测试不导入研究代码） | 已接受（2026-11-11），实现见计划 `architecture-cleanup` §7 |
 | [0026](0026-names-output-and-prompt-budget.md) | 产品建表放宽输出上限与提示预算（`q3-names-v2`） | 已接受，2026-11-12 已实现；第 3 点配方名与 hash 由 0028 替代 |
 | [0027](0027-no-original-audio-copy.md) | 不再流复制原始音轨 | 已接受，2026-11-17 已实现 |
 | [0028](0028-names-accept-empty-table.md) | 产品建表只在回复格式不合格时重试，空表是合法结果（`q3-names-v3`） | 已接受，2026-11-17 已实现 |
 | [0029](0029-translate-per-cue-resolution.md) | 产品翻译按条收下、只追问未解决的 cue（`q3-translate-v1`） | 已接受，2026-11-17 已实现 |
+| [0030](0030-asr-window-plausibility-guard.md) | ASR 整窗守卫加语速与已知幻听句两条规则（`guard-v3`） | 已接受，2026-11-18 已实现 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0030 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0031 起。
 
 ## 记录新决定
 
@@ -141,10 +143,8 @@
 
 "当前有效决定"表的改动日志，新的一行加在最前。
 
-- 2026-11-17（batch-run-fixes，均采纳并实现）：ADR-0029 产品翻译按条收下、只追问未解决的 cue（`q3-translate-v1`，票 08），"产品翻译"行改配方名与规则并加 0029；ADR-0028 产品建表空表不再重试（`q3-names-v3`，票 07），"专名一致性"行改配方名并加 0028；ADR-0027 不再流复制原始音轨（票 05），"产品架构"行加 0027。
-- 2026-11-12：ADR-0026：产品建表放宽 `max_tokens` 与提示预算（`q3-names-v2`），采纳并实现。
+- 2026-11-17／18（batch-run-fixes，均采纳并实现）：ADR-0030 ASR 整窗守卫加语速与已知幻听句两条规则（`w0-faster-whisper-large-v3-guard-v3`，票 09，11-18），"ASR 复读守卫"行改名为"ASR 整窗守卫"并加 0030；ADR-0029 产品翻译按条收下、只追问未解决的 cue（`q3-translate-v1`，票 08），"产品翻译"行改配方名与规则并加 0029；ADR-0028 产品建表空表不再重试（`q3-names-v3`，票 07），"专名一致性"行改配方名并加 0028；ADR-0027 不再流复制原始音轨（票 05），"产品架构"行加 0027。
 - 2026-11-11（文档架构整理）：表压成每行一句话，完整定义移到 [CURRENT.md](CURRENT.md)；spec §8 的 7 项由用户委托 agent 裁定（结果见该 spec §9）：ADR-0007、0008、0010、0014、0015、0017、0019、0021 状态行追加过时条款的说明，现行表各行不变。
-- 2026-11-11：ADR-0025：GPU 锁冲突一律进程级、产品不为研究侧留代码、核心测试不导入研究代码，同日采纳；同日 ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT，采纳并实现；ADR-0023 的 ASR 复读守卫已实现并验收。
-- 2026-11-10：ADR-0023 采纳。
+- 2026-11-11：ADR-0025：GPU 锁冲突一律进程级、产品不为研究侧留代码、核心测试不导入研究代码，同日采纳；同日 ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT，采纳并实现；ADR-0023（11-10 采纳）的 ASR 复读守卫已实现并验收；11-12 ADR-0026：产品建表放宽 `max_tokens` 与提示预算（`q3-names-v2`），采纳并实现。
 - 2026-11-09：ADR-0021 把唯一基线改为 Q3；同日 ADR-0022 把产品建表切到 Strata，names 与翻译共用一个 Strata session。
 - 2026-11-08：合并精简；同日 ADR-0018 定唯一基线 Q2，ADR-0019 把产品翻译切到 Q2，ADR-0020 改输入范围、工作目录与发布。

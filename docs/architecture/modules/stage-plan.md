@@ -54,7 +54,7 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 - `ASR_RECIPES` 有 `w0`、`x0`、`cross`（→ `recipes.CROSS`）三项，其它值抛错。
 - `cross` 的 `asr.json` 身份：上游 PCM SHA256 ＋ `vad.json` SHA256 ＋ `recipe_hash(CROSS)` ＋ 两路模型文件 SHA256；`model_files("asr", models, engine="cross")` 按 `ENGINE_PARTS["cross"]` 返回 w0 与 x0 两套清单的并集。
-- `CROSS` 嵌入 `W0`、`X0` 与裁判参数，任一子配方变化即身份变化；`W0` 含复读守卫的 `guard` 块（[ADR-0023](../../adr/0023-asr-repeat-guard.md)）。
+- `CROSS` 嵌入 `W0`、`X0` 与裁判参数，任一子配方变化即身份变化；`W0` 含整窗守卫的 `guard` 块（[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)）。
 - 审计产物 `asr-w0.json`／`asr-x0.json` 用单引擎身份（`asr_identity("w0"|"x0", …)`，只含该路模型文件），`asr-judge.json` 用 cross 身份；三者不进 `STAGE_OUTPUT`，不参与 `is_current`。
 
 **模型文件清单**：

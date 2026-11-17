@@ -1,6 +1,6 @@
 # 模块边界
 
-状态：current；权威决定：[ADR-0012](../adr/0012-cross-asr-judge.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)；现行配方见 [CURRENT](../adr/CURRENT.md)
+状态：current；权威决定：[ADR-0012](../adr/0012-cross-asr-judge.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)；现行配方见 [CURRENT](../adr/CURRENT.md)
 
 本文只规定依赖方向、唯一归属、接缝、状态与并发规则。各模块做什么见[架构总览](INDEX.md)的模块表与各模块页；模块页说明自己如何遵守，实际偏差在模块页就地注明，不在此改写规则。
 

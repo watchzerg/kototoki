@@ -13,9 +13,9 @@ payload 为 `schema_version`、`engine`、`offset_s`、`input`、`chunks`（照�
 保留文本 `text`、`metadata`、`stages`。cross 的 `asr.json` 取 w0 的段结构、trace 与失败窗口，段文字换成合并文本；
 三个审计产物不参与 `is_current`，窗口文字只写进 `.work/` 产物，不进日志。
 
-w0 的转写（w0 引擎，以及 cross 的 w0 那一路）在解码之后过一遍整窗复读守卫（`kototoki.guard`，ADR-0023）：命中窗口
-折叠后改写段文字，折叠后仍命中的作为失败窗口（原因 `guard:repeat-strict`）置空，两种情况都在该窗 trace 里记 `guard`；
-x0 的转写不过守卫。
+w0 的转写（w0 引擎，以及 cross 的 w0 那一路）在解码之后过一遍整窗守卫（`kototoki.guard`，ADR-0023、ADR-0030）：
+复读窗口折叠后改写段文字；复读折叠后仍命中、语速超限或整窗是已知幻听句的作为失败窗口（原因 `guard:<规则名>`）置空；
+两种情况都在该窗 trace 里记 `guard`。x0 的转写不过守卫。
 本模块导入时不加载 torch／CT2，适配器在 `start` 里才导入。
 """
 
@@ -60,7 +60,7 @@ def log_failures(job_id: str, failures: list[tuple[int, str]], label: str = "") 
 
 def apply_guard(job_id: str, segments: list[dict[str, Any]], traces: list[Any],
                 failures: list[tuple[int, str]]) -> int:
-    """对未失败的 w0 窗口逐个过复读守卫，就地改 `segments`／`traces`／`failures`，返回被守卫改动的窗口数。
+    """对未失败的 w0 窗口逐个过整窗守卫，就地改 `segments`／`traces`／`failures`，返回被守卫改动的窗口数。
 
     折叠：换掉该段文字；置空：文字不动，追加一条失败（之后由 `fail_window` 移入 `failed_windows`）。
     两者都把守卫记录写进该窗 trace 的 `guard`。日志只记窗口号、动作与计数。
@@ -70,7 +70,7 @@ def apply_guard(job_id: str, segments: list[dict[str, Any]], traces: list[Any],
     for index, segment in enumerate(segments):
         if index in failed:
             continue
-        text, record = guard.apply(segment["text"])
+        text, record = guard.apply(segment["text"], segment["end"] - segment["start"])
         if record is None:
             continue
         guarded += 1
@@ -97,7 +97,7 @@ class Transcript(NamedTuple):
 
 def transcribe(job_id: str, asr: Any, part: str, audio: Any, vad: Mapping[str, Any], load_s: float,
                label: str = "") -> Transcript:
-    """一路转写 → 计时 → 守卫 → 记失败 → 组文档；`part` 是 `plan.ENGINE_PARTS` 的部件名，只有 w0 过复读守卫。"""
+    """一路转写 → 计时 → 守卫 → 记失败 → 组文档；`part` 是 `plan.ENGINE_PARTS` 的部件名，只有 w0 过整窗守卫。"""
     started = time.perf_counter()
     segments, traces, failures = asr.transcribe(audio, vad["chunks"])
     inference_s = time.perf_counter() - started

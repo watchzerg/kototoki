@@ -285,6 +285,29 @@ class AsrWorkerTest(WorkerTestCase):
         self.assertIn("[asr] 0123456789ab: window 1 failed: guard:repeat-strict", output)
         self.assertNotIn("たすけ", output)
 
+    def test_guard_blanks_impossible_speech_rate_and_hallucination_phrase(self):  # ADR-0030
+        self.run_vad()
+        fast = "今日は良い天気なので外へ出かけて買い物をします"  # 规范化 23 字，窗口 1 s
+        asr = FakeEngine("w0", (fast, "ご視聴ありがとうございました。", "はい"))
+        with self.assertLogs("kototoki.workers", "INFO") as logs:
+            self.assertEqual(self.run_asr(asr), EXIT_OK)
+        document = artifacts.read_json(self.work_dir / artifacts.ASR)
+        validate_transcript(document)
+        self.assertEqual(document["text"], "はい")
+        self.assertEqual(document["failed_windows"], [
+            {"chunk_index": 0, "reason": "guard:speech-rate", "text": fast},
+            {"chunk_index": 1, "reason": "guard:hallucination-phrase", "text": "ご視聴ありがとうございました。"}])
+        self.assertEqual(document["asr_traces"][0]["guard"], {"rule": "speech-rate", "action": "blank", "chars": 23,
+                                                              "duration_s": 1.0})
+        self.assertEqual(document["asr_traces"][1]["guard"], {"rule": "hallucination-phrase", "action": "blank",
+                                                              "phrase_index": 0})
+        self.assertEqual((self.progress()[-1]["failed_windows"], self.progress()[-1]["guarded_windows"]), (2, 2))
+        output = "\n".join(logs.output)
+        self.assertIn("[asr] 0123456789ab: window 0 failed: guard:speech-rate", output)
+        self.assertIn("[asr] 0123456789ab: window 1 failed: guard:hallucination-phrase", output)
+        for text in ("天気", "視聴"):
+            self.assertNotIn(text, output)
+
     def test_x0_engine_is_not_guarded(self):
         self.run_vad()
         self.assertEqual(self.run_asr(FakeEngine("x0", (REPEATED, RECURRING, "はい")), engine="x0"), EXIT_OK)
@@ -483,23 +506,23 @@ BYTE_SCENARIOS = {
 # 2026-11-11 架构整理票据 06 改动前（提交 c04f21d）的代码在这些夹具上写出的产物字节 sha256，
 # `time.perf_counter` 固定为 0.0（`stages`、`score_s` 是墙钟）。重构不得改变任何一个。
 PINNED_ASR_BYTES = {
-    "switch": {"asr.json": "e57539391666718e406c5787c3b40b520ac5221b0b6159ca8f9c6f4e8237a5db",
-               "asr-w0.json": "c1bdc0ca835ad3133ae4ac10f9631c96dc190f4a39d4b06f838644a829da742f",
+    "switch": {"asr.json": "0241a7740e07a9a2484e577ebc1b7adf39c9babc2c4eb27970457c503cd49637",
+               "asr-w0.json": "507a9d2aec04b28d3d43fa34f88778fcd31d69836c06310d88464e9f74b95637",
                "asr-x0.json": "9d6440c199073ee87a5be7e9860d1159004e7bccb20c93a225aed4cfa2a0f691",
-               "asr-judge.json": "4e98582f8df24dfbea884be3a967cda28c6bb68ef69eff3887d5d33f696a3274"},
-    "w0_failed": {"asr.json": "f4763538ee3af457ccfd222c20dc3c19069580df83d3b789c367b12d3f0d1a5b",
-                  "asr-w0.json": "c1ae25eacd4adac5b5c466a2065260ccdfa4ea40b08d30faa7ac8ed9745d6ac7",
+               "asr-judge.json": "5acafb632daf8a8462d48914cd74b21fc74558ea72eccd96bc7e1a1184fbb8ff"},
+    "w0_failed": {"asr.json": "bddae7b2e0a129bed8fc794566a108fc86e29f3a4bb254f3410a462d0c70e20b",
+                  "asr-w0.json": "e2d3f5f96fbdb8f5639a63212e7193a65f1325d578d19da1e40566cfd92d1062",
                   "asr-x0.json": "ea2aa241a794e3bd57ad2e469b596d64cf14bea24d4277462b9db94afa4f579a",
-                  "asr-judge.json": "2947f72b66910e8ee4973e30fd685c32a00f0f100cf7b4b44458bc0ad0a28f5d"},
-    "guard": {"asr.json": "81ee13a730182b5a0f547ebc5f93a32b02b0e43c7024e81337ccb1dc34eef888",
-              "asr-w0.json": "42b81885c448d2de8cf598cd58134a19a515de86a42656b8c63ad472332914d0",
+                  "asr-judge.json": "640d24718d6b403492ed796918b7b95bb6f5ccd2fca6fc959f615bff2ff2a796"},
+    "guard": {"asr.json": "1f1fe568ab154d0334cbba05ba5636bca635bd2a0fafa29e476cab2821962d3b",
+              "asr-w0.json": "8aa669fbf7a0d227581d9464cffd324769331f5adfc1058c277287f61896f7db",
               "asr-x0.json": "d9f45b6263b3115eeb54087de5bfec6b9ebfe93d273e0dc7ccc069fa5b9bc7ce",
-              "asr-judge.json": "443ee83e35661ca294f48ac644671f8a2fa845415401ab7d30009ae35ee6f321"},
-    "score_error": {"asr.json": "ce142e830684b5de5fd7e785bea75963c9618921001af140a2e88ad6e415299c",
-                    "asr-w0.json": "fe42630bcb9505f083146b6c74f73bcb769b85f12316f7b1464f8eb38e7ddfdc",
+              "asr-judge.json": "3ce75502e9fdbd737eae80881d1d63a097228a8e8c3b5e9d6585b869e8818094"},
+    "score_error": {"asr.json": "5cecd9682e70e7ef8fa998e90e888436da562a213b8a28d546311b626b78d244",
+                    "asr-w0.json": "500c955d2b9bb36f5691e73004cf6f3faf6e1dc53bf32f826a47792f26b37bfb",
                     "asr-x0.json": "6bff8762369cd17250f8305ea0b310a3769f58c849eb347900d54cb91e21bcad",
-                    "asr-judge.json": "96e56ae2f02259a2f4864e6380b0e9217b596dc9404191c190148fe41666c57d"},
-    "w0": "a893c653f8e736a1cbb3604a02b3d7f224f36511e5b38a901b092a46d17644f0",
+                    "asr-judge.json": "1fd15762f494ebbdaf6ba7e06e947835c6df83be44967d0945ac088c76e03cb9"},
+    "w0": "62650b8101cca6a3e6a7a0b36ac1f9ffe71e7afd042932eb189b35812f6f3291",
     "x0": "9d8561a7ac2eaac4877319ebcbce42f362b16e97317717b8e1429821aba22ee4",
 }
 
@@ -638,10 +661,10 @@ class AlignWorkerTest(WorkerTestCase):
 # 2026-11-11 架构整理票据 08 改动前（票据 06 提交之上、offset 仍由对齐加）的代码在 offset 0 的整链夹具上写出的字节
 # sha256：`align.json`、`ja-cues.json`（payload 以固定身份 {"fixed": 1} 写出）与 `ja.srt`；`time.perf_counter` 固定为 0.0。
 PINNED_CUE_CHAIN_BYTES = {
-    "w0": {"align.json": "28d07c9f1492bf7bcaaee0c75992832b676821a9458956669182aee58c6db026",
+    "w0": {"align.json": "f3acec80808004de6161860ef76ed3342a0024da90c4203f3751ff3c149e5e56",
            "ja-cues.json": "f3736e25d8c364e29f9679b3874acae9938b941f66b151e42722927ba025131e",
            "ja.srt": "ea77acfaa498939d0c3d4fe1a42a22da36e21293aaeb738df053df626c17ca94"},
-    "cross": {"align.json": "d9776df4e7a447b50084fa9b233a74abf2368768ef043674d27b78106a862107",
+    "cross": {"align.json": "11022594478655024309dbb9cff1075b19c13c107765e2c926837b4ebddd796b",
               "ja-cues.json": "fc6469779d1131b0b5c8b3b814b177de6bff13bfbe66aba551ab80024e3e27b4",
               "ja.srt": "b75439e16c5e0172164e2561d7c0758f7921e8cfe4d7908757813bc7dad04615"},
 }

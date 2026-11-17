@@ -100,11 +100,11 @@ VAD: dict[str, Any] = {
 }
 
 # --- ASR w0（来源 experiments/w0_demo/asr.py；W0 契约 w0-pyannote-current-mms-v1） -------------------------
-# 解码与特征同 W0 基线（`baseline` 不变）；`guard` 是产品在解码之后加的整窗复读守卫（ADR-0023），
-# 规则来源 experiments/asr_robustness_v15/repeat.py 的 `repeat-strict`，实现在 kototoki/guard.py。
+# 解码与特征同 W0 基线（`baseline` 不变）；`guard` 是产品在解码之后加的整窗守卫，实现在 kototoki/guard.py：
+# 复读（ADR-0023，来源 experiments/asr_robustness_v15/repeat.py 的 `repeat-strict`）、语速与已知幻听句（ADR-0030）。
 
 W0: dict[str, Any] = {
-    "id": "w0-faster-whisper-large-v3-guard-v2",
+    "id": "w0-faster-whisper-large-v3-guard-v3",
     "baseline": "w0-pyannote-current-mms-v1",
     "model": "faster-whisper large-v3 (CTranslate2)",
     "device": "cuda:0",
@@ -126,11 +126,29 @@ W0: dict[str, Any] = {
         "initial_prompt": None, "without_timestamps": True, "prefix": None, "hotwords": None,
         "max_length": "model.max_length",
     },
+    # 整窗守卫（ADR-0023、ADR-0030）：先复读，再在（折叠后的）文字上看语速与已知幻听句；第一个置空的规则生效。
     "guard": {
-        "rule": "repeat-strict", "min_period": 2, "min_copies": 10, "min_count": 10, "min_length": 3,
-        "min_coverage": 0.5,
-        "action": "collapse tandem run to its first unit; blank via failed_windows if still flagged",
         "normalize": "kototoki.judge.normalize",
+        "order": "repeat-strict, then speech-rate, then hallucination-phrase on the possibly collapsed text; "
+                 "the first blank wins",
+        "repeat": {
+            "rule": "repeat-strict", "min_period": 2, "min_copies": 10, "min_count": 10, "min_length": 3,
+            "min_coverage": 0.5,
+            "action": "collapse tandem run to its first unit; blank via failed_windows if still flagged",
+        },
+        # 人说不出的语速：Whisper 在极短窗口上编出的整句；也保证 MMS（每帧 20 ms）放得下全部字符
+        "speech_rate": {
+            "rule": "speech-rate", "max_chars_per_s": 20,
+            "measure": "normalized character count / (window end - start seconds); blank when greater",
+            "action": "blank via failed_windows",
+        },
+        # Whisper large-v3 在无可辨语音时编出的视频结尾字幕（随模型，不随内容）；整窗规范化文字等于其一才置空
+        "hallucination_phrases": {
+            "rule": "hallucination-phrase",
+            "phrases": ["ご視聴ありがとうございました", "チャンネル登録よろしくお願いします", "byH"],
+            "match": "whole-window normalized text equals one phrase",
+            "action": "blank via failed_windows",
+        },
     },
 }
 

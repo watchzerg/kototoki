@@ -34,6 +34,6 @@ Status: in-progress
 | 06 | [运行日志与汇总修正](issues/06-run-log-and-summary.md) | 8、9、11、12、13 | — | resolved |
 | 07 | [专名表把空列表判为不合格](issues/07-names-empty-list.md) | 14 | — | resolved（ADR-0028，`q3-names-v3`） |
 | 08 | [单字与语气词 cue 的翻译失败](issues/08-short-cue-translation.md) | 15 | — | resolved（按条收下、只追问未解决的 cue，ADR-0029，`q3-translate-v1`） |
-| 09 | [极短窗口识别字数过多导致对齐失败](issues/09-short-window-asr-overflow.md) | 16 | — | needs-triage |
+| 09 | [极短窗口识别字数过多导致对齐失败](issues/09-short-window-asr-overflow.md) | 16 | — | resolved（守卫加语速与已知幻听句，ADR-0030，`guard-v3`） |
 
 分组理由：01 是独立 bug；02–05 都在抽取阶段，02 是"修正"，03 是"测量"，04 是"判失败"，05 是"降级"，可以分开讨论；06 是一组互不依赖的小改动；07–09 分属专名、翻译、识别三个模型阶段，各自牵涉配方或基线。

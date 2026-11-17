@@ -6,7 +6,7 @@
 
 负责双语字幕流水线（[技术设计](../../specs/bilingual-subtitle-pipeline.md)）的三个 GPU 阶段的 worker 壳与共用规则：从 `audio-16k.wav` 求 VAD 窗口（`vad.json`）、逐窗转写（`asr.json`）、字符级强制对齐（`align.json`）。本页写三壳共用的入口、jobs 约定、模型核对、身份、产物与失败分级，以及 VAD 与对齐两个推理模块。
 
-ASR 的两个引擎（w0、x0）、可选的 `cross` 引擎、裁判与 w0 复读守卫见 [STT ASR](stt-asr.md)。
+ASR 的两个引擎（w0、x0）、可选的 `cross` 引擎、裁判与 w0 整窗守卫见 [STT ASR](stt-asr.md)。
 
 不负责：决定哪些文件要跑或跳过、锁、子进程环境与按文件重启（[批次编排](batch-orchestration.md)）；身份的组成与期望值（[阶段计划](stage-plan.md)）；cue 切分与时间回填（[日文 cue](japanese-cues.md)）。
 

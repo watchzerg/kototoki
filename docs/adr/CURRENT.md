@@ -2,7 +2,7 @@
 
 状态：current（活文档；权威仍是各 ADR 正文，本页与 ADR 冲突时以 ADR 为准并修本页）
 
-本页把分散在多篇 ADR 里、相互部分取代的现行规则合成一份完整定义：翻译基线、产品翻译与建表、STT、专名、复读守卫及其他现行产品决定。
+本页把分散在多篇 ADR 里、相互部分取代的现行规则合成一份完整定义：翻译基线、产品翻译与建表、STT、专名、ASR 整窗守卫及其他现行产品决定。
 只写现状；演变过程见[决定索引·演进链](INDEX.md#演进链)。条款号写作"0017 身份"表示该 ADR 的无编号小节。
 
 ## 翻译基线 Q3
@@ -86,13 +86,15 @@ ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU（0003 �
 
 `[stt] engine` = `w0`（默认）｜`x0`｜`cross`；改默认须新 ADR 并在全新隔离材料上确认（[0012](0012-cross-asr-judge.md) 第 1 点）。`cross` 配方 `cross-w0-x0-whisper-judge-v1`：Whisper 教师强制打分，d > −1.0 取 x0（0012 第 2 点）；守卫、共驻与审计产物见 0012 第 3–5 点。
 
-## ASR 复读守卫
+## ASR 整窗守卫
 
-[0023](0023-asr-repeat-guard.md)，只在产品 w0 路径（含 `cross` 的 w0 一路）。
+[0023](0023-asr-repeat-guard.md)、[0030](0030-asr-window-plausibility-guard.md)，只在产品 w0 路径（含 `cross` 的 w0 一路）。每个未失败的窗口依次过三条规则，都在规范化文本（NFKC、去标点与空白）上判定；后两条看复读处理后（可能已折叠）的文字，第一个置空的规则生效（0030 第 1 点）。
 
-- 规则 `repeat-strict`：规范化文本上周期 ≥2 的相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖 ≥50%（第 1 点）。
-- 动作：折叠只保留第一个单元；仍命中则按 `failed_windows` 置空（第 2 点）。只做后处理，不重解码（第 3 点）。
-- 产品 W0 配方 `w0-faster-whisper-large-v3-guard-v2`，W0 `b73198fac0a1b8eb1ccc24d7d33479e3a42059989e4ef2a6820367efcb603e76`、CROSS `d29b138b492290b3c1fbf788c029472c97ecc1fb58aa7cdc4bb415c1cbec717f`（状态行）。W0 基线身份不变（状态行）。
+- 复读 `repeat-strict`：周期 ≥2 的相邻重复 ≥10 份，或 ≥3 字子串不重叠出现 ≥10 次，且覆盖 ≥50%（0023 第 1 点）；折叠只保留第一个单元，仍命中则置空（0023 第 2 点）。
+- 语速 `speech-rate`：规范化字数 ÷ 窗口时长 > 20 字/秒即置空（0030 第 2 点）。
+- 已知幻听句 `hallucination-phrase`：整窗规范化文字等于 `ご視聴ありがとうございました`、`チャンネル登録よろしくお願いします`、`byH` 之一即置空（0030 第 3 点）。
+- 置空按 `failed_windows` 记，原因 `guard:<规则名>`；只做后处理，不重解码（0023 第 3 点）。不用 `no_speech_prob`／`avg_logprob` 规则（0030 第 6 点）。
+- 产品 W0 配方 `w0-faster-whisper-large-v3-guard-v3`，W0 `6a47318c7732534270f64d14bb5da9830a79fdcae9f6d84e01a309532d62403b`、CROSS `bd5bc55527a539beab598e98f687f1bcbbcc6c23b3ba3a823fd3e9dfb46338e3`（0030 状态行）。W0 基线身份不变（0023 状态行）。
 
 ## 专名
 
@@ -135,4 +137,5 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 | [0018](0018-q2-sole-translation-baseline.md) | 第 2、4 点（改为针对 Q3）、第 3 点"H0 不再是基线"、第 5 点 | 第 1 点 → 0021；第 3 点"产品当前的翻译实现" → 0019 |
 | [0019](0019-product-translation-q2.md) | 第 1–3、6 点；第 4 点的基础设施失败与 `StrataRefused` | 第 2 点 llama-server 建表与不同时驻留 → 0022；第 4 点 10→5→1 降级、单条保留日文与空行判失败，第 5 点配方名、hash 与 run 目录名 → 0029 |
 | [0022](0022-product-names-on-strata.md) | 第 1 点其余（提示、采样、请求形状、预检、seed 序列与 5 次尝试）、第 3–5 点 | 第 1 点 `max_tokens` 8192、context 24576／预算 15872，第 2 点配方名 `q3-names-v1` → 0026；第 6 点与第 1 点"由 `tests/core/` 导入 v13 对照" → 0025；第 1 点把空表算作失败 → 0028 |
+| [0023](0023-asr-repeat-guard.md) | 第 1–3 点；第 4 点的 `guard` 块与 hash 级联 | 第 4 点配方 id 与 hash、第 5 点"不管低压缩比的插入套话" → 0030 |
 | [0026](0026-names-output-and-prompt-budget.md) | 第 1、2、4 点 | 第 3 点配方名 `q3-names-v2` 与 hash → 0028 |

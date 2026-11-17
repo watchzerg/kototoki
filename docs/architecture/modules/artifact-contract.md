@@ -55,9 +55,9 @@
 
 - `fail_window(asr, chunk_index, reason)` 把 `original_segments[i].text` 移入 `failed_windows`（`chunk_index`、`reason`、`text`）并置空；`retained_text` 是保留文本，后续对齐、cue 与翻译只用它。
 - `validate_failed_windows` 要求列表存在、索引唯一有效且对应窗口已置空。
-- `reason` 的现有取值：解码／生成抛错的 `RuntimeError: …`、x0 触顶的 `token_limit_reached: generated <n> tokens`、w0 复读守卫置空的 `guard:repeat-strict`（[ADR-0023](../../adr/0023-asr-repeat-guard.md)；此时 `text` 是该窗被置空前的完整原文）。
+- `reason` 的现有取值：解码／生成抛错的 `RuntimeError: …`、x0 触顶的 `token_limit_reached: generated <n> tokens`、w0 整窗守卫置空的 `guard:repeat-strict`、`guard:speech-rate`、`guard:hallucination-phrase`（[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)；此时 `text` 是该窗被置空前的完整原文）。
 
-**复读守卫记录**（w0 与 cross 的 `asr.json`、cross 的 `asr-w0.json`）：被守卫改动的窗口在 `asr_traces[i]` 里多一个键 `guard = {rule, action, period, copies, removed_raw_chars}`，`action` 为 `collapse`（`original_segments[i].text` 已是折叠后的文字）或 `blank`（该窗同时出现在 `failed_windows`）；没有被改动的窗口没有这个键。记录只有规则名与计数，不含文字。字段含义见 [STT ASR](stt-asr.md#w0-复读守卫)。
+**整窗守卫记录**（w0 与 cross 的 `asr.json`、cross 的 `asr-w0.json`）：被守卫改动的窗口在 `asr_traces[i]` 里多一个键 `guard`，内容是生效规则的记录：复读 `{rule, action, period, copies, removed_raw_chars}`，语速 `{rule, action, chars, duration_s}`，幻听句 `{rule, action, phrase_index}`；`action` 为 `collapse`（只有复读，`original_segments[i].text` 已是折叠后的文字）或 `blank`（该窗同时出现在 `failed_windows`）；没有被改动的窗口没有这个键。记录只有规则名与计数，不含文字。字段含义见 [STT ASR](stt-asr.md#w0-整窗守卫)。
 
 **cross 审计产物**（[ADR-0012](../../adr/0012-cross-asr-judge.md)）：
 

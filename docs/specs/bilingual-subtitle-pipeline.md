@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | 音频分离 | 模型输入直接从输入容器按绝对流索引解码，带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV；不流复制原始音轨（§2.1） | 两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；时间戳以输入容器为准，见 §2.2；[ADR-0027](../adr/0027-no-original-audio-copy.md) |
 | VAD 与分窗 | Pyannote `segmentation-3.0`（revision `e66f3d3b…`），powerset 原生检测，onset／offset 0.5，`source-span-merge-v1`：≤30 s、整数样本坐标、保留块内间隙 | [ADR-0003](../adr/0003-new-pyannote-baselines.md) |
-| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗复读守卫（规则 `repeat-strict`，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v2` | [W0 契约](w0-reusable-demo.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md) |
+| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗守卫（复读 `repeat-strict`、语速、已知幻听句，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v3` | [W0 契约](w0-reusable-demo.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md) |
 | ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](x0-reusable-demo.md) |
 | ASR `cross`（可选） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0、再 x0 转写，由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../research/acceptance/2026-10-19-cross-asr-acceptance.md) |
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
@@ -134,7 +134,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 - **内嵌字幕不可用**（ADR-0024）：抽取失败或清洗后零条目，记一行 WARNING，该文件回到 STT 链，不写 `failure.json`，结果不缓存。
 - **无语音**：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布零条目 `ja-zh.srt` 并告警。
 - **抽取质量门**（batch-run-fixes 04）：视频输入解码时长超过参照时长 1.5 倍判 extract 失败；VAD 语音时长不足参照时长 1% 判 vad 失败。两者都写 `failure.json`。
-- **ASR 失败窗口**（w0／x0／cross 同一表示）：x0 生成触顶、w0 整窗复读守卫（`repeat-strict`，[ADR-0023](../adr/0023-asr-repeat-guard.md)）折叠后仍命中，都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker][stt]、[产物契约][art]）。
+- **ASR 失败窗口**（w0／x0／cross 同一表示）：x0 生成触顶、w0 整窗守卫置空（复读折叠后仍命中、语速 > 20 字/秒、整窗是已知幻听句；[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)），都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker][stt]、[产物契约][art]）。
 - **Strata 基础设施失败与批次终态**（ADR-0019）：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、结构校验失败、超出 context、一条都没收下是该次尝试失败，两次都失败即节点终态，进入拆分；`StrataRefused` 不重试，本批其余需要模型的影片直接失败。
 - **按条解决**（产品规则，配方另名 `q3-translate-v1`，ADR-0029）：回复结构合法即按条收下，缺失、空串、含空行的 cue 按最大连续段再问；两次都失败的节点对半拆，单条仍失败该 cue 不出中文，双语字幕里只有日文一行；未翻译清单写 `report.json` 并在汇总给出未翻译数。可靠性重试、按条追问与拆分都不是"翻译多次再挑选"（ADR-0008）。见[翻译子系统][tr]。
 - **专名建表失败**（ADR-0022）：超预算或 5 次回复格式都不合格写空表（模型回空表不算失败，ADR-0028）（`build.status` 为 `too_long`／`failed`），记 WARNING，影片照常翻译与发布；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（[专名一致性][names]）。

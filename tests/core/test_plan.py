@@ -460,9 +460,9 @@ class AsrEngineTests(unittest.TestCase):
         other = {**shas, "qwen3-asr-1.7b-hf/model.safetensors": "f" * 64}  # 任一路模型 SHA 变化即不同身份
         self.assertNotEqual(identity, plan.asr_identity("cross", PCM, "e" * 64, other))
 
-    def test_single_engine_recipe_hashes_are_pinned(self) -> None:  # w0 自 ADR-0023 起为带 guard 的新配方
+    def test_single_engine_recipe_hashes_are_pinned(self) -> None:  # w0 自 ADR-0023 起带 guard，ADR-0030 换 guard-v3
         self.assertEqual(plan.recipe_hash("asr", engine="w0"),
-                         "b73198fac0a1b8eb1ccc24d7d33479e3a42059989e4ef2a6820367efcb603e76")
+                         "6a47318c7732534270f64d14bb5da9830a79fdcae9f6d84e01a309532d62403b")
         self.assertEqual(plan.recipe_hash("asr", engine="x0"),
                          "5d1bec25fbb4acae6d82a866620faf75e2c55498aa304c1dadd7dc401bfd057b")
         self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="w0")), len(plan.W0_FILES) + 1)

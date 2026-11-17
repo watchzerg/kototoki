@@ -28,7 +28,7 @@
 **配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 八个字典；`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）。
 
 - VAD：固定设备 `cuda:0`、Pyannote revision `e66f3d3b…`、`source-span-merge-v1`。
-- w0：beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链，另含复读守卫块（[ADR-0023](../../adr/0023-asr-repeat-guard.md)）；x0：BF16、SDPA、greedy、4096。
+- w0：beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链，另含整窗守卫块：复读、语速、已知幻听句三个子块（[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)）；x0：BF16、SDPA、greedy、4096。
 - MMS：FP32、`jpn` adapter、字典按模型类数过滤。
 - cue：切分顺序、回填方式、整窗回退每字符时长上限 0.25 s（`CUES["fallback_max_char_s"]`，`cues` 直接读它，没有第二份常量）与毫秒取整；数值规则在配置 `[cues]`，作为影响输出的配置键另入身份。
 - `SAMPLE_RATE`、`MAX_WINDOW_SAMPLES` 只在 `recipes.py` 定义。

@@ -25,6 +25,7 @@
 | `performance` | 测试与工具 | [基线测试指南](../docs/guides/baseline-testing.md) | 否 | 只读汇总历史 harness manifest 的性能与资源。 |
 | `provision` | 测试与工具 | — | 未核实 | 模型获取与范围模型准备脚本。 |
 | `tests` | 测试与工具 | — | 否 | evaluator 的单元测试。 |
+| `asr_nospeech` | 测试与工具 | [batch-run-fixes 09](../.scratch/batch-run-fixes/issues/09-short-window-asr-overflow.md)、[README](asr_nospeech/README.md) | 是 | 逐窗 Whisper `no_speech_prob` 测量与阈值汇总，只读调用产品 ASR 适配器。 |
 
 ## 冻结轮次与历史
 

@@ -19,7 +19,7 @@
 | [配置、配方与媒体提取](modules/config-and-media.md) | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py` | 读配置、配方常量与 `recipe_hash`、选音轨与派生 WAV、内嵌字幕抽取与清洗 |
 | [配置参考](modules/config-reference.md) | `kototoki/config.py`、`kototoki.toml.example` | `kototoki.toml` 的全部键、默认值、校验，哪些键进产物身份 |
 | [STT worker](modules/stt-workers.md) | `kototoki/workers/`、`kototoki/vad.py`、`kototoki/align.py`、`kototoki/schema.py` | GPU worker 壳的共用规则（jobs、模型核对、身份、失败分级）、VAD 与对齐 |
-| [STT ASR](modules/stt-asr.md) | `kototoki/asr_whisper.py`、`kototoki/asr_qwen.py`、`kototoki/judge.py`、`kototoki/guard.py` | w0／x0 逐窗转写、cross 交叉打分裁判、w0 整窗复读守卫 |
+| [STT ASR](modules/stt-asr.md) | `kototoki/asr_whisper.py`、`kototoki/asr_qwen.py`、`kototoki/judge.py`、`kototoki/guard.py` | w0／x0 逐窗转写、cross 交叉打分裁判、w0 整窗守卫（复读、语速、已知幻听句） |
 | [日文 cue](modules/japanese-cues.md) | `kototoki/cues.py` | 字符时间回填并切成日文 cue；时间轴上唯一加 `offset_s` 的地方 |
 | [Strata 服务与共享 session](modules/strata-session.md) | `kototoki/strata.py`、`kototoki/local_client.py` | Strata 起停、身份核对、专家区检查、整批共用的 session 与启动额度、回环客户端 |
 | [专名一致性](modules/name-consistency.md) | `kototoki/names/` | 在共享 session 上把整份 `ja.srt` 一次建成专名表；失败写空表照常翻译 |
@@ -48,7 +48,7 @@
 | 改配置键、默认值或校验 | [配置参考](modules/config-reference.md) → [配置、配方与媒体提取](modules/config-and-media.md) |
 | 改音轨选择、WAV 派生或内嵌字幕路径 | [配置、配方与媒体提取](modules/config-and-media.md) |
 | 改 VAD 分窗、对齐或 worker 的 jobs 约定 | [STT worker](modules/stt-workers.md) → [产物契约](modules/artifact-contract.md) |
-| 改 w0／x0 转写、cross 裁判或复读守卫 | [STT ASR](modules/stt-asr.md) |
+| 改 w0／x0 转写、cross 裁判或整窗守卫 | [STT ASR](modules/stt-asr.md) |
 | 改日文 cue 的切分与显示规则 | [日文 cue](modules/japanese-cues.md) |
 | 改翻译配方、失败路径或双语合并 | [翻译子系统与双语合并](modules/translation-subsystem.md) |
 | 改专名建表 | [专名一致性](modules/name-consistency.md) |
