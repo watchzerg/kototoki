@@ -12,7 +12,6 @@ import json
 import logging
 from pathlib import Path
 import sys
-import time
 from typing import Any
 import warnings
 import wave
@@ -45,12 +44,12 @@ def main(start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]],
     日志只写 stderr（编排器把它存成 `run-<戳>-<stage>.stderr.log`），stdout 只留协议 JSON 行。
     handler 挂在 root 上：`kototoki` logger 放到 INFO，第三方库按 root 默认级别只有 WARNING 及以上。
     """
-    started = time.time()
+    formatter = RunFormatter()  # 相对秒自 worker 进程启动起算
     parser = argparse.ArgumentParser()
     parser.add_argument("--jobs", type=Path, required=True)
     jobs_path = parser.parse_args(argv).jobs
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(RunFormatter(started))
+    handler.setFormatter(formatter)
     logging.getLogger().addHandler(handler)
     logging.getLogger("kototoki").setLevel(logging.INFO)
     logging.captureWarnings(True)

@@ -121,7 +121,7 @@ def _run_logging(path: Path, console: TextIO | None = None) -> Iterator[None]:
     `kototoki` logger 临时放到 INFO。只有进度、计数与耗时，不写转写与译文。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    formatter = RunFormatter(time.time())
+    formatter = RunFormatter()
     root, ours = logging.getLogger(), logging.getLogger("kototoki")
     level, showwarning = ours.level, warnings.showwarning
     with path.open("a", encoding="utf-8", newline="\n") as stream:
