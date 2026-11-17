@@ -26,7 +26,7 @@
   - `run.json` 已存在但配方 hash／seed／注入行／来源不符时抛 `ValueError`，消息提示删除该目录即可重译。
 - `translate_document(plan, session, *, relative) -> TranslateResult`：`session` 是编排传入的共享 `kototoki.strata.Session`，`relative` 是输入目录内相对路径（只进日志）；`needs_model` 为 False 时可为 `None`，只读回已完成的 run（记为完成而批次文件缺失即抛 `TranslateError`，不启动 Strata）。返回：
   - `translations`：cue id → 译文，精确覆盖全部 cue，回退的 cue 为日文原文；
-  - `fallback_count`：回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues`、发布日志行与控制台汇总；
+  - `fallback_count`：回退为日文的 cue 数，编排器写进 `published.json` 的 `translate_fallback_cues`、发布日志行与控制台汇总（汇总在翻译完成时计，发布失败的文件也算）；
   - `report`：即 `report.json` 的内容。
   - 基础设施失败用尽重启、Strata 被拒绝或已不可用时抛 `TranslateError`（编排器记为该文件翻译失败）。
 - `RECIPE_HASH`：配方 `q2-degrade-v1` 的 hash，进翻译身份，由 `tests/core/test_translate_recipes.py` 钉住。注入行的内容不进配方 hash，进身份的 `names_sha256`。

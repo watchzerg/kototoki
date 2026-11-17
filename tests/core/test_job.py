@@ -885,6 +885,7 @@ class PublishTests(JobCase):
 
     def test_failed_publish_writes_no_audit_record(self) -> None:
         self.make_inputs("a.mkv")
+        self.fallback = 2  # 汇总的回退数在翻译完成时计，发布失败也不漏（batch-run-fixes 06.1）
         real = artifacts.replace_with_retry
         final = self.final("a.mkv")
 
@@ -895,7 +896,7 @@ class PublishTests(JobCase):
 
         with mock.patch.object(artifacts, "replace_with_retry", side_effect=locked_final):
             summary = self.run_job()
-        self.assertEqual(summary.failed, {"a.mkv": "publish"})
+        self.assertEqual((summary.failed, summary.fallback_cues), ({"a.mkv": "publish"}, 2))
         self.assertFalse(final.exists())
         self.assertFalse((self.work_dir("a.mkv") / artifacts.PUBLISHED).exists())
         self.assertTrue((self.work_dir("a.mkv") / job.PUBLISH_DIR / final.name).is_file())  # 副本可人工恢复

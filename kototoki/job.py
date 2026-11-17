@@ -200,7 +200,7 @@ class Summary:
     no_speech: list[str] = field(default_factory=list)     # VAD 为空，发布零条目字幕
     embedded: list[str] = field(default_factory=list)      # 本次发布中日文取自内嵌字幕轨、未经 STT 的文件
     failed: dict[str, str] = field(default_factory=dict)   # 相对路径 → 失败阶段
-    fallback_cues: int = 0                                 # 译文回退为日文的 cue 数
+    fallback_cues: int = 0                                 # 本次翻译完成的文件中译文回退为日文的 cue 数（不论是否发布）
 
     @property
     def exit_code(self) -> int:
@@ -649,6 +649,7 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
             ctx.fail(video, "translate", error, traceback=not known)
             continue
         results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
+        ctx.summary.fallback_cues += int(result.fallback_count)  # 翻译完成即计，与发布成败无关
         resumed = " (resumed)" if tplan.document.cues and not tplan.needs_model else ""  # 全部批次已完成，未用模型
         (logger.warning if result.fallback_count else logger.info)(
             f"[translate] done {video.relative}{resumed}: {len(tplan.document.cues)} cue(s), "
@@ -678,7 +679,6 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, fall
     ctx.summary.published.append(video.relative)
     if video.embedded is not None:
         ctx.summary.embedded.append(video.relative)
-    ctx.summary.fallback_cues += fallback
     logger.info(f"[publish] done {video.relative}" + (" (no speech)" if video.no_speech else "")
                 + (" (embedded subtitles)" if video.embedded is not None else "")
                 + (f", {fallback} fallback cue(s)" if fallback else ""))

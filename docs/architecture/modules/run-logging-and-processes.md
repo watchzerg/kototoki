@@ -18,7 +18,7 @@
   - `kototoki.names.table`（不合格的建表尝试，前缀 `[names]`）；`kototoki.names` 包顶层只发 `count_tokens` 不可用与停 Strata 前的两条 WARNING，建表结果行由编排写；
   - worker 壳在子进程里，由 `workers/gpu.main` 用同一 `RunFormatter` 写 stderr（[STT worker](stt-workers.md)）。
 - **级别**：
-  - INFO：进度、计数与耗时——每阶段 start／逐文件 done／end、worker 的 stdout 进度事件、建表每部一行（条目数、丢弃数、prompt／completion token、秒数）、翻译每批一行、发布行的回退 cue 数、结尾汇总（含回退 cue 数）。
+  - INFO：进度、计数与耗时——每阶段 start／逐文件 done／end、worker 的 stdout 进度事件、建表每部一行（条目数、丢弃数、prompt／completion token、秒数）、翻译每批一行、发布行的回退 cue 数、结尾汇总（含回退 cue 数：本次翻译完成的文件全部计入，在翻译完成时累加，与发布成败无关）。
   - WARNING：流程继续但应看一眼的事——大小仍在变化、发布期发现字幕已出现而不覆盖、媒体告警（`[extract] <相对路径>: <告警>`；媒体模块不发日志，由编排在主线程逐条记，续跑跳过 extract 时照样出现）、worker stderr 有告警、建表终态失败写空表（`[names] done <相对路径>: build failed (<原因>), empty table`）、等显存超过 30 s、Strata 重启／降级拆批／回退保留日文。
   - ERROR：文件级与进程级失败，另含 Strata 不可用（被拒绝或启动额度用尽，整批一次）与停止未核实。DEBUG 不用。
 - **行格式**（`kototoki/logs.py` 的 `LOG_FORMAT`／`LOG_DATEFMT`）：UTC 墙钟、自本次 `run` 起的相对秒、定宽级别、消息；非 `kototoki` logger 的消息前加 `[<logger 名首段>]`（如 `[transformers]`）。消息沿用 `[stage]` 前缀与 start／done／end／FAILED 词汇。例：
