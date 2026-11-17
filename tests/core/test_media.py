@@ -228,48 +228,16 @@ class AudioOnlyInputTests(unittest.TestCase):
         self.assertIn("Audio duration from stream.duration", probe.warnings[0])
 
 
-class ExtractTests(unittest.TestCase):
-    """`extract()` 的流复制分支；ffmpeg 调用用桩替换。"""
-
-    def run_extract(self, *, has_video: bool) -> tuple[mock.Mock, mock.Mock]:
-        probe = SimpleNamespace(audio=track(), has_video=has_video)
-        config = SimpleNamespace(paths=SimpleNamespace(ffmpeg=Path("ffmpeg.exe")))
-        with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.object(media, "extract_original", return_value=(Path("audio.m4a"), "$ copy\n")) as copy, \
-                mock.patch.object(media, "derive_pcm16k", return_value="extract") as derive:
-            self.assertEqual(media.extract(Path("in.x"), Path(tmp) / "w", probe, config), "extract")
-        return copy, derive
-
-    def test_video_input_stream_copies_then_derives(self) -> None:
-        copy, derive = self.run_extract(has_video=True)
-        copy.assert_called_once()
-        self.assertEqual(derive.call_args.kwargs["audio_copy"], Path("audio.m4a"))
-        self.assertEqual(derive.call_args.kwargs["log_head"], "$ copy\n")
-
-    def test_audio_input_skips_stream_copy(self) -> None:
-        copy, derive = self.run_extract(has_video=False)
-        copy.assert_not_called()
-        self.assertIsNone(derive.call_args.kwargs["audio_copy"])
-
-    def test_payload_of_audio_input_has_null_audio_copy(self) -> None:
-        result = media.Extract(audio_copy=None, wav=Path("audio-16k.wav"), log=Path("extract.log"), sample_rate=16000,
+class ExtractPayloadTests(unittest.TestCase):
+    def test_payload_has_no_audio_copy(self) -> None:
+        """ADR-0027：视频也不流复制原始音轨，`probe.json` 的 extract 记录没有 `audio_copy`。"""
+        result = media.Extract(wav=Path("audio-16k.wav"), log=Path("extract.log"), sample_rate=16000,
                                samples=16000, pcm_sha256="0" * 64, decoded_duration_s=1.0, duration_s=1.0,
                                offset_s=0.0, pan="p", compensation={}, warnings=())
         payload = result.payload()
-        self.assertIsNone(payload["audio_copy"])
+        self.assertNotIn("audio_copy", payload)
         self.assertEqual(payload["duration_s"], 1.0)
         self.assertIn("diagnostics", payload)
-
-
-class ContainerTests(unittest.TestCase):
-    def test_mapping_follows_spec_table(self) -> None:
-        expected = {"flac": ".flac", "aac": ".m4a", "alac": ".m4a", "ac3": ".ac3", "eac3": ".eac3", "dts": ".dts",
-                    "opus": ".opus", "vorbis": ".ogg", "mp3": ".mp3", "pcm_s16le": ".wav", "pcm_s24le": ".wav",
-                    "pcm_s32le": ".wav", "pcm_f32le": ".wav"}
-        for codec, suffix in expected.items():
-            self.assertEqual(media.container_suffix(codec), suffix)
-        for codec in ("pcm_s16be", "pcm_s24be", "pcm_bluray", "pcm_dvd", "aac_latm", "truehd", "unknown"):
-            self.assertEqual(media.container_suffix(codec), ".mka")
 
 
 class PanSelectionTests(unittest.TestCase):
@@ -372,15 +340,6 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("-ac", command)
         self.assertNotIn("-ar", command)
         self.assertEqual(command[-5:-1], ["-fflags", "+bitexact", "-flags:a", "+bitexact"])
-
-    def test_copy_command_is_stream_copy_with_rf64_only_for_wav(self) -> None:
-        command = media.copy_command(self.ffmpeg, self.video, track(index=2), Path("x/.audio.partial.m4a"))
-        self.assertEqual(command[command.index("-c:a") + 1], "copy")
-        self.assertEqual(command[command.index("-map") + 1], "0:2")
-        self.assertIn("-nostdin", command)
-        self.assertNotIn("-rf64", command)
-        wav = media.copy_command(self.ffmpeg, self.video, track(codec_name="pcm_s24le"), Path("x/.audio.partial.wav"))
-        self.assertEqual(wav[wav.index("-rf64") + 1], "auto")
 
     def test_probe_command_shows_all_streams_and_format(self) -> None:
         command = media.probe_command(Path("D:/tools dir/ffprobe.exe"), self.video)

@@ -109,7 +109,7 @@ ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU（0003 �
 
 ### 输入、工作目录与发布
 
-音频也是输入；`[paths] work_dir`（默认 `.local/work/`）按目标目录分子目录；只发布 `<主名>.ja-zh.srt` 到源文件旁，已存在即跳过（[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 第 1–4 点）。
+音频也是输入；`[paths] work_dir`（默认 `.local/work/`）按目标目录分子目录；只发布 `<主名>.ja-zh.srt` 到源文件旁，已存在即跳过（[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 第 1–4 点）；视频输入也不流复制原始音轨，extract 只派生 `audio-16k.wav`（[0027](0027-no-original-audio-copy.md) 第 1–2 点）。
 
 ### 内嵌日文字幕
 

@@ -1,7 +1,6 @@
-"""媒体：ffprobe 选音轨、ffmpeg 流复制原始音轨、从输入容器派生 16 kHz 单声道 PCM16 WAV（规格 §2）。
+"""媒体：ffprobe 选音轨、从输入容器派生 16 kHz 单声道 PCM16 WAV（规格 §2）；不流复制原始音轨（ADR-0027）。
 
-输入可以是视频或音频（ADR-0020）：除封面图外没有视频流即为音频，不做流复制（源文件本身即原始音频），
-时长校验改对所选音轨的时长。
+输入可以是视频或音频（ADR-0020）：除封面图外没有视频流即为音频，时长校验改对所选音轨的时长。
 
 本模块是唯一定义时间轴零点的地方：派生 WAV 用 `aresample=async=1:first_pts=0` 补齐起始静音与
 中途间隙，sample 0 即视频 0 秒，`offset_s` 恒为 0；音轨与容器的 `start_time` 只作诊断。
@@ -9,7 +8,7 @@
 内嵌日文字幕（ADR-0024）：`select_subtitle` 按 `recipes.EMBEDDED` 选可用的文本字幕轨，`extract_subtitle` 让
 ffmpeg 把它转成 SRT 文本返回；是否采用、清洗与落盘归编排。字幕时间与派生 WAV 一样以 ffmpeg 的输入零点为准。
 
-只产生 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`），返回结果对象；
+只产生 ffmpeg 自身的输出文件（`audio-16k.wav`、`extract.log`），返回结果对象；
 `probe.json` 等 JSON 产物的身份包装、写入与是否跳过由编排经产物契约完成。
 
 模块页：docs/architecture/modules/config-and-media.md。
@@ -30,23 +29,8 @@ from typing import IO, Any
 import wave
 
 from kototoki import recipes
-from kototoki.artifacts import AUDIO_16K, AUDIO_COPY_STEM, EXTRACT_LOG, replace_with_retry
+from kototoki.artifacts import AUDIO_16K, EXTRACT_LOG, replace_with_retry
 from kototoki.config import Config
-
-# 流复制的容器映射（规格 §2.1）；未列出的编码一律 `.mka`。
-CONTAINERS = {
-    "flac": ".flac",
-    "aac": ".m4a", "alac": ".m4a",
-    "ac3": ".ac3",
-    "eac3": ".eac3",
-    "dts": ".dts",
-    "opus": ".opus",
-    "vorbis": ".ogg",
-    "mp3": ".mp3",
-    # 只有小端 PCM 放 WAV（超过 4 GB 时 RF64）；大端 PCM、pcm_bluray、pcm_dvd 等走 .mka
-    "pcm_s16le": ".wav", "pcm_s24le": ".wav", "pcm_s32le": ".wav", "pcm_f32le": ".wav",
-}
-FALLBACK_CONTAINER = ".mka"
 
 # swr 在 -loglevel verbose 下报告的硬补偿（`async=1`）；样本数按输入采样率计。实测只报告一部分
 # （合成 2 s 间隙只报出约 0.63 s），因此另用 ffmpeg 结束统计的输入样本数算净补偿。
@@ -109,7 +93,6 @@ class Probe:
 
 @dataclass(frozen=True)
 class Extract:
-    audio_copy: Path | None     # 音频输入不做流复制
     wav: Path
     log: Path
     sample_rate: int
@@ -124,7 +107,7 @@ class Extract:
     diagnostics: dict[str, Any] | None = None   # 解码日志的统计（`digest_decode_log`），只作诊断
 
     def payload(self) -> dict[str, Any]:
-        return {"audio_copy": self.audio_copy.name if self.audio_copy else None, "wav": self.wav.name, "log": self.log.name,
+        return {"wav": self.wav.name, "log": self.log.name,
                 "sample_rate": self.sample_rate, "samples": self.samples, "pcm_sha256": self.pcm_sha256,
                 "decoded_duration_s": self.decoded_duration_s, "duration_s": self.duration_s,
                 "offset_s": self.offset_s, "pan": self.pan, "compensation": dict(self.compensation),
@@ -306,10 +289,6 @@ def subtitle_command(ffmpeg: Path, video: Path, index: int) -> list[str]:
             "-map", f"0:{index}", "-c:s", "srt", "-f", "srt", "pipe:1"]
 
 
-def container_suffix(codec_name: str) -> str:
-    return CONTAINERS.get(codec_name, FALLBACK_CONTAINER)
-
-
 def pan_filter(track: AudioTrack) -> str:
     """该音轨声道布局对应的下混表达式（`recipes.PAN`）；布局未标注时按声道数。"""
     layout = track.channel_layout
@@ -325,12 +304,6 @@ def pan_filter(track: AudioTrack) -> str:
 def probe_command(ffprobe: Path, video: Path) -> list[str]:
     return [str(ffprobe), "-hide_banner", "-v", "error", "-print_format", "json",
             "-show_streams", "-show_format", str(video)]
-
-
-def copy_command(ffmpeg: Path, video: Path, track: AudioTrack, output: Path) -> list[str]:
-    rf64 = ["-rf64", "auto"] if output.suffix == ".wav" else []
-    return [str(ffmpeg), "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", str(video),
-            "-map", f"0:{track.index}", "-vn", "-sn", "-dn", "-c:a", "copy", *rf64, str(output)]
 
 
 def derive_filter(track: AudioTrack) -> str:
@@ -507,14 +480,14 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
                           errors="replace", check=False)
 
 
-def _run_decode(command: list[str], log_path: Path, log_head: str,
+def _run_decode(command: list[str], log_path: Path,
                 track: AudioTrack) -> tuple[int, str, tuple[int, int], dict[str, Any]]:
     """运行解码命令，stderr 流式经 `digest_decode_log` 写进 `log_path`（不整段读进内存）；返回退出码与
     `digest_decode_log` 的三项结果。"""
     with open(log_path, "w", encoding="utf-8", newline="\n") as log, \
             subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                              encoding="utf-8", errors="replace") as process:
-        log.write(f"{log_head}$ {subprocess.list2cmdline(command)}\n")
+        log.write(f"$ {subprocess.list2cmdline(command)}\n")
         assert process.stderr is not None
         try:
             kept, swr_samples, diagnostics = digest_decode_log(process.stderr, log, track)
@@ -557,34 +530,19 @@ def _wav_pcm(path: Path) -> tuple[int, int, str]:
     return rate, samples, digest.hexdigest()
 
 
-def extract_original(video: Path, work_dir: Path, track: AudioTrack, ffmpeg: Path) -> tuple[Path, str]:
-    """`-c:a copy` 原样写出音轨为 `audio.<ext>`；返回路径与 ffmpeg stderr。"""
-    target = Path(work_dir) / f"{AUDIO_COPY_STEM}{container_suffix(track.codec_name)}"
-    partial = _partial(target)
-    command = copy_command(ffmpeg, Path(video), track, partial)
-    try:
-        result = _run(command)
-        if result.returncode != 0:
-            raise MediaError(f"ffmpeg stream copy failed ({result.returncode}): {result.stderr.strip()[-2000:]}")
-        replace_with_retry(partial, target)
-    finally:
-        partial.unlink(missing_ok=True)
-    return target, f"$ {subprocess.list2cmdline(command)}\n{result.stderr}"
-
-
-def derive_pcm16k(video: Path, work_dir: Path, probe_result: Probe, ffmpeg: Path, *, audio_copy: Path | None,
-                  log_head: str = "") -> Extract:
+def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> Extract:
     """从输入容器按绝对流索引解码，补齐时间轴、下混、重采样为 `audio-16k.wav`，精简后的解码日志写 `extract.log`。
 
     时长校验在替换目标之前完成：截断时不留下 `audio-16k.wav`，只留日志。
     """
     work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
     target, log_path = work_dir / AUDIO_16K, work_dir / EXTRACT_LOG
     partial = _partial(target)
     track = probe_result.audio
-    command = derive_command(ffmpeg, Path(video), track, partial)
+    command = derive_command(config.paths.ffmpeg, Path(path), track, partial)  # 不支持的下混布局在此失败，不运行 ffmpeg
     try:
-        returncode, kept, swr_samples, diagnostics = _run_decode(command, log_path, log_head, track)
+        returncode, kept, swr_samples, diagnostics = _run_decode(command, log_path, track)
         if returncode != 0:
             raise MediaError(f"ffmpeg decode failed ({returncode}); see {EXTRACT_LOG}")
         rate, samples, pcm_sha256 = _wav_pcm(partial)
@@ -597,19 +555,8 @@ def derive_pcm16k(video: Path, work_dir: Path, probe_result: Probe, ffmpeg: Path
         replace_with_retry(partial, target)
     finally:
         partial.unlink(missing_ok=True)
-    return Extract(audio_copy=audio_copy, wav=target, log=log_path, sample_rate=rate, samples=samples,
+    return Extract(wav=target, log=log_path, sample_rate=rate, samples=samples,
                    pcm_sha256=pcm_sha256, decoded_duration_s=decoded_s,
                    duration_s=probe_result.duration_s, offset_s=float(recipes.MEDIA["offset_s"]),
                    pan=pan_filter(track), compensation=parse_compensation(kept, swr_samples, track, decoded_s),
                    warnings=tuple(warnings), diagnostics=diagnostics)
-
-
-def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> Extract:
-    """视频输入先流复制原始音轨，再派生 16 kHz WAV；ffmpeg 命令与输出都记入 `extract.log`。音频输入只派生 WAV。"""
-    work_dir = Path(work_dir)
-    work_dir.mkdir(parents=True, exist_ok=True)
-    pan_filter(probe_result.audio)  # 不支持的布局在任何 ffmpeg 运行前失败
-    audio_copy, copy_log = (extract_original(path, work_dir, probe_result.audio, config.paths.ffmpeg)
-                            if probe_result.has_video else (None, ""))
-    return derive_pcm16k(path, work_dir, probe_result, config.paths.ffmpeg, audio_copy=audio_copy,
-                         log_head=copy_log)

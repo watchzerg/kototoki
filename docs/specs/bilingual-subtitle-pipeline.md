@@ -15,7 +15,7 @@
 
 | 阶段 | 固定选择 | 依据 |
 | --- | --- | --- |
-| 音频分离 | ① 视频：ffmpeg 流复制（`-c:a copy`）保留原始编码，不转码（音频文件不做 ①）；② 模型输入直接从输入容器按绝对流索引解码（不是从 ① 的裸码流），带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV | 用户要求无损保留原格式；两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；裸码流容器丢时间戳，见 §2.2 |
+| 音频分离 | 模型输入直接从输入容器按绝对流索引解码，带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV；不流复制原始音轨（§2.1） | 两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；时间戳以输入容器为准，见 §2.2；[ADR-0027](../adr/0027-no-original-audio-copy.md) |
 | VAD 与分窗 | Pyannote `segmentation-3.0`（revision `e66f3d3b…`），powerset 原生检测，onset／offset 0.5，`source-span-merge-v1`：≤30 s、整数样本坐标、保留块内间隙 | [ADR-0003](../adr/0003-new-pyannote-baselines.md) |
 | ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗复读守卫（规则 `repeat-strict`，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v2` | [W0 契约](w0-reusable-demo.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md) |
 | ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](x0-reusable-demo.md) |
@@ -42,7 +42,7 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 | 阶段 | 输入 → 产物 | 设备 | 模块页 |
 | --- | --- | --- | --- |
 | probe | 视频／音频 → `probe.json`（音轨选择、`has_video`、参照时长、字幕流清单） | CPU | [配置、配方与媒体提取][media] |
-| extract | 输入 → `audio.<ext>`（仅视频，流复制）、`audio-16k.wav`、`extract.log` | CPU | 同上 |
+| extract | 输入 → `audio-16k.wav`、`extract.log` | CPU | 同上 |
 | vad | `audio-16k.wav` → `vad.json` | GPU*（VAD 允许 CPU，第一版固定 `cuda:0`） | [STT worker][stt] |
 | asr | `audio-16k.wav`＋`vad.json` → `asr.json`（`cross` 另写三份审计文件） | GPU | 同上 |
 | align | `audio-16k.wav`＋`asr.json` → `align.json` | GPU | 同上 |
@@ -59,15 +59,14 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 
 选轨、抽取与清洗规则（配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`）见[配置、配方与媒体提取][media]；是否采用与回退见[批次编排][orch]。不做：外挂字幕文件、位图字幕 OCR、按内容判断语言、假名注音处理、按 ASS 样式过滤卡拉 OK 行与屏幕字。
 
-### 2.1 流复制的容器映射
+### 2.1 不流复制原始音轨
 
-按音轨编码选容器、其余退回 `.mka` 的映射表见[配置、配方与媒体提取][media]。
+视频输入与音频输入一样，extract 只派生 `audio-16k.wav`，不再把原始音轨流复制为 `audio.<ext>`（[ADR-0027](../adr/0027-no-original-audio-copy.md)）：源文件留在原地，工作目录不交付，副本只是重复数据；复制要多读一遍源文件，还曾因坏包让可出字幕的文件整片失败。
 
 ### 2.2 时间轴与下混
 
-- **时间零点只在媒体模块定义**：② 直接从输入容器解码（裸码流容器丢时间戳），`aresample=async=1:first_pts=0` 补齐起始静音（AAC 声明采样率与容器时间戳不符时先按真实采样率纠正，规则见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)），WAV 的 sample 0 即输入 0 秒，因此 `offset_s` 恒为 0；音轨 `start_time` 只进 `probe.json` 作诊断，下游阶段只传 `offset_s = 0`。
+- **时间零点只在媒体模块定义**：模型输入直接从输入容器解码（容器带时间戳，裸码流不带），`aresample=async=1:first_pts=0` 补齐起始静音（AAC 声明采样率与容器时间戳不符时先按真实采样率纠正，规则见[配置、配方与媒体提取](../architecture/modules/config-and-media.md)），WAV 的 sample 0 即输入 0 秒，因此 `offset_s` 恒为 0；音轨 `start_time` 只进 `probe.json` 作诊断，下游阶段只传 `offset_s = 0`。
 - 时长校验、按声道布局的 `pan` 常量（进 `MEDIA` 配方 hash、禁止削波）与重采样器（ffmpeg 默认 swr）见[配置、配方与媒体提取][media]；swr／soxr 的频谱对比与改回 swr 的经过见[历史记录][hist-26]。
-- "无损"的边界：① 是严格无损（字节级流复制），只作归档；② 是推理输入，下混与重采样必然改变样本。
 
 ## 3. 调度模型：CPU 流水线 + GPU 分阶段批处理
 
@@ -100,7 +99,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
     strata-sessions/     names 与翻译共用的 Strata session 证据
     run-<戳>.log、run-<戳>-<stage>.stderr.log
     <id>/
-      probe.json、audio.<ext>（仅视频）、audio-16k.wav、extract.log
+      probe.json、audio-16k.wav、extract.log
       vad.json、asr.json（cross 另有 asr-w0.json、asr-x0.json、asr-judge.json，只作审计）、align.json
       ja-cues.json 或 ja-embedded.json（内嵌字幕路径）、ja.srt
       name-table.json、names/transport/…

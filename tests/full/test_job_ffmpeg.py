@@ -58,7 +58,7 @@ class EndToEndTests(JobCase):
             self.assertEqual((reader.getframerate(), reader.getnchannels(), reader.getsampwidth()),
                              (recipes.SAMPLE_RATE, 1, 2))
             self.assertAlmostEqual(reader.getnframes() / recipes.SAMPLE_RATE, SECONDS, delta=0.1)
-        self.assertEqual(len(list(work.glob(f"{artifacts.AUDIO_COPY_STEM}.*"))), 1)  # 视频输入做原音轨流复制
+        self.assertEqual(list(work.glob("audio.*")), [])  # ADR-0027：不流复制原始音轨
         self.assertEqual([launch["ids"] for launch in self.launches()], [self.ids(rel)] * 3)
         identifier = self.ids(rel)[0]
         # 共享 Strata session：names 启动、翻译后退出（ADR-0022）
@@ -76,7 +76,7 @@ class EndToEndTests(JobCase):
         self.assertIn("names", published["sources"])
         self.assertNotIn("names_apply", published["sources"])
 
-    def test_synthesized_audio_skips_stream_copy(self) -> None:
+    def test_synthesized_audio_input_publishes(self) -> None:
         rel = "ep02.flac"
         self.make_audio(rel)
         summary = self.run_job()
@@ -84,8 +84,6 @@ class EndToEndTests(JobCase):
         work = self.work_dir(rel)
         probe = artifacts.read_json(work / artifacts.PROBE)
         self.assertFalse(probe["has_video"])
-        self.assertIsNone(probe["extract"]["audio_copy"])
-        self.assertEqual(list(work.glob(f"{artifacts.AUDIO_COPY_STEM}.*")), [])
         with wave.open(str(work / artifacts.AUDIO_16K), "rb") as reader:
             self.assertAlmostEqual(reader.getnframes() / recipes.SAMPLE_RATE, SECONDS, delta=0.1)
         self.assertEqual(self.final(rel).read_text(encoding="utf-8"), MERGED)

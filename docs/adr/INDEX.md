@@ -18,7 +18,7 @@
 | STT 基线 | W0 为 faster-whisper、X0 为 Qwen-ASR，两路共用新 Pyannote VAD 与 MMS 日语对齐；旧 PyanNet、fixed30、cut-merge 只作历史身份。见 [CURRENT·STT 基线](CURRENT.md#stt-基线与产品-stt) | [0003](0003-new-pyannote-baselines.md) |
 | 设备 | ASR 与强制对齐只跑 GPU、不回退 CPU；VAD 可用 CPU 或 GPU，产品固定为 GPU。见 [CURRENT·设备](CURRENT.md#设备) | [0003](0003-new-pyannote-baselines.md)、[0007](0007-bilingual-subtitle-pipeline-architecture.md) |
 | 产品 STT 引擎 | `[stt] engine` 可选 `w0`（默认）、`x0`、`cross`（Whisper 交叉打分裁判）；改默认须新 ADR 并在全新隔离素材上确认。见 [CURRENT·产品 STT 引擎](CURRENT.md#产品-stt-引擎) | [0012](0012-cross-asr-judge.md) |
-| 产品架构 | 阶段 × 整批推进、每阶段一个子进程，配置文件驱动，按身份与配方 hash 续跑。见 [CURRENT·产品架构](CURRENT.md#产品架构)、[输入、工作目录与发布](CURRENT.md#输入工作目录与发布) | [0007](0007-bilingual-subtitle-pipeline-architecture.md)、[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) |
+| 产品架构 | 阶段 × 整批推进、每阶段一个子进程，配置文件驱动，按身份与配方 hash 续跑。见 [CURRENT·产品架构](CURRENT.md#产品架构)、[输入、工作目录与发布](CURRENT.md#输入工作目录与发布) | [0007](0007-bilingual-subtitle-pipeline-architecture.md)、[0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)、[0027](0027-no-original-audio-copy.md) |
 | 翻译基线（唯一） | Q3 是唯一翻译基线，新测试都以它为对照；引用前任或历史身份（Q2、Q1、Q0、F1、H0）须写明并说明理由；新增后缀命名须用户裁定。见 [CURRENT·翻译基线 Q3](CURRENT.md#翻译基线-q3) | [0021](0021-q3-strata-names-baseline.md)；对照规则见 [0018](0018-q2-sole-translation-baseline.md)；H0／Q0 身份见 [0015](0015-two-translation-baselines.md) |
 | 产品翻译 | 产品配方 `q2-degrade-v1`＝Q2 规则＋失败包逐级拆批降级；Strata 由产品启停并与建表共用一个 session。见 [CURRENT·产品翻译](CURRENT.md#产品翻译) | [0019](0019-product-translation-q2.md)、[0022](0022-product-names-on-strata.md) |
 | 翻译基线 Q3：身份 | Q2 翻译规则不变，专名表改由同一 Strata 实例上的 Flash-Next 按 `names-strata-v4` 建，失败换 seed 重试、取第一张合格的表。见 [CURRENT·翻译基线 Q3](CURRENT.md#翻译基线-q3) | [0021](0021-q3-strata-names-baseline.md)、[0017](0017-q2-strata-default-launch-baseline.md) |
@@ -65,6 +65,7 @@
   1. [0007](0007-bilingual-subtitle-pipeline-architecture.md)（10-13）：只扫视频；`<output_dir>/.work/`；三份 SRT 镜像发布到 `output_dir`，按 `published.json` 判定覆盖、`force`。
   2. → [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md)（11-08）：音频也作输入；`[paths] work_dir`（默认 `.local/work/`）按目标目录分子目录；只发布 `ja-zh.srt` 到源文件旁，已存在即跳过；删 `output_dir` 与 `force`。
   3. → [0024](0024-embedded-japanese-subtitles.md)（11-11）：有可用的内嵌日文文本字幕轨的文件不做 STT，`ja.srt` 取自字幕轨，从 `names` 起走原链；其余文件不变。
+  4. → [0027](0027-no-original-audio-copy.md)（11-17）：视频输入也不再流复制原始音轨（`audio.<ext>`），extract 只派生 `audio-16k.wav`；派生命令与 PCM 身份不变。
 - **方法禁区**：[0008](0008-no-multi-translation-selection.md)（10-16），放弃 v4 `mbr8c` 与 v5 `mbr8s`。0012、0014–0017 都确认它仍适用。
 - **专名一致性**：
   1. [0013](0013-name-consistency-closed.md)（已合并）（10-19）：结题，冻结配置，不进产品。
@@ -92,7 +93,7 @@
 | --- | --- | --- |
 | [0003](0003-new-pyannote-baselines.md) | STT 基线 W0／X0（新 Pyannote） | 有效（并入 0001、0002） |
 | [0005](0005-apex-i-compact-translation-baseline.md) | H0 翻译模型、采样与引擎 | 有效（并入 0004） |
-| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 双语字幕流水线架构 | 有效；第 3 点的翻译引擎由 0019 替代、建表引擎由 0022 替代；第 7、9、10 点的工作目录、输出目录锁与发布由 0020 替代 |
+| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 双语字幕流水线架构 | 有效；第 3 点的翻译引擎由 0019 替代、建表引擎由 0022 替代；第 7、9、10 点的工作目录、输出目录锁与发布由 0020 替代；第 7、8 点的原始音轨流复制由 0027 替代 |
 | [0008](0008-no-multi-translation-selection.md) | 不自动选用"翻译多次再挑选" | 有效 |
 | [0010](0010-dp10-cut-translation-flow-baseline.md) | H0 翻译流程与产品配方（`dp10-cut`／`dp10-cut-degrade-v1`） | 部分有效（并入 0006、0009、0011）：切包规则仍是 Q2 的切包；第 6、7 点产品配方由 0019 替代 |
 | [0012](0012-cross-asr-judge.md) | 产品 STT 可选引擎 `cross` | 有效 |
@@ -108,8 +109,9 @@
 | [0024](0024-embedded-japanese-subtitles.md) | 有内嵌日文文本字幕轨的文件跳过 STT | 已接受，2026-11-11 已实现；2026-11-12 真实片源（Black Panther）运行通过，forced 判定补认标题（`embedded-ja-subtitle-v2`） |
 | [0025](0025-product-package-boundaries.md) | 产品包边界与失败级别（GPU 锁冲突进程级、产品不为研究侧留代码、核心测试不导入研究代码） | 已接受（2026-11-11），实现见计划 `architecture-cleanup` §7 |
 | [0026](0026-names-output-and-prompt-budget.md) | 产品建表放宽输出上限与提示预算（`q3-names-v2`） | 已接受，2026-11-12 已实现 |
+| [0027](0027-no-original-audio-copy.md) | 不再流复制原始音轨 | 已接受，2026-11-17 已实现 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0027 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0028 起。
 
 ## 记录新决定
 
@@ -135,6 +137,7 @@
 
 "当前有效决定"表的改动日志，新的一行加在最前。
 
+- 2026-11-17：ADR-0027：不再流复制原始音轨（batch-run-fixes 05），采纳并实现；"产品架构"行加 0027。
 - 2026-11-12：ADR-0026：产品建表放宽 `max_tokens` 与提示预算（`q3-names-v2`），采纳并实现。
 - 2026-11-11：文档架构整理 spec §8 的 7 项由用户委托 agent 裁定（结果见该 spec §9）：ADR-0007、0008、0010、0014、0015、0017、0019、0021 状态行追加过时条款的说明，现行表各行不变。
 - 2026-11-11：表压成每行一句话，完整定义移到 [CURRENT.md](CURRENT.md)（文档架构整理）。

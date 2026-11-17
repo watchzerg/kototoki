@@ -30,7 +30,7 @@ Status: in-progress
 | 02 | [音轨采样率标错](issues/02-sample-rate-mislabel.md) | 3 | — | resolved |
 | 03 | [extract 诊断：按级别统计解码错误、限制日志体积](issues/03-extract-diagnostics.md) | 7、10 | — | resolved |
 | 04 | [抽取质量门：解码远超视频时长、近乎全静音](issues/04-extract-quality-gate.md) | 4、5 | 03（软依赖：可能用到真实错误数） | resolved |
-| 05 | [归档音轨流复制失败导致整片失败](issues/05-archive-copy-failure.md) | 6 | — | needs-triage |
+| 05 | [归档音轨流复制失败导致整片失败](issues/05-archive-copy-failure.md) | 6 | — | resolved（改为取消流复制，ADR-0027） |
 | 06 | [运行日志与汇总修正](issues/06-run-log-and-summary.md) | 8、9、11、12、13 | — | needs-triage |
 | 07 | [专名表把空列表判为不合格](issues/07-names-empty-list.md) | 14 | — | needs-triage |
 | 08 | [单字与语气词 cue 的翻译失败](issues/08-short-cue-translation.md) | 15 | — | needs-triage |

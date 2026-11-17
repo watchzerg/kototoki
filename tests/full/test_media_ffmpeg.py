@@ -1,4 +1,4 @@
-"""`kototoki.media` 的 full 层离线集成测试：用真实 ffmpeg 合成几秒的小片段，验证时间轴零点、下混与流复制。
+"""`kototoki.media` 的 full 层离线集成测试：用真实 ffmpeg 合成几秒的小片段，验证时间轴零点、下混与各编码的解码。
 
 不需要模型、GPU 或网络；ffmpeg／ffprobe 取 `config.load` 的默认路径（缺失时 setUpClass 失败并给出处理办法）。
 所有媒体都放在含空格和非 ASCII 字符的目录里，覆盖 Windows 路径传参。
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from array import array
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -139,12 +138,6 @@ class MediaFfmpegCase(unittest.TestCase):
         probe = media.probe(path, self.cfg)
         return probe, media.extract(path, self.work_dir, probe, self.cfg)
 
-    def ffprobe_codec(self, path: Path) -> str:
-        out = run([str(self.cfg.paths.ffprobe), "-v", "error", "-print_format", "json", "-show_streams", str(path)])
-        streams = json.loads(out.stdout)["streams"]
-        self.assertEqual(len(streams), 1)
-        return streams[0]["codec_name"]
-
 
 class TimelineTests(MediaFfmpegCase):
     def assertTime(self, actual_s: float, expected_s: float, tolerance_s: float = 0.010) -> None:
@@ -252,34 +245,34 @@ class DurationCheckTests(MediaFfmpegCase):
         self.assertAlmostEqual(probe.duration_s, 2.0, delta=0.1)
 
 
-class StreamCopyTests(MediaFfmpegCase):
-    def test_container_mapping_and_codec_preserved(self) -> None:
-        cases = [("flac", "mkv", "audio.flac"), ("pcm_s16le", "mkv", "audio.wav"),
-                 ("pcm_s16be", "mov", "audio.mka"), ("pcm_s24be", "mov", "audio.mka")]
-        for codec, container, expected in cases:
+class VideoCodecTests(MediaFfmpegCase):
+    """视频输入的各种音频编码都只派生 WAV，不留原始音轨副本（ADR-0027）。"""
+
+    def test_codecs_decode_without_audio_copy(self) -> None:
+        cases = [("flac", "mkv"), ("pcm_s16le", "mkv"), ("pcm_s16be", "mov"), ("pcm_s24be", "mov")]
+        for codec, container in cases:
             with self.subTest(codec=codec):
                 path = self.make_clip(f"{codec}.{container}", 2.0, [Audio(tone_src(dur=2.0))], codec=codec)
                 self.work_dir = self.media_dir / f"work {codec}"
                 probe, extract = self.extract_clip(path)
                 self.assertEqual(probe.audio.codec_name, codec)
-                self.assertEqual(extract.audio_copy.name, expected)
-                self.assertGreater(extract.audio_copy.stat().st_size, 0)
-                self.assertEqual(self.ffprobe_codec(extract.audio_copy), codec)
+                self.assertEqual(sorted(item.name for item in self.work_dir.iterdir()),
+                                 ["audio-16k.wav", "extract.log"])
+                rate, channels, samples = read_wav(extract.wav)
+                self.assertEqual((rate, channels), (RATE, 1))
+                self.assertAlmostEqual(len(samples) / rate, 2.0, delta=0.05)
 
 
 class AudioOnlyInputTests(MediaFfmpegCase):
-    """音频输入（ADR-0020）：不做流复制，WAV 照常派生，时长参照取所选音轨。"""
+    """音频输入（ADR-0020）：WAV 照常派生，时长参照取所选音轨。"""
 
-    def test_flac_input_has_no_audio_copy_and_correct_wav(self) -> None:
+    def test_flac_input_derives_correct_wav(self) -> None:
         path = self.media_dir / "音声.flac"
         run([str(self.cfg.paths.ffmpeg), "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
              "-i", tone_src(dur=2.0), "-c:a", "flac", str(path)])
         probe, extract = self.extract_clip(path)
         self.assertFalse(probe.has_video)
         self.assertAlmostEqual(probe.duration_s, 2.0, delta=0.1)
-        self.assertIsNone(extract.audio_copy)
-        self.assertIsNone(extract.payload()["audio_copy"])
-        self.assertEqual([item.name for item in self.work_dir.glob("audio.*")], [])
         rate, channels, samples = read_wav(extract.wav)
         self.assertEqual((rate, channels), (RATE, 1))
         self.assertAlmostEqual(len(samples) / rate, 2.0, delta=0.05)

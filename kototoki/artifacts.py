@@ -46,7 +46,6 @@ CACHE_DIR = "cache"
 MODEL_VERIFICATION = "model-verification.json"
 
 PROBE = "probe.json"
-AUDIO_COPY_STEM = "audio"  # 流复制音轨为 audio.<ext>，扩展名由容器映射决定（票据 02）；音频输入不做流复制
 AUDIO_16K = "audio-16k.wav"
 EXTRACT_LOG = "extract.log"
 VAD = "vad.json"

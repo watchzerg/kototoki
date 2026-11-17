@@ -1,6 +1,6 @@
 # 配置、配方与媒体提取
 
-状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0027](../../adr/0027-no-original-audio-copy.md)
 
 ## 定位与阅读
 
@@ -8,7 +8,7 @@
 
 - 读取 `kototoki.toml` 得到 `Config`（键、默认值与校验的参考见[配置参考](config-reference.md)）；
 - STT／cue／媒体／内嵌字幕的配方常量与 `recipe_hash`；
-- 从输入（视频或音频文件）选音轨、视频的流复制原始音轨、派生模型输入 WAV；
+- 从输入（视频或音频文件）选音轨、派生模型输入 WAV（不流复制原始音轨，ADR-0027）；
 - 内嵌日文字幕的选轨、抽取与清洗（`kototoki/media.py`、`kototoki/embedded.py`）。
 
 不负责：是否采用字幕轨、`ja.srt` 与 `ja-embedded.json` 的落盘与跳过判定（[批次编排](batch-orchestration.md)）；翻译配方（`kototoki/translate/recipes.py`）与建表配方（`kototoki/names/recipes.py`）；`probe.json` 等 JSON 产物的身份包装、写入与跳过判定（编排经[产物契约](artifact-contract.md)完成）；VAD／ASR／对齐推理（[STT worker](stt-workers.md)）。现行配方身份见[现行决定](../../adr/CURRENT.md)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
@@ -55,17 +55,13 @@
 - 参照时长：视频输入取第一条非封面视频流，音频输入取所选音轨。取其 `duration`；没有时先取精确的 Matroska 标签 `DURATION`（大小写不敏感），再取 mkvmerge 统计标签 `DURATION-<lang>`；都没有时退回容器时长并告警；时长全无报 `MediaError`。
 - 流时长与 `format.duration` 相差超过 `MEDIA["duration_tolerance_s"]` 时取较小者并写入 `Probe.warnings`，`duration_source` 记实际来源。`probe.json` 的字段是 `has_video`、`duration_s`、`duration_source`。
 
-**extract**（`extract(path, work_dir, probe, config) -> Extract`）：先校验下混布局，再依次运行 ffmpeg 命令（视频两条，音频输入只有第 2 条），各写同目录临时文件（保留扩展名）后原子替换目标。
+**extract**（`extract(path, work_dir, probe, config) -> Extract`）：视频与音频输入相同，只运行一条 ffmpeg 解码命令，写同目录临时文件后原子替换 `audio-16k.wav`；不流复制原始音轨（ADR-0027）。构造命令时校验下混布局，不支持的布局在运行 ffmpeg 前抛 `MediaError`。
 
-1. `extract_original`（仅视频输入；音频输入时 `audio_copy` 为 null、无 `audio.<ext>`）：`-map 0:<绝对索引> -c:a copy` 写出 `audio.<ext>`，容器映射：
-   - `flac`→`.flac`；`aac`／`alac`→`.m4a`；`ac3`→`.ac3`；`eac3`→`.eac3`；`dts`→`.dts`；`opus`→`.opus`；`vorbis`→`.ogg`；`mp3`→`.mp3`；
-   - 小端 PCM（`pcm_s16le`／`s24le`／`s32le`／`f32le`）→`.wav`（`-rf64 auto`）；
-   - 其余（大端 PCM、`pcm_bluray`、`pcm_dvd`、`aac_latm`、`truehd` 等）→`.mka`。
-2. `derive_pcm16k`：**从输入容器**按同一绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`（采样率标错时最前面加 `asetrate=<真实>,asetpts=PTS*<真实>/<声明>`，后者把时间戳拉回容器时间）（ffmpeg 默认 swr）、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、`-loglevel level+verbose`（每行带级别标签；不进 `MEDIA` hash）；两条命令行与精简后的 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即输入 0 秒，`Extract.offset_s` 恒为 0。
-3. 时长校验对参照时长 `Extract.duration_s`：视频输入解码短于参照超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；音频输入短于参照只告警（时长可能是估算值，ADR-0020）；长于参照超过 1 s 告警，视频输入超过 1.5 倍（`MAX_OVERLONG_RATIO`，不进 `MEDIA`）抛 `MediaError`。
-4. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 报告的补入／丢弃样本数之和（输入采样率，含起始补齐，不完整，仅作参考）与净补偿秒数 `net_padding_s`（派生时长 − ffmpeg 结束统计的输入时长，已纠正时按纠正后的采样率，以它为准）。超过 0.1 s 时的 WARNING 由编排写（`job.compensation_warnings`）。
+1. **从输入容器**按所选音轨的绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`（采样率标错时最前面加 `asetrate=<真实>,asetpts=PTS*<真实>/<声明>`，后者把时间戳拉回容器时间）（ffmpeg 默认 swr）、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、`-loglevel level+verbose`（每行带级别标签；不进 `MEDIA` hash）；命令行与精简后的 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即输入 0 秒，`Extract.offset_s` 恒为 0。
+2. 时长校验对参照时长 `Extract.duration_s`：视频输入解码短于参照超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；音频输入短于参照只告警（时长可能是估算值，ADR-0020）；长于参照超过 1 s 告警，视频输入超过 1.5 倍（`MAX_OVERLONG_RATIO`，不进 `MEDIA`）抛 `MediaError`。
+3. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 报告的补入／丢弃样本数之和（输入采样率，含起始补齐，不完整，仅作参考）与净补偿秒数 `net_padding_s`（派生时长 − ffmpeg 结束统计的输入时长，已纠正时按纠正后的采样率，以它为准）。超过 0.1 s 时的 WARNING 由编排写（`job.compensation_warnings`）。
 
-**解码日志**（batch-run-fixes 03）：`derive_pcm16k` 流式读 stderr，不整段进内存，经 `digest_decode_log` 写精简的 `extract.log`：info、无上下文、`in#`／`out#` 行原样写；error（含 fatal）、warning 行与 swr 补偿行各留前后 100 条（样本数全数累加）；其余 verbose 行只计数；末尾附消息类型计数表。`Extract.diagnostics`（进 `probe.json`，只作诊断）含各级别条数 `levels`、所选音轨的 `decode_errors` 与前 20 类 error／warning `messages`；有 error 行时 `Extract.warnings` 加一条（不判失败）。
+**解码日志**（batch-run-fixes 03）：`extract` 流式读 stderr，不整段进内存，经 `digest_decode_log` 写精简的 `extract.log`：info、无上下文、`in#`／`out#` 行原样写；error（含 fatal）、warning 行与 swr 补偿行各留前后 100 条（样本数全数累加）；其余 verbose 行只计数；末尾附消息类型计数表。`Extract.diagnostics`（进 `probe.json`，只作诊断）含各级别条数 `levels`、所选音轨的 `decode_errors` 与前 20 类 error／warning `messages`；有 error 行时 `Extract.warnings` 加一条（不判失败）。
 
 子进程一律参数列表、`stdin=DEVNULL`（ffmpeg 另加 `-nostdin`）、UTF-8 解码。
 
@@ -85,7 +81,7 @@
 
 `embedded` 是基础层之上的纯函数模块（与 `cues` 同级），只依赖 `srt`，由编排直接调用。`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与 ffmpeg／ffprobe 可执行文件（默认是项目内 `.local/tools/ffmpeg/<version>/bin/`，版本由 `assets.toml` 锁定，见[依赖布局与资产清单](../../development/dependencies.md)），不依赖 torch 与网络，编排器在线程池里直接调用。
 
-媒体模块只写 ffmpeg 自身的输出文件（`audio.<ext>`、`audio-16k.wav`、`extract.log`；临时文件 `.<名>.<pid>.partial<ext>` 正常结束时自行删除，被强杀留下的残留由编排在下次提取前清理），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败；`Probe.warnings`／`Extract.warnings` 只作数据返回，本模块不发日志，由编排逐条写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
+媒体模块只写 ffmpeg 自身的输出文件（`audio-16k.wav`、`extract.log`；临时文件 `.<名>.<pid>.partial<ext>` 正常结束时自行删除，被强杀留下的残留由编排在下次提取前清理），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败；`Probe.warnings`／`Extract.warnings` 只作数据返回，本模块不发日志，由编排逐条写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
 
 ## 代码与验证入口
 
@@ -93,10 +89,10 @@
 - 测试（core，`just test`）：
   - `tests/core/test_config.py`：默认值、两种相对路径基准、模型路径、未知键与已删除键、类型、环境变量破锁、示例文件覆盖全部键。
   - `tests/core/test_recipes.py`：`pan` 系数与归一化、不削波、重采样参数、`LAYOUT_BY_CHANNELS`、音轨选择（含 `LANGUAGE_ALIASES`）与采样率纠正规则进 hash、固定值、无翻译配方；`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 的 hash 全部钉住。
-  - `tests/core/test_media.py`：语言归一化、音轨选择各分支、时长来源（含音频输入）、容器映射、命令行构造、补偿解析、解码日志精简与计数、采样率标错纠正、时长校验各分支；字幕轨选择、抽取命令行与抽取失败。
+  - `tests/core/test_media.py`：语言归一化、音轨选择各分支、时长来源（含音频输入）、命令行构造、`Extract` 记录不含 `audio_copy`、补偿解析、解码日志精简与计数、采样率标错纠正、时长校验各分支；字幕轨选择、抽取命令行与抽取失败。
   - `tests/core/test_embedded.py`：标签与覆盖块、多行与空行、绘图／空／重复／非正时长条目、排序与重新编号、清洗结果过 `srt.parse_srt`。
 - 测试（full，`just test-full`）：
-  - `tests/full/test_media_ffmpeg.py`：用 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、流复制容器、多音轨选择、解码日志（干净与损坏的 AAC）；临时目录含空格与非 ASCII。默认路径的 ffmpeg／ffprobe 缺失时失败而不跳过。
+  - `tests/full/test_media_ffmpeg.py`：用 ffmpeg 合成媒体：音轨延迟 0.5 s、中途 2 s 间隙、5.1 满幅、单声道、立体声、音频长于／短于视频、视频里的 FLAC 与大小端 PCM 只留 WAV 与日志、多音轨选择、解码日志（干净与损坏的 AAC）；临时目录含空格与非 ASCII。默认路径的 ffmpeg／ffprobe 缺失时失败而不跳过。
   - `tests/full/test_job_ffmpeg.py`：真实 ffmpeg 合成带 SubRip、ASS、mov_text 字幕轨的片段走完整批次编排，含容器起点 +2 s。
 - 未验证：
   - 内嵌字幕：真实片源（流媒体、字幕组 ASS 特效）、假名注音、标签与内容语言不符的轨。

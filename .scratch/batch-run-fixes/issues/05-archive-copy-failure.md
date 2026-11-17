@@ -1,6 +1,6 @@
 # 05 归档音轨流复制失败导致整片失败
 
-Status: needs-triage
+Status: resolved
 Type: task
 Blocked by: —
 
@@ -38,3 +38,6 @@ ffmpeg stream copy failed (3199971767): [aac_adtstoasc @ ...] Error parsing ADTS
 - 台账 §C2。
 
 ## Comments
+
+- 2026-11-17 讨论定案：不做降级、不换容器重试，而是**取消归档流复制**（用户裁定）。副本没有任何阶段读取；ADR-0020 后源文件留在原地、工作目录不交付，副本只是重复数据，还多读一遍源文件。另一方案"先复制到 `.mka` 再从副本派生"会改变 PCM 身份、需要新 `MEDIA` 版本，且坏包仍可能在封装时失败，未采纳。落为 [ADR-0027](../../../docs/adr/0027-no-original-audio-copy.md)。
+- 2026-11-17 已实现：删除 `extract_original`、`copy_command`、`CONTAINERS`、`AUDIO_COPY_STEM` 与 `Extract.audio_copy`；派生命令与 `MEDIA` hash 不变。`just test`、`just test-full` 通过。未验证：JUFD-732 本片重跑（源盘不在线）。

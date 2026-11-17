@@ -200,8 +200,7 @@ class JobCase(unittest.TestCase):
             stream.setframerate(16000)
             stream.writeframes(pcm)
         return media.Extract(
-            audio_copy=Path(work_dir) / "audio.m4a", wav=wav, log=Path(work_dir) / artifacts.EXTRACT_LOG,
-            sample_rate=16000, samples=len(pcm) // 2, pcm_sha256=hashlib.sha256(pcm).hexdigest(),
+            wav=wav, log=Path(work_dir) / artifacts.EXTRACT_LOG, sample_rate=16000, samples=len(pcm) // 2, pcm_sha256=hashlib.sha256(pcm).hexdigest(),
             decoded_duration_s=10.0, duration_s=10.0, offset_s=0.0, pan="",
             compensation=self.compensation.get(rel, {}), warnings=self.media_warnings.get(rel, ((), ()))[1])
 
