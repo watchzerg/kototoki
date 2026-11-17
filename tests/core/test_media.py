@@ -70,6 +70,15 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(probe.audio.index, 1)
         self.assertIn("using the first audio stream", probe.warnings[0])
 
+    def test_single_untagged_audio_is_taken_silently(self) -> None:
+        """回归（batch-run-fixes 06.4）：唯一音轨没有语言标签或标 `und` 时不告警；标了别的语言、或多条都不匹配时照常告警。"""
+        for tag in (None, "", "und", "UND"):
+            with self.subTest(tag=tag):
+                probe = self.select(audio(1, tag))
+                self.assertEqual((probe.audio.index, probe.warnings), (1, ()))
+        self.assertIn("using the first audio stream", self.select(audio(1, "eng")).warnings[0])
+        self.assertIn("using the first audio stream", self.select(audio(1, None), audio(2, None)).warnings[0])
+
     def test_configured_language_is_normalized_too(self) -> None:
         self.assertEqual(self.select(audio(1, "eng"), audio(2, "jpn"), language="ja").audio.index, 2)
         self.assertEqual(self.select(audio(1, "jpn"), audio(2, "eng"), language="ENG").audio.index, 2)

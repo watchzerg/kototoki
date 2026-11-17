@@ -197,13 +197,18 @@ def _audio_track(stream: Mapping[str, Any]) -> AudioTrack:
 
 def select_audio(tracks: Sequence[AudioTrack], language: str) -> tuple[AudioTrack, list[str]]:
     """语言匹配且非 commentary 的音轨优先，其中 `default` 优先；无匹配取第一条（规则写在
-    `recipes.MEDIA["audio_selection"]`，改规则须同时改它）。返回所选音轨与告警。"""
+    `recipes.MEDIA["audio_selection"]`，改规则须同时改它）。返回所选音轨与告警。
+
+    无匹配时告警，唯一的音轨没有语言标签（或标为 `und`）时除外：没得选，这类源很常见（batch-run-fixes 06.4）。
+    """
     if not tracks:
         raise MediaError("No audio stream in the input")
     wanted = normalize_language(language)
     matches = [track for track in tracks if normalize_language(track.language) == wanted and not track.comment]
     warnings = []
     if not matches:
+        if len(tracks) == 1 and normalize_language(tracks[0].language) in (None, "und"):
+            return tracks[0], warnings
         warnings.append(f"No non-commentary audio stream tagged {wanted!r}; using the first audio stream "
                         f"(index {tracks[0].index})")
         return tracks[0], warnings

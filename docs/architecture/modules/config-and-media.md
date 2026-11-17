@@ -48,7 +48,7 @@
 
 **probe**（`kototoki/media.py`，`probe(path, config) -> Probe`）：ffprobe `-show_streams -show_format` 全部流；原始 JSON 保留在 `Probe.ffprobe`（供 `artifacts.video_identity` 取指纹，视频与音频同用），`Probe.payload()` 是 `probe.json` 的内容。
 
-- 音轨选择：语言标签归一化后（`jpn`／`ja`／`jp` 大小写不敏感视为 `jpn`，按 `recipes.LANGUAGE_ALIASES`，配置值同样归一化）等于 `input.audio_language` 且非 `disposition.comment` 的音轨优先，其中 `disposition.default` 优先、否则取第一条；多条匹配告警；无匹配取第一条音轨并告警；没有音轨报 `MediaError`。
+- 音轨选择：语言标签归一化后（`jpn`／`ja`／`jp` 大小写不敏感视为 `jpn`，按 `recipes.LANGUAGE_ALIASES`，配置值同样归一化）等于 `input.audio_language` 且非 `disposition.comment` 的音轨优先，其中 `disposition.default` 优先、否则取第一条；多条匹配告警；无匹配取第一条音轨并告警，唯一的音轨没有语言标签或标为 `und` 时不告警（没得选；batch-run-fixes 06.4，只改告警，选轨规则与配方不变）；没有音轨报 `MediaError`。
 - 记录：所选与全部音轨的绝对流索引、编码、声道数与布局、采样率、语言、default／comment、`start_time` 与时长（只作诊断，不进时间轴）、`measured_sample_rate` 与 `corrected_sample_rate`（见下条）；容器 `start_time`；字幕流清单（索引、编码、语言、default、forced，供内嵌日文字幕选轨）；告警列表。
 - 采样率标错（`media.sample_rate_check`，规则 `MEDIA["sample_rate_correction"]`）：AAC-LC 且有 `nb_frames` 与流 `duration` 时实测 `nb_frames × 1024 ÷ duration`；声明 48000 而实测在 44100 的 ±1% 内（或反之）时 `corrected_sample_rate` 取真实值，所选音轨命中记告警。只认这一对（共用 SFB 表，改标签无损）。
 - `has_video`：除封面图（`attached_pic`）外没有视频流即为音频输入（`Probe.has_video = False`）。
