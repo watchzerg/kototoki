@@ -58,14 +58,15 @@ _Avoid_: 产品后端, 正式后端
 翻译与字幕的最小单元：由 `align.json` 字符时间回填后按句末、软断点、字数与时长切出的一条日文字幕（`ja-cues.json`／`ja.srt`），中文译文与之一一对应。采用内嵌日文字幕的文件（ADR-0024）不经切分，`ja.srt` 里清洗后的每条字幕即一条日文 cue。
 
 **整窗 fallback**：
-日文 cue 回填时，一个窗口没有任何字符时间，按 VAD 子段比例给字符排时间（`time_source=fallback`）；只属时间回填，不是翻译回退。
+日文 cue 回填时，一个窗口没有任何字符时间，按 VAD 子段比例给字符排时间（`time_source=fallback`）；只属时间回填，与翻译的未翻译 cue 无关。
 
 **产品翻译配方 `dp10-cut-degrade-v1`**：
 `kototoki/translate/recipes.py` 的产品翻译配方（2026-10-18 起，ADR-0011）：切包、邻文、提示、grammar、采样与请求字节与 v3 `dp10-cut` 完全相同，只把批次终态失败的处理（`overflow`）改为拆批降级（两半→单条）、单条仍失败保留日文，因此另算 `recipe_hash`。2026-10-14..18 的产品配方 `b10-joint-degrade-v1` 与 `b10-joint` 同此关系，保留作旧 run 目录的身份对照。
 _Avoid_: dp10-cut、b10-joint（指产品配方时）
 
-**回退 cue**：
-降级到单条仍失败、译文保留日文原文的 cue；对该配方 hash 与 seed 是终态，重跑不再尝试，只有改 seed 才重译；数量记入 `translate/report.json` 与 `published.json`。
+**未翻译 cue**：
+按条追问到单条仍没有合格译文的 cue（ADR-0029）：译文为 `None`，双语字幕里只有日文一行；对该配方 hash 与 seed 是终态，重跑不再尝试，只有改 seed 才重译；数量记入 `translate/report.json` 与 `published.json`（`translate_untranslated_cues`）。2026-11-17 之前的配方 `q2-degrade-v1` 把这类 cue 的中文位置填成日文原文，称"回退 cue"。
+_Avoid_: 回退 cue（指现行产品时）
 
 **阶段计划**：
 双语字幕流水线中对一个文件从 vad 起逐阶段核对产物身份、给出"下一个要跑的阶段"（或终态 `publish`／`done`）与各阶段期望身份的模块（`kototoki/plan.py`）；编排只负责问，worker 壳从它取写进产物的身份。

@@ -70,7 +70,7 @@ __all__ = [
 ]
 
 # Strata 服务身份（ADR-0017"服务"一节）：产品用 `strata launch --no-tui --model iq3_s` 启动，`probe` 逐项核对。
-# 翻译配方 `q2-degrade-v1` 与建表配方 `q3-names-v1` 的运行时身份都取这里的值。
+# 翻译配方 `q3-translate-v1` 与建表配方 `q3-names-v3` 的运行时身份都取这里的值。
 MODEL = "qwen3.8-flash-next-iq3_s"
 STRATA_VERSION = "0.2.12"
 STRATA_ENGINE_BUILD = "0.1.58"

@@ -23,7 +23,7 @@
 | [日文 cue](modules/japanese-cues.md) | `kototoki/cues.py` | 字符时间回填并切成日文 cue；时间轴上唯一加 `offset_s` 的地方 |
 | [Strata 服务与共享 session](modules/strata-session.md) | `kototoki/strata.py`、`kototoki/local_client.py` | Strata 起停、身份核对、专家区检查、整批共用的 session 与启动额度、回环客户端 |
 | [专名一致性](modules/name-consistency.md) | `kototoki/names/` | 在共享 session 上把整份 `ja.srt` 一次建成专名表；失败写空表照常翻译 |
-| [翻译子系统与双语合并](modules/translation-subsystem.md) | `kototoki/translate/`、`kototoki/merge.py` | 产品翻译配方：切包、请求、专名注入、按批次续跑、10→5→1 降级；中日两行合并 |
+| [翻译子系统与双语合并](modules/translation-subsystem.md) | `kototoki/translate/`、`kototoki/merge.py` | 产品翻译配方：切包、请求、专名注入、按批次续跑、按条追问未解决的 cue；中日两行合并 |
 
 ### 研究与 demo
 
@@ -50,7 +50,7 @@
 | 改 VAD 分窗、对齐或 worker 的 jobs 约定 | [STT worker](modules/stt-workers.md) → [产物契约](modules/artifact-contract.md) |
 | 改 w0／x0 转写、cross 裁判或复读守卫 | [STT ASR](modules/stt-asr.md) |
 | 改日文 cue 的切分与显示规则 | [日文 cue](modules/japanese-cues.md) |
-| 改翻译配方、降级或双语合并 | [翻译子系统与双语合并](modules/translation-subsystem.md) |
+| 改翻译配方、失败路径或双语合并 | [翻译子系统与双语合并](modules/translation-subsystem.md) |
 | 改专名建表 | [专名一致性](modules/name-consistency.md) |
 | 改 Strata 起停、显存检查或 session | [Strata 服务与共享 session](modules/strata-session.md) |
 | 加阶段、改产物身份或跳过判定 | [阶段计划](modules/stage-plan.md) → [产物契约](modules/artifact-contract.md) |

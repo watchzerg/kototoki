@@ -35,11 +35,19 @@ class MergeTests(unittest.TestCase):
         for lines in _text_lines(result):
             self.assertEqual(len(lines), 2)
 
-    def test_fallback_cue_keeps_two_identical_lines(self):
+    def test_translation_equal_to_the_japanese_keeps_two_identical_lines(self):
         document = _document()
         ids = [cue.id for cue in document.cues]
         result = merge(document, {ids[0]: "こんにちは", ids[1]: "再见"})
         self.assertEqual(_text_lines(result)[0], ["こんにちは", "こんにちは"])
+
+    def test_untranslated_cue_has_only_the_japanese_line(self):
+        document = _document()
+        ids = [cue.id for cue in document.cues]
+        result = merge(document, {ids[0]: None, ids[1]: "再见"})
+        self.assertEqual(result, "1\n00:00:01,000 --> 00:00:02,500\nこんにちは\n\n"
+                                 "2\n00:00:03,000 --> 00:00:04,000\n再见\nさようなら\n")
+        self.assertEqual(len(parse_srt(result).cues), 2)
 
     def test_zero_cue_document_gives_empty_string(self):
         self.assertEqual(merge(parse_srt(""), {}), "")
@@ -64,6 +72,17 @@ class IncompleteTranslationTests(unittest.TestCase):
         translations = {cue.id: "译" for cue in document.cues} | {"ghost-cue-9": "多余"}
         with self.assertRaises(IncompleteTranslationError) as caught:
             merge(document, translations)
+        self.assertEqual(caught.exception.report["unexpected_ids"], ["ghost-cue-9"])
+
+    def test_none_still_needs_the_other_ids_and_a_known_id(self):
+        document = _document()
+        ids = [cue.id for cue in document.cues]
+        with self.assertRaises(IncompleteTranslationError) as caught:
+            merge(document, {ids[0]: None})
+        self.assertEqual((caught.exception.report["missing_ids"], caught.exception.report["untranslated_ids"]),
+                         ([ids[1]], [ids[0]]))
+        with self.assertRaises(IncompleteTranslationError) as caught:
+            merge(document, {ids[0]: "你好", ids[1]: "再见", "ghost-cue-9": None})
         self.assertEqual(caught.exception.report["unexpected_ids"], ["ghost-cue-9"])
 
     def test_empty_translation_raises(self):

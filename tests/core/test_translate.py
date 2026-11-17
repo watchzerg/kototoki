@@ -1,6 +1,6 @@
 """翻译子系统伪客户端测试：`plan` 的 run 键、身份与 `needs_model`、正常、按批次续跑、基础设施失败（OOM、中途断开、
-起不来）重启即新 session、Strata 拒绝、空场景、`ja.srt`／seed／注入行变化换目录。批次终态失败的降级见
-`test_translate_degrade.py`，Strata 启停与共享 session 本身见 `test_strata.py`。不启动 Strata，不占 GPU。"""
+起不来）重启即新 session、Strata 拒绝、空场景、`ja.srt`／seed／注入行变化换目录。按条追问、拆分与未翻译见
+`test_translate_resolve.py`，Strata 启停与共享 session 本身见 `test_strata.py`。不启动 Strata，不占 GPU。"""
 
 from __future__ import annotations
 
@@ -63,8 +63,9 @@ class FakeServer:
 
 class FakeClient:
     """按待译 JSON 回译文（OpenAI chat completions 形状）。`plan` 按本客户端的请求序号注入故障；
-    待译 ID 含 `harness.poison` 中任一条时返回非法 JSON（解析失败，用于降级测试）；待译条数超过
-    `harness.max_targets` 时按服务报超出 context 回 HTTP 400。"""
+    待译 ID 含 `harness.poison` 中任一条时返回非法 JSON（结构失败，用于拆分测试）；`harness.empty`／`harness.drop`
+    里的 ID 在剩余次数内回空串／不回（按条未解决，用于追问测试）；待译条数超过 `harness.max_targets` 时按服务报
+    超出 context 回 HTTP 400。"""
 
     def __init__(self, server: FakeServer, plan: dict[int, Any]):
         self.server, self.plan = server, plan
@@ -102,6 +103,16 @@ class FakeClient:
         if self.server.harness.poison & set(target["translations"]):
             return reply("{not json")
         texts = {k: "译" + k + ("\n\n续" if behaviour == "blank_line" else "") for k in target["translations"]}
+        for key in list(texts):
+            for remaining, value in ((self.server.harness.empty, ""), (self.server.harness.drop, None)):
+                if remaining.get(key, 0) > 0:
+                    remaining[key] -= 1
+                    if value is None:
+                        del texts[key]
+                    else:
+                        texts[key] = value
+        if behaviour == "extra":
+            texts["unknown-cue"] = "多"
         return reply(json.dumps({"translations": texts}, ensure_ascii=False))
 
 
@@ -114,6 +125,8 @@ class Harness:
         self.plans: list[dict[int, Any]] = []  # 依次分给每个新客户端
         self.start_failures: list[Any] = []    # 依次用于每次服务启动；None 表示正常
         self.poison: set[str] = set()
+        self.empty: dict[str, int] = {}        # cue id → 还要回空串的次数
+        self.drop: dict[str, int] = {}         # cue id → 还要漏掉的次数
         self.max_targets: int | None = None
         self.warm_cache = False                # True：服务的首个请求也报 cache_n 5（前缀缓存未清空）
         self.trace_dirs: list[Path] = []       # 依次给每个新客户端的 trace 目录
@@ -167,7 +180,7 @@ class TranslateDocumentTests(unittest.TestCase):
         doc = document(23)
         result = self.h.translate(doc)
         self.assertEqual(result.translations, {cue.id: "译" + cue.id for cue in doc.cues})
-        self.assertEqual(result.fallback_count, 0)
+        self.assertEqual(result.untranslated_count, 0)
         self.assertEqual(result.report["completion"]["state"], "complete")
         run = self.run_json(doc)
         self.assertEqual((run["recipe_hash"], run["seed"]), (RECIPE_HASH, SEED))
@@ -194,7 +207,7 @@ class TranslateDocumentTests(unittest.TestCase):
         doc = document(5)
         self.h.plans = [{1: "bad_json"}]
         result = self.h.translate(doc)
-        self.assertEqual(result.fallback_count, 0)
+        self.assertEqual(result.untranslated_count, 0)
         self.assertEqual([body["seed"] for body in self.h.requests], [SEED, SEED + 1])
         self.assertEqual(self.h.requests[0]["messages"], self.h.requests[1]["messages"])
         (row,) = self.batch_lines(doc)
@@ -321,20 +334,35 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual([r.getMessage() for r in logs.records],
                          [f"[translate] unexpected ValueError during translation (batch {second}); stopping Strata"])
 
-    def test_blank_line_in_translation_is_a_parse_failure(self) -> None:
+    def test_blank_line_in_every_translation_accepts_nothing_and_splits(self) -> None:
         doc = document(5)
+        ids = [cue.id for cue in doc.cues]
         self.h.plans = [{1: "blank_line", 2: "blank_line"}]
         result = self.h.translate(doc)
-        self.assertEqual(result.fallback_count, 0)
+        self.assertEqual(result.untranslated_count, 0)
         (row,) = self.batch_lines(doc)
-        self.assertEqual(row["degrade"]["nodes"][0]["error_kind"], "parse")
+        first = row["resolution"]["nodes"][0]
+        self.assertEqual((first["status"], first["error_kind"]), ("failed", "unresolved"))
+        self.assertEqual(first["request"]["attempts"][0]["unresolved"], dict.fromkeys(ids, "blank_line"))
+        self.assertEqual([n["batch_id"].rsplit(".", 1)[-1] for n in row["resolution"]["nodes"][1:]], ["a", "b"])
+
+    def test_extra_ids_are_ignored_and_recorded(self) -> None:
+        doc = document(5)
+        self.h.plans = [{1: "extra"}]
+        result = self.h.translate(doc)
+        self.assertEqual(result.untranslated_count, 0)
+        (row,) = self.batch_lines(doc)
+        self.assertNotIn("resolution", row)
+        self.assertNotIn("unresolved", row)
+        self.assertEqual(row["request"]["attempts"][0]["extra_ids"], 1)
+        self.assertNotIn("unknown-cue", row["translations"])
 
     def test_format_error_then_success_logs_the_failed_attempt(self) -> None:
         doc = document(5)
         self.h.plans = [{1: "bad_json"}]
         with self.assertLogs("kototoki.translate", level="WARNING") as logs:
             result = self.h.translate(doc)
-        self.assertEqual(result.fallback_count, 0)
+        self.assertEqual(result.untranslated_count, 0)
         (row,) = self.batch_lines(doc)
         (line,) = [r.getMessage() for r in logs.records]
         self.assertEqual(line, f"[translate] batch {row['batch_id']} attempt 1/2 failed (parse): validation: "
@@ -381,7 +409,7 @@ class TranslateDocumentTests(unittest.TestCase):
         self.h.plans = [{1: "length", 2: "length"}]
         self.h.translate(doc)
         (row,) = self.batch_lines(doc)
-        self.assertEqual(row["degrade"]["nodes"][0]["error_kind"], "limit")
+        self.assertEqual(row["resolution"]["nodes"][0]["error_kind"], "limit")
 
     def test_rerun_of_a_complete_run_does_not_start_strata(self) -> None:
         doc = document(12)
@@ -483,7 +511,7 @@ class TranslateDocumentTests(unittest.TestCase):
         doc = document(23)
         self.h.plans = [{2: URLError(ConnectionResetError(10054, "connection reset"))}]
         result = self.h.translate(doc)
-        self.assertEqual((len(result.translations), result.fallback_count), (23, 0))
+        self.assertEqual((len(result.translations), result.untranslated_count), (23, 0))
         self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
         first, second = self.run_json(doc)["sessions"]
         self.assertEqual((first["stop_reason"], first["batches_written"], second["batches_written"]), ("server", 1, 2))
@@ -520,7 +548,7 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_empty_scene_writes_nothing_and_requests_nothing(self) -> None:
         doc = parse_srt("")
         result = self.h.translate(doc)
-        self.assertEqual((result.translations, result.fallback_count), ({}, 0))
+        self.assertEqual((result.translations, result.untranslated_count), ({}, 0))
         self.assertEqual(self.h.events, [])
         self.assertEqual(self.run_json(doc)["completion"]["state"], "complete")
 
@@ -652,7 +680,7 @@ class TranslateDocumentTests(unittest.TestCase):
         self.h.table = table(("high", "台詞1", "台词一"))
         with self.assertLogs("kototoki.translate", level="INFO") as logs:
             result = self.h.translate(doc)
-        self.assertEqual(result.fallback_count, 1)
+        self.assertEqual(result.untranslated_count, 1)
         text = "\n".join(logs.output)
         self.assertIn("WARNING", text)
         for fragment in ("台詞", "ですね", "译", "台词一"):

@@ -49,13 +49,14 @@ Q1 规则＋上表模型与启动，表由产品当时的 27B 建表（`BUILD_RE
 
 ## 产品翻译
 
-配方 `q2-degrade-v1`，`RECIPE_HASH` `332649cf98662e42cccc31485792104c3ce6303e6cd634ef42ef85839ee9310d`（[0019](0019-product-translation-q2.md) 第 5 点）。
+配方 `q3-translate-v1`，`RECIPE_HASH` `865bcd1d06f0cc7af83a02f90d0ff2ae5c1fca012695d28e1dbbe4b4f0325964`（[0029](0029-translate-per-cue-resolution.md) 第 5 点；此前 `q2-degrade-v1`，[0019](0019-product-translation-q2.md) 第 5 点）。
 
 - 规则即 Q2：切包 `dp10-cut`（`gap-pack-v2`，参数同 0010 第 2–3 点）、`wide-context-v1`、`qwen-joint-v1`、`qwen-name-table-v1`（`window`）、模型与采样同上；正常包请求体与研究侧逐字节相同（0019 第 1 点）。
-- 降级：两次都失败（触顶、解析失败、超出 context）按 10→5→1 拆批，单条仍失败保留日文并计入回退报告；另拒绝含空行的译文（0019 第 4 点）。
+- 回复判定：截断、超出 context、非 JSON、不是恰好一个 `translations` 对象为结构失败，换 seed（超出 context 不换）；结构合法即按条判，非空且不含空行的收下，缺失、空串、含空行的未解决，多出 ID 与顺序不看；一条都没收下也算失败（0029 第 1、2 点）。
+- 追问：每个节点（初始即批次）最多两次；收下至少 1 条后，未解决的 cue 按最大连续段再问；两次都失败的节点对半拆，单条仍失败该 cue 不出中文，合并时只输出日文一行，计入未翻译报告（0029 第 3、4 点）。
 - 基础设施失败：停掉 Strata 重启，同调用内最多重启 2 次；`StrataRefused` 不重试（0019 第 4 点、[0022](0022-product-names-on-strata.md) 第 5 点）。
 - Strata：启动前 `--status` 为空、空闲显存 ≥14000 MiB、可用内存 ≥52 GiB（等满 180 s 仍不够只记 WARNING）；接入检查同上；专家区须为 `ram`（日志有 `expert arena: locked` 且无 mmap 记录），否则拒绝；整批结束、出错或中断时 `--stop` 并核实（0019 第 2 点）。session 与建表共用（0022 第 3 点）。
-- 身份 `{ja_srt_sha256, recipe_hash, seed, names_sha256}`；run 目录 `translate/srt-<sha12>/q2-degrade-v1__s<seed>__n<names_sha12>/`；改到注入行即重译（0019 第 3、5 点）。
+- 身份 `{ja_srt_sha256, recipe_hash, seed, names_sha256}`；run 目录 `translate/srt-<sha12>/q3-translate-v1__s<seed>__n<names_sha12>/`；改到注入行即重译（0019 第 3 点、0029 第 5 点）。
 - 配置：`[translate]` 只有 `seed`（正整数），端口固定 8080（0019 第 6 点）。
 
 ## 产品建表
@@ -121,7 +122,7 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 
 ### 方法禁区
 
-不自动选用"翻译多次再挑选"；可靠性重试与 10→5→1 降级不算在内；边界情况先问（[0008](0008-no-multi-translation-selection.md) 第 1–2 点、范围）。
+不自动选用"翻译多次再挑选"；可靠性重试与按条追问、对半拆分不算在内；边界情况先问（[0008](0008-no-multi-translation-selection.md) 第 1–2 点、范围；0029 依据）。
 
 ## 部分被取代的 ADR 仍有效的条款
 
@@ -132,5 +133,6 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 | [0015](0015-two-translation-baselines.md) | 第 2 点（H0 身份）、第 3 点（Q0 身份）、第 4 点其余测试规则、第 6、7 点 | 第 1 点、第 4 点"写明 H0 还是 Q2"、第 5 点基线含义 → 0018 |
 | [0017](0017-q2-strata-default-launch-baseline.md) | 第 3 点；身份节的 Q1 规则、Q2 两处改动、服务、请求、接入检查、配方身份（均为 Q3 组成部分） | 第 1 点 → 0021；第 2 点对照对象经 0018 第 2 点扩展、再由 0021 改为 Q3 |
 | [0018](0018-q2-sole-translation-baseline.md) | 第 2、4 点（改为针对 Q3）、第 3 点"H0 不再是基线"、第 5 点 | 第 1 点 → 0021；第 3 点"产品当前的翻译实现" → 0019 |
+| [0019](0019-product-translation-q2.md) | 第 1–3、6 点；第 4 点的基础设施失败与 `StrataRefused` | 第 2 点 llama-server 建表与不同时驻留 → 0022；第 4 点 10→5→1 降级、单条保留日文与空行判失败，第 5 点配方名、hash 与 run 目录名 → 0029 |
 | [0022](0022-product-names-on-strata.md) | 第 1 点其余（提示、采样、请求形状、预检、seed 序列与 5 次尝试）、第 3–5 点 | 第 1 点 `max_tokens` 8192、context 24576／预算 15872，第 2 点配方名 `q3-names-v1` → 0026；第 6 点与第 1 点"由 `tests/core/` 导入 v13 对照" → 0025；第 1 点把空表算作失败 → 0028 |
 | [0026](0026-names-output-and-prompt-budget.md) | 第 1、2、4 点 | 第 3 点配方名 `q3-names-v2` 与 hash → 0028 |

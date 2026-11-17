@@ -4,7 +4,7 @@ Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）
 入口：`just smoke translate_product`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
 `python scripts/smoke/translate_product.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。走产品代码：
 `translate.plan` → 共享 `strata.Session`（`StrataServer`：`--status` 为空才启动、`strata launch --no-tui`、ADR-0017 接入
-检查、结束 `--stop` 并核实显存释放）→ `translate.translate_document`，配方为产品配方 `q2-degrade-v1`，seed 取
+检查、结束 `--stop` 并核实显存释放）→ `translate.translate_document`，配方为产品配方 `q3-translate-v1`，seed 取
 `config.load` 的默认值。开始前若已有 Strata launch 在服务，产品拒绝运行，本脚本照实记为失败。
 
 输入是下面内置的 12 条中性合成日语短句（不含任何真实字幕），第 6 条后留 20 s 停顿，dp10-cut 必在此切包，
@@ -75,12 +75,12 @@ def read(path: Path) -> Any:
 
 
 def batch_stats(run_dir: Path) -> dict[str, Any]:
-    """每包耗时与首次格式失败：取 `batches.jsonl` 每行原批次请求（降级的取 `degrade.nodes[0]`）的尝试记录。"""
+    """每包耗时与首次格式失败：取 `batches.jsonl` 每行原批次请求（追问过的取 `resolution.nodes[0]`）的尝试记录。"""
     path = run_dir / "batches.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
     packs = []
     for row in rows:
-        request = row.get("request") or ((row.get("degrade") or {}).get("nodes") or [{}])[0].get("request") or {}
+        request = row.get("request") or ((row.get("resolution") or {}).get("nodes") or [{}])[0].get("request") or {}
         attempts = request.get("attempts") or []
         first = attempts[0] if attempts else {}
         packs.append({"targets": len(row.get("target_ids") or []), "attempts": len(attempts),
@@ -88,11 +88,11 @@ def batch_stats(run_dir: Path) -> dict[str, Any]:
                       "seconds": sum(a.get("completion_seconds") or 0.0 for a in attempts),
                       "input_tokens": first.get("input_tokens"), "output_tokens": first.get("output_tokens"),
                       "reasoning_chars": sum(a.get("reasoning_chars") or 0 for a in attempts),
-                      "names_injected": request.get("names_injected"), "degraded": "degrade" in row})
+                      "names_injected": request.get("names_injected"), "followed_up": "resolution" in row})
     seconds = [p["seconds"] for p in packs]
     return {"packs": packs,
-            "first_attempt_format_failures": sum(1 for p in packs if p["first_error_kind"] in ("parse", "limit")),
-            "degraded_packs": sum(1 for p in packs if p["degraded"]),
+            "first_attempt_format_failures": sum(1 for p in packs if p["first_error_kind"] in ("parse", "limit", "unresolved")),
+            "followed_up_packs": sum(1 for p in packs if p["followed_up"]),
             "reasoning_chars": sum(p["reasoning_chars"] for p in packs),
             "seconds_per_pack": {"mean": sum(seconds) / len(seconds) if seconds else None,
                                  "max": max(seconds) if seconds else None}}
@@ -149,17 +149,17 @@ def main() -> int:
         failures.append("reasoning_content was not empty (thinking must be off)")
     if translated is not None:
         ids = [cue.id for cue in document.cues]
-        texts = [translated.translations.get(cue_id, "") for cue_id in ids]
+        texts = [translated.translations.get(cue_id) or "" for cue_id in ids]
         result["output"] = {"translations": len(translated.translations),
                             "nonempty": sum(1 for text in texts if text.strip()),
                             "translations_sha256": sha256_text(json.dumps(texts, ensure_ascii=False)),
-                            "counts": translated.report.get("counts"), "fallback_cues": translated.fallback_count}
+                            "counts": translated.report.get("counts"), "untranslated_cues": translated.untranslated_count}
         if set(translated.translations) != set(ids):
             failures.append("translations do not cover every cue id")
         if not all(text.strip() for text in texts):
             failures.append("some translations are empty")
-        if translated.fallback_count:
-            failures.append(f"{translated.fallback_count} cue(s) fell back to Japanese")
+        if translated.untranslated_count:
+            failures.append(f"{translated.untranslated_count} cue(s) left untranslated")
         if (translated.report.get("counts") or {}).get("batches", 0) < 2:
             failures.append("expected at least two batches")
         if not any(p["names_injected"] for p in result["batches"]["packs"]):

@@ -1,6 +1,6 @@
-"""按批次落盘、可续跑的整片翻译；编排器传入的共享 `kototoki.strata.Session` 在整批影片间（names 建表与翻译）共用一个 Strata 服务（ADR-0019、ADR-0022）。
+"""按批次落盘、可续跑的整片翻译；编排器传入的共享 `kototoki.strata.Session` 在整批影片间（names 建表与翻译）共用一个 Strata 服务（ADR-0019、ADR-0022、ADR-0029）。
 
-`run_step` 复制自 `experiments/translation_v3/strata.py`（判定逻辑不变，去掉思考分支）。与研究侧的差别：
+`run_step` 复制自 `experiments/translation_v3/strata.py`（去掉思考分支，回复判定改为按条，ADR-0029）。与研究侧的差别：
 
 - 研究侧只连接执行者启动好的服务；这里由编排器持有的共享 `kototoki.strata.Session` 持有 `StrataServer`：第一次真正需要
   请求模型时才 `strata launch --no-tui --model iq3_s`、核对身份（可能已在 names 阶段启动），整批影片顺序共用，
@@ -12,12 +12,13 @@
   session 的启动失败整批累计 `strata.MAX_START_FAILURES` 次后也不再尝试（`unavailable` 只由 `Session` 写，这里只读）。
 - 每个 Strata session 首个 completion 的 `cache_n` 只记一次（`run.json` 的 `cache_reset`）；记录状态归本模块，
   按共享 session 与 `session.label` 分开记（`_cache_state`）。
-- 两次尝试都失败的批次（生成触顶、解析失败、HTTP 报超出 context）按 `degrade.py` 拆批降级，单条仍失败保留日文；
-  研究侧只空出该包的 cue。降级完成的批次照常写入 `batches.jsonl`，回退对该身份是终态，重跑不再尝试。
+- 回复结构合法即按条收下；没解决的 cue 再问，终态失败（生成触顶、解析失败、HTTP 报超出 context、一条都没收下）
+  的节点对半拆，单条仍失败该 cue 不出中文（`resolve.py`，ADR-0029）；研究侧只空出失败的包。批次照常写入
+  `batches.jsonl`，未翻译对该身份是终态，重跑不再尝试。
 
 run 目录由本子系统的 `plan` 决定：`<work_dir>/translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>/`（`ja.srt` 的 SHA、
 配方名、seed、注入行的 SHA 四项分键；同名配方内容变化时 `run.json` 的 hash 不符即拒绝续跑，删除该目录可重跑），下有
-`run.json`、`batches.jsonl`、`degrade.jsonl`（降级中各节点的结果，续跑用）、`scene.json`、`report.json`、
+`run.json`、`batches.jsonl`、`nodes.jsonl`（追问中各节点的结果，续跑用）、`scene.json`、`report.json`、
 `transport/session-NN/`（逐请求原始交换）、`infra-failures/`。`TranslatePlan.needs_model` 告诉编排器是否要取 GPU 锁：
 零条目或 `run.json` 已记完成时不需要。Strata session 的证据在 `<工作根>/strata-sessions/<UTC戳>-<pid>/session-NN/`（归中间层）。
 """
@@ -43,7 +44,7 @@ from kototoki.srt import SourceDocument
 from kototoki.local_client import InfraFailure, explicit_oom
 from kototoki.strata import Session, StrataRefused
 
-from . import degrade
+from . import resolve
 from . import recipes as R
 from .batching import Batch, Scene, build_batches, cue_positions, scene_from_document, source_key
 
@@ -51,7 +52,7 @@ TRANSLATE_DIR = "translate"  # 工作目录内的翻译根目录
 RUN_SCHEMA = "kototoki-translate-run-v1"
 SCENE_SCHEMA = "kototoki-translate-scene-v1"
 BATCHES = "batches.jsonl"
-DEGRADE = "degrade.jsonl"
+NODES = "nodes.jsonl"
 REPORT = "report.json"
 MAX_RESTARTS = 2
 CLIENT_TIMEOUT_SECONDS = 600.0
@@ -84,8 +85,8 @@ class TranslateError(RuntimeError):
 
 @dataclass(frozen=True)
 class TranslateResult:
-    translations: dict[str, str]
-    fallback_count: int
+    translations: dict[str, str | None]  # None：该 cue 不出中文（合并时只输出日文一行）
+    untranslated_count: int
     report: dict[str, Any] = field(default_factory=dict)
 
 
@@ -141,8 +142,11 @@ def _http_body(client: Any) -> str:
 
 
 def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[str], cache_state: dict[str, Any],
-             record: dict[str, Any]) -> dict[str, str]:
-    """一个包的 chat completion 与校验：不用 grammar、不查预算端点；最多两次（seed、seed＋1）。"""
+             record: dict[str, Any]) -> R.Parsed:
+    """一个节点的 chat completion 与校验：不用 grammar、不查预算端点；最多两次（seed、seed＋1）。
+
+    回复结构合法且收下至少 1 条即返回（未解决的 cue 在 `Parsed.unresolved`，也记进该次尝试）；结构失败或一条都没
+    收下（`unresolved`）计为失败、换下一个 seed；两次都失败抛最后一个 `StepFailed`。"""
     attempts: list[dict[str, Any]] = record.setdefault("attempts", [])
     last: StepFailed | None = None
     for number in range(1, R.MAX_ATTEMPTS + 1):
@@ -196,13 +200,19 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
             if not isinstance(content, str) or not content.strip():
                 raise StepFailed("empty generated text", "parse")
             try:
-                result = R.parse_translation(content, ids)
+                parsed = R.parse_translation(content, ids)
             except ValueError as exc:
                 attempt["whitespace_ratio"] = whitespace_ratio(content)
                 raise StepFailed(f"validation: {exc}", "parse") from exc
+            attempt["extra_ids"] = parsed.extra_ids
+            if parsed.unresolved:
+                attempt["unresolved"] = dict(parsed.unresolved)
+            if not parsed.accepted:
+                raise StepFailed(f"no cue accepted: {len(parsed.unresolved)} unresolved "
+                                 f"({resolve.reason_counts(parsed.unresolved)})", "unresolved")
             attempt["status"] = "accepted"
             record["status"] = "accepted"
-            return result
+            return parsed
         except StepFailed as exc:
             attempt.update(status="failed", error=str(exc)[:2000], error_kind=exc.kind)
             last = exc
@@ -216,7 +226,8 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
 
 
 def _log_failed_attempts(batch_id: str, request: dict[str, Any], base: Path) -> None:
-    """每次被拒绝（HTTP 错误、超出 context、server 报错）或格式不合格（非 JSON、ID 不符、空译文、触顶）的尝试记一行
+    """每次被拒绝（HTTP 错误、超出 context、server 报错）、结构不合格（非 JSON、不是一个 translations 对象、触顶）或
+    一条都没收下的尝试记一行
     WARNING：分类、seed、错误首行、停止原因、输出 token、回复字符数与交换目录（相对工作根 `base`）。回复正文不进日志，
     在交换目录的 `response.raw` 里。"""
     attempts = request.get("attempts") or []
@@ -250,7 +261,7 @@ def translate_batch(client: Any, scene: Scene, batch: Batch, rows: list[dict[str
         raise
     finally:
         _log_failed_attempts(batch.batch_id, request, base)
-    return {**batch.record(), "translations": result, "request": request}
+    return {**batch.record(), "translations": result.accepted, "unresolved": result.unresolved, "request": request}
 
 
 # --- run 目录 ----------------------------------------------------------------------------------
@@ -320,22 +331,22 @@ def _read_batches(root: Path, batches: list[Batch]) -> dict[int, dict[str, Any]]
     return done
 
 
-def _read_degrade(root: Path, batches: list[Batch], done: dict[int, dict[str, Any]]
-                  ) -> dict[int, dict[str, dict[str, Any]]]:
-    """读出未完成批次的降级节点（批次序号 → batch_id → 行）；已完成批次的节点只是证据，不再使用。"""
-    path = root / DEGRADE
+def _read_nodes(root: Path, batches: list[Batch], done: dict[int, dict[str, Any]]
+                ) -> dict[int, dict[str, dict[str, Any]]]:
+    """读出未完成批次的追问节点（批次序号 → batch_id → 行）；已完成批次的节点只是证据，不再使用。"""
+    path = root / NODES
     recorded: dict[int, dict[str, dict[str, Any]]] = {}
     for row in _read_jsonl(path):
         index = row.get("parent_index")
         batch_id = str(row.get("batch_id"))
         if type(index) is not int or not 0 <= index < len(batches) or not (
                 batch_id == batches[index].batch_id or batch_id.startswith(batches[index].batch_id + ".")):
-            raise ValueError(f"{path}: degrade row {row.get('batch_id')!r} does not match the batch plan")
+            raise ValueError(f"{path}: node row {row.get('batch_id')!r} does not match the batch plan")
         if index in done:
             continue
         nodes = recorded.setdefault(index, {})
         if row["batch_id"] in nodes:
-            raise ValueError(f"{path}: duplicate degrade row {row['batch_id']!r}")
+            raise ValueError(f"{path}: duplicate node row {row['batch_id']!r}")
         nodes[row["batch_id"]] = row
     return recorded
 
@@ -361,20 +372,21 @@ def _finish(root: Path, run: dict[str, Any], batches: list[Batch], done: dict[in
     return run["completion"]
 
 
-def _write_scene(root: Path, scene: Scene, batches: list[Batch], done: dict[int, dict[str, Any]]) -> dict[str, str]:
-    translations: dict[str, str] = {}
+def _write_scene(root: Path, scene: Scene, batches: list[Batch], done: dict[int, dict[str, Any]]
+                 ) -> dict[str, str | None]:
+    translations: dict[str, str | None] = {}
     for index in range(len(batches)):
         translations.update(done[index]["translations"])
-    # 降级批次的节点含原批次请求，因此按节点计；未降级批次只有一个请求。
+    # 追问过的批次的节点含原批次请求，因此按节点计；其余批次只有一个请求。
     requests = [node["request"] for row in done.values()
-                for node in (row["degrade"]["nodes"] if "degrade" in row else [row])]
+                for node in (row["resolution"]["nodes"] if "resolution" in row else [row])]
     attempts = [a for request in requests for a in request.get("attempts", [])]
-    degraded = [done[index] for index in range(len(batches)) if "degrade" in done[index]]
+    followed = [done[index] for index in range(len(batches)) if "resolution" in done[index]]
     atomic_write_json(root / "scene.json", {
         "schema": SCENE_SCHEMA, "scene_id": scene.scene_id, "status": "complete", "cue_ids": scene.ids,
         "positions": cue_positions(batches), "batches": [b.record() for b in batches], "translations": translations,
-        "degradation": [{"batch_id": row["batch_id"], **row["degrade"]} for row in degraded],
-        "fallback_ids": [item["id"] for row in degraded for item in row["degrade"]["fallback"]],
+        "resolution": [{"batch_id": row["batch_id"], **row["resolution"]} for row in followed],
+        "untranslated_ids": [item["id"] for row in followed for item in row["resolution"]["untranslated"]],
         "totals": {"requests": len(requests), "attempts": len(attempts),
                    "input_tokens": sum(a.get("input_tokens") or 0 for a in attempts),
                    "output_tokens": sum(a.get("output_tokens") or 0 for a in attempts),
@@ -383,11 +395,11 @@ def _write_scene(root: Path, scene: Scene, batches: list[Batch], done: dict[int,
 
 
 def _batch_line(row: dict[str, Any], total: int) -> str:
-    """批次完成的一行进度；字段取自已有记录，取不到的省略；降级批次只有 cue 数、请求数与回退数。"""
-    last = (row["request"].get("attempts") or [{}])[-1] if "degrade" not in row else {}
+    """批次完成的一行进度；字段取自已有记录，取不到的省略；追问过的批次只有 cue 数、请求数与未翻译数。"""
+    last = (row["request"].get("attempts") or [{}])[-1] if "resolution" not in row else {}
     timings = last.get("timings") or {}
     parts = [f"{len(row['target_ids'])} cue(s)"]
-    if "degrade" not in row:  # 降级批次的 tok、tok/s、cache 属于失败的原始请求，不报
+    if "resolution" not in row:  # 追问过的批次有多个请求，tok、tok/s、cache 不报
         if last.get("output_tokens") is not None:
             parts.append(f"{last['output_tokens']} tok")
         if isinstance(timings.get("predicted_per_second"), (int, float)):
@@ -395,8 +407,8 @@ def _batch_line(row: dict[str, Any], total: int) -> str:
         if timings.get("cache_n") is not None:
             parts.append(f"cache {timings['cache_n']}")
     else:
-        parts.append(f"degraded ({len(row['degrade']['nodes'])} request(s), "
-                     f"{len(row['degrade']['fallback'])} fallback)")
+        parts.append(f"followed up ({len(row['resolution']['nodes'])} request(s), "
+                     f"{len(row['resolution']['untranslated'])} untranslated)")
     return f"[translate] batch {row['index'] + 1}/{total}: " + ", ".join(parts)
 
 
@@ -409,13 +421,13 @@ SESSION_ENGINE_KEYS = ("candidate", "strata", "cold_load_seconds", "free_vram_mi
 
 
 def translate_document(plan: TranslatePlan, session: Session | None, *, relative: str) -> TranslateResult:
-    """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文；零条目文档不请求模型。`relative` 是输入目录内的相对路径，
+    """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文（不出中文的 cue 为 None）；零条目文档不请求模型。`relative` 是输入目录内的相对路径，
     只进 session start 日志行，让多集批次里的批次与告警能归到某一集。
 
-    已完成的批次（含降级完成的）直接复用；全部完成时不启动 Strata。`session` 只在 `plan.needs_model` 时使用，
+    已完成的批次（含追问完成的）直接复用；全部完成时不启动 Strata。`session` 只在 `plan.needs_model` 时使用，
     编排器在不需要模型时可传 None；计划说不需要而批次仍未完成（`run.json` 与 `batches.jsonl` 不一致）时抛
-    `TranslateError`，不会在没有 GPU 锁的情况下启动 Strata。批次终态失败按 `degrade` 降级，回退条数进
-    `fallback_count`，`report` 即写入 `report.json` 的内容。基础设施失败用尽重启抛 `TranslateError`（证据留在 run 目录）。
+    `TranslateError`，不会在没有 GPU 锁的情况下启动 Strata。没解决的 cue 按 `resolve` 追问，未翻译条数进
+    `untranslated_count`，`report` 即写入 `report.json` 的内容。基础设施失败用尽重启抛 `TranslateError`（证据留在 run 目录）。
     """
     document, root, seed = plan.document, plan.run_dir, plan.identity["seed"]
     scene = scene_from_document(document)
@@ -424,18 +436,18 @@ def translate_document(plan: TranslatePlan, session: Session | None, *, relative
         run["completion"] = {"state": "complete", "batches_total": 0, "batches_complete": 0, "cues_total": 0,
                              "restarts_last_call": 0}
         atomic_write_json(root / "run.json", run)
-        report = degrade.build_report([], run["completion"])
+        report = resolve.build_report([], run["completion"])
         atomic_write_json(root / REPORT, report)
-        return TranslateResult({}, 0, report)
+        return TranslateResult({}, 0, report)  # 零条目
     batches = build_batches(scene)
     done = _read_batches(root, batches)
-    recorded = _read_degrade(root, batches, done)
+    recorded = _read_nodes(root, batches, done)
     if len(done) < len(batches) and (session is None or not plan.needs_model):
         raise TranslateError(f"{root} is recorded as complete but {len(batches) - len(done)} batch(es) are missing "
                              f"from {BATCHES}; delete the run directory to translate again")
 
     def record(row: dict[str, Any]) -> None:
-        _append_line(root / DEGRADE, row)
+        _append_line(root / NODES, row)
         recorded.setdefault(row["parent_index"], {})[row["batch_id"]] = row
     restarts = 0
     while len(done) < len(batches):
@@ -474,8 +486,8 @@ def translate_document(plan: TranslatePlan, session: Session | None, *, relative
                 if batch.index in done:
                     continue
                 current = batch
-                row = degrade.translate_with_degrade(scene, batch, attempt, recorded.setdefault(batch.index, {}),
-                                                     record)
+                row = resolve.translate_resolving(scene, batch, attempt, recorded.setdefault(batch.index, {}),
+                                                  record)
                 row = row | {"session": number}
                 _append_line(root / BATCHES, row)
                 done[batch.index] = row
@@ -525,6 +537,6 @@ def translate_document(plan: TranslatePlan, session: Session | None, *, relative
             _finish(root, run, batches, done, restarts)
     completion = _finish(root, run, batches, done, restarts)
     translations = _write_scene(root, scene, batches, done)
-    report = degrade.build_report([done[index] for index in range(len(batches))], completion)
+    report = resolve.build_report([done[index] for index in range(len(batches))], completion)
     atomic_write_json(root / REPORT, report)
-    return TranslateResult(translations, report["counts"]["fallback_cues"], report)
+    return TranslateResult(translations, report["counts"]["untranslated_cues"], report)

@@ -118,7 +118,7 @@ def gap_pack_cuts(scene: Scene, target: int, pack: dict[str, Any]) -> list[int]:
 
 def neighbours(scene: Scene, start: int, stop: int) -> tuple[int, int]:
     """待译 [start, stop) 的可见范围 [left, right)：`wide-context-v1`，前 20、后 5 条只按条数截到场景边，
-    可见总数超过 35 条时先去后邻、再去前邻。降级的子批次用同一规则。"""
+    可见总数超过 35 条时先去后邻、再去前邻。追问与拆分的子节点用同一规则。"""
     n = len(scene.cues)
     left, right = max(0, start - WIDE_CONTEXT["before"]), min(n, stop + WIDE_CONTEXT["after"])
     while right - left > WIDE_CONTEXT["max_visible"] and right > stop:

@@ -49,7 +49,7 @@
 10. 发布（`publish`）：`ja-zh.srt` 文本是翻译结果与 `ja.srt` 按 cue 合并（`merge.merge`，没有专名替换；零 cue 为空文本）。
     - 先查源文件旁是否已出现同名字幕（运行期间由用户或别的工具写入）：有则不覆盖，记入 `existing` 并告警。
     - 否则写副本到 `<work root>/<id>/publish/`（保留）→ `write_srt` 原子写到源文件旁（临时文件在目标目录内，不跨卷）→ 成功后 `record_published`（审计）→ 删除该文件的 `failure.json`。
-    - `ja.srt` 留在工作目录，不发布 `zh.srt`。发布日志行在有回退 cue 时追加 `, N fallback cue(s)`。
+    - `ja.srt` 留在工作目录，不发布 `zh.srt`。发布日志行在有未翻译 cue（字幕里只有日文一行）时追加 `, N untranslated cue(s)`。
     - 收尾不变量：未失败的文件此时必须已在 `published`、`existing` 或 `no_speech` 里，否则记 `publish` 失败（`NotPublished`）。
 
 **内嵌日文字幕**（`job.use_embedded_subtitle`，在 probe／extract 的线程池里；选轨、抽取与清洗规则见[配置、配方与媒体提取](config-and-media.md)）：
@@ -65,7 +65,7 @@
 **计划与身份**：续跑与跳过的唯一判据是[阶段计划](stage-plan.md)给出的 `Plan`（`stage`、各阶段期望身份、`no_speech`、`TranslatePlan`）；编排对每文件调用一次 `next_stage`，每跑完一个阶段调用一次 `advance`，不自己拼身份。
 
 - 模型文件 SHA256 由 `model_sha_lookup` 经 `gpu.verify_models`（`plan.model_files` 给出期望值，size+mtime 缓存与 worker 共用）按阶段每次运行最多核对一次；失败结果同样缓存，模型缺失或不符时需要该阶段核对的文件记失败。
-- `published.json`（审计记录）的 `sources` 即 `Plan.sources`（全部身份与 `no_speech`，含 `names`），另记 `translate_fallback_cues`，不参与任何判定。
+- `published.json`（审计记录）的 `sources` 即 `Plan.sources`（全部身份与 `no_speech`，含 `names`），另记 `translate_untranslated_cues`，不参与任何判定。
 - 用户手改 `name-table.json` 的 `entries`：改到会被注入的条目（`high` 的实体或其写法）即改变翻译身份的 `names_sha256`，但已发布的字幕不会自动重做——须先删掉该 `.ja-zh.srt`，再运行才重译（需要 Strata）；只改 medium／low 条目不触发任何重做。
 
 **GPU worker 调度、崩溃与重启**：GPU 阶段每批启动一个 worker 子进程（`run_gpu_stage`），按文件隔离崩溃并为其后文件重启；命令、jobs、子进程环境与崩溃判定见[运行日志与进程原语](run-logging-and-processes.md#worker-子进程)。失败文件退出后续阶段，批次继续。
@@ -94,7 +94,7 @@
 
 - `kototoki.strata`：共享 session，`Session(config, on_server_pid=...)` 上下文管理器。
 - `kototoki.names`：`build_document(work_dir, document, session | None, seed)` 返回带 `payload`／`status`／`attempts`／`seconds` 的结果；names 身份由阶段计划算。
-- `kototoki.translate`：`translate_document(plan, session | None, *, relative)` 返回带 `translations`（cue id → 译文）与 `fallback_count` 的结果；`TranslatePlan` 由阶段计划经 `translate.plan` 取得。
+- `kototoki.translate`：`translate_document(plan, session | None, *, relative)` 返回带 `translations`（cue id → 译文，不出中文为 `None`）与 `untranslated_count` 的结果；`TranslatePlan` 由阶段计划经 `translate.plan` 取得。
 - `kototoki.merge`：`merge(ja_document, translations) -> srt_text`。
 
 不导入任何推理模块与 `experiments.*`：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。

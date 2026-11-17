@@ -18,8 +18,8 @@
   - `kototoki.names.table`（不合格的建表尝试，前缀 `[names]`）；`kototoki.names` 包顶层只发 `count_tokens` 不可用与停 Strata 前的两条 WARNING，建表结果行由编排写；
   - worker 壳在子进程里，由 `workers/gpu.main` 用同一 `RunFormatter` 写 stderr（[STT worker](stt-workers.md)）。
 - **级别**：
-  - INFO：进度、计数与耗时——每阶段 start／逐文件 done／end、worker 的 stdout 进度事件、建表每部一行（条目数、丢弃数、prompt／completion token、秒数）、翻译每批一行、发布行的回退 cue 数、结尾汇总（含回退 cue 数：本次翻译完成的文件全部计入，在翻译完成时累加，与发布成败无关）。
-  - WARNING：流程继续但应看一眼的事——大小仍在变化、发布期发现字幕已出现而不覆盖、媒体告警（`[extract] <相对路径>: <告警>`；媒体模块不发日志，由编排在主线程逐条记，续跑跳过 extract 时照样出现）、worker stderr 有告警、建表终态失败写空表（`[names] done <相对路径>: build failed (<原因>), empty table`）、等显存超过 30 s、Strata 重启／降级拆批／回退保留日文。
+  - INFO：进度、计数与耗时——每阶段 start／逐文件 done／end、worker 的 stdout 进度事件、建表每部一行（条目数、丢弃数、prompt／completion token、秒数）、翻译每批一行、发布行的未翻译 cue 数、结尾汇总（含未翻译 cue 数：翻译完成即累加，与发布成败无关）。
+  - WARNING：流程继续但应看一眼的事——大小仍在变化、发布期发现字幕已出现而不覆盖、媒体告警（`[extract] <相对路径>: <告警>`；媒体模块不发日志，由编排在主线程逐条记，续跑跳过 extract 时照样出现）、worker stderr 有告警、建表终态失败写空表（`[names] done <相对路径>: build failed (<原因>), empty table`）、等显存超过 30 s、Strata 重启／追问与拆分／未翻译。
   - ERROR：文件级与进程级失败，另含 Strata 不可用（被拒绝或启动额度用尽，整批一次）与停止未核实。DEBUG 不用。
 - **行格式**（`kototoki/logs.py` 的 `LOG_FORMAT`／`LOG_DATEFMT`）：UTC 墙钟、自本次 `run` 起的相对秒（单调时钟，格式化时取：系统时钟被校正时不跳变；时间戳仍是墙钟，会随校正跳）、定宽级别、消息；非 `kototoki` logger 的消息前加 `[<logger 名首段>]`（如 `[transformers]`）。消息沿用 `[stage]` 前缀与 start／done／end／FAILED 词汇。例：
 
@@ -43,7 +43,7 @@
   - 任何逃出流程的异常（Ctrl+C、`GpuLocked`、Strata 启停异常、未预期的 `OSError` 等 `BaseException`）在日志上下文内记 ERROR `[run] ABORTED: <异常类型>`，`KeyboardInterrupt` 不带 traceback，其余带；随后原样抛出，退出码不变。
   - `[summary]` 的两类行（总计行与逐个 `failed at <stage>` 行）在任何退出路径都写，中断时写已知的计数。
 - **编排的计划与复用行**：extract 复用已有派生 WAV（`probe.json` 当前、跳过提取）时 done 行追加 ` (reused)`；计划之后一行 INFO `[plan] N file(s) resume at: vad 3, names 2, translate 7, publish 1`，按阶段链顺序只列非零项（`publish` 是无语音直接发布），没有文件时为 `none`。为什么重跑（产物缺失、不可读或哪个身份字段不符）不记。
-- **编排的翻译结果行**：每文件 `[translate] done <相对路径>[ (resumed)]: N cue(s), F fallback, T.Ts`；`(resumed)` 表示全部批次早已完成、本次只读回译文未用模型；回退数大于 0 时为 WARNING。翻译子系统自己的行见[翻译子系统](translation-subsystem.md)。
+- **编排的翻译结果行**：每文件 `[translate] done <相对路径>[ (resumed)]: N cue(s), U untranslated, T.Ts`；`(resumed)` 表示全部批次早已完成、本次只读回译文未用模型；未翻译数大于 0 时为 WARNING。翻译子系统自己的行见[翻译子系统](translation-subsystem.md)。
 - **子进程噪声**：`job.child_env` 在离线变量之外合入 `job.QUIET_ENV`（`TQDM_DISABLE=1`、`HF_HUB_DISABLE_PROGRESS_BARS=1`、`TRANSFORMERS_VERBOSITY=warning`），让 worker stderr 只留日志行；这组变量归编排。
 - **启动早期错误**：用法与配置错误、工作根锁冲突由 `__main__` 打印到 stderr（控制台流设 `errors="backslashreplace"`），以退出码区分，不写成日志行。GPU 锁冲突不属此类：它在 scan、extract 之后才可能发生，运行日志以 `[run] ABORTED: GpuLocked` 与 `[summary]` 收尾，`__main__` 另把原因打印到 stderr，退出码仍是 4。
 
@@ -92,7 +92,7 @@
   - `tests/core/test_logs.py`：墙钟跳变时相对秒不跳、时间戳跟墙钟；第三方 logger 前缀。
   - `tests/core/test_protocol.py`：`classify_launch`（正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件）。
   - `tests/core/test_procs.py`：锁内容、空锁文件与不可解析、无 `pid_created` 的外部锁、死 pid 与破锁、非整数 pid、并发创建、`update` 只改自己的锁、`release` 只删自己的锁。
-  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、cues 三件套（0 条为 WARNING）、翻译 done 行的耗时、`(resumed)` 与回退时的 WARNING、`[plan]` 计数与 `(reused)`、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、同类失败（不同异常对象、同一抛出位置）只有一份 traceback 且其后行带消息、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志且运行后 `captureWarnings` 复原、告警与失败的级别、extract 三件套、媒体告警逐条 WARNING（含续跑跳过 extract）、补偿告警的阈值与续跑、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
+  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、cues 三件套（0 条为 WARNING）、翻译 done 行的耗时、`(resumed)` 与有未翻译时的 WARNING、`[plan]` 计数与 `(reused)`、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、同类失败（不同异常对象、同一抛出位置）只有一份 traceback 且其后行带消息、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志且运行后 `captureWarnings` 复原、告警与失败的级别、extract 三件套、媒体告警逐条 WARNING（含续跑跳过 extract）、补偿告警的阈值与续跑、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
   - 同文件的 `LockTests`（锁冲突退出码、残留锁、空的／无法解析的锁、锁内 pid 记录）、`ScanTests`（Job Object 建立失败时释放工作根锁）、`IsolationTests`（崩溃文件隔离、按文件重启、`_launch` 异常时回收 worker）。
 - 测试（full，`just test-full`）：`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙断言 `job.compensation_warnings` 给出一行补入告警。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。

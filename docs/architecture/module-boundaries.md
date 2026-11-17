@@ -24,7 +24,7 @@
 - 日文 cue 是时间轴上唯一加 offset 的地方，归[日文 cue](modules/japanese-cues.md)。
 - STT 推理、`cross` 引擎与 `kototoki/schema.py` 的校验归 [STT worker](modules/stt-workers.md)。`judge` 不导入推理模块，打分由调用方传入的 `WhisperAsr.score` 做；`guard` 只处理字符串，改写、trace 与把置空窗口记失败归 worker 壳，x0 不用守卫。
 - 阶段链、`ENGINE_PARTS`（唯一出处）、模型清单与各阶段期望身份归[阶段计划](modules/stage-plan.md)；translate 身份转问翻译子系统，是否已发布由编排按字幕文件是否存在判定。
-- 翻译配方与 `RECIPE_HASH`（只在 `kototoki/translate/recipes.py`）、注入规则、run 目录键、`needs_model`、降级与合并归[翻译子系统](modules/translation-subsystem.md)。
+- 翻译配方与 `RECIPE_HASH`（只在 `kototoki/translate/recipes.py`）、注入规则、run 目录键、`needs_model`、按条追问与未翻译、合并归[翻译子系统](modules/translation-subsystem.md)。
 - 建表配方与 hash（只在 `kototoki/names/recipes.py`）、建表请求额度与 `name-table.json` 的内容归[专名一致性](modules/name-consistency.md)；文件由编排写，表的用法（注入哪些行）归翻译子系统。
 - 扫描、调度、锁、发布、子进程环境与运行日志归[批次编排](modules/batch-orchestration.md)；进程原语在基础层 `kototoki/procs.py`，日志行格式在 `kototoki/logs.py`。
 - 本机回环客户端 `LlamaClient`、`InfraFailure`、`explicit_oom` 归 `kototoki/local_client.py`；llama-server 进程生命周期不在产品里，在研究侧 `experiments/translation_v3/llama_server.py`，`list_llama_servers` 在 `scripts/smoke/`。

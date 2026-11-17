@@ -146,7 +146,7 @@ class JobCase(unittest.TestCase):
         self.translate_errors: set[str] = set()  # work id
         # (work id, 表 SHA)：伪 run 已完成，再计划即 needs_model=False；表一变即另起 run
         self.translate_done: set[tuple[str, str]] = set()
-        self.fallback = 0
+        self.untranslated = 0
         self.enterContext(mock.patch("kototoki.translate.plan", self._translate_plan))
         self.enterContext(mock.patch("kototoki.translate.translate_document", self._translate_document))
         self.enterContext(mock.patch("kototoki.merge.merge", self._merge))
@@ -272,7 +272,7 @@ class JobCase(unittest.TestCase):
             raise RuntimeError("fake translate failure")
         self.translate_done.add((identifier, plan.names_sha256))
         return types.SimpleNamespace(translations={cue.id: "你好" for cue in plan.document.cues},
-                                     fallback_count=self.fallback)
+                                     untranslated_count=self.untranslated)
 
     def _merge(self, document, translations) -> str:
         self.calls.append("merge")
@@ -851,15 +851,15 @@ class LockTests(JobCase):
 class PublishTests(JobCase):
     def test_bilingual_subtitle_published_with_audit_record(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
-        self.fallback = 1
+        self.untranslated = 1
         console = io.StringIO()
         summary = self.run_job(console=console)
-        self.assertEqual((summary.published, summary.fallback_cues), (["a.mkv", "b.mkv"], 2))
+        self.assertEqual((summary.published, summary.untranslated_cues), (["a.mkv", "b.mkv"], 2))
         for rel in ("a.mkv", "b.mkv"):
             record = self.published(rel)
             self.assertEqual(record["final"], str(self.final(rel)))
             self.assertEqual(record["sha256"], artifacts.sha256_file(self.final(rel)))
-            self.assertEqual(record["sources"]["translate_fallback_cues"], 1)
+            self.assertEqual(record["sources"]["translate_untranslated_cues"], 1)
             self.assertTrue(record["translate_dir"].startswith("translate/srt-"))
             self.assertRegex(record["translate_dir"], rf"/fake__s{self.config.translate.seed}__n[0-9a-f]{{12}}$")
             copy = self.work_dir(rel) / job.PUBLISH_DIR / self.final(rel).name  # 工作目录副本保留
@@ -885,7 +885,7 @@ class PublishTests(JobCase):
 
     def test_failed_publish_writes_no_audit_record(self) -> None:
         self.make_inputs("a.mkv")
-        self.fallback = 2  # 汇总的回退数在翻译完成时计，发布失败也不漏（batch-run-fixes 06.1）
+        self.untranslated = 2  # 汇总的未翻译数在翻译完成时计，发布失败也不漏（batch-run-fixes 06.1）
         real = artifacts.replace_with_retry
         final = self.final("a.mkv")
 
@@ -896,7 +896,7 @@ class PublishTests(JobCase):
 
         with mock.patch.object(artifacts, "replace_with_retry", side_effect=locked_final):
             summary = self.run_job()
-        self.assertEqual((summary.failed, summary.fallback_cues), ({"a.mkv": "publish"}, 2))
+        self.assertEqual((summary.failed, summary.untranslated_cues), ({"a.mkv": "publish"}, 2))
         self.assertFalse(final.exists())
         self.assertFalse((self.work_dir("a.mkv") / artifacts.PUBLISHED).exists())
         self.assertTrue((self.work_dir("a.mkv") / job.PUBLISH_DIR / final.name).is_file())  # 副本可人工恢复
@@ -1089,7 +1089,7 @@ class NamesTests(JobCase):
             sources = self.published(rel)["sources"]
             self.assertEqual(sources["translate"]["names_sha256"], self.table_sha256(self.table(rel)))
             self.assertEqual(set(sources), {"probe", "vad", "asr", "align", "ja_cues", "names", "translate",
-                                            "no_speech", "translate_fallback_cues"})
+                                            "no_speech", "translate_untranslated_cues"})
             # 表只经翻译注入：发布的译文就是翻译结果，不再做发布期替换、不写替换审计。
             self.assertEqual(self.final(rel).read_text(encoding="utf-8"), MERGED)
             self.assertFalse((self.work_dir(rel) / "names-apply.json").exists())
@@ -1230,7 +1230,7 @@ class EmbeddedSubtitleTests(JobCase):
                          "2\n00:00:05,000 --> 00:00:06,000\n你好\n次の台詞\n")
         sources = self.published("a.mkv")["sources"]
         self.assertEqual(set(sources), {"probe", "ja_embedded", "names", "translate", "no_speech",
-                                        "translate_fallback_cues"})
+                                        "translate_untranslated_cues"})
         self.assertEqual(sources["ja_embedded"], record["identity"])
         self.assertIn("vad", self.published("b.mkv")["sources"])
         log = console.getvalue()
@@ -1451,7 +1451,7 @@ class RunLogTests(JobCase):
         for line in file:
             self.assertRegex(line, LOG_LINE)
         self.assertIn("[summary] 2 file(s): 2 published (0 no speech, 0 from embedded subtitles), 0 with subtitles, 0 failed, "
-                      "0 unstable, 0 fallback cue(s)", self.entries_at(file, "INFO"))
+                      "0 unstable, 0 untranslated cue(s)", self.entries_at(file, "INFO"))
 
     def test_warnings_use_level_not_wording(self) -> None:
         self.make_inputs("a.mkv", "b.mkv")
@@ -1572,7 +1572,7 @@ class RunLogTests(JobCase):
         self.assertIn("OSError: disk gone", text.split("[run] ABORTED: OSError", 1)[1])
         info = self.entries_at(file, "INFO")
         self.assertIn("[summary] 2 file(s): 0 published (0 no speech, 0 from embedded subtitles), 0 with subtitles, "
-                      "1 failed, 0 unstable, 0 fallback cue(s)", info)
+                      "1 failed, 0 unstable, 0 untranslated cue(s)", info)
         self.assertEqual(info[-1], "[summary] failed at extract: b.mkv")
         self.assertFalse(self.config.gpu_lock.exists())
 
@@ -1706,20 +1706,20 @@ class RunLogTests(JobCase):
         self.assertEqual(cue_lines[-1][0], "INFO")
         self.assertRegex(cue_lines[-1][1], r"^\[cues\] end: 2 done, 1 failed, \d+\.\ds$")
 
-    def test_translate_done_line_carries_time_resume_and_fallback_level(self) -> None:
+    def test_translate_done_line_carries_time_resume_and_untranslated_level(self) -> None:
         self.make_inputs("a.mkv")
-        self.fallback = 2
+        self.untranslated = 2
         _, file = self.run_logged()
         (done,) = [m.group(1, 2) for m in map(LOG_LINE.match, file) if m and m[2].startswith("[translate] done")]
         self.assertEqual(done[0], "WARNING")
-        self.assertRegex(done[1], r"^\[translate\] done a\.mkv: 1 cue\(s\), 2 fallback, \d+\.\ds$")
+        self.assertRegex(done[1], r"^\[translate\] done a\.mkv: 1 cue\(s\), 2 untranslated, \d+\.\ds$")
 
-        self.fallback = 0
+        self.untranslated = 0
         self.final("a.mkv").unlink()  # run 已完成：只读回译文，不需要模型
         _, file = self.run_logged()
         (done,) = [m.group(1, 2) for m in map(LOG_LINE.match, file) if m and m[2].startswith("[translate] done")]
         self.assertEqual(done[0], "INFO")
-        self.assertRegex(done[1], r"^\[translate\] done a\.mkv \(resumed\): 1 cue\(s\), 0 fallback, \d+\.\ds$")
+        self.assertRegex(done[1], r"^\[translate\] done a\.mkv \(resumed\): 1 cue\(s\), 0 untranslated, \d+\.\ds$")
 
     def test_names_done_line_shows_the_attempt_only_after_retries(self) -> None:
         self.make_inputs("a.mkv")

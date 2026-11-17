@@ -1,6 +1,6 @@
-"""产品翻译配方 `q2-degrade-v1`（ADR-0019）：Q2 的提示、专名注入、请求体、回复校验与配方 hash（翻译配方的唯一归属）。
+"""产品翻译配方 `q3-translate-v1`（ADR-0029）：Q3 的提示、专名注入、请求体、回复校验与配方 hash（翻译配方的唯一归属）。
 
-Q2 是一条组配方的规则（ADR-0017）：Q1＝`qwen-wide`＋只注入 `confidence: high` 的专名表，模型换成 Strata 上的
+Q3 的翻译规则即 Q2（ADR-0017、ADR-0021）：Q1＝`qwen-wide`＋只注入 `confidence: high` 的专名表，模型换成 Strata 上的
 Qwen3.8-Flash-Next IQ3_S、不加参数启动。本模块把这条规则写成产品常量，研究实现只复制、不导入：
 
 - 提示 `qwen-joint-v1`：系统消息是 joint 任务文本（只读上下文之前的部分），用户消息是只读上下文与待译 JSON；
@@ -8,9 +8,10 @@ Qwen3.8-Flash-Next IQ3_S、不加参数启动。本模块把这条规则写成�
 - 专名注入 `qwen-name-table-v1`、过滤 `window`：一部影片的 `name-table.json` 里 `confidence: high` 的实体，每个
   `forms[]` 取一行 `{source: ja, translation: zh}`，按 `ja` 去重，跳过 `ja` 或 `zh` 为空的写法（即研究侧
   `names11.product_tables("high")`）；某包只注入日文写法出现在该包可见台词（含只读邻文）里的行。
-- 请求：chat completions，不用 grammar，思考关闭，采样 `temperature 0.7, top_p 0.8, top_k 20`，每包最多两次
+- 请求：chat completions，不用 grammar，思考关闭，采样 `temperature 0.7, top_p 0.8, top_k 20`，每个节点最多两次
   （seed、seed＋1）；即研究侧 `strata.request_body`。
-- 失败路径（产品新增，因而另算 hash）：两次都失败的包按 `degrade.py` 拆成 10→5→1，单条仍失败保留日文。
+- 失败路径（产品自有，因而另算 hash）：回复结构合法即按条收下，没解决的 cue 按 `resolve.py` 单独再问；
+  结构失败两次的节点对半拆，单条仍失败则该 cue 不出中文（ADR-0029）。
 
 表的内容不进配方 hash，进翻译身份（`generate.plan` 的 `names_sha256`）：手改表即换 run 目录、重译。
 """
@@ -18,12 +19,13 @@ Qwen3.8-Flash-Next IQ3_S、不加参数启动。本模块把这条规则写成�
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from kototoki.artifacts import object_hash, sha256_bytes
 from kototoki.strata import MODEL, STRATA_ENGINE_BUILD, STRATA_LAUNCH, STRATA_RESOLVED, STRATA_VERSION
 
-RECIPE_NAME = "q2-degrade-v1"
+RECIPE_NAME = "q3-translate-v1"
 N_PREDICT = 4096
 # Q1 的输入预算（context 16384 − 4096 − 64）：Strata 下超出只记录（`over_q1_budget`），不判失败。
 Q1_CONTEXT = 16384
@@ -32,7 +34,10 @@ Q1_INPUT_BUDGET = Q1_CONTEXT - N_PREDICT - GUARD_TOKENS
 MAX_ATTEMPTS = 2
 SEED_STEP = 1  # 第 N 次尝试用 seed + (N − 1) × SEED_STEP
 SAMPLING = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0}
-OVERFLOW = "degrade-10-5-1-keep-source"
+# 回复结构合法即按条收；没解决的 cue 按连续段再问，结构失败两次的节点对半拆，单条仍失败不出中文（ADR-0029）。
+OVERFLOW = "unresolved-runs+halve-after-structural-failures+untranslated"
+VALIDATION = ("strict-json+one-translations-object; per-cue nonempty-string+no-blank-line; "
+              "missing/empty/blank-line unresolved; extra ids ignored; order ignored")
 
 # 切包：v3 `dp10-cut` 的 gap-pack-v2 参数逐字照抄（ADR-0010 第 2–3 点），只用 `group_gap=None` 分支。
 GAP_PACK_VERSION = "gap-pack-v2"
@@ -67,7 +72,7 @@ REQUEST_SHAPE = "chat-completions+no-grammar+usage-prompt-tokens"
 
 RECIPE: dict[str, Any] = {
     "schema": "kototoki-translate-recipe-v2",
-    "rule": "Q2 (ADR-0017) + degrade (ADR-0019)",
+    "rule": "Q3 translation rule (ADR-0017, ADR-0021) + per-cue resolution (ADR-0029)",
     "packing": {"version": GAP_PACK_VERSION, "target": TARGET, **DP10_CUT_PACK},
     "neighbours": {"version": WIDE_CONTEXT_VERSION, **WIDE_CONTEXT},
     "prompt": {"version": PROMPT_VERSION, "joint": [JOINT_VERSION, sha256_bytes(JOINT_INSTRUCTION.encode())],
@@ -83,7 +88,7 @@ RECIPE: dict[str, Any] = {
     "attempts": {"max": MAX_ATTEMPTS, "seed_step": SEED_STEP},
     "first_cache_check": "recorded-only",
     "input_budget": {"q1_input_budget": Q1_INPUT_BUDGET, "over": "recorded-not-failed"},
-    "validation": "strict-json+one-translations-object+id-set+id-order+nonempty+no-blank-line",
+    "validation": VALIDATION,
     "overflow": OVERFLOW,
 }
 RECIPE_HASH = object_hash(RECIPE)
@@ -153,19 +158,31 @@ def strict_json(text: str) -> Any:
     return json.loads(text.strip().lstrip("﻿"), object_pairs_hook=pairs)
 
 
-def parse_translation(text: str, ids: list[str]) -> dict[str, str]:
-    """恰好一个 `translations` 对象、ID 集合与顺序同待译、值非空；另拒绝含空行的译文（空行会让 SRT 断块）。"""
+@dataclass(frozen=True)
+class Parsed:
+    """一次结构合法的回复按条判定的结果：`accepted` 与 `unresolved` 按待译顺序，合起来恰好覆盖待译 ID。"""
+    accepted: dict[str, str]
+    unresolved: dict[str, str]  # cue id → `missing`／`empty`／`blank_line`
+    extra_ids: int              # 回复里多出的 ID 数（忽略，只记录）
+
+
+def parse_translation(text: str, ids: list[str]) -> Parsed:
+    """结构校验（抛 `ValueError`）：严格 JSON、恰好一个 `translations` 对象。结构合法后按条判：值为非空字符串且
+    不含空行（空行会让 SRT 断块）的收下；缺失、空串／非字符串、含空行的记为未解决；多出的 ID 与顺序不看。"""
     obj = strict_json(text)
-    if not isinstance(obj, dict) or set(obj) != {"translations"}:
+    if not isinstance(obj, dict) or set(obj) != {"translations"} or not isinstance(obj["translations"], dict):
         raise ValueError("Expected exactly one translations object")
     result = obj["translations"]
-    if not isinstance(result, dict) or set(result) != set(ids):
-        raise ValueError("Translation ID set mismatch")
-    if any(not isinstance(value, str) or not value.strip() for value in result.values()):
-        raise ValueError("Empty or invalid translation")
-    if list(result) != ids:
-        raise ValueError("Translation ID order mismatch")
-    for key, value in result.items():
-        if any(not line.strip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
-            raise ValueError(f"Blank line inside translation of {key}")
-    return result
+    accepted: dict[str, str] = {}
+    unresolved: dict[str, str] = {}
+    for key in ids:
+        value = result.get(key)
+        if key not in result:
+            unresolved[key] = "missing"
+        elif not isinstance(value, str) or not value.strip():
+            unresolved[key] = "empty"
+        elif any(not line.strip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
+            unresolved[key] = "blank_line"
+        else:
+            accepted[key] = value
+    return Parsed(accepted, unresolved, len(set(result) - set(ids)))

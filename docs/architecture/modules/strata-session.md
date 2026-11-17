@@ -9,7 +9,7 @@
 - `kototoki/strata.py`：`StrataServer`（启动、身份核对、专家区检查、资源采样、停止与显存释放核实）、显存轮询、Strata 身份常量、整批共用的 `Session`。
 - `kototoki/local_client.py`：`LlamaClient`（只连本机回环）、基础设施失败 `InfraFailure`、OOM 文本识别 `explicit_oom`。
 
-两者都是中间层：[专名一致性](name-consistency.md)（建表）与[翻译子系统](translation-subsystem.md)单向依赖它们。不负责：何时需要模型、GPU 锁与 Strata pid 写进锁文件（[批次编排](batch-orchestration.md)）；请求内容、重试与降级（各使用者）；Strata 与模型的安装（[依赖布局](../../development/dependencies.md)）。现行定义见[决定定义：产品翻译](../../adr/CURRENT.md#产品翻译)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+两者都是中间层：[专名一致性](name-consistency.md)（建表）与[翻译子系统](translation-subsystem.md)单向依赖它们。不负责：何时需要模型、GPU 锁与 Strata pid 写进锁文件（[批次编排](batch-orchestration.md)）；请求内容、重试与追问（各使用者）；Strata 与模型的安装（[依赖布局](../../development/dependencies.md)）。现行定义见[决定定义：产品翻译](../../adr/CURRENT.md#产品翻译)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 

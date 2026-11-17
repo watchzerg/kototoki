@@ -2,10 +2,10 @@
 `TranslateResult` 与产品配方 hash `RECIPE_HASH`。Strata 的生命周期与共享 session 在中间层 `kototoki.strata`（ADR-0022），
 由编排器持有、传给 `translate_document`；本包不导出 `Session`，也没有 `strata` 子模块（研究侧直接导入 `kototoki.strata`）。
 
-`recipes`（Q2 规则的产品配方 `q2-degrade-v1`）、`batching`、`degrade`、`generate` 是内部实现；编排器不导入它们。
+`recipes`（Q3 翻译规则的产品配方 `q3-translate-v1`）、`batching`、`resolve`、`generate` 是内部实现；编排器不导入它们。
 专名表只注入 `confidence: high` 条目的写法，这条规则只在本包（`translate.plan` 算 `names_sha256`）。
 子系统不取 GPU 锁、不做时间换算。
-见 docs/architecture/modules/translation-subsystem.md 与 ADR-0019、ADR-0022。
+见 docs/architecture/modules/translation-subsystem.md 与 ADR-0019、ADR-0022、ADR-0029。
 
 模块页：docs/architecture/modules/translation-subsystem.md。
 """

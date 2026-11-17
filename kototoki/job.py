@@ -200,7 +200,7 @@ class Summary:
     no_speech: list[str] = field(default_factory=list)     # VAD 为空，发布零条目字幕
     embedded: list[str] = field(default_factory=list)      # 本次发布中日文取自内嵌字幕轨、未经 STT 的文件
     failed: dict[str, str] = field(default_factory=dict)   # 相对路径 → 失败阶段
-    fallback_cues: int = 0                                 # 本次翻译完成的文件中译文回退为日文的 cue 数（不论是否发布）
+    untranslated_cues: int = 0                             # 本次翻译完成的文件中不出中文的 cue 数（不论是否发布）
 
     @property
     def exit_code(self) -> int:
@@ -635,14 +635,14 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) 
 
 
 def translate_batch(ctx: _Context, batch: list[VideoFile],
-                    session: strata.Session) -> dict[str, tuple[dict[str, str], int, str]]:
-    """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 回退条数, run 目录相对工作目录)。
+                    session: strata.Session) -> dict[str, tuple[dict[str, str | None], int, str]]:
+    """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 未翻译条数, run 目录相对工作目录)。
 
     只有某个文件 `needs_model` 时才取 GPU 锁（names 已取时沿用），需要模型的文件拿到共享 `session`（names 阶段没有
     启动 Strata 时在这里第一次启动）；零条目或 run 已完成的文件不需要模型，传 None、直接读回译文。撞 GPU 锁
     （`GpuLocked`）向上抛、整批退出码 4。
     """
-    results: dict[str, tuple[dict[str, str], int, str]] = {}
+    results: dict[str, tuple[dict[str, str | None], int, str]] = {}
     if not batch:
         return results
     started = time.perf_counter()
@@ -661,18 +661,18 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
         except Exception as error:
             ctx.fail(video, "translate", error, traceback=not known)
             continue
-        results[video.relative] = (dict(result.translations), int(result.fallback_count), tplan.relative)
-        ctx.summary.fallback_cues += int(result.fallback_count)  # 翻译完成即计，与发布成败无关
+        results[video.relative] = (dict(result.translations), int(result.untranslated_count), tplan.relative)
+        ctx.summary.untranslated_cues += int(result.untranslated_count)  # 翻译完成即计，与发布成败无关
         resumed = " (resumed)" if tplan.document.cues and not tplan.needs_model else ""  # 全部批次已完成，未用模型
-        (logger.warning if result.fallback_count else logger.info)(
+        (logger.warning if result.untranslated_count else logger.info)(
             f"[translate] done {video.relative}{resumed}: {len(tplan.document.cues)} cue(s), "
-            f"{result.fallback_count} fallback, {time.perf_counter() - file_started:.1f}s")
+            f"{result.untranslated_count} untranslated, {time.perf_counter() - file_started:.1f}s")
     logger.info(f"[translate] end: {len(results)} done, {len(batch) - len(results)} failed, "
                 f"{time.perf_counter() - started:.1f}s")
     return results
 
 
-def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, fallback: int) -> bool:
+def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, untranslated: int) -> bool:
     """双语字幕写一份到工作目录 `publish/`（副本）→ 原子写到源文件旁 → `record_published`（审计）；成功后删 failure.json。
 
     源文件旁那份用 `write_srt` 原子写：临时文件建在目标目录内再替换，工作目录与输入不在同一卷时也不会跨卷移动。
@@ -687,14 +687,14 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, fall
     srt.write_srt(text, video.work_dir / PUBLISH_DIR / video.final.name)
     srt.write_srt(text, video.final)
     artifacts.record_published(video.work_dir, video.final, artifacts.sha256_file(video.final),
-                               video.plan.sources | {"translate_fallback_cues": fallback}, translate_dir)
+                               video.plan.sources | {"translate_untranslated_cues": untranslated}, translate_dir)
     (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
     ctx.summary.published.append(video.relative)
     if video.embedded is not None:
         ctx.summary.embedded.append(video.relative)
     logger.info(f"[publish] done {video.relative}" + (" (no speech)" if video.no_speech else "")
                 + (" (embedded subtitles)" if video.embedded is not None else "")
-                + (f", {fallback} fallback cue(s)" if fallback else ""))
+                + (f", {untranslated} untranslated cue(s)" if untranslated else ""))
     return True
 
 
@@ -827,10 +827,10 @@ def _run(ctx: _Context) -> None:
                 if publish(ctx, video, "", "", 0):
                     summary.no_speech.append(video.relative)
             elif stage == "translate" and video.relative in translated:
-                translations, fallback, translate_dir = translated[video.relative]
+                translations, untranslated, translate_dir = translated[video.relative]
                 document = video.plan.translate.document
                 text = merge.merge(document, translations) if document.cues else ""
-                publish(ctx, video, text, translate_dir, fallback)
+                publish(ctx, video, text, translate_dir, untranslated)
         except Exception as error:
             ctx.fail(video, "publish", error)
 
@@ -855,6 +855,6 @@ def _log_summary(summary: Summary) -> None:
                 f"({len(summary.no_speech)} no speech, {len(summary.embedded)} from embedded subtitles), "
                 f"{len(summary.existing)} with subtitles, "
                 f"{len(summary.failed)} failed, {len(summary.unstable)} unstable, "
-                f"{summary.fallback_cues} fallback cue(s)")
+                f"{summary.untranslated_cues} untranslated cue(s)")
     for rel, stage in summary.failed.items():
         logger.info(f"[summary] failed at {stage}: {rel}")

@@ -1,4 +1,4 @@
-"""产品配方 `q2-degrade-v1` 的身份钉子：配方 hash、与研究侧 Q2（`experiments/translation_v3/{qwen,strata}.py`＋
+"""产品配方 `q3-translate-v1` 的身份钉子：配方 hash、与研究侧 Q2（`experiments/translation_v3/{qwen,strata}.py`＋
 `scene_batching_v6/v12.py::strata_recipe_data`）逐字节一致的切包、邻文、提示与请求体（摘要钉子），注入行与研究
 `names11.py::product_tables` 的规则一致（字面量钉子），回复校验。gap-pack-v2 切包用例移植自
 `experiments/scene_batching_v6/test_v7.py`。与研究实现的实时对照在 `tests/equivalence/test_translate_recipes.py`，
@@ -20,7 +20,7 @@ from kototoki.translate import recipes as R
 from kototoki.translate.batching import (Batch, Cue, Scene, build_batches, cue_positions, gap_pack_cuts, neighbours,
                                          scene_from_document, silence)
 
-Q2_DEGRADE_V1_HASH = "332649cf98662e42cccc31485792104c3ce6303e6cd634ef42ef85839ee9310d"
+Q3_TRANSLATE_V1_HASH = "865bcd1d06f0cc7af83a02f90d0ff2ae5c1fca012695d28e1dbbe4b4f0325964"
 SEED = 20261008
 
 
@@ -75,10 +75,10 @@ def random_cues(rng: random.Random, n: int) -> list[tuple[str, str, float, float
 
 class RecipeIdentityTests(unittest.TestCase):
     def test_hash_is_pinned_and_exported(self) -> None:
-        # ADR-0019：配方任何字段变化都要换 hash、并改这里与 ADR。
-        self.assertEqual(R.RECIPE_HASH, Q2_DEGRADE_V1_HASH)
+        # ADR-0029：配方任何字段变化都要换 hash、并改这里与 ADR。
+        self.assertEqual(R.RECIPE_HASH, Q3_TRANSLATE_V1_HASH)
         self.assertEqual(RECIPE_HASH, object_hash(R.RECIPE))
-        self.assertEqual(R.RECIPE_NAME, "q2-degrade-v1")
+        self.assertEqual(R.RECIPE_NAME, "q3-translate-v1")
 
     def test_recipe_records_the_q2_identity(self) -> None:
         recipe = R.RECIPE
@@ -91,7 +91,8 @@ class RecipeIdentityTests(unittest.TestCase):
         self.assertIsNone(recipe["request"]["grammar"])
         self.assertEqual(recipe["request"]["chat_template_kwargs"], {"enable_thinking": False})
         self.assertEqual(recipe["attempts"], {"max": 2, "seed_step": 1})
-        self.assertEqual(recipe["overflow"], "degrade-10-5-1-keep-source")
+        self.assertEqual(recipe["overflow"], "unresolved-runs+halve-after-structural-failures+untranslated")
+        self.assertTrue(recipe["validation"].startswith("strict-json+one-translations-object; per-cue "))
 
     def test_packing_is_the_v3_dp10_cut_pack(self) -> None:
         # 取自 2026-11-11 的 `experiments.translation_v3.recipes.BUILTIN["dp10-cut"].gap_pack`。
@@ -182,15 +183,23 @@ class NamesTests(unittest.TestCase):
 
 
 class ParseTests(unittest.TestCase):
-    def test_parse_translation_is_strict(self) -> None:
-        self.assertEqual(R.parse_translation('{"translations":{"a":"甲","b":"乙"}}', ["a", "b"]), {"a": "甲", "b": "乙"})
-        self.assertEqual(R.parse_translation('﻿ {"translations":{"a":"甲\\n乙"}} ', ["a"]), {"a": "甲\n乙"})
-        for bad in ('{"translations":{"a":"甲"}}', '{"translations":{"a":"甲","a":"乙","b":"丙"}}',
-                    '{"translations":{"a":" ","b":"乙"}}', '{"translations":{"b":"乙","a":"甲"}}',
-                    '{"translations":{"a":"甲\\n\\n续","b":"乙"}}', '{"translations":{"a":"甲","b":"乙"},"x":1}',
-                    "not json"):
+    def test_structure_is_strict(self) -> None:
+        for bad in ('{"translations":{"a":"甲","a":"乙","b":"丙"}}', '{"translations":{"a":"甲","b":"乙"},"x":1}',
+                    '{"translations":["甲","乙"]}', '["甲"]', "not json"):
             with self.assertRaises(ValueError, msg=bad):
                 R.parse_translation(bad, ["a", "b"])
+
+    def test_cues_are_judged_one_by_one(self) -> None:
+        self.assertEqual(R.parse_translation('{"translations":{"a":"甲","b":"乙"}}', ["a", "b"]),
+                         R.Parsed({"a": "甲", "b": "乙"}, {}, 0))
+        self.assertEqual(R.parse_translation('﻿ {"translations":{"a":"甲\\n乙"}} ', ["a"]),
+                         R.Parsed({"a": "甲\n乙"}, {}, 0))
+        # 顺序不看；缺失、空串、非字符串、含空行（含末尾换行）各自未解决；多出的 ID 只计数。
+        parsed = R.parse_translation('{"translations":{"e":"戊","d":"甲\\n\\n续","c":" ","x":"多","b":3,'
+                                     '"f":"己\\n"}}', ["a", "b", "c", "d", "e", "f"])
+        self.assertEqual(parsed, R.Parsed({"e": "戊"}, {"a": "missing", "b": "empty", "c": "empty", "d": "blank_line",
+                                                        "f": "blank_line"}, 1))
+        self.assertEqual(list(parsed.unresolved), ["a", "b", "c", "d", "f"])
 
 
 class BatchingTests(unittest.TestCase):

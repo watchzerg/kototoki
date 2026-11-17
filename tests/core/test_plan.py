@@ -112,7 +112,7 @@ class PlanCase(unittest.TestCase):
         self.final.parent.mkdir(parents=True, exist_ok=True)
         self.final.write_bytes(text.encode("utf-8"))
         artifacts.record_published(self.work, self.final, artifacts.sha256_bytes(text.encode()),
-                                   current.sources | {"translate_fallback_cues": 0}, "translate/x")
+                                   current.sources | {"translate_untranslated_cues": 0}, "translate/x")
 
     def next(self) -> plan.Plan:
         return plan.next_stage(self.target, self.config, models)
