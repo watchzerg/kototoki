@@ -1,6 +1,6 @@
 # 06 运行日志与汇总修正
 
-Status: needs-triage
+Status: resolved
 Type: task
 Blocked by: —
 
@@ -42,3 +42,11 @@ Blocked by: —
 - 台账"第 3 次运行新发现的主程序问题"、§C3。
 
 ## Comments
+
+- 2026-11-17 讨论定案（用户全部采纳推荐方案）：
+  - 6.1 汇总的回退数 = 本次翻译完成的全部回退，翻译完成时累加，与发布成败无关；不另加"有回退的文件数"。
+  - 6.2 前缀相对秒改单调时钟；时间戳仍是 UTC 墙钟。
+  - 6.3 去重键 = 阶段 + 异常类型 + 抛出位置（最内层帧）；不带 traceback 的 FAILED 行附异常消息首行（截 200）；汇总不加每类计数。
+  - 6.4 唯一音轨无语言标签或 `und` 时不告警；标了别的语言或多条不匹配照常告警。只改告警，选轨规则与 `MEDIA` hash 不变。
+  - 6.5 票里的候选方向（入口 `reconfigure(encoding="utf-8")`）无效：台账显示当时已设 `PYTHONUTF8=1`，乱码来自 pwsh `*>` 按 `[Console]::OutputEncoding`（新开 pwsh 默认 ibm437）解码。不改产品代码，只写文档；已在本机用全新 pwsh 复现并验证 `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()` 可解。
+- 2026-11-17 已实现，各子问题分开提交：6.1 `de5bf57`、6.2 `25b4b79`、6.3 `43cf0ff`、6.4 `9bb17ae`、6.5 文档与本票同一提交。附带变化：Strata 不可用后、worker 崩溃／启动失败的 FAILED 行现在也带消息（统一按"无 traceback 即带消息"）。`just test` 通过。未验证：真实批量运行（不占 GPU，未跑）。
