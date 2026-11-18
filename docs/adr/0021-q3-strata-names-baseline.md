@@ -12,7 +12,7 @@
 
 ## 身份
 
-**建表配方 `names-strata-v4`**（`experiments/scene_batching_v6/v13.py` 的 `s1_recipe("v4")`），hash `38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0`：
+**建表配方 `names-strata-v4`**（`archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v13.py` 的 `s1_recipe("v4")`），hash `38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0`：
 
 - 以产品 `BUILD`（`kototoki/names/recipes.py`）为底，以下几项不变：提示 `build-table-prompt-v5`、schema `name-table-v2`、no-think；采样 temperature 0.7／top_p 0.8／top_k 20／min_p 0／presence_penalty 1.5；程序兜底；`[names] seed` 20261019；整片 `ja.srt` 一次送入。
 - 改动：
@@ -46,7 +46,7 @@
 
 ## 依据
 
-证据来自[第十三轮（v13）](../research/2026-11-08-names-on-strata-v13.md)。下面的 Δ＝Q3−Q2，越小越好，括号内为 CI90。两臂翻译规则相同，都在本轮新生成，只差注入的表。
+证据来自[第十三轮（v13）](../../research/2026-11-strata-v12-v13/README.md)。下面的 Δ＝Q3−Q2，越小越好，括号内为 CI90。两臂翻译规则相同，都在本轮新生成，只差注入的表。
 
 - **可行性**：17 部全部建成，最多用到第 3 次请求，JSON 语法错误 0；失败的 6／25 个请求都是写满 8192 token 的失控。首次请求失败 4／17，不过立项时的"≤2／17"，用户放宽为"5 次内全部建成"。思考全部关闭。
 - **表质量（dev 15 部，与参考中文比）**：非劣，未达改善。

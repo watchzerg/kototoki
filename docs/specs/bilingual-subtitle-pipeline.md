@@ -17,18 +17,18 @@
 | --- | --- | --- |
 | 音频分离 | 模型输入直接从输入容器按绝对流索引解码，带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV；不流复制原始音轨（§2.1） | 两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；时间戳以输入容器为准，见 §2.2；[ADR-0027](../adr/0027-no-original-audio-copy.md) |
 | VAD 与分窗 | Pyannote `segmentation-3.0`（revision `e66f3d3b…`），powerset 原生检测，onset／offset 0.5，`source-span-merge-v1`：≤30 s、整数样本坐标、保留块内间隙 | [ADR-0003](../adr/0003-new-pyannote-baselines.md) |
-| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗守卫（复读 `repeat-strict`、语速、已知幻听句，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v3` | [W0 契约](w0-reusable-demo.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md) |
-| ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](x0-reusable-demo.md) |
-| ASR `cross`（可选） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0、再 x0 转写，由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../research/acceptance/2026-10-19-cross-asr-acceptance.md) |
-| 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [MMS 对齐](../architecture/modules/mms-alignment.md) |
-| 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2） | [显示契约](../testing/demo-display-contract.md)为起点 |
+| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗守卫（复读 `repeat-strict`、语速、已知幻听句，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v3` | [W0 契约](../../research/2026-10-stt-demo-w0-x0/README.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md) |
+| ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](../../research/2026-10-stt-demo-w0-x0/README.md) |
+| ASR `cross`（可选） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0、再 x0 转写，由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md) |
+| 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [STT worker](../architecture/modules/stt-workers.md) |
+| 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2） | [日文 cue](../architecture/modules/japanese-cues.md)（起点是研究期的显示契约，见 [STT demo 轮次](../../research/2026-10-stt-demo-w0-x0/README.md)） |
 | 翻译 | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，`strata launch --no-tui --model iq3_s`，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`；`confidence: high` 的专名注入；每个请求节点最多两次（seed、seed+1）；产品配方 `q3-translate-v1` | [ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) |
 | 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，回复格式不合格才依次换 seed、最多 5 次请求，空表直接接受（配方 `q3-names-v3`，与 Q3 的 `names-strata-v4` 只差输出上限 16384、提示预算 32256 与空表不重试）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0026](../adr/0026-names-output-and-prompt-budget.md)、[ADR-0028](../adr/0028-names-accept-empty-table.md)、[专名一致性][names] |
 | 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文就是翻译结果；未翻译的 cue 只有日文一行（ADR-0029） | 用户裁定 |
 
 ### 1.2 已裁定
 
-设计阶段（2026-10-13／14）的裁定表原文见[历史记录](../research/2026-11-11-bilingual-pipeline-spec-history.md#12-已裁定2026-10-13)；现行规则以[现行决定](../adr/CURRENT.md)、[决定索引](../adr/INDEX.md)与各 ADR（ADR-0007 起）为准。
+设计阶段（2026-10-13／14）的裁定表原文见历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）；现行规则以[现行决定](../adr/CURRENT.md)、[决定索引](../adr/INDEX.md)与各 ADR（ADR-0007 起）为准。
 
 ## 2. 阶段分解
 
@@ -158,7 +158,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 ### 7.2–7.4 环境、代码布局、上游版本
 
-当前环境、版本、选版规则与 CUDA 说明见[技术选型](../development/technology-stack.md)与[依赖布局与资产清单](../development/dependencies.md)；当前文件布局见[架构总览][arch]；原文（含 2026-10-13 上游版本核实表）见[历史记录](../research/2026-11-11-bilingual-pipeline-spec-history.md#7-进程环境与依赖)。
+当前环境、版本、选版规则与 CUDA 说明见[技术选型](../development/technology-stack.md)与[依赖布局与资产清单](../development/dependencies.md)；当前文件布局见[架构总览][arch]；原文（含 2026-10-13 上游版本核实表）见历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。
 
 ## 10. 配置文件 `kototoki.toml`
 
@@ -166,7 +166,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 ## 11. 未来方向
 
-未裁定事项与未来方向见[待裁定事项](../pending-decisions.md)与 `.scratch/next-directions/issues/` 的票据；本节原文见[历史记录](../research/2026-11-11-bilingual-pipeline-spec-history.md#11-未来方向本期不做只登记)。
+未裁定事项与未来方向见[待裁定事项](../pending-decisions.md)与 `.scratch/next-directions/issues/` 的票据；本节原文见历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。
 
 ## 拆出的内容
 
@@ -174,13 +174,13 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 | 原章节 | 去向 |
 | --- | --- |
-| 状态行修订历史、§1.2、§8、§9、§11、§12、§13 | [历史记录][hist]（原文） |
-| §2 的单片成本列、§2.2 重采样经过、§3.2 对比表、§3.4 时间线 | [历史记录][hist-26]（原文）；理由见 [ADR-0007][adr7] |
+| 状态行修订历史、§1.2、§8、§9、§11、§12、§13 | 历史记录原文（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`） |
+| §2 的单片成本列、§2.2 重采样经过、§3.2 对比表、§3.4 时间线 | 历史记录原文（同上，"原第 2 至 6 节中移出的原文"一节）；理由见 [ADR-0007][adr7] |
 | §2 各阶段细则、§2.1、§2.2 时长校验与下混 | [配置、配方与媒体提取][media]、各模块页 |
 | §4、§6 的逐模块细则 | [产物契约][art]、[阶段计划][plan]、[批次编排][orch]、[翻译子系统][tr]、[专名一致性][names] |
 | §5.2 规则表 | [配置参考][cfg]、[日文 cue][cues] |
 | §7.1 的 DLL 与导入细节 | [STT worker][stt]、[批次编排][orch] |
-| §7.2–§7.4 | [技术选型](../development/technology-stack.md)、[依赖布局与资产清单](../development/dependencies.md)；原文在[历史记录][hist] |
+| §7.2–§7.4 | [技术选型](../development/technology-stack.md)、[依赖布局与资产清单](../development/dependencies.md)；原文在历史记录（同上） |
 | §10 | [配置参考][cfg] |
 
 [arch]: ../architecture/INDEX.md
@@ -195,5 +195,3 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 [orch]: ../architecture/modules/batch-orchestration.md
 [plan]: ../architecture/modules/stage-plan.md
 [art]: ../architecture/modules/artifact-contract.md
-[hist]: ../research/2026-11-11-bilingual-pipeline-spec-history.md
-[hist-26]: ../research/2026-11-11-bilingual-pipeline-spec-history.md#原第-2-至-6-节中移出的原文

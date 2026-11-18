@@ -2,15 +2,8 @@
 
 状态：current
 
-本目录存放技术规格。状态为 superseded 的文件保留作历史设计参照，不再是当前基线或产品行为的依据。
+本目录只存放现行技术规格；已取代的旧规格在归档 tag 里（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)）。
 
 | 文件 | 状态 | 说明 |
 | --- | --- | --- |
-| [bilingual-subtitle-pipeline.md](bilingual-subtitle-pipeline.md) | 现行 | 产品包 `kototoki/` 双语字幕流水线的跨模块契约（阶段链、调度、产物、cue 交界、失败语义）；配置见[配置参考](../architecture/modules/config-reference.md)，拆出的历史原文见[拆分记录](../research/2026-11-11-bilingual-pipeline-spec-history.md)。 |
-| [w0-reusable-demo.md](w0-reusable-demo.md) | 现行 | W0（VAD、ASR、强制对齐）可复用 demo 的契约。 |
-| [x0-reusable-demo.md](x0-reusable-demo.md) | 现行 | X0（分段、Qwen 输入、MMS）可复用 demo 的契约。 |
-| [subtitle-translation-common.md](subtitle-translation-common.md) | superseded | 2026-10 字幕翻译共同设计草案，由 [../adr/CURRENT.md](../adr/CURRENT.md) 的现行翻译基线与 [ADR-0019](../adr/0019-product-translation-q2.md) 的产品翻译取代。 |
-| [subtitle-translation-generic.md](subtitle-translation-generic.md) | superseded | 通用语言模型翻译流程草案，同上由现行基线与 [ADR-0019](../adr/0019-product-translation-q2.md) 取代。 |
-| [subtitle-translation-hy-mt2.md](subtitle-translation-hy-mt2.md) | superseded | Hy-MT2 翻译流程提案，其基线地位已由 [ADR-0021](../adr/0021-q3-strata-names-baseline.md)（Q3）接替，历史链见 [../adr/INDEX.md](../adr/INDEX.md)。 |
-| [subtitle-translation-tower-plus.md](subtitle-translation-tower-plus.md) | superseded | Tower-Plus-9B 翻译流程草案，同上由现行基线与 [ADR-0019](../adr/0019-product-translation-q2.md) 取代。 |
-| [subtitle-translation-translategemma.md](subtitle-translation-translategemma.md) | superseded | TranslateGemma 翻译流程草案，同上由现行基线与 [ADR-0019](../adr/0019-product-translation-q2.md) 取代。 |
+| [bilingual-subtitle-pipeline.md](bilingual-subtitle-pipeline.md) | 现行 | 产品包 `kototoki/` 双语字幕流水线的跨模块契约（阶段链、调度、产物、cue 交界、失败语义）；配置见[配置参考](../architecture/modules/config-reference.md)，拆出的历史原文见拆分记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。 |

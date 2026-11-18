@@ -13,10 +13,9 @@ unverified until exercised. WSL, Docker, Bash, and macOS-specific tooling are no
 implicit prerequisites.
 
 正式部署的最低显存、驱动／runtime 要求和完整兼容矩阵尚未确定。
-当前 W0 的已测环境、模型和 Python 版本已有 [两窗原生 Windows 证据](../testing/2026-10-05-w0-demo-validation.md)。
-恢复该环境或修改 W0 运行逻辑时，复用并更新 [W0 demo](../../experiments/w0_demo/README.md)，保留其本地资产和进程 DLL 加载方式。
+产品根环境在原生 Windows 上的运行证据见[验收记录](../../research/INDEX.md#验收记录)；研究期 W0 demo 的两窗证据见 [STT demo 轮次](../../research/2026-10-stt-demo-w0-x0/README.md)。
 遵循[推理选择原则](inference-selection.md)：ASR／强制对齐要求 GPU，VAD 可使用 CPU 或 GPU；
-当前 demo 的 Pyannote CUDA 实测不证明新 CPU VAD 已通过。macOS 推理后端尚未选定。
+研究期 Pyannote CUDA 实测不证明 CPU VAD 已通过。macOS 推理后端尚未选定。
 
 ## Portable commands and processes
 
@@ -27,9 +26,6 @@ implicit prerequisites.
   Exercise paths containing spaces and non-ASCII characters.
 - Keep child Python processes in the same project environment; use the running
   interpreter when launching Python workers.
-  X0 demo有明确例外：Qwen与MMS的已验证Transformers版本不同，使用参数指定的两个既有隔离环境，
-  由轻量环境统一持有GPU锁、顺序启动并等待子进程结束；运行身份记录实际解释器和依赖。
-  不为合并环境而升级依赖，入口见[X0 demo](../../experiments/x0_demo/README.md)。
 - If adding multiprocessing, make worker startup safe for spawn and protect
   executable entry points. Avoid initializing models or spawning workers at import.
 - Test cancellation, process cleanup, and temporary-file lifetimes on Windows

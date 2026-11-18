@@ -98,7 +98,7 @@ ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU（0003 �
 
 ## 专名
 
-- 研究线关闭，不开新轮次、agent 不自行重启，重开只由用户明确要求（[0014](0014-name-consistency-in-product.md) 第 1 点）；`experiments/name_consistency/` 冻结，产品不导入（0014 第 9 点）。
+- 研究线关闭，不开新轮次、agent 不自行重启，重开只由用户明确要求（[0014](0014-name-consistency-in-product.md) 第 1 点）；研究代码已随 [0031](0031-research-layout-and-lightweight-records.md) 删除，产品不导入研究（0014 第 9 点）。
 - 产品 `names` 阶段位于 `ja-cues` 与 `translate` 之间，整片 `ja.srt` 一次送入，产物 `name-table.json`（0014 第 3 点）；建表方式见[产品建表](#产品建表)。
 - 建表必开；表只经翻译注入（high 条目），没有发布时替换；手改表改到注入行即重译（0019 第 3 点）。
 - 条目只在工作目录，不进日志，日志只记计数（0014 第 8 点）。

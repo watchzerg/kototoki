@@ -1,6 +1,6 @@
 # 05 现行文档改链与旧文档删除
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 Blocked by: 02, 03, 04
 
@@ -20,3 +20,12 @@ Blocked by: 02, 03, 04
 
 - 在 `docs/`、`research/`、根目录 Markdown 中 grep `docs/research/|docs/plans/|docs/context/|docs/testing/|docs/guides/|docs/archive/|kototoki_eval|experiments/` 只剩 tag 路径形式（`archive/2026-11-18-pre-research-restructure:`）的命中。
 - `just docs-check` 的链接检查通过（`check_docs.py` 本身的规则调整在 06；若此处因 `PATH_ROOTS` 或 `BYTE_VERIFIED` 报错，记录后交 06）。
+
+## Answer
+
+- **登记**：`research/INDEX.md` 登记 16 个轮次与 8 篇验收记录，加"按主题的现状"表（取代旧 `topics/*` 与 `timeline.md`）、研究方法约束（已结题线不重开、v3／v4／v5 确认集已开封、v2 只取教训、裁判规则见翻译评估方法）与"遗留路径"说明（`kototoki/` 注释中的 `experiments/…` 指归档 tag）。
+- **改链**：全部 ADR（0031 除外）只改链接与旧路径代码段（改为 tag 形式）；CURRENT、决定索引、GLOSSARY、README、`docs/INDEX.md`、`docs/specs/INDEX.md` 与现行技术设计、`docs/development/*`、`docs/agents/*`、`docs/pending-decisions.md`、架构总览与各模块页。CURRENT 专名一节的"`experiments/name_consistency/` 冻结"改为"研究代码已随 0031 删除"。
+- **现行内容迁移**：`stt-workers.md` 直接写入此前只在研究页的继承规则（`source-span-merge-v1` 的 480000 样本硬切与 ≤30 s 合并、w0 解码参数、MMS 词表／blank／精度／失败回退／TF32）；`translation-evaluation.md` 重写为文字口径（裁判 profile、执行面、MQM 规则、成对盲评、统计、两种人名错误口径），不再引用脚本；`inference-selection.md` 删去字节校验说明；`module-boundaries.md` 删研究侧条款、加 R5／R6；`workflow.md` 删 legacy、等价层与研究测试 recipe 的描述。
+- **删除**：`docs/research/`、`docs/plans/`、`docs/context/`、`docs/testing/`、`docs/guides/`、`docs/archive/`、`docs/agents/subtitle-translation-evaluation.md`、`docs/specs/subtitle-translation-*.md`、`docs/specs/{w0,x0}-reusable-demo.md`，以及只服务研究侧的 `docs/architecture/stt-candidate-pipelines.md` 和 8 个模块页（vad-stage、w0／x0-pipeline、mms-alignment、stt-evaluation、corpus-and-assets、translation-runtime、translation-srt-flow）。
+- **预算**：tag 路径变长使 5 个模块页与决定索引超预算，靠把"变更与决策来源"里的归档项合并为一句"归档 tag 中：…"（不加反引号）压回预算内，没有加白名单。
+- **完成标准**：grep 旧路径只剩 tag 形式、ADR-0031 与决定索引演进链中描述删除范围的历史提法。`check_docs.py`（06 的新规则已在工作区）除 `.scratch/` 下 67 处指向已删文档的链接外无错误；这些交 07 处理。告警 1 条：`japanese-cues.md` 状态行含 3 个以上日期（既有）。

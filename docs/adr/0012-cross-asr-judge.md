@@ -13,9 +13,9 @@
 
 ## 依据
 
-- 合并理论上限：两部合计 CER 16.16% → 11.90%（oracle，[上限](../research/2026-10-19-asr-pair-oracle.md)）。Whisper 当裁判到 14.31%，拿到上限增益的 43%，替换区间 AUC 0.774（[交叉打分](../research/2026-10-19-asr-pair-cross-score.md)，候选见[裁判选型调研](../research/2026-10-19-acoustic-judge-survey.md)）；MMS 当裁判只到 15.40%，AUC 0.49（[MMS 裁判](../research/2026-10-19-asr-pair-ctc-judge.md)）；叠加 Qwen 或 MMS 反而稀释。
-- 产品路径验收（[T6](../research/acceptance/2026-10-19-cross-asr-acceptance.md)，HF II／III 官方整片口径）：CER 15.25% → 14.30%（−0.95 pp），两部都低于 w0；低于预设 1.0 pp 线，用户 2026-10-19 知悉后仍裁定采用，默认保持 `w0`。
-- 显存：[T0 探针](../research/acceptance/2026-10-19-cross-coresidency-probe.md)整卡峰值 10688 MiB，产品验收 10030 MiB，翻译阶段照常启动。
+- 合并理论上限：两部合计 CER 16.16% → 11.90%（oracle，[上限](../../research/2026-10-cross-asr-judge/README.md)）。Whisper 当裁判到 14.31%，拿到上限增益的 43%，替换区间 AUC 0.774（[交叉打分](../../research/2026-10-cross-asr-judge/README.md)，候选见[裁判选型调研](../../research/2026-10-cross-asr-judge/README.md)）；MMS 当裁判只到 15.40%，AUC 0.49（[MMS 裁判](../../research/2026-10-cross-asr-judge/README.md)）；叠加 Qwen 或 MMS 反而稀释。
+- 产品路径验收（[T6](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)，HF II／III 官方整片口径）：CER 15.25% → 14.30%（−0.95 pp），两部都低于 w0；低于预设 1.0 pp 线，用户 2026-10-19 知悉后仍裁定采用，默认保持 `w0`。
+- 显存：[T0 探针](../../research/acceptance/2026-10-19-cross-coresidency-probe.md)整卡峰值 10688 MiB，产品验收 10030 MiB，翻译阶段照常启动。
 - 成本：asr 阶段墙钟 1211.6 s，为 w0（323.4 s）的 3.75 倍，整批 1754.8 s 对 890.3 s；用户已接受。
 
 ## 约束与未关闭项

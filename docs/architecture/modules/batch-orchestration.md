@@ -97,7 +97,7 @@
 - `kototoki.translate`：`translate_document(plan, session | None, *, relative)` 返回带 `translations`（cue id → 译文，不出中文为 `None`）与 `untranslated_count` 的结果；`TranslatePlan` 由阶段计划经 `translate.plan` 取得。
 - `kototoki.merge`：`merge(ja_document, translations) -> srt_text`。
 
-不导入任何推理模块与 `experiments.*`：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。
+不导入任何推理模块与研究代码：`import kototoki.job`／`kototoki.__main__` 之后 `sys.modules` 中没有 `torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`。不做任何时间换算。
 
 ## 代码与验证入口
 
@@ -111,7 +111,6 @@
 ## 变更与决策来源
 
 - [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
-- 计划：[`product-names-on-strata`](../../plans/product-names-on-strata.md)（§7 共用 session 的真实运行）、[`architecture-cleanup`](../../plans/architecture-cleanup.md)
-- 验收：[两部整片](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[专名一致性进产品](../../research/acceptance/2026-10-20-name-consistency-product.md)
-- [技术设计历史记录](../../research/2026-11-11-bilingual-pipeline-spec-history.md)
+- 归档 tag 中的计划 `archive/2026-11-18-pre-research-restructure:docs/plans/` 下 product-names-on-strata（§7 共用 session 的真实运行）、architecture-cleanup；技术设计历史记录 docs/research/2026-11-11-bilingual-pipeline-spec-history.md
+- 验收：[两部整片](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[专名一致性进产品](../../../research/acceptance/2026-10-20-name-consistency-product.md)
 - 票据：`.scratch/bilingual-subtitle-pipeline/issues/`（06、14、15）；`.scratch/runtime-logging/`、`.scratch/runtime-logging-gaps/`；`.scratch/architecture-review/issues/01-small-fixes.md`；`.scratch/name-consistency-product/issues/06-orchestration.md`；`.scratch/q2-product-switch/`；`.scratch/q3-product-switch/`；`.scratch/architecture-cleanup/`

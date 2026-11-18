@@ -63,7 +63,7 @@
 
 - `engine = "cross"` 时 asr 阶段在 `<work root>/<id>/` 额外写三个审计文件，名称是模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，身份按单引擎计算）与 `asr-judge.json`（逐窗裁判记录与汇总，身份同 cross 的 `asr.json`；字段见 [STT ASR](stt-asr.md#cross-引擎)）。
 - 三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。
-- 它们**不是阶段产物**：不在 `STAGE_ARTIFACTS` 与 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游。保留它们是为了零 GPU 复算与用 `kototoki_eval` 评分。
+- 它们**不是阶段产物**：不在 `STAGE_ARTIFACTS` 与 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游。保留它们是为了零 GPU 复算与离线评分。
 
 **专名产物**：`NAME_TABLE = "name-table.json"` 是 names 阶段的阶段产物（在 `STAGE_ARTIFACTS`，参与 `is_current`，由编排经 `write_artifact` 写出，payload 为 `name-table-v2` 表与 `meta`／`build`）。身份由[阶段计划](stage-plan.md)给出，以 `names` 键进 `published.json` 的 `sources`；表含转写内容，只写在工作目录（[专名一致性](name-consistency.md)）。
 
@@ -78,7 +78,7 @@
 
 **SRT**（`kototoki/srt.py`）：
 
-- 解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。读取容忍 UTF-8 BOM。
+- 解析与渲染复制自 `archive/2026-11-18-pre-research-restructure:experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。读取容忍 UTF-8 BOM。
 - `format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。
 - 整数毫秒入口 `format_srt_ms([(start_ms, end_ms, text), ...])`：时间已是整数毫秒的条目直接渲染，不经秒（`format_srt` 取整后也走它），日文 cue 与内嵌字幕清洗都用它。
 - 时间行四段到整数毫秒是 `time_parts_ms`，解析与内嵌字幕清洗共用；毫秒格式化只有 `srt` 一处实现。
@@ -86,7 +86,7 @@
 
 ## 接口与依赖
 
-只依赖标准库；不导入 `experiments`、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)，worker 壳与编排都向它取。CUDA 粘性错误的识别与包装为 `FatalWorkerError` 归 worker 壳（[STT worker](stt-workers.md)）。`<work root>/lock`、GPU 锁与 worker 子进程重启归编排器。
+只依赖标准库；不导入研究代码、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)，worker 壳与编排都向它取。CUDA 粘性错误的识别与包装为 `FatalWorkerError` 归 worker 壳（[STT worker](stt-workers.md)）。`<work root>/lock`、GPU 锁与 worker 子进程重启归编排器。
 
 ## 代码与验证入口
 
@@ -94,13 +94,13 @@
 - `tests/core/test_artifacts.py`：短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、工作根键与最终字幕路径、`published.json` 审计记录、原子写重试与临时文件清理。
 - `tests/core/test_protocol.py`：jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`；`classify_launch` 的正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件。
 - `tests/core/test_srt.py`：空 SRT、取整边界、严格解析、UTF-8 无 BOM。
-- 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟。worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
+- 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟。worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
 
 ## 变更与决策来源
 
 - [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 - 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/00-foundation.md`）、`.scratch/cross-asr-judge/`、`.scratch/name-consistency-product/`、`.scratch/architecture-review/`（2026-10-19 审计 B-1、B-13）
-- 计划：[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
-- 验收：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[cross 产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)
-- 历史：[技术设计历史](../../research/2026-11-11-bilingual-pipeline-spec-history.md)
-- 来源代码：`experiments/translation_flow/srt.py`、`experiments/translation_v3/common.py`（原子写）、`experiments/translation_v3/server.py`（`verify_model`）
+- 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
+- 验收：[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)
+- 历史：技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）
+- 来源代码：`archive/2026-11-18-pre-research-restructure:experiments/translation_flow/srt.py`、`archive/2026-11-18-pre-research-restructure:experiments/translation_v3/common.py`（原子写）、`archive/2026-11-18-pre-research-restructure:experiments/translation_v3/server.py`（`verify_model`）

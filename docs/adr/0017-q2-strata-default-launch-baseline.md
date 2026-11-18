@@ -17,12 +17,12 @@ Q2 是**一条组配方的规则**，不是固定 hash：对每个输入先拼�
 
 - 基础配方：Q0＝`qwen-wide`（[ADR-0015](0015-two-translation-baselines.md)），切包、邻文、提示与采样都不变。
 - 建表：产品 `kototoki/names` 的建表（[ADR-0014](0014-name-consistency-in-product.md)），提示 `build-table-prompt-v5`，`BUILD_RECIPE_HASH` 为 `5b8d1b76da757bb26aa3d3fb894c1963935a308b6ef4eb7c75edeaa2d44c9e50`，与产品同一模型、同一参数；建表输入就是待翻译的那份日语。
-- 注入：`qwen_options.names = {"filter": "window", "tables": {work_id: rows}}`，表头 `qwen-name-table-v1`。`rows` 只取表里 `confidence: high` 的实体；每个实体的每个 `forms[]` 取一行 `{source: form.ja, translation: form.zh}`；按 `ja` 去重，跳过 `ja` 或 `zh` 为空的写法。取法即 `experiments/scene_batching_v6/names11.py` 的 `product_tables("high")`（产品 ASR 源）与 `nstar_tables("high")`（dev 源）。
+- 注入：`qwen_options.names = {"filter": "window", "tables": {work_id: rows}}`，表头 `qwen-name-table-v1`。`rows` 只取表里 `confidence: high` 的实体；每个实体的每个 `forms[]` 取一行 `{source: form.ja, translation: form.zh}`；按 `ja` 去重，跳过 `ja` 或 `zh` 为空的写法。取法即 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/names11.py` 的 `product_tables("high")`（产品 ASR 源）与 `nstar_tables("high")`（dev 源）。
 - 没有事后替换：译文直接作为结果，不再跑 `names` 替换（注入后再替换与只注入的输出逐字节相同）。
 - 不按输入来源区分：产品 ASR 源与 dev 干净源一律用同一条规则。
 - 引用 Q1 对照时的实例：产品 HF II／III 的 `q0-names-high`，hash `c10e143a65c50277daede28a2f3d3e79adc0db53b1db6a4398e0c9f6720f30e8`；dev 15 部的 `qwen-names-dev-high`，hash `9c444d3c…`。
 
-**Q2 的两处改动**：`model` 设为 `qwen3.8-flash-next-iq3_s`；`qwen_options` 加 `strata_launch: "default"`。规则实现是 `experiments/scene_batching_v6/v12.py` 的 `strata_recipe_data(q1, name, comment, launch="default")`。采样仍是 `temperature 0.7, top_p 0.8, top_k 20`，seed 步长不变。
+**Q2 的两处改动**：`model` 设为 `qwen3.8-flash-next-iq3_s`；`qwen_options` 加 `strata_launch: "default"`。规则实现是 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v12.py` 的 `strata_recipe_data(q1, name, comment, launch="default")`。采样仍是 `temperature 0.7, top_p 0.8, top_k 20`，seed 步长不变。
 
 **服务**：Strata 0.2.12，引擎 build 0.1.58，在 PowerShell 里运行不带参数的 `strata launch`。2026-11-08 的 `--plan` 显示它在本机解析为：模型 IQ3_S、上下文 128K；图片读取器放 CPU，并发按显卡自动适配；投机解码 DFlash2；只允许本机访问，端口 8080，tune 为 skip；无需下载。本机 quick tune（2026-11-07，288 s）结果为 `default_confirmed / already_fastest`，`settings.args {}`，默认配置已是最快。
 
@@ -36,7 +36,7 @@ Q2 是**一条组配方的规则**，不是固定 hash：对每个输入先拼�
 
 ## 依据
 
-质量证据来自[第十二轮（v12）](../research/2026-11-08-strata-flash-next-v12.md)的 **F1**：配方规则与 Q2 相同，启动配置不同（`kototoki-translate` 预设，上下文 32K、并发 1、关闭图片读取器、草稿器 MTP）。对照为 Q1，裁判 profile 不变，Δ＝候选 − 对照，越小越好，括号内 CI90。
+质量证据来自[第十二轮（v12）](../../research/2026-11-strata-v12-v13/README.md)的 **F1**：配方规则与 Q2 相同，启动配置不同（`kototoki-translate` 预设，上下文 32K、并发 1、关闭图片读取器、草稿器 MTP）。对照为 Q1，裁判 profile 不变，Δ＝候选 − 对照，越小越好，括号内 CI90。
 
 - dev：accuracy 剧集 −0.186［−0.231, −0.142］、电影 −0.126［−0.173, −0.078］，两类都显著改善。
 - 产品 ASR 源：全体 −0.269［−0.340, −0.201］，三桶都显著改善；人名错误 79 对 89，差值上界 +0.0006，用户认定为边界噪声；不一致率 0.0175 对 0.0273。

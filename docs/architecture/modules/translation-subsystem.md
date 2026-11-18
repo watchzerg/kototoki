@@ -12,7 +12,7 @@
 - GPU 锁、Job Object、`ja-zh.srt` 的写出与发布（[批次编排](batch-orchestration.md)；`zh.srt` 不发布，ADR-0020）；
 - 专名表的建表（[专名一致性](name-consistency.md)）；工作目录本身的位置（[产物契约](artifact-contract.md)）；任何时间换算。
 
-上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。研究侧同名规则在 `experiments/translation_v3/{qwen,strata}.py` 与[完整 SRT 翻译流程](translation-srt-flow.md)；本模块是 Q2 的产品移植，不导入它们。
+上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。本模块是 Q2 的产品移植，研究侧同名规则（归档 tag 中的 experiments/translation_v3/ 与 translation-srt-flow 模块页）已删除，本模块是唯一权威。
 
 ## 当前行为规格
 
@@ -38,7 +38,7 @@
   - 内部切点按停顿分级加罚：<0.5 s 加 6、<1 s 加 3、<2 s 加 1，缺时间戳按第一档。
   - 停顿只取自 `ja.srt` 自身的时间轴、只比较长短，不是时间换算。
 - **只读邻文**（`batching.neighbours`，`wide-context-v1`）：前 20 条、后 5 条，只按条数取到场景边；可见总数（含待译）超过 35 条时先去后邻、再去前邻。追问与拆分的子节点用同一规则。
-- **提示**（`recipes.messages`，`qwen-joint-v1`）：两条 chat messages。system 是 joint 任务文本，该批有注入行时末尾追加 `qwen-name-table-v1` 的 header 与 `日文 → 中文` 逐行；user 是只读日文上下文（JSON）加待译 JSON `{"translations": {id: 日文}}`。文字与研究侧 `experiments/translation_v3/qwen.py::messages` 逐字节相同。
+- **提示**（`recipes.messages`，`qwen-joint-v1`）：两条 chat messages。system 是 joint 任务文本，该批有注入行时末尾追加 `qwen-name-table-v1` 的 header 与 `日文 → 中文` 逐行；user 是只读日文上下文（JSON）加待译 JSON `{"translations": {id: 日文}}`。文字与研究侧 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/qwen.py::messages` 逐字节相同。
 - **专名注入**（`recipes.name_rows`、`names_for_window`）：取 `name-table.json` 里 `confidence: high` 的实体，每个 `forms[]` 一行，按 `ja` 去重，跳过 `ja` 或 `zh` 为空的写法；某批只注入日文写法出现在该批可见台词（含只读邻文）里的行。表为空时不注入，翻译照常。只改 medium／low 条目不改变注入行。
 - **请求体**（`recipes.request_body`）：chat completions，无 grammar，思考关闭，`temperature 0.7、top_p 0.8、top_k 20`，`max_tokens` 4096，非流式，`seed` 取 `[translate] seed`（须为正整数）。同一节点最多两次：seed、seed＋1。批次的请求体与研究侧 `strata.request_body(qwen.messages(…))` 逐字节相同。
 - **校验**（`recipes.parse_translation`）：严格 JSON（重复键拒绝）、恰好一个 `translations` 对象，否则抛 `ValueError`；再按条判：非空且无空行的收下，其余记为 `missing`／`empty`／`blank_line`；多出的 ID（记数 `extra_ids`）与顺序不看。
@@ -101,9 +101,9 @@
 
 ## 实现设计
 
-移植来源与取舍（产品包不导入 `experiments.*`，只复制）：
+移植来源与取舍（研究代码已删除，产品实现是唯一权威）：
 
-- `recipes.py`：来自 `experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables` 与 v9 `wide-context-v1`。Q2 规则写成常量（提示、注入、请求体、校验、配方 hash），与研究侧逐字节对照由测试钉住。产品自有的按条判定与追问使它另算 hash（`q3-translate-v1`）。Strata 身份常量从 `kototoki.strata` 取。
+- `recipes.py`：来自 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables` 与 v9 `wide-context-v1`。Q2 规则写成常量（提示、注入、请求体、校验、配方 hash），与研究侧逐字节对照由测试钉住。产品自有的按条判定与追问使它另算 hash（`q3-translate-v1`）。Strata 身份常量从 `kototoki.strata` 取。
 - `batching.py`：来自 `translation_v3/batching.py` 与 `data.py`。gap-pack-v2 切包只留 `group_gap=None` 分支；`Scene`／`Cue`（带秒）由 `ja.srt` 构造；`source_key` 是 `srt-<sha12>` 的唯一出处。
 - `resolve.py`：产品自有。节点规则、按条解决与 `report.json`；不导入 `generate`，由其传入请求与日志写入函数。
 - `generate.py`：来自 `translation_v3/strata.py::run_step` 与 `generate.py`。`run_step` 去掉思考分支、改为按条判定（零收下计 `unresolved`）；共享 `Session` 取代研究侧"执行者先启动服务"；按批次追加落盘；同调用内重启 Strata；按 session 记 `cache_state`。
@@ -111,7 +111,7 @@
 ## 接口与依赖
 
 - 依赖：标准库、`kototoki.artifacts`、`kototoki.config`（只读 `translate.seed`）、`kototoki.srt`、中间层 `kototoki.strata`（`Session`、`StrataRefused`、身份常量）与 `kototoki.local_client`（`InfraFailure`、`explicit_oom`）。共享 `Session` 经 `ensure_started()`、`stop()`、`label`、`client()`、`unavailable` 使用（[Strata 服务与共享 session](strata-session.md#接口与依赖)）。
-- 不导入 `names`（只读它写出的表内容，由 `plan` 传入）与 `experiments.*`。
+- 不导入 `names`（只读它写出的表内容，由 `plan` 传入）与研究代码。
 - 编排器只导入包顶层的 `translate_document` 与 `kototoki.merge`；[阶段计划](stage-plan.md)延迟导入包顶层的 `plan` 取 `TranslatePlan`；包顶层还导出 `RECIPE_HASH`、`TranslateError`、`TranslateResult`。`recipes`、`batching`、`resolve`、`generate` 是内部实现。
 - 外部依赖：Strata 本机 8080 服务（安装与模型由用户维护，见[依赖布局](../../development/dependencies.md)）。
 
@@ -123,13 +123,11 @@
   - `tests/core/test_translate_resolve.py`：子节点的邻文、按段追问、单条不出中文、结构失败对半拆、超出 context、续跑复用节点、未翻译终态、`published.json` 计数与只有日文一行的发布字幕。
   - `tests/core/test_translate_recipes.py`：`RECIPE_HASH` 钉子；提示、注入与请求体与研究侧输出逐字节相同的结果钉成字面量或 sha256；gap-pack-v2 规则；`confidence: high` 的注入规则对真实 `translate.plan` 断言。
   - `tests/core/test_merge.py`：中上日下、换行替换为空格、`None` 只输出日文一行、零条目得空串、缺失／多余／空串抛错。
-- 与研究侧 `translation_v3`／`scene_batching_v6` 的实时对照：`tests/equivalence/test_translate_recipes.py`（`just test-equivalence`，属 `gate-full`）。
-- 真实模型验证（占 GPU，须用户批准）：`just smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：[Q2 首用 smoke 与整片（含 mmap 诊断）](../../research/acceptance/2026-11-11-module-page-history-translation-names.md)；与建表共用 session 的整片见 [`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md) §7。
+- 真实模型验证（占 GPU，须用户批准）：`just smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
 - 未验证：追问与拆分只经伪客户端，追问窗口下的译文质量无裁判证据；Strata 的请求不复现（同 seed 跨启动约半数 cue 不同，ADR-0017），重跑不保证同一译文；产品配方在产品里的质量没有独立裁判证据（沿用 ADR-0017 的 v12 F1 证据）。
 
 ## 变更与决策来源
 
 - [ADR-0005](../../adr/0005-apex-i-compact-translation-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0008](../../adr/0008-no-multi-translation-selection.md)、[ADR-0010](../../adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0011](../../adr/0011-dp10-cut-product-recipe.md)、[ADR-0017](../../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)
 - `.scratch/bilingual-subtitle-pipeline/issues/`（05、09、15、16）、`.scratch/architecture-review/issues/01-small-fixes.md`、`.scratch/name-consistency-product/issues/02-shared-llama-server.md`、`.scratch/q2-product-switch/`、`.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`、`.scratch/runtime-logging-gaps/`、`.scratch/batch-run-fixes/issues/08-short-cue-translation.md`
-- [`product-names-on-strata`](../../plans/product-names-on-strata.md)、[`architecture-cleanup`](../../plans/architecture-cleanup.md)
-- [技术设计历史原文](../../research/2026-11-11-bilingual-pipeline-spec-history.md)、[模块页拆出的历史记录](../../research/acceptance/2026-11-11-module-page-history-translation-names.md)
+- 归档 tag `archive/2026-11-18-pre-research-restructure` 中：计划 docs/plans/product-names-on-strata.md、docs/plans/architecture-cleanup.md；技术设计历史原文 docs/research/2026-11-11-bilingual-pipeline-spec-history.md；模块页拆出的历史记录 docs/research/acceptance/2026-11-11-module-page-history-translation-names.md

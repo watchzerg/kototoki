@@ -1,7 +1,7 @@
 # ADR-0003：W0／X0 两条 STT 基线（新 Pyannote VAD＋MMS）
 
 状态：已接受。合并整理于 2026-11-08（并入 ADR-0001、ADR-0002 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。  
-范围：本地 GPU 日语转写的两条基线身份与组件；操作入口与逐项组件定义见[当前基线](../architecture/stt-candidate-pipelines.md)。
+范围：本地 GPU 日语转写的两条基线身份与组件；操作入口与逐项组件定义见[当前基线](../../research/2026-10-stt-demo-w0-x0/README.md)。
 
 ## 决定
 
@@ -12,17 +12,17 @@
 5. **设备**：ASR 与 CTC 对齐只跑 GPU；VAD 可用 CPU 或 GPU，不以 GPU 支持作为资格条件。现有整片证据采用 CUDA FP32，换设备须独立记录。
 6. **保留语言与本地**：保留日语原文，本地 GPU 推理，不上传音频。
 7. **历史身份**：旧 PyanNet W0、X0 无 VAD fixed30、X0 `cut-merge`（低能量切点＋按源跨度有界合并，方法适配，不声称与 WhisperX 神经 VAD 后处理等价）只作历史／对照身份；省略策略参数的旧命令不得称为最新基线。历史 manifest、route 值、目录和分数不改写，新运行另建身份并固定完整配置，不得跨身份归分。
-8. **复用入口**：W0 持续迭代入口为 `experiments/w0_demo/`，X0 为 `experiments/x0_demo/`；分段、模型或解码变化须更新 recipe 与验证记录。基线测试从[标准基线测试指南](../guides/baseline-testing.md)开始，契约见 [W0](../specs/w0-reusable-demo.md)、[X0](../specs/x0-reusable-demo.md)。
+8. **复用入口**：W0 持续迭代入口为 `archive/2026-11-18-pre-research-restructure:experiments/w0_demo/`，X0 为 `archive/2026-11-18-pre-research-restructure:experiments/x0_demo/`；分段、模型或解码变化须更新 recipe 与验证记录。基线测试从[标准基线测试指南](../../research/2026-10-stt-demo-w0-x0/README.md)开始，契约见 [W0](../../research/2026-10-stt-demo-w0-x0/README.md)、[X0](../../research/2026-10-stt-demo-w0-x0/README.md)。
 9. **产品**：产品包 `kototoki/` 的 STT 阶段承接这两条基线，VAD 固定 `cuda:0`，可选引擎见 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](0012-cross-asr-judge.md)。
 
 ## 依据
 
-- 用户在两部完整电影对照后明确采纳。[两片整片对照](../research/2026-10-05-fullfilm-segmentation-comparison.md)：W0 新 Pyannote 的文字与时间指标优于 cut-merge；X0 配对排除失败后文字几乎持平，选择新 Pyannote 主要由零 ASR 触顶及运行成本支持。
-- [Whisper 框架研究](../research/2026-10-04-whisper-framework-architecture.md)支持在 faster-whisper 上以明确适配层保留关键行为；[MMS 补充实测](../research/2026-10-04-japanese-ctc-results.md)支持其作为对齐方向。
-- X0 不要求照搬 Whisper 的特征或 VAD 切分；[X0 流程研究](../research/2026-10-05-x0-whisperx-flow.md)与 [demo 契约](../specs/x0-reusable-demo.md)定义样本守恒、30 秒边界、完整文字、实际 GPU 与错误记账验收项。
+- 用户在两部完整电影对照后明确采纳。[两片整片对照](../../research/2026-10-vad-comparison/README.md)：W0 新 Pyannote 的文字与时间指标优于 cut-merge；X0 配对排除失败后文字几乎持平，选择新 Pyannote 主要由零 ASR 触顶及运行成本支持。
+- [Whisper 框架研究](../../research/2026-10-stt-demo-w0-x0/README.md)支持在 faster-whisper 上以明确适配层保留关键行为；[MMS 补充实测](../../research/2026-10-components-and-ctc/README.md)支持其作为对齐方向。
+- X0 不要求照搬 Whisper 的特征或 VAD 切分；[X0 流程研究](../../research/2026-10-x0-whisperx-flow/README.md)与 [demo 契约](../../research/2026-10-stt-demo-w0-x0/README.md)定义样本守恒、30 秒边界、完整文字、实际 GPU 与错误记账验收项。
 
 ## 约束与未关闭项
 
-- **CLI 默认值未迁移（已核对代码）**：`experiments/w0_demo/run.py` 不给 `--vad-manifest`／`--frozen-vad` 时走旧 PyanNet 检查点（`--vad-checkpoint` 默认 `w0-assets/pytorch_model.bin`）；`experiments/x0_demo/run.py` 的 `--segmentation` 默认 `fixed30`。运行最新基线须显式提供新 Pyannote 的 VAD manifest（X0 同时 `--segmentation vad`）。
+- **CLI 默认值未迁移（已核对代码）**：`archive/2026-11-18-pre-research-restructure:experiments/w0_demo/run.py` 不给 `--vad-manifest`／`--frozen-vad` 时走旧 PyanNet 检查点（`--vad-checkpoint` 默认 `w0-assets/pytorch_model.bin`）；`archive/2026-11-18-pre-research-restructure:experiments/x0_demo/run.py` 的 `--segmentation` 默认 `fixed30`。运行最新基线须显式提供新 Pyannote 的 VAD manifest（X0 同时 `--segmentation vad`）。
 - 未证明新 Pyannote 优于所有历史候选，也未证明满足严格字幕时间目标；X0 时间质量无普遍优势，极短窗 MMS 失败仍存在。
 - 本轮未比较 fixed30 整片表现；对质量或性能提升的宣称须有可复现证据。

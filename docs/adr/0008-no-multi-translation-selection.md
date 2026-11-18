@@ -23,11 +23,11 @@
 
 ## 依据
 
-- v4 `mbr8c`：确认集 Δ −0.016（约 −4%，集中在剧集），墙钟约 6 倍（[v4 报告](../research/2026-10-11-hy30-flow-v4-report.md)）。
-- v5 `mbr8s`：全新剧集确认集 Δ −0.036（约 −7%），电影未确认，翻译墙钟 6.3 倍；更省的变体（N＜8、早停）不在重复 seed 上复现，与低温组合也不叠加（[v5 结题](../research/2026-10-16-quality-exploration-v5.md#结题第-13-步)）。
+- v4 `mbr8c`：确认集 Δ −0.016（约 −4%，集中在剧集），墙钟约 6 倍（[v4 报告](../../research/2026-10-translation-flow-v1-v4/README.md)）。
+- v5 `mbr8s`：全新剧集确认集 Δ −0.036（约 −7%），电影未确认，翻译墙钟 6.3 倍；更省的变体（N＜8、早停）不在重复 seed 上复现，与低温组合也不叠加（[v5 结题](../../research/2026-10-quality-v5/README.md)）。
 - 产品中文错误约四分之三来自 ASR，翻译侧在产品输入上的收益上限约为总惩罚的 1%。用户判断几个百分点的质量收益换数倍墙钟不值得。
 
 ## 约束与未关闭项
 
 - 产品翻译保持单次生成：H0 产品配方 `dp10-cut-degrade-v1`（见 ADR-0010）；Q 线同样单次生成。后续质量探索在单次生成前提下找方向，如提示、上下文、术语、后处理与模型本身。
-- v4、v5 的多样本代码（`experiments/translation_v4` 的 `mbr8`、`experiments/quality_v5` 的 `mbr_cheap.py`、`mbr_semantic.py`、`parallel_probe.py`）作为历史证据保留，只在用户明确要求时复用。
+- v4、v5 的多样本代码（`archive/2026-11-18-pre-research-restructure:experiments/translation_v4` 的 `mbr8`、`archive/2026-11-18-pre-research-restructure:experiments/quality_v5` 的 `mbr_cheap.py`、`mbr_semantic.py`、`parallel_probe.py`）作为历史证据保留，只在用户明确要求时复用。

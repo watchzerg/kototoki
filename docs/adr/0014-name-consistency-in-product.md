@@ -1,6 +1,6 @@
 # ADR-0014：专名一致性——研究线已结题，冻结配置已移植进产品 `names` 阶段
 
-状态：已接受。合并整理于 2026-11-08（并入 ADR-0013 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。第 3 点中的发布时替换、第 5 点（`[names] enabled`）、第 6 点（`names_apply`）、第 7 点（手改表只重做替换）自 2026-11-08 起由 [ADR-0019](0019-product-translation-q2.md) 替代：表只经翻译注入使用，建表必开，手改注入行即重译。第 10 点中"Q 线用 `names` 建表注入"自 2026-11-09 起对基线由 [ADR-0021](0021-q3-strata-names-baseline.md) 替代：基线 Q3 的表由 Strata Flash-Next 建（`names-strata-v4`）。第 3 点中的建表模型（Qwen3.8-27B 经 llama-server）与串行驻留自 2026-11-09 起由 [ADR-0022](0022-product-names-on-strata.md) 替代：产品在与翻译共用的 Strata session 上用 Flash-Next 按 Q3 规则建表，阶段位置不变。第 1 点“研究线关闭”自 2026-11-10 起由用户明确要求局部重开：[v15](../research/2026-11-10-asr-robustness-v15.md) 票据 04 在**日文转写侧**量“只允许按专名表写法替换”（方向 ① 的日文侧版本，表按 `zh` 分组定指称），不重做中文侧替换；是否进产品待 v15 结题后另立 ADR。v15 已结题：2026-11-11 用户裁定该日文侧表内替换不进产品，不另立 ADR（见 [v15](../research/2026-11-10-asr-robustness-v15.md) §8、[现行决定·专名](CURRENT.md#专名)）。第 2 点的替换子项、第 4 点末句"替换阶段异常使该影片 publish 失败"与第 10 点前半句，随 [ADR-0019](0019-product-translation-q2.md) 删除发布时替换而不再适用（2026-11-11 标注，用户委托 agent 裁定）。  
+状态：已接受。合并整理于 2026-11-08（并入 ADR-0013 的有效条款；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。第 3 点中的发布时替换、第 5 点（`[names] enabled`）、第 6 点（`names_apply`）、第 7 点（手改表只重做替换）自 2026-11-08 起由 [ADR-0019](0019-product-translation-q2.md) 替代：表只经翻译注入使用，建表必开，手改注入行即重译。第 10 点中"Q 线用 `names` 建表注入"自 2026-11-09 起对基线由 [ADR-0021](0021-q3-strata-names-baseline.md) 替代：基线 Q3 的表由 Strata Flash-Next 建（`names-strata-v4`）。第 3 点中的建表模型（Qwen3.8-27B 经 llama-server）与串行驻留自 2026-11-09 起由 [ADR-0022](0022-product-names-on-strata.md) 替代：产品在与翻译共用的 Strata session 上用 Flash-Next 按 Q3 规则建表，阶段位置不变。第 1 点“研究线关闭”自 2026-11-10 起由用户明确要求局部重开：[v15](../../research/2026-11-asr-robustness-v14-v15/README.md) 票据 04 在**日文转写侧**量“只允许按专名表写法替换”（方向 ① 的日文侧版本，表按 `zh` 分组定指称），不重做中文侧替换；是否进产品待 v15 结题后另立 ADR。v15 已结题：2026-11-11 用户裁定该日文侧表内替换不进产品，不另立 ADR（见 [v15](../../research/2026-11-asr-robustness-v14-v15/README.md) §8、[现行决定·专名](CURRENT.md#专名)）。第 2 点的替换子项、第 4 点末句"替换阶段异常使该影片 publish 失败"与第 10 点前半句，随 [ADR-0019](0019-product-translation-q2.md) 删除发布时替换而不再适用（2026-11-11 标注，用户委托 agent 裁定）。  
 范围：专名一致性（日文侧建专名表＋生成后程序替换）的研究线状态、冻结的最佳配置，以及它在产品包 `kototoki/` 中的 `names` 阶段与发布时替换。
 
 ## 决定
@@ -15,17 +15,17 @@
 6. **`published.json.sources` 含 `names`（表的身份）与 `names_apply`（审计产物的身份）两个键。** 表或审计产物的身份变化会使已发布结果过期，下次整批运行重新发布，不重译、不起 Hy-MT2。用户改过且非 `force` 的最终文件照常被发布前置判定挡住。
 7. **表可人工校对。** 表是 `.work/<id>/` 里的产物：用户改 `name-table.json` 的 `entries`（改错名、删条目）后重跑，只重做替换与发布。机制是 `is_current` 只比较 `identity` 块，手改不触发重建；文件 sha256 变化使 `names_apply` 身份变化，`published.json` 不再匹配。重建（改 `ja.srt`、改 `[names] seed`、`BUILD` 配方变化）会覆盖手改，不做保护。
 8. **隐私。** 专名表条目是转写内容，只在工作目录，不进日志，日志只记计数。
-9. **研究目录继续冻结。** `experiments/name_consistency/`（101 项离线测试）只读，产品只复制、不导入；冻结证据（六份报告、`.local/name-consistency/` 的表与矩阵、`.scratch/name-consistency/` 的票据）需要改动时新增带版本的文件。
+9. **研究目录继续冻结。** `archive/2026-11-18-pre-research-restructure:experiments/name_consistency/`（101 项离线测试）只读，产品只复制、不导入；冻结证据（六份报告、`.local/name-consistency/` 的表与矩阵、`.scratch/name-consistency/` 的票据）需要改动时新增带版本的文件。
 10. **与翻译基线的关系。** H0 链在发布时跑这套替换（配方见 [ADR-0015](0015-two-translation-baselines.md)）；Q 线直接用 `names` 建表注入、不做替换（[ADR-0017](0017-q2-strata-default-launch-baseline.md)）。[ADR-0008](0008-no-multi-translation-selection.md) 不涉及：建表每部只一次请求，不是翻译多次再挑选。
 
 ## 依据
 
-- 研究期（冻结基准为四张 v4 提示 no-think 表，HF II／III × w0／x0）：合计 161 处改动，逐行判 good 89%、有害 2.5%；盲序成对判分偏好替换后 88／平局 20／偏好原译 3；整片通读略好读、无新错、覆盖不全。六轮报告见[调研索引](../research/INDEX.md#翻译后审校与人名专名一致性2026-10-19已结题adr-0013)。
+- 研究期（冻结基准为四张 v4 提示 no-think 表，HF II／III × w0／x0）：合计 161 处改动，逐行判 good 89%、有害 2.5%；盲序成对判分偏好替换后 88／平局 20／偏好原译 3；整片通读略好读、无新错、覆盖不全。六轮报告见[调研索引](../../research/INDEX.md)。
 - 六轮把规则层改动都试过，第三轮之后默认未再动：规则一 82%／4%，孤立单字 89%／2.5%；规则二（中文名核对）、二字组（有害 20%）、迭代、交集、两次建表取一致、`--pool-by-target`、虚构示例提示 v6 均无净收益。
 - 剩余误差在规则层之外：次要角色的表内错名（27B IQ3 的知识错）、一次性音译覆盖不到、边角残字。
 - 提示 v5 与 v4 的差别落在采样噪声内；v5 样本的额外有害行（爸爸→时臣）已由称呼词黑名单堵住。
 - 没有 MQM 抽样与整片人工观感评估；用户知悉后接受以上证据水平作为进产品依据。
-- 产品路径验收（[验收记录](../research/acceptance/2026-10-20-name-consistency-product.md)）：HF II／III w0 整批重跑退出码 0，新表第一次尝试即 `ok`（20／15 条，建表 49.5／40.5 s，整机显存峰值 13445 MiB），替换 55／32 个 cue；`apply_table measure` 不一致率 0.151 → 0.135、0.121 → 0.094；研究脚本 `apply_table` 默认参数在产品表上的输出与产品发布的 `zh.srt` 逐字节相同。
+- 产品路径验收（[验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)）：HF II／III w0 整批重跑退出码 0，新表第一次尝试即 `ok`（20／15 条，建表 49.5／40.5 s，整机显存峰值 13445 MiB），替换 55／32 个 cue；`apply_table measure` 不一致率 0.151 → 0.135、0.121 → 0.094；研究脚本 `apply_table` 默认参数在产品表上的输出与产品发布的 `zh.srt` 逐字节相同。
 - 建表每部约 1 分钟 GPU。
 
 ## 约束与未关闭项

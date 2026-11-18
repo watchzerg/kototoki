@@ -6,7 +6,7 @@ Track tasks as Markdown under `.scratch/<feature-slug>/`. The directory is track
 ## Conventions
 
 - Feature spec: `.scratch/<feature-slug>/spec.md`. The spec is the plan: scope, tickets,
-  gates, progress and open questions live there. Do not add files to `docs/plans/`.
+  gates, progress and open questions live there.
 - Execution prompts and acceptance scripts for the feature live in the same directory.
 - Tickets: `.scratch/<feature-slug>/issues/<NN>-<slug>.md`.
   Start numbering at `01`; use one file per ticket.

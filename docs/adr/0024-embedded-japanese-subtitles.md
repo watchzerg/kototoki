@@ -1,6 +1,6 @@
 # ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT
 
-状态：已接受（2026-11-11，用户裁定：按方案默认开启、ASS 进第一版、听障说明原样保留、外挂字幕不做）、**已实现（2026-11-11）**：`kototoki/embedded.py`（清洗）、`kototoki/media.py`（选轨与抽取）、`kototoki/plan.py`（身份与计划起点）、`kototoki/job.py`（接入 CPU 阶段）；配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`。验证见"依据"与"未验证"。不替代任何 ADR：[ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 的阶段链对没有可用字幕轨的文件不变，本 ADR 给有字幕轨的文件另加一条不经 STT 的路径；[ADR-0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 的输入、工作目录与发布规则不变；[ADR-0019](0019-product-translation-q2.md)、[ADR-0022](0022-product-names-on-strata.md) 的翻译与建表不变。2026-11-12 补漏：第 2 点的"不是 `forced`"在实现上也认标题里的 "forced"（不分大小写；真实片源 Black Panther 的两条 jpn 轨 disposition 都为 0、forced 只写在标题 `ja--forced--` 里，v1 选中了只有 224 条的部分字幕），配方 id 升为 `embedded-ja-subtitle-v2`，见[产品全流程验收](../research/acceptance/2026-11-12-product-fullflow-acceptance.md)。  
+状态：已接受（2026-11-11，用户裁定：按方案默认开启、ASS 进第一版、听障说明原样保留、外挂字幕不做）、**已实现（2026-11-11）**：`kototoki/embedded.py`（清洗）、`kototoki/media.py`（选轨与抽取）、`kototoki/plan.py`（身份与计划起点）、`kototoki/job.py`（接入 CPU 阶段）；配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`。验证见"依据"与"未验证"。不替代任何 ADR：[ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 的阶段链对没有可用字幕轨的文件不变，本 ADR 给有字幕轨的文件另加一条不经 STT 的路径；[ADR-0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 的输入、工作目录与发布规则不变；[ADR-0019](0019-product-translation-q2.md)、[ADR-0022](0022-product-names-on-strata.md) 的翻译与建表不变。2026-11-12 补漏：第 2 点的"不是 `forced`"在实现上也认标题里的 "forced"（不分大小写；真实片源 Black Panther 的两条 jpn 轨 disposition 都为 0、forced 只写在标题 `ja--forced--` 里，v1 选中了只有 224 条的部分字幕），配方 id 升为 `embedded-ja-subtitle-v2`，见[产品全流程验收](../../research/acceptance/2026-11-12-product-fullflow-acceptance.md)。  
 范围：产品包 `kototoki/`。不改 W0／X0／`cross`、cue 规则、翻译与建表配方，不改研究侧。
 
 ## 决定
@@ -15,7 +15,7 @@
 
 ## 依据
 
-- 质量上限：[v5](../research/2026-10-16-quality-exploration-v5.md) 估计译文质量损失里 STT 侧上限约 76%，翻译侧约 1%；有人工日文字幕的文件直接绕开 STT 的全部错误源。[技术设计](../specs/bilingual-subtitle-pipeline.md) §11 原登记为"1.1 版最值得做的功能"。
+- 质量上限：[v5](../../research/2026-10-quality-v5/README.md) 估计译文质量损失里 STT 侧上限约 76%，翻译侧约 1%；有人工日文字幕的文件直接绕开 STT 的全部错误源。[技术设计](../specs/bilingual-subtitle-pipeline.md) §11 原登记为"1.1 版最值得做的功能"。
 - 清洗规则按 ffmpeg n9.0.2 的实际输出定（2026-11-11 用合成 mkv／mp4 实测）：ASS 轨转出后样式变成嵌套 `<font>`、对齐留成 `{\an8}`、`\h` 原样留下、`\N` 变换行、绘图指令漏成文字、空事件留成只有标签的条目；SubRip 与 mov_text 轨基本原样。
 - 时间轴：容器起点不为 0（合成 +2 s）时，转出的字幕时间与派生 WAV 一样以 ffmpeg 的输入零点为准（字幕 0.5 s 仍是 0.5 s，WAV 不补 2 s），两条路径的时间基准一致。
 - 测试：core 覆盖清洗、选轨、计划（从 names 起、不核对 GPU 模型）、编排（不提取音频、不起 worker、回退、续跑、两条路径来回切换）；full 用真实 ffmpeg 合成带 SubRip、ASS、mov_text 字幕轨的片段走完整批次编排。

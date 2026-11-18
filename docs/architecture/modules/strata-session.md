@@ -71,17 +71,17 @@
 
 - 只有 Strata 这一个后端实现，不抽后端协议。服务进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
 - `strata` 在 PATH 上是 PowerShell 脚本，子进程优先用 `%LOCALAPPDATA%\Strata\terminal\current\bin\strata.cmd`（`strata_cmd`）。
-- `probe` 改编自研究侧 `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数，起草方式改读服务日志。
+- `probe` 改编自研究侧 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数，起草方式改读服务日志。
 - Strata 身份常量（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、`STRATA_LAUNCH`、`STRATA_RESOLVED`）只在这里定义，翻译配方 `q2-degrade-v1` 与建表配方 `q3-names-v3` 的运行时身份都取这些值。
 - `Session` 的状态（`server`、`ordinal`、`start_failures`、`unavailable`、`runtime_root`）归它自己；`runtime_root` 在构造时按 UTC 时间戳与 pid 定下。
-- `LlamaClient` 源自 `experiments/translation_demo/client.py`（产品新增 `chat_completion`），`explicit_oom` 复制自 `translation_demo/run.py`；只复制不导入。llama-server 的进程生命周期与 `tokenize`／`complete` 只在研究侧 `experiments/translation_v3/llama_server.py`（ADR-0025）。
+- `LlamaClient` 源自 `archive/2026-11-18-pre-research-restructure:experiments/translation_demo/client.py`（产品新增 `chat_completion`），`explicit_oom` 复制自 `translation_demo/run.py`；只复制不导入。llama-server 的进程生命周期不在产品里（ADR-0025）。
 
 ## 接口与依赖
 
 - 使用者（names、翻译）只经 `ensure_started()`、`stop()`、`label`、`client()`、`unavailable` 使用 `Session`，不碰 `ordinal`、`runtime_root`、`client_factory`。翻译还读服务对象的 `identity`（`candidate`、`strata`、`cold_load_seconds`、启动前空闲显存与可用内存）写进 `run.json`。
 - 内部接缝只供测试：`Session(server_factory=..., client_factory=...)`（伪服务须有 `url`、`identity` 与上下文管理器协议；伪客户端只经 `client()` 生效）；`StrataServer` 的 `cli`、`get`、`free_vram`、`available_ram`、`sleep`、`clock`、`log_dir`、`engine_log_dir`。
-- 依赖：`kototoki/strata.py` 依赖标准库、`kototoki.artifacts`、`kototoki.config`（只用工作根位置）与 `kototoki.local_client`；`kototoki/local_client.py` 只依赖标准库。两者都不导入 names、翻译、torch 与 `experiments.*`。
-- 研究侧 `experiments/translation_v3/` 与 `experiments/scene_batching_v6/v13.py` 直接导入本模块。
+- 依赖：`kototoki/strata.py` 依赖标准库、`kototoki.artifacts`、`kototoki.config`（只用工作根位置）与 `kototoki.local_client`；`kototoki/local_client.py` 只依赖标准库。两者都不导入 names、翻译、torch 与研究代码。
+- 研究代码可以直接导入本模块（[ADR-0031](../../adr/0031-research-layout-and-lightweight-records.md) R5）。
 - 外部依赖：Strata CLI、本机 8080 服务、`nvidia-smi`。
 
 ## 代码与验证入口
@@ -97,6 +97,6 @@
 ## 变更与决策来源
 
 - [ADR-0017](../../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
-- [`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
+- `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
 - `.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`、`.scratch/architecture-review/`、`.scratch/runtime-logging-gaps/`
-- [Q2 首用 smoke 与整片记录（含 mmap 诊断）](../../research/acceptance/2026-11-11-module-page-history-translation-names.md)
+- Q2 首用 smoke 与整片记录（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）

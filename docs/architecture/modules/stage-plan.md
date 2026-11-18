@@ -106,6 +106,6 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 - [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/14-stage-plan-module.md`、`issues/15-translate-run-key.md`）、`.scratch/cross-asr-judge/`、`.scratch/name-consistency-product/`（`issues/05-config-assets-plan.md`）
-- 计划：[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)、[`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md)
-- 验收：[cross 产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)
-- 历史：[技术设计历史](../../research/2026-11-11-bilingual-pipeline-spec-history.md)
+- 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md`
+- 验收：[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)
+- 历史：技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）

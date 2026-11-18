@@ -83,7 +83,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - `asr.json`：`engine` 为 `"cross"`，`original_segments` 取 w0 的段结构、文字换成合并文本，`asr_traces` 取 w0 的 trace，`failed_windows` 为 w0 的失败窗口。
 - `metadata` 为 `{w0, x0, judge}`（两路适配器的 metadata，与裁判配方 id、margin、批上限、文本形式、文件级计数）；`stages` 含 `load_s`、`load_w0_s`、`load_x0_s`、`inference_w0_s`、`inference_x0_s`、`score_s`。
 - 三个审计产物写在同一工作目录，不参与 `is_current`（见[产物契约](artifact-contract.md)）：
-  - `asr-w0.json`／`asr-x0.json`：各自完整的 `asr.json` 结构，`engine` 分别为 `w0`／`x0`，身份按单引擎计算（只含该路模型文件），可直接用 `kototoki_eval` 评分。
+  - `asr-w0.json`／`asr-x0.json`：各自完整的 `asr.json` 结构，`engine` 分别为 `w0`／`x0`，身份按单引擎计算（只含该路模型文件），可直接离线评分。
   - `asr-judge.json`：身份同 cross 的 `asr.json`；`offset_s`（照抄 `vad.json`）、`windows`、`summary`。
   - `windows` 每窗口：`index`、`identical`、`text_form`、`guard`、`w0_text`、`x0_text`、逐区间的 `w`／`x`／`kind`／`score_w`／`score_x`／`d`／`switched`、`decision`（`identical`／`judged`／`w0_failed`／`x0_failed`／`score_error`）。
   - `summary`：`windows` 为全部窗口；`identical`／`scored`／`normalized_form`／`intervals`／`switched`／`guards`／`by_kind` 只统计进入裁判的窗口；另有 `w0_failed`／`x0_failed`／`score_error` 与打分墙钟 `score_s`。
@@ -100,7 +100,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - `WhisperAsr.score(audio, chunk, texts, max_batch=16) -> list[float]`：对同一窗口音频编码一次，为每个候选文本返回 Σ log `text_token_probs`（不含结束符；空文本得 0 且不送入 `align`；全部为空时不运行编码器；超过 `max_batch` 分批；返回数量不符抛 `RuntimeError`）。
 - `kototoki.judge.judge_window(...)`：纯函数，输入一个窗口的两路文本与打分函数，返回合并文本与该窗口的审计记录。
 - `kototoki.judge.judge_file(...)`：整文件纯函数，输入两路逐窗文本与各自的失败窗口、打分回调与 `CROSS` 参数，输出合并文本、逐窗记录（`window_record`）与计数；`clean_x0`、`normalize` 也在 `judge`。
-- `judge` 属基础层，只依赖标准库，不导入 torch、`experiments`、`kototoki_eval` 与任何推理模块；打分函数由壳传入。
+- `judge` 属基础层，只依赖标准库，不导入 torch、研究代码与任何推理模块；打分函数由壳传入。
 - `kototoki.guard` 属基础层，只导入 `recipes` 与 `judge.normalize`。`guard.REPEAT`、`guard.SPEECH_RATE`、`guard.PHRASES` 是三条规则的规则名与参数（取自 `recipes.W0["guard"]` 的三个子块）。
 - `guard.apply(text, duration_s) -> (new_text, record | None)`：按顺序过三条规则；未命中返回原文与 `None`；否则返回生效规则的记录，`action` 为 `collapse` 时 `new_text` 是折叠后的文字，为 `blank` 时调用方应把该窗置空（`new_text` 仍是原文）。`duration_s` 不为正抛 `ValueError`。
 - `guard.check_repeat(text) -> bool`、`guard.apply_repeat(text)`：只跑复读规则（`apply` 的第一步，也是与研究实现实时对照的入口）。
@@ -112,13 +112,12 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - `tests/core/test_asr_whisper.py`：导入顺序（伪模块）、逐窗失败；`score`（伪模型：按输入顺序累加 log 概率、空文本得 0 且不送入 `align`、分批）。
 - `tests/core/test_asr_qwen.py`（伪 processor／模型）：配方生成参数、只取 prompt 之后的 token、触顶窗口保留截断文字并返回失败、`RuntimeError` 窗口、模型不在 CUDA 即失败；经壳串到对齐与 `build_cues`：触顶窗口置空、截断文字进 `failed_windows`、不进 cue；x0 模型文件清单与配方 hash。
 - `tests/core/test_judge.py`：规范化、编辑对齐与分歧区间、偏移映射、原文假设与规范化回退、相同窗口不打分、`d > m` 边界、多区间合并、空结果守卫、批切分、数量不符抛错、`clean_x0`、`judge_file` 的逐窗决策（w0 失败优先于 x0 失败、打分出错、窗口记录、计数）；与研究脚本合成样例的结果钉成 sha256。
-- `tests/core/test_guard.py`：复读——10 份命中 9 份不命中、覆盖率边界、单字连写按周期 2、标点夹在重复之间时的原文区间、只有非相邻复现或折叠后仍命中即置空、无法规范化不命中，一组构造文本上的命中与折叠结果钉成 sha256；整窗——恰好 20 字/秒不置空、超过即置空、标点不计字数、整窗幻听句置空而长句内与名单外的感谢不拦、复读先于后两条且后两条看折叠后的文字、时长不为正抛错；三个规则常量等于配方块、名单已是规范化形式、不导入 torch／`experiments`。
+- `tests/core/test_guard.py`：复读——10 份命中 9 份不命中、覆盖率边界、单字连写按周期 2、标点夹在重复之间时的原文区间、只有非相邻复现或折叠后仍命中即置空、无法规范化不命中，一组构造文本上的命中与折叠结果钉成 sha256；整窗——恰好 20 字/秒不置空、超过即置空、标点不计字数、整窗幻听句置空而长句内与名单外的感谢不拦、复读先于后两条且后两条看折叠后的文字、时长不为正抛错；三个规则常量等于配方块、名单已是规范化形式、不导入 torch 与研究代码。
 - `tests/core/test_stt_workers.py` 的 ASR 部分：
   - 守卫：折叠改写段文字并写 trace、复读置空进 `failed_windows`、语速与幻听句置空的原因与 trace、已失败窗口不过守卫、x0 引擎不受影响、cross 的裁判拿到守卫后的 w0 文字而 x0 那一路不过守卫；日志不含文字。
   - `cross`：四个产物齐全且身份分别按单引擎／cross 计算、边界 d 保持 w0、偏好 x0 的区间被切换、w0 失败窗口仍记失败、x0 失败窗口取 w0、打分出错与数量不符取 w0 且日志不含文字、w0 那一路之后失败时四个产物都不写、合并结果被对齐消费。
   - 加载：先 Whisper 后 Qwen 并拆分两路模型身份、单引擎只加载自己的部件（`CrossStartupTest`）。
   - 字节：四个 cross 产物与单引擎 `asr.json` 钉成 sha256（`AsrArtifactBytesTest`，`time.perf_counter` 固定）。
-- 与研究实现的实时对照在 `tests/equivalence/`（`just test-equivalence`，属 `gate-full`）：守卫 ↔ `experiments.asr_robustness_v15.repeat`、裁判 ↔ `experiments.quality_v5`。
 - 打分门禁（真实模型验证，占 GPU，须用户批准，不属于任何测试层与 gate）：`just smoke whisper_score`（`scripts/smoke/whisper_score.py`）；取冻结窗口的前几个 VAD 窗口，产品转写文本的分数须比字符打乱文本至少高 20 nat、空文本恰为 0、每 token 分数与产品 `avg_logprob` 差 < 0.5 nat；规则写在脚本头部。
 - 冻结窗口门禁 `stt_frozen_window`／`x0_frozen_window` 见 [STT worker](stt-workers.md#代码与验证入口)。
 - 未验证：显存紧张的机器上 `cross` 共驻能否放下（没有回退路径）、w0 失败窗口以 x0 替代（不做）、数值确定性、译文层收益与新材料确认；x0 触顶的真实路径。
@@ -126,9 +125,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 ## 变更与决策来源
 
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
-- 研究：[交叉打分](../../research/2026-10-19-asr-pair-cross-score.md)、[v15](../../research/2026-11-10-asr-robustness-v15.md)；`no_speech_prob` 测量（`experiments/asr_nospeech/`，票据 batch-run-fixes 09）
-- 验收：[cross 共驻探针](../../research/acceptance/2026-10-19-cross-coresidency-probe.md)、[cross 产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)
+- 研究：[交叉打分](../../../research/2026-10-cross-asr-judge/README.md)、[v15](../../../research/2026-11-asr-robustness-v14-v15/README.md)；`no_speech_prob` 测量（归档 experiments/asr_nospeech/，票据 batch-run-fixes 09）
+- 验收：[cross 共驻探针](../../../research/acceptance/2026-10-19-cross-coresidency-probe.md)、[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)
 - 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、`.scratch/cross-asr-judge/`、`.scratch/asr-repeat-guard/`、`.scratch/batch-run-fixes/`（`issues/09-short-window-asr-overflow.md`）、`.scratch/runtime-logging-gaps/`
-- 计划：[`docs/plans/asr-repeat-guard.md`](../../plans/asr-repeat-guard.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
-- 历史记录：[模块页拆出的历史记录](../../research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md)
-- 来源代码：`experiments/w0_demo/asr.py`、`experiments/x0_demo/asr.py`、`experiments/qwen/run_qwen.py`、`experiments/asr_robustness_v15/repeat.py`、`experiments/quality_v5`
+- 归档 tag `archive/2026-11-18-pre-research-restructure` 中：计划 docs/plans/asr-repeat-guard.md、docs/plans/architecture-cleanup.md；模块页拆出的历史记录 docs/research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md；来源代码 experiments/ 下的 w0_demo/asr.py、x0_demo/asr.py、qwen/run_qwen.py、asr_robustness_v15/repeat.py、quality_v5

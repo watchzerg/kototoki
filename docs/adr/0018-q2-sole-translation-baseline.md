@@ -18,7 +18,7 @@
 
 ## 依据
 
-- 用户决定不再维持两条基线。Q 线在 v9–v12 中已对 H0 显著占优：v10 的 Q0 在 dev 两类和产品 ASR 源上都好于 H0；之后 Q1、F1 又依次在 Q 线内部改进。证据见 [ADR-0015](0015-two-translation-baselines.md)、[ADR-0017](0017-q2-strata-default-launch-baseline.md) 与[调研索引](../research/INDEX.md#决定与探索时间线)。
+- 用户决定不再维持两条基线。Q 线在 v9–v12 中已对 H0 显著占优：v10 的 Q0 在 dev 两类和产品 ASR 源上都好于 H0；之后 Q1、F1 又依次在 Q 线内部改进。证据见 [ADR-0015](0015-two-translation-baselines.md)、[ADR-0017](0017-q2-strata-default-launch-baseline.md) 与[调研索引](../../research/INDEX.md)。
 - 只保留一个对照可以省掉"每次都跑两臂"的 GPU 与裁判成本。
 
 ## 约束与未关闭项

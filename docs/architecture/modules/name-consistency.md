@@ -55,16 +55,15 @@
 - **配方与身份**：`BUILD`（配方 `q3-names-v3`）一个字典，含提示 v5 的 sha256、采样、schema sha256、`max_tokens` 16384、`reasoning off`、context 49152 与预算 32256、归一规则与常量、`attempts` 5、`seed_step` 1 与 `retry_on`（`malformed`）、模型、运行时身份（Strata 版本、引擎 build、默认启动及其解析值、kv `int8`，常量来自 `kototoki.strata`，与翻译配方的 `runtime` 取值相同）、请求形状。hash 用 `kototoki.recipes.recipe_hash`（`BUILD_RECIPE_HASH`，测试钉住）。
 - 与 Q3 的 `names-strata-v4` 相同的是模型、运行时身份、请求形状与建表块中除 `max_tokens`／context／预算以外的各项（这三项由 [ADR-0026](../../adr/0026-names-output-and-prompt-budget.md) 放宽，v4 为 8192／24576／15872）；另有 [ADR-0028](../../adr/0028-names-accept-empty-table.md) 新增的 `retry_on`（v4 把空表当不合格），不含研究侧的说明字段与 llama.cpp 的 `model_asset`，所以 hash 不同。测试把三项换回 v4 的值、去掉 `retry_on` 后核对 v4 的 hash。
 - 表的身份 `{ja_srt_sha256, recipe_hash: BUILD, seed}` 由[阶段计划](stage-plan.md)计算，以 `names` 键进 `published.json.sources`（审计记录）。表的内容经翻译身份的 `names_sha256` 影响译文。
-- **Strata 回调**：`build_table` 的 `chat` 回调是 `session.client()` 返回的 `LlamaClient.chat_completion`；`tokenize` 回调是 `_TokenCounter`（`/v1/messages/count_tokens`，带退路，写法与 `experiments/scene_batching_v6/v13.py` 的 `NamesClient.tokenize` 相同，复制不导入）。5 次尝试在 `build_table` 内完成。请求体与 seed 序列的等价：core 测试钉 sha256，与 v13 的实时逐字节对照在 `tests/equivalence/`。
 - **资源所有权**：Strata session 的证据在共用的 `<work root>/strata-sessions/`（[Strata 服务与共享 session](strata-session.md)）。每部影片的原始交换在 `<work root>/<id>/names/transport/<UTC戳>-<pid>/session-NN/`（`count-NN` 为两段提示的计数请求，`chat-NN` 为建表请求），按运行分目录，重建时不与旧交换撞名。本模块不取 GPU 锁、不写 `name-table.json`（编排写）、不启停 Strata（只调 `ensure_started()`／`stop()`）。
-- **移植来源**：`table.py` 来自 `experiments/name_consistency/build_table.py`（`SYSTEM_PROMPT` 逐字节相同，去掉 CLI、思考模式与重归一）；Strata 回调与 5 次尝试来自 `experiments/scene_batching_v6/v13.py`；只复制不导入。研究侧 `experiments/name_consistency/` 冻结。
+- **移植来源**：`table.py` 来自 `archive/2026-11-18-pre-research-restructure:experiments/name_consistency/build_table.py`（`SYSTEM_PROMPT` 逐字节相同，去掉 CLI、思考模式与重归一）；Strata 回调与 5 次尝试来自 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v13.py`；只复制不导入；研究代码已删除（[ADR-0031](../../adr/0031-research-layout-and-lightweight-records.md)），产品实现是唯一权威。
 
 ## 接口与依赖
 
 - 编排以普通导入使用 `kototoki.names`，只用：`build_document(work_dir, document, session | None, seed) -> BuildResult`（`payload`、`attempts`、`seconds`、`status` ∈ `ok | failed | too_long`）、`NamesError` 与 `BUILD_RECIPE_HASH`。包顶层只导出这几项与 `BuildResult`。
 - [阶段计划](stage-plan.md)延迟导入 `kototoki.names.recipes` 取该 hash。翻译子系统不导入本模块，只读它写出的 `name-table.json`（经 `plan` 传入内容）。
 - 依赖：基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata`（`Session`、`StrataRefused`、身份常量；经 `ensure_started()`、`stop()`、`label`、`client()` 使用，不碰 `ordinal`、`runtime_root`、`client_factory`）与 `kototoki.local_client`（`InfraFailure`、`explicit_oom`）。
-- 不导入 torch、推理模块、翻译子系统与 `experiments.*`（`tests/core/test_job.py` 的禁止导入测试连同 `kototoki.names` 一起守门）。不读配置（`seed` 由编排与阶段计划读）。
+- 不导入 torch、推理模块、翻译子系统与研究代码（`tests/core/test_job.py` 的禁止导入测试连同 `kototoki.names` 一起守门）。不读配置（`seed` 由编排与阶段计划读）。
 
 ## 代码与验证入口
 
@@ -74,17 +73,16 @@
   - `tests/core/test_names_recipes.py`：提示与 schema 的 sha256、`BUILD` hash 钉子、改值即改 hash、与 v13 `s1_recipe("v4")` 的逐项对应钉成字面量、运行时身份等于翻译配方。
   - `tests/core/test_names_session.py`：伪 Strata session／伪客户端：正常建表、首次不合格后换 seed 成功、5 次都失败写空表且恰好 5 个请求、`count_tokens` 退路、超预算不发送、传输失败与 HTTP 错误抛 `NamesError` 并停 Strata（停之前一行 WARNING）、被拒与启动失败抛 `NamesError`、零条目不碰 session；与 v13 一致的请求体与 seed 序列钉成 sha256。
   - `tests/core/test_job.py` 的 `NamesTests`：阶段顺序与锁里的 Strata pid、表与 `sources` 的 `names` 键、终态失败空表照常发布并记 WARNING、session 不可用只让有 cue 的影片失败、建表异常只影响该影片且重跑恢复、零条目不取锁不启动；`RunLogTests` 另测重试成功的 done 行带 attempt、Strata 不可用后其余 FAILED 行不带 traceback。
-- `tests/equivalence/test_names.py`：与 `experiments.scene_batching_v6.v13` 的实时逐字节对照（`just test-equivalence`）。
 - `tests/full/test_job_ffmpeg.py`：共享 session 在 names 阶段启动、翻译后退出，`sources` 含 `names`。
 - 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：`just smoke names_product`（`scripts/smoke/names_product.py`）在产品自动启停的 Strata 上走 `plan.names_identity` → 共享 `Session` → `build_document` → `write_artifact`（默认 seed）。
   - 输入是脚本内置的 12 条合成日语短句（同一人名的正确写法与一处 ASR 式误写、一个职阶名、其余中性）。
   - 通过条件：`expert_arena` 为 `ram`、`build.status == ok`、表至少一条 person、全程没有 llama-server 进程、停止后 status 为空且显存释放、无异常；结果只记计数、哈希、耗时与资源峰值。
-  - 运行记录：Strata 路径见 [`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md) §7；27B 时期见 [2026-10-20 验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)。
+  - 运行记录：Strata 路径见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7；27B 时期见 [2026-10-20 验收记录](../../../research/acceptance/2026-10-20-name-consistency-product.md)。
 - 未验证：产品写出的表尚未人工抽看；注入后的译文质量只有研究侧 Q2／Q3 证据；x0 输出、其他作品与剧集、`too_long`／`failed`、`count_tokens` 退路与 Strata 起不来等失败路径的真实运行；同一 seed 下建表的可重复性（见 [ADR-0022](../../adr/0022-product-names-on-strata.md)）。
 
 ## 变更与决策来源
 
 - [ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0026](../../adr/0026-names-output-and-prompt-budget.md)
 - `.scratch/name-consistency-product/`（01–09）、`.scratch/names-on-strata-v13/`、`.scratch/q3-product-switch/`、`.scratch/architecture-cleanup/`、`.scratch/runtime-logging-gaps/`
-- [`docs/plans/product-names-on-strata.md`](../../plans/product-names-on-strata.md)、[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)
-- [2026-10-20 专名一致性进产品验收记录](../../research/acceptance/2026-10-20-name-consistency-product.md)
+- `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
+- [2026-10-20 专名一致性进产品验收记录](../../../research/acceptance/2026-10-20-name-consistency-product.md)

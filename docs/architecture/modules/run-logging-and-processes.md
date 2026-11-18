@@ -10,7 +10,7 @@
 
 ### 运行日志
 
-- **框架**：标准库 `logging`，不用 `structlog`：读者只有人和 `grep`，第三方库的告警本就走标准库 logging，一个 root handler 即可收进同一文件，无需桥接，也不新增依赖。
+- **框架**：标准库 `logging`，不用 `structlog`：读者只有人和 `grep`，一个 root handler 就能把第三方告警收进同一文件。
 - **挂接**：`job.run` 取到工作根锁后，在 `_run_logging` 上下文内给 root logger 挂两个 INFO 级 `StreamHandler`：`<work root>/run-<UTC戳>.log`（UTF-8、`\n` 行尾）与控制台（默认 `sys.stdout`），共用一个 `kototoki.logs.RunFormatter`；`kototoki` logger 临时设为 INFO，并开 `logging.captureWarnings(True)`（第三方 `warnings.warn` 以 `[py]` 前缀进日志）。root 级别不动（默认 WARNING），所以第三方库只有 WARNING 及以上进日志。`run` 退出（含异常）时恢复级别与 `captureWarnings` 状态、摘下并关闭 handler。
 - **发事件的一方**：其他产品模块只经 `logging.getLogger(__name__)` 发事件，不配置 handler、不开文件：
   - `kototoki.job`；`kototoki.translate.*`；
@@ -83,7 +83,7 @@
 
 ## 接口与依赖
 
-`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库、`ctypes` 与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contain_children`）与 `kototoki.workers.gpu`（`RunFormatter`）。`procs` 复制自 `experiments/translation_v3/procs.py`，不导入；`job` 从它导入，测试以 `mock.patch("kototoki.job.contain_children")` 替换。
+`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库、`ctypes` 与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contain_children`）与 `kototoki.workers.gpu`（`RunFormatter`）。`procs` 复制自 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/procs.py`，不导入；`job` 从它导入，测试以 `mock.patch("kototoki.job.contain_children")` 替换。
 
 ## 代码与验证入口
 
@@ -96,13 +96,10 @@
   - 同文件的 `LockTests`（锁冲突退出码、残留锁、空的／无法解析的锁、锁内 pid 记录）、`ScanTests`（Job Object 建立失败时释放工作根锁）、`IsolationTests`（崩溃文件隔离、按文件重启、`_launch` 异常时回收 worker）。
 - 测试（full，`just test-full`）：`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙断言 `job.compensation_warnings` 给出一行补入告警。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。
-- 真实路径：asr 阶段强杀编排器后 worker 随 Job Object 退出、残留锁默认拒绝，见[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)。
+- 真实路径：asr 阶段强杀编排器后 worker 随 Job Object 退出、残留锁默认拒绝，见[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)。
 
 ## 变更与决策来源
 
 - [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
-- 运行日志设计与真实运行核对：`.scratch/runtime-logging/`（`spec.md` 及票据 01–04）
-- 运行日志补缺（运行头、异常收尾、worker 字段、cues 三件套、Strata 故障行、续跑计数、smoke runner）：`.scratch/runtime-logging-gaps/`
-- 小修集合（媒体告警、extract 三件套、空锁破除）：`.scratch/architecture-review/issues/01-small-fixes.md`
-- 进程原语移入基础层：计划 [`architecture-cleanup`](../../plans/architecture-cleanup.md)，`.scratch/architecture-cleanup/`
+- 已完成票据（见归档 tag）：runtime-logging（设计与实跑核对）、runtime-logging-gaps、architecture-review 01、architecture-cleanup（进程原语下沉）
 - [技术选型](../../development/technology-stack.md)（`structlog` 未采用）

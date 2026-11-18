@@ -26,7 +26,7 @@
 
 ## 约束与未关闭项
 
-- 根环境含 Torch 等推理依赖；三个历史环境保留供复现；产品包从 `experiments/` 复制并精简实现，不导入历史包，历史目录冻结。
+- 根环境含 Torch 等推理依赖；三个历史环境保留供复现；产品包从 `archive/2026-11-18-pre-research-restructure:experiments/` 复制并精简实现，不导入历史包，历史目录冻结。
 - **重新评估 CUDA 版本的触发条件**：CT2 发布 CUDA 13 wheel；某必需组件要求 torch > 2.11；整片验收显示 ASR 阶段是墙钟瓶颈。届时形态是给 ASR worker 一个独立 cu12 侧车 venv，或改用 HF Whisper，不采用单 venv 混装。
 - 未采用：逐文件全流程调度、翻译基于 ASR 窗口文本、Python 3.14／3.15、CT2 源码构建、soxr 重采样、批内语序自由、跨文件术语一致（后两者登记为未来方向）。
 - "CT2 共用 torch DLL"只证明同版本可共存；不加 DLL 目录能否解析以干净 PATH 下的 smoke 为准。

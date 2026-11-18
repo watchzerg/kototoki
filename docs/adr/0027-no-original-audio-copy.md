@@ -1,6 +1,6 @@
 # ADR-0027：不再流复制原始音轨
 
-状态：已接受（2026-11-17，用户决定，起因 batch-run-fixes 票据 05）、已实现（同日）。替代 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 第 7 点中间产物里的"原始编码音轨流复制"与第 8 点"流复制的原始音轨只作归档"，以及 2026-10-13 设计裁定"音频产物：原始编码流复制保留"（[历史记录](../research/2026-11-11-bilingual-pipeline-spec-history.md#12-已裁定2026-10-13)）。
+状态：已接受（2026-11-17，用户决定，起因 batch-run-fixes 票据 05）、已实现（同日）。替代 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 第 7 点中间产物里的"原始编码音轨流复制"与第 8 点"流复制的原始音轨只作归档"，以及 2026-10-13 设计裁定"音频产物：原始编码流复制保留"（历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`））。
 范围：产品包 `kototoki/` 的 extract 阶段产物。不改派生 WAV 的命令、`MEDIA` 配方与 hash、PCM 身份及任何下游配方。
 
 ## 决定

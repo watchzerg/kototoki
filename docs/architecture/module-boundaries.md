@@ -1,20 +1,12 @@
 # 模块边界
 
-状态：current；权威决定：[ADR-0012](../adr/0012-cross-asr-judge.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)；现行配方见 [CURRENT](../adr/CURRENT.md)
+状态：current；权威决定：[ADR-0012](../adr/0012-cross-asr-judge.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)、[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)；现行配方见 [CURRENT](../adr/CURRENT.md)
 
 本文只规定依赖方向、唯一归属、接缝、状态与并发规则。各模块做什么见[架构总览](INDEX.md)的模块表与各模块页；模块页说明自己如何遵守，实际偏差在模块页就地注明，不在此改写规则。
 
 ## 职责归属
 
 每条规则只有一个归属；消费方调用或读取，不复制。
-
-研究侧：
-
-- VAD 候选、原生检测与 `source-span-merge-v1` 切分合并归[外部 VAD 阶段](modules/vad-stage.md)；W0／X0 只经 manifest 文件消费。
-- VAD manifest 校验 `read_vad_manifest` 与 `read_audio`（输入身份）归 `experiments/w0_demo/run.py`；X0 与外部 VAD 阶段直接调用，不复制。
-- 强制对齐、`sample_window` 与 `text_only` 归 [MMS 对齐](modules/mms-alignment.md)；转写 JSON 契约 `validate_transcript`、评分与 `minimal-display-v1` 归 [STT 评分](modules/stt-evaluation.md)，demo 不复制 WhisperX cue 逻辑。
-- 模型下载与资产 SHA256 固定归[语料与模型资产](modules/corpus-and-assets.md)；推理入口只读本地文件。
-- llama-server 命令行、驻留证据、OOM 识别与 Hy30 提示模板归[逐窗翻译运行时](modules/translation-runtime.md)，[完整 SRT 流程](modules/translation-srt-flow.md)导入不复制；流程配方身份归后者。
 
 产品包 `kototoki/`：
 
@@ -27,17 +19,16 @@
 - 翻译配方与 `RECIPE_HASH`（只在 `kototoki/translate/recipes.py`）、注入规则、run 目录键、`needs_model`、按条追问与未翻译、合并归[翻译子系统](modules/translation-subsystem.md)。
 - 建表配方与 hash（只在 `kototoki/names/recipes.py`）、建表请求额度与 `name-table.json` 的内容归[专名一致性](modules/name-consistency.md)；文件由编排写，表的用法（注入哪些行）归翻译子系统。
 - 扫描、调度、锁、发布、子进程环境与运行日志归[批次编排](modules/batch-orchestration.md)；进程原语在基础层 `kototoki/procs.py`，日志行格式在 `kototoki/logs.py`。
-- 本机回环客户端 `LlamaClient`、`InfraFailure`、`explicit_oom` 归 `kototoki/local_client.py`；llama-server 进程生命周期不在产品里，在研究侧 `experiments/translation_v3/llama_server.py`，`list_llama_servers` 在 `scripts/smoke/`。
+- 本机回环客户端 `LlamaClient`、`InfraFailure`、`explicit_oom` 归 `kototoki/local_client.py`；llama-server 进程生命周期不在产品里，`list_llama_servers` 在 `scripts/smoke/`。
 - Strata 起停、显存轮询（`nvidia_smi`、`wait_for_free_vram`）、身份核对与常量、共享 `Session` 归 `kototoki/strata.py`（[Strata session](modules/strata-session.md)）；启动额度只由 `Session` 计数，`unavailable` 只由它写。
 
 ## 依赖方向
 
-研究侧：
+研究与产品（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) R5、R6）：
 
-- 允许：X0 → W0（`read_audio`、`setup_runtime`、`gpu_lock`、`read_vad_manifest`、`MmsAligner`）；外部 VAD 阶段 → W0（`gpu_lock`、`read_audio`、`vad_candidates`）；W0／X0 → `kototoki_eval.schema`；完整 SRT 流程 → 逐窗翻译运行时的纯函数。
-- 现存当前→历史依赖只读、不得扩大：X0 → `experiments/qwen/run_qwen.py`（资产身份常量、`checkpoint_identity`、`check_gpu`）；完整 SRT 流程 → `experiments/translation_flow/srt.py`，其测试另导入冻结的 `v2_prepare`／`v2_recipes`；W0 测试导入 `experiments.framework_equivalence` 作数值参照，运行时不导入。
-- 禁止：`kototoki_eval` 导入推理或 `experiments` 代码；推理入口导入 `experiments/provision`；当前模块写入或修改冻结的历史实验包。
-- 文件契约代替导入：W0／X0 只读外部 VAD 的 manifest；评分 CLI 只读 `result.json`；各入口只读语料准备产出的 WAV 与参考 JSON。
+- 产品永不导入 `research/`；研究可以导入产品符号，直接调用产品实现，不保留研究侧副本。
+- 研究数据经仓库根 `data.toml` 与环境变量 `KOTOTOKI_DATA` 定位，代码与文档不写本机绝对路径。
+- 产品符号移动或改名时，产品不为研究侧保留再导出模块；研究代码随之改导入行。
 
 产品包 `kototoki/`（分层图见[架构总览](INDEX.md)），依赖只向下：
 
@@ -51,35 +42,27 @@
 
 - **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动 worker，通信只经 jobs 文件、产物与退出码。编排不导入 worker 壳；期望身份来自 `plan`，模型核对只用 `workers/gpu.verify_models`（导入时不加载推理库）。`tests/core/test_job.py` 的禁止导入测试守门（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、`experiments.*`）。
 - **推理模块互不导入。** 各自在独立进程加载模型，阶段之间只经产物文件交接。`workers/gpu.py` 只被 worker 壳与编排导入，不属基础层。
-- **基础层不依赖 torch、ffmpeg、网络与上层。** 编排可直接导入。`judge`、`guard` 不导入 torch、推理模块、`experiments.*`、`kototoki_eval`；`judge.normalize` 与 `schema.validate_transcript` 从 `kototoki_eval` 复制而不引用；`guard` 只导入 `recipes` 与 `judge.normalize`，算法从研究脚本复制。
-- **产品包不导入 `experiments.*` 与 `kototoki_eval`**，历史实现只复制。`tests/core/test_boundaries.py` 以 AST 扫描 `kototoki/` 全部模块守门，并要求 `tests/core` 自身不导入 `experiments`。
+- **基础层不依赖 torch、ffmpeg、网络与上层。** 编排可直接导入。`judge`、`guard` 不导入 torch、推理模块与研究代码；`judge.normalize`、`schema.validate_transcript` 与 `guard` 的算法当初复制自已删除的研究代码（归档 tag，见 [ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)），现在产品实现是唯一权威；`guard` 只导入 `recipes` 与 `judge.normalize`。
+- **产品包不导入 `research`**。`tests/core/test_boundaries.py` 以 AST 扫描 `kototoki/` 全部模块守门，并要求 `tests/core` 自身不导入 `research`。
 
 中间层规则：
 
 - `local_client` 只依赖基础层，发 HTTP，基础层不得导入它；`strata`、翻译子系统与 `names` 单向依赖它。
-- `strata` 只依赖基础层与 `local_client`；不导入 `names`、翻译子系统、torch、`experiments.*`。`names` 与翻译子系统单向依赖它，研究侧脚本也直接导入它。
-- `names` 只依赖 `artifacts`、`srt`、`recipes`、`strata`、`local_client`；不导入 `config`、翻译子系统、torch、`experiments.*`。
+- `strata` 只依赖基础层与 `local_client`；不导入 `names`、翻译子系统、torch。`names` 与翻译子系统单向依赖它，研究代码也可以直接导入它。
+- `names` 只依赖 `artifacts`、`srt`、`recipes`、`strata`、`local_client`；不导入 `config`、翻译子系统、torch。
 - 翻译子系统不导入 `names`，只读 `name-table.json` 的内容（经 `plan` 传入）。
 - 编排以普通导入使用 `strata`、`names`、`translate`、`merge`：四者不导入 `plan` 与 `job`、不加载 torch，`test_job.py` 照常守门。
 - `plan` 只在核对翻译阶段时延迟导入 `translate`，只在核对 names 阶段时延迟导入 `names.recipes`（只取 `BUILD_RECIPE_HASH`）；worker 壳导入 `plan`，但不会触发这两条边。
-- 产品符号移动或改名时，同一提交里机械改研究侧的导入行；产品不为研究侧保留再导出模块。
 
 ## 状态与契约
 
-- 每个研究运行目录由创建它的入口独占：`.local/w0-demo/`、`.local/x0-demo/`、`.local/vad-comparison/`、翻译 `--output-dir` 与 v3 根目录。目录已存在即拒绝；结果、全文和缓存只写在该目录内。
-- VAD manifest 是窗口的唯一权威：runner 把原字节复制为 `vad-manifest.json` 并记 SHA256，运行中来源变化即失败。其 `stages` 是外部成本快照，不计入 W0／X0 的 `stages` 或 `wall_s`；回放不是新推理（`fresh_inference=false`）。
 - 输入身份以内容为准（`file_sha256`、`pcm_sha256`、采样率、声道、样本数、时长、`offset_s`），路径可以不同。
-- 运行身份（recipe 名、`recipe_hash`、模型 SHA256、冻结源码哈希）是派生结果可比的前提；同名配方内容不同时拒绝续跑。
-- X0 子进程之间只经运行目录中的 JSON 交接（`request.json` → `plan.json` → `asr.json` → `alignment.json`），每阶段重验源码与输入哈希。
+- 运行身份（recipe 名、`recipe_hash`、模型 SHA256）是派生结果可比的前提；同名配方内容不同时拒绝续跑。
 
 ## 并发与生命周期
 
 - `.local/gpu.lock` 是所有 GPU 作业共用的互斥文件，全部以 `O_EXCL` 创建，不抢占、不杀进程。
-  - 研究侧主要实现：`experiments/w0_demo/run.py` 的 `gpu_lock`（写 `pid`＋`recipe`，退出时删除；W0、X0 父进程、CUDA 设备的外部 VAD 阶段使用）；`experiments/translation_v3/procs.py` 的 `ProcessLock` 与 `server.py` 的 `GpuLock`（写 `pid`＋`pid_created`＋`run_id`，存活持有者在时退出码 3，过期锁只在 `--break-stale-lock` 时替换）。
-  - 除产品（`kototoki/procs.py` 的 `ProcessLock`）外，其余写入方都在 `experiments/` 与 `scripts/smoke/`；只有产品与 v3 记录 `pid_created` 并处理过期锁。统一这些写入方不在当前范围。
-- 逐窗翻译运行时（`experiments/translation_demo_runtime.py`）不取 `.local/gpu.lock`，只检查端口；与其他 GPU 作业的互斥由操作者保证。
-- 研究侧模型按阶段串行：W0 在 VAD 关闭后加载 ASR，ASR `close()` 后再加载 MMS；X0 每阶段一个子进程，父进程持锁到全部子进程退出。
-- 取消：X0 父进程中断时 `terminate`，10 秒后 `kill` 当前子进程，记录被中断阶段成本并清理 `tmp/`；v3 把 llama-server 放入 KILL_ON_JOB_CLOSE Job Object。发出取消不等于 GPU 已释放；完整 Windows 取消与 OOM 恢复未验证（见 [X0 pipeline](modules/x0-pipeline.md)）。
+  - 产品的实现是 `kototoki/procs.py` 的 `ProcessLock`（记录 `pid_created` 并处理过期锁）；`scripts/smoke/` 另有写入方，统一它们不在当前范围。
 - 产品 STT 阶段之间串行。例外：`cross` 引擎的 asr worker 让 Whisper（CT2）与 Qwen（torch）同进程共驻到退出，运行时不按显存回退；translate、align 不与之共驻（[ADR-0012](../adr/0012-cross-asr-judge.md)）。
 - 产品只有一个服务进程 Strata，由共享 `strata.Session` 管理：
   - 整批一个，首次真正需要模型时才启动（names 或 translate），两阶段之间不停；没有影片需要模型时不启动。
@@ -138,6 +121,6 @@
 测试穿过与调用方相同的接缝：
 
 - `cues`、`merge`、`srt`、`artifacts`、`protocol`（含 `classify_launch`）、`procs`、`judge`、`config` 直接按接口离线测。
-- 与研究实现的等价在 core 里钉字面量或 sha256，实时对照在 `tests/equivalence/`（`just test-equivalence`，属 `gate-full`）。
+- 需要钉住的研究来源取值在 core 里钉字面量，注释写来源（ADR 或归档 tag 路径）；没有实时对照层（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)）。
 - 媒体测命令行构造与合成媒体；推理模块用冻结窗口门禁（重任务）；翻译子系统用伪客户端走完整流程；编排用伪 worker 脚本。
 - 需要越过接口去戳实现时，先怀疑模块形状。编排是最深的模块；worker 壳的 `__main__` 只做入口，流程知识在协议模块。

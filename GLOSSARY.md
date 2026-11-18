@@ -92,7 +92,7 @@ _Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是�
 专名表里 `confidence: high` 实体的每个写法展开成的一行 `{ja → zh}`（按 `ja` 去重，跳过空写法）；某个包只注入日文写法出现在该包可见台词里的行，表头 `qwen-name-table-v1`（Q1／Q2 规则，`kototoki/translate/recipes.py::name_rows`）。注入行的 SHA256 是产品翻译身份的一部分。
 
 **锚定 cue**：
-（研究线与 2026-11-08 前的产品替换，ADR-0019 起产品不再替换）替换时，日文里出现某个实体最长 `form.ja` 的 cue 就由该写法锚定（短写法不再重复处理同一 cue），该 cue 的译文以这个写法的 `zh` 为替换目标；替换只发生在锚定 cue 内（研究实现 `experiments/name_consistency/`）。
+（研究线与 2026-11-08 前的产品替换，ADR-0019 起产品不再替换）替换时，日文里出现某个实体最长 `form.ja` 的 cue 就由该写法锚定（短写法不再重复处理同一 cue），该 cue 的译文以这个写法的 `zh` 为替换目标；替换只发生在锚定 cue 内（研究实现见 [专名一致性轮次](research/2026-10-name-consistency/README.md)）。
 
 **落点**：
 在锚定 cue 的译文里找到的、应被换成目标中文的那一段：先找同实体其他写法的中文与过特异性检验的 `zh_variants`（变体层），找不到再用跨 cue 统计（统计层）；统计层落点按规则一扩展到整个名字。落点重叠、紧邻复合名连接符或不在词边界上时不替换，记为 `unresolved`。

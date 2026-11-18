@@ -32,7 +32,7 @@
 
 ## 依据
 
-票据 09 的复查与测量，数据为首次大批量运行的 228 个文件，以及有参考字幕的 HF II、HF III。测量包 `experiments/asr_nospeech/`，产物在 `.local/asr-nospeech/`，不进 Git。
+票据 09 的复查与测量，数据为首次大批量运行的 228 个文件，以及有参考字幕的 HF II、HF III。测量包 `archive/2026-11-18-pre-research-restructure:experiments/asr_nospeech/`，产物在 `.local/asr-nospeech/`，不进 Git。
 
 - 对齐失败的 54 个窗口只有 17–253 ms 长，文字只有 6 种 Whisper 结尾套话。由于 `cues._fallback` 回填时间，这些文字全部进了 `ja.srt`。
 - 语速超过 20 字/秒的窗口共 95 个（含上面 54 个），其余 41 个也是同类套话，或物理上说不完的短句。

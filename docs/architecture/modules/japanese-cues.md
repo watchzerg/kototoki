@@ -1,6 +1,6 @@
 # 日文 cue
 
-状态：current（票据 04 交付，2026-10-14）；编排器调用与 `ja-cues.json`／`ja.srt` 落盘见[批次编排](batch-orchestration.md)（票据 06）。2026-11-11 起按计划 [`architecture-cleanup`](../../plans/architecture-cleanup.md)（[ADR-0025](../../adr/0025-product-package-boundaries.md)）先行写入本页接口（units 改为 WAV 本地秒、offset 只在本模块加一次、直接读 `recipes.CUES["fallback_max_char_s"]`、用 `srt` 的整数毫秒入口），代码随该计划票据 03、08 落地；offset 为 0 时 `ja-cues.json` 与 `ja.srt` 字节不变，结果见计划 §7。
+状态：current（票据 04 交付，2026-10-14）；编排器调用与 `ja-cues.json`／`ja.srt` 落盘见[批次编排](batch-orchestration.md)（票据 06）。2026-11-11 起按计划 `architecture-cleanup`（`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`）（[ADR-0025](../../adr/0025-product-package-boundaries.md)）先行写入本页接口（units 改为 WAV 本地秒、offset 只在本模块加一次、直接读 `recipes.CUES["fallback_max_char_s"]`、用 `srt` 的整数毫秒入口），代码随该计划票据 03、08 落地；offset 为 0 时 `ja-cues.json` 与 `ja.srt` 字节不变，结果见计划 §7。
 
 ## 定位与阅读
 
@@ -19,7 +19,7 @@
 
 - 窗内有时间字符之间的 `text_only` 串按前一字符的 `end` 到后一字符的 `start` 等分（`time_source=interpolated`）。
 - 窗首／窗尾只有单侧邻居的串，按该窗平均每字符时长（首个到末个有时间字符的跨度 ÷ 字符数）向窗口边界外推，夹取在窗口边界内（`interpolated`）。
-- 整窗无时间：按 VAD 子段时长比例（最大余数法）分配字符数，子段内从起点依次排列，每字符时长 = min(子段时长 ÷ 字符数, `recipes.CUES["fallback_max_char_s"]`=0.25 s)（`time_source=fallback`，沿用 `kototoki_eval.schema` 取值）；没有子段时用窗口边界。
+- 整窗无时间：按 VAD 子段时长比例（最大余数法）分配字符数，子段内从起点依次排列，每字符时长 = min(子段时长 ÷ 字符数, `recipes.CUES["fallback_max_char_s"]`=0.25 s)（`time_source=fallback`，沿用研究期评分包的取值）；没有子段时用窗口边界。
 - `align.json` 不改；回填只体现在返回的 payload 里。
 
 **切分**：标点、空白与符号（Unicode 类别 P／S／Z／C，含 ♪）是非词汇字符，不参与 cue 时间与切点。
@@ -54,13 +54,13 @@
 - 离线观感（2026-10-14，当时的 `[cues]` 初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（现行默认值见[配置参考](config-reference.md)）。记录见票据 04 Comments。
 - x0 标点密度离线对照（2026-10-14，票据 07；现有同窗 X0／W0 研究期 `result.json`，hf-ii／hf-iii 各 6 个冻结窗口中两引擎都有结果的 11 个，同一组 101 个 VAD 窗口，默认 `[cues]`）：x0 每 100 个词汇字符有 7.7 个句末标点、2.5 个逗号，w0 为 2.3 与 0.6；cue 数 626 对 591，平均每条 9.9 对 9.8 字、p90 均为 18、触及 24 字上限 4 对 3 条，平均时长 1.84 s 对 1.99 s；以句末标点收尾的 cue 占 69% 对 20%，w0 其余多在时间间隔或硬切处断开。结论：x0 的标点主要改变断点位置（更多落在句末），不改变条目长度，现有初值无需按引擎区分。
 - 票据 12 离线重算（2026-10-15，整片验收 `align.json`，初值 `[cues]`）：跨 VAD 子段才断句后，cue 数 w0／II 1056→1048、w0／III 1188→1181、x0／II 1154→1150、x0／III 1263→1257，≤2 字条目 113→110、124→118、115→114、95→90，重叠与 >6 s 条目数不变。建票样本（HF II w0 约 1969 s 的两字词）仍为两条：两字都落在 VAD 子段之外（Pyannote 漏检了约 2.4 s 的拖长音），本规则无法判定；词边界方案由票据 13 调研，结论见下一条。
-- 票据 13 词边界调研（2026-10-15，只读，未实现）：用两个模型目录的 `tokenizer.json` 把 `asr.json` 的 `asr_traces[].tokens` 按字节还原并对回窗口文字，四部整片 772 个窗口全部逐字全等（w0 取小于 eot 的 id；x0 去特殊 token 后 `strip()`），跨多字节字符的 token 并组即可得到稳定的 token→字符映射。但 Whisper 对日文的 token 接近单字（平均 1.28 字／组，`先輩` 是两个 token），建票样本不会合并；"同一 token 内不按间隔断句"在四部整片只减 12 条 ≤2 字条目（432→420），同 token 内的 1–14 s 间隔都跨过非语音区，合并反而新增两条 >6 s cue。用户裁定不实现（2026-10-15），建票样本的根因是 VAD 漏检拖长音。方法、数据表与限制见[cue token 边界调研](../../research/2026-10-15-cue-token-boundary-study.md)。
-- 未验证：x0 标点密度下的观感（只有统计，未人工看）；整片双语观感（[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)只核对了条目数、时间一致与每条两行，未人工看）。
+- 票据 13 词边界调研（2026-10-15，只读，未实现）：用两个模型目录的 `tokenizer.json` 把 `asr.json` 的 `asr_traces[].tokens` 按字节还原并对回窗口文字，四部整片 772 个窗口全部逐字全等（w0 取小于 eot 的 id；x0 去特殊 token 后 `strip()`），跨多字节字符的 token 并组即可得到稳定的 token→字符映射。但 Whisper 对日文的 token 接近单字（平均 1.28 字／组，`先輩` 是两个 token），建票样本不会合并；"同一 token 内不按间隔断句"在四部整片只减 12 条 ≤2 字条目（432→420），同 token 内的 1–14 s 间隔都跨过非语音区，合并反而新增两条 >6 s cue。用户裁定不实现（2026-10-15），建票样本的根因是 VAD 漏检拖长音。方法、数据表与限制见[cue token 边界调研](../../../research/2026-10-cue-token-boundary/README.md)。
+- 未验证：x0 标点密度下的观感（只有统计，未人工看）；整片双语观感（[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)只核对了条目数、时间一致与每条两行，未人工看）。
 
 ## 变更与决策来源
 
-票据 `.scratch/bilingual-subtitle-pipeline/issues/04-japanese-cues.md`、`12-cue-gap-split-inside-word.md`、`13-cue-word-boundary.md`（调研结论见[cue token 边界调研](../../research/2026-10-15-cue-token-boundary-study.md)）；[技术设计](../../specs/bilingual-subtitle-pipeline.md) §4、§5；§1.2 第三轮裁定表原文见[技术设计历史记录](../../research/2026-11-11-bilingual-pipeline-spec-history.md#12-已裁定2026-10-13)。非词汇字符判定参考 `experiments/display/replay.py`（只读，未导入），并把符号类别（♪）纳入。
+票据 `.scratch/bilingual-subtitle-pipeline/issues/04-japanese-cues.md`、`12-cue-gap-split-inside-word.md`、`13-cue-word-boundary.md`（调研结论见[cue token 边界调研](../../../research/2026-10-cue-token-boundary/README.md)）；[技术设计](../../specs/bilingual-subtitle-pipeline.md) §4、§5；§1.2 第三轮裁定表原文见技术设计历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。非词汇字符判定参考 `archive/2026-11-18-pre-research-restructure:experiments/display/replay.py`（只读，未导入），并把符号类别（♪）纳入。
 
-2026-11-11 产品包架构整理（计划 [`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md) 票据 03、08，[ADR-0025](../../adr/0025-product-package-boundaries.md)）：offset 改为在本模块对 units 也加一次（此前由对齐加，与"cue 是唯一加 offset 的地方"不符）；删除 `FALLBACK_MAX_CHAR_S` 与钉相等的测试；`ja-cues.json` 由编排加 `ja_srt_sha256`；CUES hash 不变。
+2026-11-11 产品包架构整理（计划 `archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md` 票据 03、08，[ADR-0025](../../adr/0025-product-package-boundaries.md)）：offset 改为在本模块对 units 也加一次（此前由对齐加，与"cue 是唯一加 offset 的地方"不符）；删除 `FALLBACK_MAX_CHAR_S` 与钉相等的测试；`ja-cues.json` 由编排加 `ja_srt_sha256`；CUES hash 不变。
 
 运行日志补缺（`.scratch/runtime-logging-gaps/` 票据 04）：`build_ja_cues` 返回载荷，编排据此记 `[cues]` 三件套。

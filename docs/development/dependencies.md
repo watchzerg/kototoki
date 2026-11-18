@@ -1,7 +1,7 @@
 # 依赖布局与资产清单
 
 状态：accepted（2026-10-18 评审并由用户裁定）
-范围：产品根环境与 `kototoki/` 的依赖放在哪里、版本由谁锁定、由哪个 recipe 安装或编译。不涉及冻结的 `experiments/` 及其隔离环境（`.local/envs/`）。
+范围：产品根环境与 `kototoki/` 的依赖放在哪里、版本由谁锁定、由哪个 recipe 安装或编译。不涉及研究期留在本机的隔离环境（`.local/envs/`）。
 
 产品运行所需的全部依赖都放进本项目、不进 Git。除 Python 包外，所有依赖的版本由一份提交进 Git 的**资产清单**（根目录 `assets.toml`）唯一确定；recipe 按清单下载、校验 SHA256 并放到固定位置。`.local/` 只放内容，不承载身份。Python 工具分工见 [Python 工具链](toolchain.md)，命令与门禁见[开发工作流](workflow.md)。
 
@@ -12,7 +12,7 @@
 | 引导层 | mise、uv、just | 项目外（mise 自身安装工具） | `mise.toml`；唯一不在项目内的一层 |
 | Python 依赖 | 运行时与开发依赖 | `.venv/`，缓存 `.local/cache/root-uv`，解释器 `.local/tools/python`（`mise.toml` 的 `[env]`） | `pyproject.toml` + `uv.lock`；开发工具引入时放 `[dependency-groups] dev`，与运行时分开 |
 | 下载的二进制 | ffmpeg、llama.cpp | 安装到 `.local/tools/<name>/<version>/`；原始压缩包缓存在 `.local/downloads/<name>/` | 清单写版本、URL、压缩包 SHA256 与解压后关键文件 SHA256；安装时在安装目录生成 `identity.json`（沿用 llama.cpp 的格式） |
-| 模型 | 产品用到的权重 | `.local/models/<dir>/`，现有目录不改名、不迁移 | 清单写 HF repo、revision 与逐文件 SHA256（字段形状同冻结的 `experiments/provision/acquire_models.py` 的 `SPECS`，代码不复用） |
+| 模型 | 产品用到的权重 | `.local/models/<dir>/`，现有目录不改名、不迁移 | 清单写 HF repo、revision 与逐文件 SHA256（字段形状沿用研究期资产准备脚本的 `SPECS`） |
 | 编译产物 | 当前没有，只定规则 | 源码与构建树 `.local/build/<name>/<version>/`；产物安装到 `.local/tools/<name>/<version>/` | 清单锁源码 git commit 与构建参数；产物同样生成 `identity.json` |
 
 Python 依赖的变更：用 uv 增删、解析与同步，manifest 与 lock 一起提交；日常安装只消费已提交的解析结果，升级是单独、可识别的变更；新选型与有意升级按[推理选型原则](inference-selection.md)取最新稳定版，选定后保留可复现的锁定。包来源与平台相关的选择（如 `pytorch-cu128` 显式索引）随引入写进[技术选型](technology-stack.md#已选依赖)；不从别的项目照搬 CUDA 包版本、索引或依赖；只有选定的 GPU 后端需要时才引入后端专属的可选依赖组。
@@ -72,9 +72,9 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 ## ffmpeg
 
-- 当前记录（2026-10-19 起）是 BtbN win64 gpl 构建 `n9.0.2-28-g669f5ab083`（9.0 维护分支，当时最新稳定版为 9.0.2；tag `autobuild-2026-10-18-13-01`），安装在 `.local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/`，`kototoki/config.py` 与 `kototoki.toml.example` 的默认路径指向这里。按下面的升级步骤核对：两部影片的派生 WAV 与旧构建、与基线语料逐字节一致（[验收记录](../research/acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)）。
-- 此前的第一条记录是本机既有的 gyan.dev full build `2026-10-01-git-0b01ed76aa`（原样复制、原始压缩包未保留，不能经 `install-tools` 重装）；它的安装目录仍留在 `.local/tools/ffmpeg/`，[swr 回归验收](../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)等既往证据绑定在它上面。
-- 冻结的 `experiments/corpus/prepare.py`、`experiments/corpus/prepare_round2.py`、`experiments/fullfilm_comparison/corpus.py` 写死了项目外的 ffmpeg 路径，按冻结证据规则不改；那份项目外安装因此保留，只是产品不再依赖它。
+- 当前记录（2026-10-19 起）是 BtbN win64 gpl 构建 `n9.0.2-28-g669f5ab083`（9.0 维护分支，当时最新稳定版为 9.0.2；tag `autobuild-2026-10-18-13-01`），安装在 `.local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/`，`kototoki/config.py` 与 `kototoki.toml.example` 的默认路径指向这里。按下面的升级步骤核对：两部影片的派生 WAV 与旧构建、与基线语料逐字节一致（[验收记录](../../research/acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)）。
+- 此前的第一条记录是本机既有的 gyan.dev full build `2026-10-01-git-0b01ed76aa`（原样复制、原始压缩包未保留，不能经 `install-tools` 重装）；它的安装目录仍留在 `.local/tools/ffmpeg/`，[swr 回归验收](../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)等既往证据绑定在它上面。
+- 研究期语料脚本曾写死项目外的 ffmpeg 路径（已随研究代码删除，见归档 tag）；那份项目外安装产品不依赖。
 
 升级 ffmpeg 是单独步骤（`just upgrade ffmpeg` 自动完成 1–4 步，验收记录仍需补写）：
 
@@ -85,7 +85,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 ## CUDA 版本说明
 
-[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 定下的 CUDA 12.8 锁定的是 **Python 进程**：CTranslate2 只有 CUDA 12 wheel，而 cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名，同一进程只能加载一份。llama-server 是独立进程，自带 CUDA 13.4 运行时 DLL，与 Python 进程没有 DLL 交集；官方 13.4 构建原生含 sm_120 内核，因此同一决定保留了 `win-cuda-13.4` 构建（原设计见[技术设计历史记录 §7.2](../research/2026-11-11-bilingual-pipeline-spec-history.md#72-环境一个统一的-cuda-128-环境)）。[选版规则](technology-stack.md#选版规则)里"CUDA 12 为锚点"只约束同一进程内会冲突的组件；ffmpeg、llama.cpp 等独立二进制各自取最新稳定版。
+[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 定下的 CUDA 12.8 锁定的是 **Python 进程**：CTranslate2 只有 CUDA 12 wheel，而 cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名，同一进程只能加载一份。llama-server 是独立进程，自带 CUDA 13.4 运行时 DLL，与 Python 进程没有 DLL 交集；官方 13.4 构建原生含 sm_120 内核，因此同一决定保留了 `win-cuda-13.4` 构建（原设计见技术设计历史记录 §7.2（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`））。[选版规则](technology-stack.md#选版规则)里"CUDA 12 为锚点"只约束同一进程内会冲突的组件；ffmpeg、llama.cpp 等独立二进制各自取最新稳定版。
 
 ## 当前实现
 

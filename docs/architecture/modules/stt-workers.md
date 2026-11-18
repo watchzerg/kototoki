@@ -10,7 +10,13 @@ ASR 的两个引擎（w0、x0）、可选的 `cross` 引擎、裁判与 w0 整�
 
 不负责：决定哪些文件要跑或跳过、锁、子进程环境与按文件重启（[批次编排](batch-orchestration.md)）；身份的组成与期望值（[阶段计划](stage-plan.md)）；cue 切分与时间回填（[日文 cue](japanese-cues.md)）。
 
-推理逻辑复制自研究期实现，那里的行为说明仍有效：[外部 VAD 阶段](vad-stage.md)、[W0 pipeline](w0-pipeline.md)、[X0 pipeline](x0-pipeline.md)、[MMS 对齐](mms-alignment.md)；本页只写产品侧的差别与接口。现行 STT 基线与设备规则见[现行决定](../../adr/CURRENT.md)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+推理逻辑移植自研究期的 W0／X0 demo（研究代码与其模块页已删除，经过见[STT demo 与 W0／X0 轮次](../../../research/2026-10-stt-demo-w0-x0/README.md)），产品实现是唯一权威。移植时保留、至今仍成立的行为：
+
+- **分窗**（`recipes` 的 `source-span-merge-v1`）：VAD 区间起点向下、终点向上取整为样本并裁到源范围、排序取并集；超过 480000 样本的区间每 480000 样本硬切，再按源跨度贪心合并，合并后跨度不超过 30 秒；不加 padding，窗内静音保留，不拼接波形；空检测是合法结果。
+- **w0 解码**：逐窗独立、不以前文 conditioning、不出时间戳 token（`condition_on_previous_text=False`、`without_timestamps=True`）。
+- **MMS 对齐**：`jpn` adapter、词表 2268、blank ID 0、CUDA FP32；单窗推理失败记该窗失败并把字符留作 `text_only`，不转 CPU 重试；词表外字符用通配符参与对齐；前向期间 matmul TF32 关、cuDNN TF32 开，退出时恢复调用者设置（Pyannote 会全局关 TF32 且不恢复）。
+
+本页其余部分只写产品侧的接口与差别。现行 STT 基线与设备规则见[现行决定](../../adr/CURRENT.md)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
@@ -83,7 +89,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 推理模块依赖 `recipes` 与 `schema`（基础层）及 torch、pyannote.audio、faster-whisper／CTranslate2、transformers／torchaudio；四者互不导入。
 
-`schema` 属基础层，只依赖标准库与 `recipes`（`SAMPLE_RATE`、`MAX_WINDOW_SAMPLES`）：`validate_transcript` 复制自 `kototoki_eval/schema.py`（评分包保持不动），另有 `validate_windows`、`validate_units`。
+`schema` 属基础层，只依赖标准库与 `recipes`（`SAMPLE_RATE`、`MAX_WINDOW_SAMPLES`）：`validate_transcript` 复制自 `archive/2026-11-18-pre-research-restructure:kototoki_eval/schema.py`（评分包已删除，产品实现是唯一权威），另有 `validate_windows`、`validate_units`。
 
 壳依赖 `artifacts`、`plan`、`recipes`、`schema`、`workers/protocol`、`workers/gpu`；ASR 壳另依赖 `guard`、`judge`（[STT ASR](stt-asr.md)）。`plan` 只在算翻译身份时才导入翻译子系统，壳不会触发。
 
@@ -120,7 +126,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 票据：`.scratch/bilingual-subtitle-pipeline/`（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`、`issues/14-stage-plan-module.md`）、`.scratch/cross-asr-judge/`、`.scratch/runtime-logging-gaps/`
-- 计划：[`docs/plans/architecture-cleanup.md`](../../plans/architecture-cleanup.md)、[`docs/plans/asr-repeat-guard.md`](../../plans/asr-repeat-guard.md)
-- 验收：[两部整片验收](../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[swr 回归](../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)
-- 历史记录：[模块页拆出的历史记录](../../research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md)、[技术设计历史](../../research/2026-11-11-bilingual-pipeline-spec-history.md)
-- 来源代码：`experiments/w0_demo/vad_candidates.py`、`experiments/w0_demo/alignment.py`、`experiments/w0_demo/pipeline.py`（units 不变量）、`kototoki_eval/schema.py`
+- 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/asr-repeat-guard.md`
+- 验收：[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[swr 回归](../../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)
+- 历史记录：模块页拆出的历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md`）、技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）
+- 来源代码：`archive/2026-11-18-pre-research-restructure:experiments/w0_demo/vad_candidates.py`、`archive/2026-11-18-pre-research-restructure:experiments/w0_demo/alignment.py`、`archive/2026-11-18-pre-research-restructure:experiments/w0_demo/pipeline.py`（units 不变量）、`archive/2026-11-18-pre-research-restructure:kototoki_eval/schema.py`
