@@ -1,6 +1,6 @@
 # 模块边界
 
-状态：current；权威决定：[ADR-0012](../adr/0012-cross-asr-judge.md)、[ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0020](../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)、[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)；现行配方见 [CURRENT](../adr/CURRENT.md)
+状态：current；权威决定：[ADR-0003](../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../adr/0028-names-accept-empty-table.md)、[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)、[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)；现行配方见 [CURRENT](../adr/CURRENT.md)
 
 本文只规定依赖方向、唯一归属、接缝、状态与并发规则。各模块做什么见[架构总览](INDEX.md)的模块表与各模块页；模块页说明自己如何遵守，实际偏差在模块页就地注明，不在此改写规则。
 
@@ -63,7 +63,7 @@
 
 - `.local/gpu.lock` 是所有 GPU 作业共用的互斥文件，全部以 `O_EXCL` 创建，不抢占、不杀进程。
   - 产品的实现是 `kototoki/procs.py` 的 `ProcessLock`（记录 `pid_created` 并处理过期锁）；`scripts/smoke/` 另有写入方，统一它们不在当前范围。
-- 产品 STT 阶段之间串行。例外：`cross` 引擎的 asr worker 让 Whisper（CT2）与 Qwen（torch）同进程共驻到退出，运行时不按显存回退；translate、align 不与之共驻（[ADR-0012](../adr/0012-cross-asr-judge.md)）。
+- 产品 STT 阶段之间串行。例外：`cross` 引擎的 asr worker 让 Whisper（CT2）与 Qwen（torch）同进程共驻到退出，运行时不按显存回退；translate、align 不与之共驻（[ADR-0003](../adr/0003-new-pyannote-baselines.md)）。
 - 产品只有一个服务进程 Strata，由共享 `strata.Session` 管理：
   - 整批一个，首次真正需要模型时才启动（names 或 translate），两阶段之间不停；没有影片需要模型时不启动。
   - 启动前 `strata launch --status` 必须为空（不抢占别人的 launch），空闲显存达到 14000 MiB、可用内存达到 52 GiB。

@@ -5,9 +5,9 @@
 - 用户写出的相对路径按**配置文件所在目录**解析；省略的键用默认值，默认值里的相对路径按**仓库根**解析
   （配置文件放仓库外时默认模型目录与 ffmpeg 仍可用）。
 - `[vad]`、`[asr.*]`、`[align]` 的模型路径为相对路径时相对于 `paths.models_root`。翻译与专名建表的模型由 Strata
-  自己管理（ADR-0019、ADR-0022），`[translate]` 与 `[names]` 都只有 `seed`（Strata 只接受正整数）；产品不起
+  自己管理（ADR-0029「Strata session」），`[translate]` 与 `[names]` 都只有 `seed`（Strata 只接受正整数）；产品不起
   llama-server，没有 `[paths] llama_server`。
-- `paths.input_dir` 没有默认值，必须写出；`paths.work_dir`（中间产物）默认仓库内 `.local/work`（ADR-0020）。
+- `paths.input_dir` 没有默认值，必须写出；`paths.work_dir`（中间产物）默认仓库内 `.local/work`（ADR-0007「工作目录」）。
 
 不进配置文件的两项：GPU 锁路径固定为仓库内 `.local/gpu.lock`；破除死锁只认环境变量
 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效。
@@ -41,7 +41,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "ffprobe": ".local/tools/ffmpeg/9.0/bin/ffprobe.exe",
     },
     "input": {
-        # 视频与音频；是否有视频流由 ffprobe 判定，不看扩展名（ADR-0020）。
+        # 视频与音频；是否有视频流由 ffprobe 判定，不看扩展名（ADR-0007「输入范围」）。
         "extensions": [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi",
                        ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"],
         "audio_language": "jpn",

@@ -1,6 +1,6 @@
 # ADR-0025：产品包的边界与失败级别（GPU 锁冲突进程级、产品不为研究侧留代码、核心测试不导入研究代码）
 
-状态：已接受（2026-11-11，用户裁定，依据计划 `archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`；实现结果记在计划 §7）。替代 [ADR-0022](0022-product-names-on-strata.md) 第 6 点中 `kototoki/llama_server.py`"留在原文件、不挪不删"（计划 §2、§3 称之为"第 4 点"，实际出处是 ADR-0022 决定第 6 点"删除与保留"的第二条；第 4 点只说 `strata.py` 与 `llama_server.py` 同层），以及 ADR-0022 第 1 点末句"等价由 `tests/core/` 导入 v13 做逐字节对照守门"。ADR-0022 其余各点不变。  
+状态：已接受（2026-11-11，用户裁定，依据计划 `archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`；实现结果记在计划 §7）。替代原 ADR-0022（现并入 [ADR-0028](0028-names-accept-empty-table.md)、[ADR-0029](0029-translate-per-cue-resolution.md)）中 `kototoki/llama_server.py`"留在原文件、不挪不删"与"等价由 `tests/core/` 导入 v13 做逐字节对照守门"两句。  
 范围：产品包 `kototoki/` 的模块边界、失败级别与产品测试的分层；研究侧只改导入行。不改任何配方、身份字段与产物内容（`MEDIA` 除外，见"不属本 ADR"），不改 W0／X0、Q3 基线与产品翻译、建表的行为，不加功能。
 
 ## 决定
@@ -11,7 +11,7 @@
    - 剩下的 `LlamaClient`、`InfraFailure`、`explicit_oom` 改名为 `kototoki/local_client.py`（类名不变），不留再导出；
    - `nvidia_smi`、`wait_for_free_vram` 搬进唯一的产品使用者 `kototoki/strata.py`；
    - `list_llama_servers` 只有 smoke 脚本用，搬到 `scripts/smoke/`。
-   此后产品包里没有 `llama_server` 模块；产品只起 Strata（ADR-0022 不变）。
+   此后产品包里没有 `llama_server` 模块；产品只起 Strata（ADR-0029「Strata session」）。
 3. **产品符号移动或改名时，同一提交里改研究侧的导入行。** 只做机械的导入路径与名字替换，不改研究代码的行为。基线 Q3 的实现 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/strata.py` 与 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v13.py` 改完后其离线测试必须仍通过；某项改动若需要改研究代码的行为才能让它们继续工作，停下交用户裁定。
 4. **`tests/core` 不再导入 `experiments.*`。** 核心测试里与研究实现的等价断言改成钉字面量或 sha256，值取自当前对照实现，注释写明来源与取值日期。与研究实现的实时对照搬到新目录 `archive/2026-11-18-pre-research-restructure:tests/equivalence/`（复读守卫 ↔ `asr_robustness_v15` 的 `repeat`、裁判 ↔ `quality_v5`、建表 ↔ `scene_batching_v6.v13`、翻译配方 ↔ `translation_v3`／`scene_batching_v6`），由新 recipe `just test-equivalence` 运行，并入 `gate-full`，不并入 `gate-core`。`tests/core` 另有一条全仓库导入边界测试（AST 扫描）：`kototoki/` 的任何模块不得导入 `experiments` 与 `archive/2026-11-18-pre-research-restructure:kototoki_eval`，`tests/core` 自身不得导入 `experiments`。
 

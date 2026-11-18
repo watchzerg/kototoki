@@ -1,16 +1,16 @@
-"""专名建表配方 `q3-names-v3`：`BUILD`／`BUILD_RECIPE_HASH`（ADR-0022、ADR-0026、ADR-0028）。
+"""专名建表配方 `q3-names-v3`：`BUILD`／`BUILD_RECIPE_HASH`（ADR-0028）。
 
-与基线 Q3 的 `names-strata-v4`（[ADR-0021]；`experiments/scene_batching_v6/v13.py` 的 `s1_recipe("v4")`，hash
+与基线 Q3 的 `names-strata-v4`（[ADR-0021「Q3 建表」]；`experiments/scene_batching_v6/v13.py` 的 `s1_recipe("v4")`，hash
 `38cb7bcd…`）**相同**的是建表块 `build` 里的提示 v5、采样、schema、归一规则、`attempts` 5、`seed_step` 1，以及 `model`、
 运行时身份 `runtime`（Strata 版本、引擎 build、默认启动及其解析值、kv）与请求形状 `request`（无 `response_format`、
 `enable_thinking: false`、`model`），取值全部来自 `names.table` 与中间层 `kototoki.strata`；
-**不同**的是 ADR-0026 放宽的三项（`max_tokens` 16384 对 8192、context 49152 对 24576、预算 32256 对 15872）、
-ADR-0028 新增的 `retry_on`（只有格式不合格才重试，空表是合法结果；v4 把空表当不合格）、配方名，
+**不同**的是 ADR-0028「输出上限与提示预算」放宽的三项（`max_tokens` 16384 对 8192、context 49152 对 24576、预算 32256 对 15872）、
+ADR-0028「重试与空表」新增的 `retry_on`（只有格式不合格才重试，空表是合法结果；v4 把空表当不合格）、配方名，
 以及不含研究侧的说明字段（`prompt_budget_check`、`retries` 文字）与 llama.cpp 的 `model_asset`，所以 hash 不同。
 `tests/core/test_names_recipes.py` 钉住 hash，并把三项换回 v4 的值、去掉 `retry_on`、拼回 `names-strata-v4` 核对其 hash。
 
 改动 `BUILD` 任何一项即得到新的 `BUILD_RECIPE_HASH`，已有 `name-table.json` 按产物契约失效重建。发布时替换已删除
-（ADR-0019）：表只经翻译注入使用，注入规则归翻译子系统。
+（ADR-0029「专名注入」）：表只经翻译注入使用，注入规则归翻译子系统。
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ BUILD: dict[str, Any] = {
         },
         "attempts": table.ATTEMPTS,
         "seed_step": table.SEED_STEP,
-        # 只有格式不合格（截断、非 JSON、`entries` 不是列表）才换 seed 重试；空表接受（ADR-0028）。
+        # 只有格式不合格（截断、非 JSON、`entries` 不是列表）才换 seed 重试；空表接受（ADR-0028「重试与空表」）。
         "retry_on": table.RETRY_ON,
     },
     "model": MODEL,

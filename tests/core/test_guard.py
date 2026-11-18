@@ -1,4 +1,4 @@
-"""ASR 整窗复读守卫（`kototoki.guard`，ADR-0023）的纯逻辑测试。
+"""ASR 整窗复读守卫（`kototoki.guard`，ADR-0030「复读 repeat-strict」）的纯逻辑测试。
 
 等价守门把产品移植在一组固定文本上的命中与折叠结果钉成 sha256；研究侧原实现是
 `archive/2026-11-18-pre-research-restructure:experiments/asr_robustness_v15/repeat.py`（已删除，core 测试不导入研究代码）。

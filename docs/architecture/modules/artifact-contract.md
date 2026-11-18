@@ -1,6 +1,6 @@
 # 产物契约
 
-状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
@@ -10,7 +10,7 @@
 
 ## 当前行为规格
 
-**布局**（`kototoki/artifacts.py`，ADR-0020）：
+**布局**（`kototoki/artifacts.py`，ADR-0007「工作目录」）：
 
 - 最终产物只有写在源文件旁的双语字幕：`S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`（`final_srt_path`，后缀常量 `FINAL_SUFFIX`）。`final_srt_path` 只用主名，同目录主名相同、扩展名不同的输入会映射到同一份字幕路径，由编排在扫描阶段检测并让后者失败。
 - 工作目录在 `[paths] work_dir` 下：`cache/` 放 `HF_HOME`／`TORCH_HOME` 与 `model-verification.json`（`cache_dir`，各目标目录共用）。
@@ -33,7 +33,7 @@
 
 - `write_failure(work_dir, stage, error)` 写 `failure.json`：阶段、异常类型与消息、当时已存在的阶段产物（`completed`，按 `STAGE_ARTIFACTS`），不含音频与转写内容。`failure.json` 的清理归编排器（[批次编排](batch-orchestration.md)）：成功发布后删除，运行期间源文件旁才出现字幕而放弃发布时也删除；扫描时源文件旁已有字幕的文件不进任何阶段，它工作目录里以前留下的 `failure.json` 不清理。
 - `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在双语字幕写到源文件旁**之后**写 `published.json`：最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录（`translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。它只是审计记录，不参与任何判定。
-- 是否需要发布只看源文件旁的 `<主名>.ja-zh.srt` 是否存在（只看文件名，编排在扫描阶段判定，ADR-0020）；要重做就删掉该字幕。
+- 是否需要发布只看源文件旁的 `<主名>.ja-zh.srt` 是否存在（只看文件名，编排在扫描阶段判定，ADR-0007「发布」）；要重做就删掉该字幕。
 
 **原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；Windows `PermissionError`（播放器或扫描器占用）时最多尝试 20 次、间隔递增至 0.5 s（`replace_with_retry`）；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
 
@@ -55,11 +55,11 @@
 
 - `fail_window(asr, chunk_index, reason)` 把 `original_segments[i].text` 移入 `failed_windows`（`chunk_index`、`reason`、`text`）并置空；`retained_text` 是保留文本，后续对齐、cue 与翻译只用它。
 - `validate_failed_windows` 要求列表存在、索引唯一有效且对应窗口已置空。
-- `reason` 的现有取值：解码／生成抛错的 `RuntimeError: …`、x0 触顶的 `token_limit_reached: generated <n> tokens`、w0 整窗守卫置空的 `guard:repeat-strict`、`guard:speech-rate`、`guard:hallucination-phrase`（[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)；此时 `text` 是该窗被置空前的完整原文）。
+- `reason` 的现有取值：解码／生成抛错的 `RuntimeError: …`、x0 触顶的 `token_limit_reached: generated <n> tokens`、w0 整窗守卫置空的 `guard:repeat-strict`、`guard:speech-rate`、`guard:hallucination-phrase`（[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)；此时 `text` 是该窗被置空前的完整原文）。
 
 **整窗守卫记录**（w0 与 cross 的 `asr.json`、cross 的 `asr-w0.json`）：被守卫改动的窗口在 `asr_traces[i]` 里多一个键 `guard`，内容是生效规则的记录：复读 `{rule, action, period, copies, removed_raw_chars}`，语速 `{rule, action, chars, duration_s}`，幻听句 `{rule, action, phrase_index}`；`action` 为 `collapse`（只有复读，`original_segments[i].text` 已是折叠后的文字）或 `blank`（该窗同时出现在 `failed_windows`）；没有被改动的窗口没有这个键。记录只有规则名与计数，不含文字。字段含义见 [STT ASR](stt-asr.md#w0-整窗守卫)。
 
-**cross 审计产物**（[ADR-0012](../../adr/0012-cross-asr-judge.md)）：
+**cross 审计产物**（[ADR-0003](../../adr/0003-new-pyannote-baselines.md)）：
 
 - `engine = "cross"` 时 asr 阶段在 `<work root>/<id>/` 额外写三个审计文件，名称是模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，身份按单引擎计算）与 `asr-judge.json`（逐窗裁判记录与汇总，身份同 cross 的 `asr.json`；字段见 [STT ASR](stt-asr.md#cross-引擎)）。
 - 三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。
@@ -98,7 +98,7 @@
 
 ## 变更与决策来源
 
-- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 - 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/00-foundation.md`）、.scratch/cross-asr-judge/、.scratch/name-consistency-product/、`.scratch/architecture-review/`（2026-10-19 审计 B-1、B-13）
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
 - 验收：[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)

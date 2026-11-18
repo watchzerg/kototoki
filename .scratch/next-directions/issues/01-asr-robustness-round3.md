@@ -33,9 +33,9 @@ Type: research
 
 ## Answer
 
-2026-11-18 结题：本票的候选方向 1–3 已作为 v14、v15 两轮执行完毕，结论见 [ASR 稳健性 v14–v15 轮次](../../../research/2026-11-asr-robustness-v14-v15/README.md)。只有 `repeat-strict` 守卫进了产品（ADR-0023），补窗重解码与后校正被否决，这条线已关闭。
+2026-11-18 结题：本票的候选方向 1–3 已作为 v14、v15 两轮执行完毕，结论见 [ASR 稳健性 v14–v15 轮次](../../../research/2026-11-asr-robustness-v14-v15/README.md)。只有 `repeat-strict` 守卫进了产品（ADR-0030「复读 repeat-strict」，原 ADR-0023），补窗重解码与后校正被否决，这条线已关闭。
 
 ## Comments
 
 - 2026-10-18 用户裁定：删去原方向 1（许可未声明的高分日语 ASR），换模型这条线停止，除非出现新模型；原方向 3（Qwen3 动漫微调加循环防护）同属换模型，一并删去。剩余方向重新编号为 1–3。
-- 2026-11-09 已按本票候选方向 1–3 起草立项文档 [v14](../../../research/2026-11-asr-robustness-v14-v15/README.md)（A 守卫、B 补窗、C 后校正），执行载体 `archive/2026-11-18-pre-research-restructure:.scratch/asr-robustness-v14/`；本票保留为来源，进度不再写这里。`cross` 不纳入（ADR-0012 已接受为可选引擎）。
+- 2026-11-09 已按本票候选方向 1–3 起草立项文档 [v14](../../../research/2026-11-asr-robustness-v14-v15/README.md)（A 守卫、B 补窗、C 后校正），执行载体 `archive/2026-11-18-pre-research-restructure:.scratch/asr-robustness-v14/`；本票保留为来源，进度不再写这里。`cross` 不纳入（ADR-0003「产品 STT 引擎」已接受为可选引擎，原 ADR-0012）。

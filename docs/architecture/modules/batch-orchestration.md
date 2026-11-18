@@ -1,6 +1,6 @@
 # 批次编排
 
-状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
@@ -110,7 +110,7 @@
 
 ## 变更与决策来源
 
-- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
+- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 归档 tag 中的计划 `archive/2026-11-18-pre-research-restructure:docs/plans/` 下 product-names-on-strata（§7 共用 session 的真实运行）、architecture-cleanup；技术设计历史记录 docs/research/2026-11-11-bilingual-pipeline-spec-history.md
 - 验收：[两部整片](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[专名一致性进产品](../../../research/acceptance/2026-10-20-name-consistency-product.md)
 - 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/issues/（06、14、15）；.scratch/runtime-logging/、.scratch/runtime-logging-gaps/；`.scratch/architecture-review/issues/01-small-fixes.md`；.scratch/name-consistency-product/issues/06-orchestration.md；.scratch/q2-product-switch/；.scratch/q3-product-switch/；.scratch/architecture-cleanup/

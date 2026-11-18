@@ -23,7 +23,7 @@ concluded：首轮多框架实测、两片复核、框架等价实验与两套�
 - Q1：CrispASR 0.8.41（Windows Vulkan），Qwen3-ASR／ForcedAligner f16 GGUF。
 - 新 Pyannote（ADR-0003）：pyannote.audio 4.0.7＋pyannote/segmentation-3.0（e66f3d3b），整片证据为 CUDA FP32。
 
-当前 W0／X0 组件（取自 ADR-0001／0003，历史上先后有旧 PyanNet、fixed30 等身份）：
+当前 W0／X0 组件（取自 ADR-0003（已并入原 ADR-0001、0002），历史上先后有旧 PyanNet、fixed30 等身份）：
 
 | 组件 | W0 | X0 |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ W0 承接 WhisperX 的切分合并、独立无时间戳解码与特征处理，�
 
 ## 结论与去向
 - 无配置达到严格时间目标；W0（内容保全、部署简单）与 W1（时间研究）各有取舍，W1 在时间上更强但删除更多。Q0／Q1 因覆盖不足不进入短名单。
-- 用户采纳 faster-whisper＋新 Pyannote＋MMS（W0）与 Qwen＋新 Pyannote＋MMS（X0）两条基线：[ADR-0003](../../docs/adr/0003-new-pyannote-baselines.md)；历史演进见 [ADR-0001](../../docs/adr/0001-two-stt-baselines.md)、[ADR-0002](../../docs/adr/0002-x0-demo-flow.md)。
+- 用户采纳 faster-whisper＋新 Pyannote＋MMS（W0）与 Qwen＋新 Pyannote＋MMS（X0）两条基线：[ADR-0003](../../docs/adr/0003-new-pyannote-baselines.md)（原 ADR-0001、ADR-0002 已并入「W0／X0 基线」）。
 - 产品实现取代研究 demo：双语字幕流水线见 [ADR-0007](../../docs/adr/0007-bilingual-subtitle-pipeline-architecture.md)，产品 STT 引擎现行规则见 [CURRENT.md](../../docs/adr/CURRENT.md)。
 - 同期衍生轮次：[组件与 CTC](../2026-10-components-and-ctc/README.md)、[VAD 比较](../2026-10-vad-comparison/README.md)、[ASR 候选](../2026-10-asr-candidates/README.md)、[X0 吸收 WhisperX 流程](../2026-10-x0-whisperx-flow/README.md)。
 

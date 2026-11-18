@@ -23,7 +23,7 @@ ACCEPTANCE = "# 验收\n\n" + "".join(f"## {h}\n\n内容\n\n" for h in (
 RUN = "# 跑次\n\n" + "".join(f"## {h}\n\n内容\n\n" for h in ("运行", "版本", "输入", "结果", "问题"))
 ADR_INDEX = (
     "# 决定索引\n\n## 全部 ADR\n\n| 编号 | 主题 |\n| --- | --- |\n"
-    "| [0002](0002-b.md) | b |\n\n跳转页：0001 → 0002。新 ADR 编号从 0003 起。\n")
+    "| [0001](0001-a.md) | a |\n| [0002](0002-b.md) | b |\n\n新 ADR 编号从 0003 起。\n")
 
 
 class CheckDocsTest(unittest.TestCase):
@@ -210,8 +210,8 @@ class CheckDocsTest(unittest.TestCase):
                    + "\n[1](0001-a.md) [3](0003-c.md)\n")
         self.assertEqual(self.errors(), [
             'docs/adr/INDEX.md:1 "全部 ADR"没有登记 0003',
-            "docs/adr/INDEX.md:8 登记的 0004 没有对应的 ADR 文件",
-            'docs/adr/INDEX.md:10 "编号从 0003 起"应为 0004'])
+            "docs/adr/INDEX.md:9 登记的 0004 没有对应的 ADR 文件",
+            'docs/adr/INDEX.md:11 "编号从 0003 起"应为 0004'])
 
     def test_status_line_with_three_dates_is_a_warning_not_an_error(self) -> None:
         self.write("docs/architecture/modules/alpha.md",

@@ -1,11 +1,11 @@
 """专名一致性：对编排器只暴露 `build_document`、`NamesError`、`BuildResult` 与建表配方 hash `BUILD_RECIPE_HASH`。
 
-- 建表（`table`）：整份 `ja.srt` 一次送入与翻译共用的 Strata（Qwen3.8-Flash-Next，思考关闭，ADR-0022），取回
+- 建表（`table`）：整份 `ja.srt` 一次送入与翻译共用的 Strata（Qwen3.8-Flash-Next，思考关闭，ADR-0029「Strata session」），取回
   `name-table-v2` 表并归一；模型回空表即接受；终态失败（超预算 `too_long`、5 次回复格式都不合格 `failed`）返回空表，由编排器照常写出，
   翻译照常进行（只是没有注入行）。
-- 表的使用者是翻译子系统（ADR-0019：Q2 规则只注入 `confidence: high` 的写法，没有发布时替换）；本模块不知道注入规则。
-- 配方（`recipes`）：建表配方 `q3-names-v3` 的字典与 hash；与基线 Q3 的 `names-strata-v4` 只差输出上限、提示预算（ADR-0026）
-  与空表不重试（ADR-0028）。
+- 表的使用者是翻译子系统（ADR-0029「专名注入」：Q2 规则只注入 `confidence: high` 的写法，没有发布时替换）；本模块不知道注入规则。
+- 配方（`recipes`）：建表配方 `q3-names-v3` 的字典与 hash；与基线 Q3 的 `names-strata-v4` 只差输出上限、提示预算（ADR-0028「输出上限与提示预算」）
+  与空表不重试（ADR-0028「重试与空表」）。
 
 Strata 的生命周期归中间层 `kototoki.strata`：编排器持有共享 `Session` 传进来，本模块只 `ensure_started()`／`stop()`，
 不启停、不核对身份。每部影片一个客户端（`session.client()`），原始交换在

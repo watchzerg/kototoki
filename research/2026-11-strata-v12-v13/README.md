@@ -1,7 +1,7 @@
 # Strata v12–v13：翻译模型与建表模型换成 Strata＋Qwen3.8-Flash-Next
 
 ## 状态
-concluded。v12 于 2026-11-08 结题，v13 于 2026-11-09 结题。结论是 Q2（[ADR-0017](../../docs/adr/0017-q2-strata-default-launch-baseline.md)）与 Q3（[ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md)）两条基线的依据；产品已按 [ADR-0019](../../docs/adr/0019-product-translation-q2.md)、[ADR-0022](../../docs/adr/0022-product-names-on-strata.md) 切换。Q3 是现行唯一翻译基线（对照规则见 [ADR-0018](../../docs/adr/0018-q2-sole-translation-baseline.md)，身份见 ADR-0021）。评估方法见本文"测试"一节。
+concluded。v12 于 2026-11-08 结题，v13 于 2026-11-09 结题。结论是 Q2（[ADR-0021「Q2（前任）」](../../docs/adr/0021-q3-strata-names-baseline.md#q2前任)，原 ADR-0017）与 Q3（[ADR-0021「Q3 身份」](../../docs/adr/0021-q3-strata-names-baseline.md#q3-身份)）两条基线的依据；产品已按 [ADR-0029](../../docs/adr/0029-translate-per-cue-resolution.md)、[ADR-0028](../../docs/adr/0028-names-accept-empty-table.md) 切换（原 ADR-0019、ADR-0022）。Q3 是现行唯一翻译基线（对照规则见 ADR-0021「对照规则」，原 ADR-0018）。评估方法见本文"测试"一节。
 
 ## 时间
 2026-11-08 立项（v12、v13 同日起草并经用户裁定）；v12 同日结题，v13 于 2026-11-09 结题。
@@ -53,8 +53,8 @@ v13（S1＝Strata 建表，翻译用 Q2 规则，对照 27B 建表）：
 | 产品翻译 | 全体 −0.095，light −0.267；人名错误 65 对 78；不一致率 0.023 对 0.042 |
 
 ## 结论与去向
-- v12：F1 优于 Q1，用户裁定作为新基线候选；同日定为 **Q2**＝Q1 规则＋Strata 不加参数启动（DFlash2）（[ADR-0017](../../docs/adr/0017-q2-strata-default-launch-baseline.md)）。
-- v13：按门写"S1 不进"（dev 剧集 wrong-referent 显著变差、Strata 建表单次不稳、两次建表差别大）；用户 2026-11-09 仍采纳 S1 v4 为基线 **Q3**，建表最多 5 次尝试（请求用 seed、seed＋1…，取第一张合格表就停，是可靠性重试而非挑选，[ADR-0008](../../docs/adr/0008-no-multi-translation-selection.md) 不涉及），风险已知并接受（[ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md)）。产品随后建表切到 Strata，规则与 Q3 一致（[ADR-0022](../../docs/adr/0022-product-names-on-strata.md)）。
+- v12：F1 优于 Q1，用户裁定作为新基线候选；同日定为 **Q2**＝Q1 规则＋Strata 不加参数启动（DFlash2）（[ADR-0021「Q2（前任）」](../../docs/adr/0021-q3-strata-names-baseline.md#q2前任)，原 ADR-0017）。
+- v13：按门写"S1 不进"（dev 剧集 wrong-referent 显著变差、Strata 建表单次不稳、两次建表差别大）；用户 2026-11-09 仍采纳 S1 v4 为基线 **Q3**，建表最多 5 次尝试（请求用 seed、seed＋1…，取第一张合格表就停，是可靠性重试而非挑选，[ADR-0008](../../docs/adr/0008-no-multi-translation-selection.md) 不涉及），风险已知并接受（[ADR-0021「唯一基线 Q3」](../../docs/adr/0021-q3-strata-names-baseline.md#唯一基线-q3)）。产品随后建表切到 Strata，规则与 Q3 一致（[ADR-0028](../../docs/adr/0028-names-accept-empty-table.md)，原 ADR-0022）。
 - 专名一致性研究线不再提议新轮次。
 
 ## 教训

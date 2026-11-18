@@ -1,6 +1,6 @@
 # ADR-0024：有内嵌日文文本字幕轨的文件跳过 STT
 
-状态：已接受（2026-11-11，用户裁定：按方案默认开启、ASS 进第一版、听障说明原样保留、外挂字幕不做）、**已实现（2026-11-11）**：`kototoki/embedded.py`（清洗）、`kototoki/media.py`（选轨与抽取）、`kototoki/plan.py`（身份与计划起点）、`kototoki/job.py`（接入 CPU 阶段）；配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`。验证见"依据"与"未验证"。不替代任何 ADR：[ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 的阶段链对没有可用字幕轨的文件不变，本 ADR 给有字幕轨的文件另加一条不经 STT 的路径；[ADR-0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) 的输入、工作目录与发布规则不变；[ADR-0019](0019-product-translation-q2.md)、[ADR-0022](0022-product-names-on-strata.md) 的翻译与建表不变。2026-11-12 补漏：第 2 点的"不是 `forced`"在实现上也认标题里的 "forced"（不分大小写；真实片源 Black Panther 的两条 jpn 轨 disposition 都为 0、forced 只写在标题 `ja--forced--` 里，v1 选中了只有 224 条的部分字幕），配方 id 升为 `embedded-ja-subtitle-v2`，见[产品全流程验收](../../research/acceptance/2026-11-12-product-fullflow-acceptance.md)。  
+状态：已接受（2026-11-11，用户裁定：按方案默认开启、ASS 进第一版、听障说明原样保留、外挂字幕不做）、**已实现（2026-11-11）**：`kototoki/embedded.py`（清洗）、`kototoki/media.py`（选轨与抽取）、`kototoki/plan.py`（身份与计划起点）、`kototoki/job.py`（接入 CPU 阶段）；配方 `recipes.EMBEDDED`，id `embedded-ja-subtitle-v1`。验证见"依据"与"未验证"。不替代任何 ADR：[ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md) 的阶段链对没有可用字幕轨的文件不变，本 ADR 给有字幕轨的文件另加一条不经 STT 的路径；ADR-0007 的输入、工作目录与发布规则不变；[ADR-0029](0029-translate-per-cue-resolution.md)、[ADR-0028](0028-names-accept-empty-table.md) 的翻译与建表不变。2026-11-12 补漏：第 2 点的"不是 `forced`"在实现上也认标题里的 "forced"（不分大小写；真实片源 Black Panther 的两条 jpn 轨 disposition 都为 0、forced 只写在标题 `ja--forced--` 里，v1 选中了只有 224 条的部分字幕），配方 id 升为 `embedded-ja-subtitle-v2`，见[产品全流程验收](../../research/acceptance/2026-11-12-product-fullflow-acceptance.md)。  
 范围：产品包 `kototoki/`。不改 W0／X0／`cross`、cue 规则、翻译与建表配方，不改研究侧。
 
 ## 决定
@@ -10,7 +10,7 @@
 3. **抽取与清洗。** `ffmpeg -map 0:<index> -c:s srt -f srt` 统一转成 SRT，不自写 ASS 解析器。清洗：去掉 `<i>`／`<b>`／`<u>`／`<s>`／`<font>` 标签与 `{\...}` 覆盖块，字面的 `\h`、`\N` 换成空格；一条多行并成一行；丢掉清洗后为空、是 ASS 绘图指令、时长非正的条目，以及起止与文字都相同的重复条目；按（起、止）稳定排序，从 1 重新编号。不改写时间，不过滤听障字幕的音效说明（如"（ドアの音）"），它们照常翻译。
 4. **回退。** ffmpeg 抽取失败，或清洗后零条目：记一行 WARNING，该文件回到 STT 链，不判失败。
 5. **身份与续跑。** `ja-embedded.json` 的身份 = 输入文件身份（`probe.json` 的身份）＋ `EMBEDDED` 配方 hash ＋字幕流索引，payload 记流信息、清洗计数与 `ja.srt` 的 SHA256；身份匹配且 `ja.srt` 的 SHA256 相符即跳过抽取。`published.json` 的 `sources` 在这条路径下为 `probe`、`ja_embedded`、`names`、`translate`。下游身份只认 `ja.srt` 的 SHA256，`names` 与 `translate` 不知道日文从哪条路径来。
-6. **两条路径互不串用 `ja.srt`。** 写字幕轨的 `ja.srt` 时删掉 `ja-cues.json`（否则以后改走 STT 会把字幕轨的 `ja.srt` 当成 cue 阶段的输出）；cue 阶段改写 `ja.srt` 后 `ja-embedded.json` 记下的 SHA256 不再相符，下次走内嵌路径时重新抽取。已发布的文件按 ADR-0020 仍然整个跳过，不会因为本 ADR 重做。
+6. **两条路径互不串用 `ja.srt`。** 写字幕轨的 `ja.srt` 时删掉 `ja-cues.json`（否则以后改走 STT 会把字幕轨的 `ja.srt` 当成 cue 阶段的输出）；cue 阶段改写 `ja.srt` 后 `ja-embedded.json` 记下的 SHA256 不再相符，下次走内嵌路径时重新抽取。已发布的文件按 ADR-0007「发布」仍然整个跳过，不会因为本 ADR 重做。
 7. **不做的事。** 同目录外挂字幕（`.ja.srt` 等）不读；位图字幕不做 OCR；不检测字幕内容是不是日文、不识别没有语言标签的日文轨；不处理假名注音；不按 ASS 样式过滤 OP／ED 卡拉 OK 行与屏幕字。
 
 ## 依据

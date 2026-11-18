@@ -1,7 +1,7 @@
 # 专名一致性：日文侧建专名表＋生成后程序替换（第 1–6 轮）
 
 ## 状态
-concluded。2026-10-19 用户裁定研究线结题，最佳已知配置冻结；同日另行裁定进产品（[ADR-0014](../../docs/adr/0014-name-consistency-in-product.md)，ADR-0013 已并入 0014）。后来产品改为"建表后只经翻译注入"，见 [ADR-0019](../../docs/adr/0019-product-translation-q2.md)、[ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md)、[ADR-0022](../../docs/adr/0022-product-names-on-strata.md)。
+concluded。2026-10-19 用户裁定研究线结题，最佳已知配置冻结；同日另行裁定进产品（原 ADR-0014，现并入 [ADR-0028](../../docs/adr/0028-names-accept-empty-table.md)；ADR-0013 同）。后来产品改为"建表后只经翻译注入"，见 [ADR-0029](../../docs/adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md)、[ADR-0028](../../docs/adr/0028-names-accept-empty-table.md)。
 
 ## 时间
 2026-10-19 立项，同日完成六轮并结题。
@@ -43,7 +43,7 @@ concluded。2026-10-19 用户裁定研究线结题，最佳已知配置冻结；
 另：盲序成对判分偏好替换后 88／平局 20／偏好原译 3；整片通读略好读、无新错、覆盖不全（士郎等一次性音译约 40% 覆盖）。
 
 ## 结论与去向
-- 采纳并冻结（[ADR-0014](../../docs/adr/0014-name-consistency-in-product.md)）：建表用 no-think（Qwen 官方 non-thinking 采样）、提示 `build-table-prompt-v5`、seed 20261019，程序兜底全开（zh 形状过滤、称呼词黑名单、evidence<3 的 person 降为 medium、日文写法形状过滤）；替换用规则一＋孤立单字。其余开关（`--name-check`、`--pool-by-target`、`--bigram-isolation`、`--iterate`、`--weak-name-check`、各种合并）都不进产品。
+- 采纳并冻结（原 ADR-0014，现并入 [ADR-0028](../../docs/adr/0028-names-accept-empty-table.md)）：建表用 no-think（Qwen 官方 non-thinking 采样）、提示 `build-table-prompt-v5`、seed 20261019，程序兜底全开（zh 形状过滤、称呼词黑名单、evidence<3 的 person 降为 medium、日文写法形状过滤）；替换用规则一＋孤立单字。其余开关（`--name-check`、`--pool-by-target`、`--bigram-isolation`、`--iterate`、`--weak-name-check`、各种合并）都不进产品。
 - 产品验收见 [专名一致性产品路径](../acceptance/2026-10-20-name-consistency-product.md)。
 - 研究线关闭：不再开"再调一轮规则"类新轮次；重开只由用户明确要求，且只值得测两个未测方向：一次性音译的模糊匹配（按读音或编辑距离）、更好的"表可人工校对"形态。
 - 后续影响：翻译基线 Q3 起建表改在 Strata 上做（见 [v12–v13](../2026-11-strata-v12-v13/README.md)），替换不再进产品。

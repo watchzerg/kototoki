@@ -454,7 +454,7 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertTrue(before.run_dir.is_dir())
 
     def test_only_high_confidence_rows_enter_the_translate_identity(self) -> None:
-        # 注入规则只在翻译子系统（ADR-0019）：编排测试的伪计划把整张表当不透明身份，这里对真实的 `translate.plan` 断言。
+        # 注入规则只在翻译子系统（ADR-0029「专名注入」）：编排测试的伪计划把整张表当不透明身份，这里对真实的 `translate.plan` 断言。
         doc = document(3)
         self.h.table = table(("high", "山田", "山田"), ("medium", "東京", "东京"), ("low", "大阪", "大阪"))
         base = self.h.plan(doc)

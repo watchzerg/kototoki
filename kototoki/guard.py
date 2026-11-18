@@ -1,8 +1,8 @@
-"""ASR 整窗守卫的纯逻辑（基础层，只依赖标准库与 `recipes`、`judge.normalize`；ADR-0023、ADR-0030）。
+"""ASR 整窗守卫的纯逻辑（基础层，只依赖标准库与 `recipes`、`judge.normalize`；ADR-0030）。
 
 三条规则都在规范化文本（NFKC、去标点与空白）上判定，参数是 `recipes.W0["guard"]`，不是配置项。按顺序：
 
-1. **复读 `repeat-strict`**（ADR-0023）：两个信号任一成立且覆盖该窗规范化文字的 `min_coverage` 以上即命中——
+1. **复读 `repeat-strict`**（ADR-0030「复读 repeat-strict」）：两个信号任一成立且覆盖该窗规范化文字的 `min_coverage` 以上即命中——
    - 相邻重复：同一个长 p（p ≥ `min_period`）的单元连续重复 ≥ `min_copies` 份；取覆盖字符最多的一段（并列取 p 小）。
      同一字符连写同时满足所有周期，按 p = 2 计。
    - 非相邻复现：长度 ≥ `min_length` 的子串不重叠出现 ≥ `min_count` 次；取 次数 × 长度 最大的（并列取更长）。

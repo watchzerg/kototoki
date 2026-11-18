@@ -58,12 +58,12 @@
 - **对照必须是 Q3**：新测试以 Q3 为对照；引用 Q2、Q1、Q0、F1 或 H0 作对照时要写明，并说明理由（[ADR-0021](../adr/0021-q3-strata-names-baseline.md) 第 1 点）。
 - **对照同期重判**：dev 对照必须与候选同期、同一包组成重判；重判漂移约 −0.012～−0.018，与候选效应同量级。产品 ASR 源的两侧在同一个包内比较，不需要同期重判。
 - **三个 seed 起才谈质量**：作品是聚类单位。dev 主 seed 为 20261011–13，产品 ASR 源用 20261054–56。同 seed 输出不可复现（Strata 约 49% 的 cue 不同），配对比较要带 A/A 噪声底。
-- **筛选与确认分开**：确认在冻结前不读的全新确认集上做单侧检验，并做 Holm 校正。v3、v4、v5 的确认集都已开封，新的确认必须用全新隔离的集合（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) 第 5 点）；电影确认材料已被 v4 用尽。
+- **筛选与确认分开**：确认在冻结前不读的全新确认集上做单侧检验，并做 Holm 校正。v3、v4、v5 的确认集都已开封，新的确认必须用全新隔离的集合（[ADR-0021](../adr/0021-q3-strata-names-baseline.md)「对照规则」第 5 点）；电影确认材料已被 v4 用尽。
 - **不选"多次翻译再挑选"的方法**（[ADR-0008](../adr/0008-no-multi-translation-selection.md)）。
 
 ## 不可混用的分数
 
-- **只在同条件下比较**：数字只在同一裁判 profile、同一数据集、同一 seed 块之间比较（[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) 第 4 点，现在针对 Q3）。
+- **只在同条件下比较**：数字只在同一裁判 profile、同一数据集、同一 seed 块之间比较（[ADR-0021](../adr/0021-q3-strata-names-baseline.md)「对照规则」第 2–4 点，现在针对 Q3）。
 - **MQM 与成对偏好不混算**；需要新量尺时，新建带版本的 profile，先做盲重复噪声校准。
 - **Codex 时代的分数不可比**：换裁判后对照和所有候选都要重判。
 - **profile 身份**：`claude-opus-5-5-mqm-v1` 的提示曾从 prompt-v1 改到 prompt-v2 而名字没变，比较前核对两侧结果记录的 profile 指纹相同，不同就重判；成对 profile 以名字加系统提示指纹认身份。今后提示、模型、effort 或 schema 一变，必须同时改 profile 名（如 `…-v2`）。
@@ -71,4 +71,4 @@
 ## 来源
 
 - 轮次：[flow v1–v4](../../research/2026-10-translation-flow-v1-v4/README.md)、[quality v5](../../research/2026-10-quality-v5/README.md)、[Q 线 v9–v11](../../research/2026-10-q-line-v9-v11/README.md)、[Strata v12–v13](../../research/2026-11-strata-v12-v13/README.md)、[ASR 稳健性 v14–v15](../../research/2026-11-asr-robustness-v14-v15/README.md)
-- [ADR-0008](../adr/0008-no-multi-translation-selection.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)
+- [ADR-0008](../adr/0008-no-multi-translation-selection.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)

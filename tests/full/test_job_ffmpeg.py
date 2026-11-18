@@ -58,14 +58,14 @@ class EndToEndTests(JobCase):
             self.assertEqual((reader.getframerate(), reader.getnchannels(), reader.getsampwidth()),
                              (recipes.SAMPLE_RATE, 1, 2))
             self.assertAlmostEqual(reader.getnframes() / recipes.SAMPLE_RATE, SECONDS, delta=0.1)
-        self.assertEqual(list(work.glob("audio.*")), [])  # ADR-0027：不流复制原始音轨
+        self.assertEqual(list(work.glob("audio.*")), [])  # ADR-0007「输入范围」：不流复制原始音轨
         self.assertEqual([launch["ids"] for launch in self.launches()], [self.ids(rel)] * 3)
         identifier = self.ids(rel)[0]
-        # 共享 Strata session：names 启动、翻译后退出（ADR-0022）
+        # 共享 Strata session：names 启动、翻译后退出（ADR-0029「Strata session」）
         self.assertEqual(self.calls, ["session_enter", f"names:{identifier}", f"translate:{identifier}",
                                       "session_exit", "merge"])
         self.assertTrue((work / artifacts.NAME_TABLE).is_file())
-        self.assertFalse((work / "names-apply.json").exists())  # ADR-0019：没有发布时替换
+        self.assertFalse((work / "names-apply.json").exists())  # 已废止的发布时替换（现见 ADR-0028「表的使用与校对」）：没有发布时替换
         self.assertEqual((work / "ja.srt").read_text(encoding="utf-8"), SRT_JA)  # 日文字幕留在工作目录
 
         self.assertEqual(self.final(rel).read_text(encoding="utf-8"), MERGED)

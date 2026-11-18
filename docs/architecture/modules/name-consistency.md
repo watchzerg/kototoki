@@ -1,6 +1,6 @@
 # 专名一致性（建表；译法经翻译注入使用）
 
-状态：current；权威决定：[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)（部分被取代）、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+状态：current；权威决定：[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)（部分被取代）、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
@@ -17,10 +17,10 @@
 - 零条目 `ja.srt`：不碰 session（可为 `None`），返回 `status = ok` 的空表（`attempts = 0`）。
 - 否则 `session.ensure_started()` 取运行中的 Strata（必要时启动），以 `session.client(<work_dir>/names/transport/<session.label>, timeout=1800)` 建客户端；交换目录因此是 `<work_dir>/names/transport/<UTC戳>-<pid>/session-NN/`。
 - 整份 `ja.srt` 渲染成"SRT 编号<TAB>文本"一次送入（cue 内换行替换为空格，时间轴丢弃）。
-- 预算检查走 `/v1/messages/count_tokens`：system 与 user 两段各作一条 user 消息计数再相加，超过 32256（49152 − 16384 − 512；49152 只用于算预算、不随请求发出，ADR-0026）时不请求，返回 `too_long` 空表。
+- 预算检查走 `/v1/messages/count_tokens`：system 与 user 两段各作一条 user 消息计数再相加，超过 32256（49152 − 16384 − 512；49152 只用于算预算、不随请求发出，ADR-0028「输出上限与提示预算」）时不请求，返回 `too_long` 空表。
 - 否则请求 `/v1/chat/completions`；只有回复格式不合格（截断 `finish_reason == "length"`、非 JSON、顶层不是对象、`entries` 不是列表）才换 seed 重试（ADR-0028，配方 `retry_on: "malformed"`）：`entries` 为空列表、或条目在归一中全被丢弃，都接受为 `status = ok` 的空表（`dropped_*` 照常记录）。重试依次用 seed、seed＋1、…、seed＋4，最多 5 个请求，取第一张合格的表即停（`table.ATTEMPTS = 5`）。仍失败返回 `failed` 空表（原因取最后一次错误的首行，`meta.attempt` 为 5）。
 - 成功时 payload 为 `name-table-v2`：`work_guess`、`entries[]`、`meta`（实际 seed 与尝试序号、`dropped_shape`／`dropped_honorific`／`dropped_ja_shape`、`prompt_tokens`／`completion_tokens`、秒数）、`build`（`status`、`reason`，以及 `build_document` 补上的 `prompt_check`——`count_tokens` 或 `skipped (<错误>)`——与 `over_budget_by_usage`）。
-- **请求体**（`table._request_body`）：`messages`、采样 temperature 0.7／top_p 0.8／top_k 20／`min_p` 0／`presence_penalty` 1.5、`seed`、`max_tokens` 16384、`chat_template_kwargs.enable_thinking: false`、非流式、`model`；无 `response_format`。除 `max_tokens`（v13 为 8192，ADR-0026）外与研究侧 v13 `NamesClient.chat` 逐字节相同。`seed` 由配置保证为正整数。
+- **请求体**（`table._request_body`）：`messages`、采样 temperature 0.7／top_p 0.8／top_k 20／`min_p` 0／`presence_penalty` 1.5、`seed`、`max_tokens` 16384、`chat_template_kwargs.enable_thinking: false`、非流式、`model`；无 `response_format`。除 `max_tokens`（v13 为 8192，ADR-0028「输出上限与提示预算」）外与研究侧 v13 `NamesClient.chat` 逐字节相同。`seed` 由配置保证为正整数。
 - **`count_tokens` 退路**：该端点返回 HTTP／传输错误或响应形状不符（没有整数 `input_tokens`）时，该影片内不再预检、计数按 0，运行日志一行 WARNING；每部影片一个客户端，下一部重新尝试该端点。此时只记录回复的 `usage.prompt_tokens`，超预算只在 `build.over_budget_by_usage` 标记、不失败；不得因此放宽预算。
 - 传输层失败（`HTTPError`、`URLError`、连接错误、超时）：`session.stop()` 停掉 Strata（下一部需要模型的影片再启动），抛 `NamesError`。HTTP 错误的消息只带状态码、分类（`oom`／`server_error`）与正文长度，正文留在交换目录。
 - `ensure_started()` 抛 `StrataRefused`（含共享 session 已不可用）或 `InfraFailure`（启动失败）时包成 `NamesError`。共享 session 不可用后，本批其余有 cue 的影片直接 `NamesError`，翻译阶段同样直接失败（[共享 session](strata-session.md#当前行为规格)）。
@@ -36,7 +36,7 @@
 
 - 翻译按 Q2 规则注入表里 `confidence: high` 的实体，每个 `forms[]` 一行（[翻译子系统](translation-subsystem.md#当前行为规格)）。
 - `name-table.json` 的跳过只比 `identity` 块（`ja_srt_sha256`、`BUILD` 配方 hash、`[names] seed`）；用户改 `entries`（改错名、删条目、调 `confidence`）不触发重建。
-- 改到会被注入的条目（`high` 的实体或其写法）会改变注入行的哈希 `names_sha256`，翻译身份随之变化；删掉该片源文件旁的 `*.ja-zh.srt` 后再运行即重译并重新发布（ADR-0020：字幕已存在的文件一律跳过）。只改 medium／low 条目不触发重译。
+- 改到会被注入的条目（`high` 的实体或其写法）会改变注入行的哈希 `names_sha256`，翻译身份随之变化；删掉该片源文件旁的 `*.ja-zh.srt` 后再运行即重译并重新发布（ADR-0007「发布」：字幕已存在的文件一律跳过）。只改 medium／low 条目不触发重译。
 - `ja.srt`、建表配方或 seed 变化会重建并覆盖手改，不做保护。
 
 **日志**（经编排写进运行日志，[批次编排：运行日志](batch-orchestration.md#运行日志)）：
@@ -53,7 +53,7 @@
 ## 实现设计
 
 - **配方与身份**：`BUILD`（配方 `q3-names-v3`）一个字典，含提示 v5 的 sha256、采样、schema sha256、`max_tokens` 16384、`reasoning off`、context 49152 与预算 32256、归一规则与常量、`attempts` 5、`seed_step` 1 与 `retry_on`（`malformed`）、模型、运行时身份（Strata 版本、引擎 build、默认启动及其解析值、kv `int8`，常量来自 `kototoki.strata`，与翻译配方的 `runtime` 取值相同）、请求形状。hash 用 `kototoki.recipes.recipe_hash`（`BUILD_RECIPE_HASH`，测试钉住）。
-- 与 Q3 的 `names-strata-v4` 相同的是模型、运行时身份、请求形状与建表块中除 `max_tokens`／context／预算以外的各项（这三项由 [ADR-0026](../../adr/0026-names-output-and-prompt-budget.md) 放宽，v4 为 8192／24576／15872）；另有 [ADR-0028](../../adr/0028-names-accept-empty-table.md) 新增的 `retry_on`（v4 把空表当不合格），不含研究侧的说明字段与 llama.cpp 的 `model_asset`，所以 hash 不同。测试把三项换回 v4 的值、去掉 `retry_on` 后核对 v4 的 hash。
+- 与 Q3 的 `names-strata-v4` 相同的是模型、运行时身份、请求形状与建表块中除 `max_tokens`／context／预算以外的各项（这三项由 [ADR-0028](../../adr/0028-names-accept-empty-table.md) 放宽，v4 为 8192／24576／15872）；另有 [ADR-0028](../../adr/0028-names-accept-empty-table.md) 新增的 `retry_on`（v4 把空表当不合格），不含研究侧的说明字段与 llama.cpp 的 `model_asset`，所以 hash 不同。测试把三项换回 v4 的值、去掉 `retry_on` 后核对 v4 的 hash。
 - 表的身份 `{ja_srt_sha256, recipe_hash: BUILD, seed}` 由[阶段计划](stage-plan.md)计算，以 `names` 键进 `published.json.sources`（审计记录）。表的内容经翻译身份的 `names_sha256` 影响译文。
 - **资源所有权**：Strata session 的证据在共用的 `<work root>/strata-sessions/`（[Strata 服务与共享 session](strata-session.md)）。每部影片的原始交换在 `<work root>/<id>/names/transport/<UTC戳>-<pid>/session-NN/`（`count-NN` 为两段提示的计数请求，`chat-NN` 为建表请求），按运行分目录，重建时不与旧交换撞名。本模块不取 GPU 锁、不写 `name-table.json`（编排写）、不启停 Strata（只调 `ensure_started()`／`stop()`）。
 - **移植来源**：`table.py` 来自 `archive/2026-11-18-pre-research-restructure:experiments/name_consistency/build_table.py`（`SYSTEM_PROMPT` 逐字节相同，去掉 CLI、思考模式与重归一）；Strata 回调与 5 次尝试来自 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v13.py`；只复制不导入；研究代码已删除（[ADR-0031](../../adr/0031-research-layout-and-lightweight-records.md)），产品实现是唯一权威。
@@ -78,11 +78,11 @@
   - 输入是脚本内置的 12 条合成日语短句（同一人名的正确写法与一处 ASR 式误写、一个职阶名、其余中性）。
   - 通过条件：`expert_arena` 为 `ram`、`build.status == ok`、表至少一条 person、全程没有 llama-server 进程、停止后 status 为空且显存释放、无异常；结果只记计数、哈希、耗时与资源峰值。
   - 运行记录：Strata 路径见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7；27B 时期见 [2026-10-20 验收记录](../../../research/acceptance/2026-10-20-name-consistency-product.md)。
-- 未验证：产品写出的表尚未人工抽看；注入后的译文质量只有研究侧 Q2／Q3 证据；x0 输出、其他作品与剧集、`too_long`／`failed`、`count_tokens` 退路与 Strata 起不来等失败路径的真实运行；同一 seed 下建表的可重复性（见 [ADR-0022](../../adr/0022-product-names-on-strata.md)）。
+- 未验证：产品写出的表尚未人工抽看；注入后的译文质量只有研究侧 Q2／Q3 证据；x0 输出、其他作品与剧集、`too_long`／`failed`、`count_tokens` 退路与 Strata 起不来等失败路径的真实运行；同一 seed 下建表的可重复性（见 [ADR-0028](../../adr/0028-names-accept-empty-table.md)「未验证与已知限制」）。
 
 ## 变更与决策来源
 
-- [ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0026](../../adr/0026-names-output-and-prompt-budget.md)
+- [ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 - 归档 tag 中的 .scratch/name-consistency-product/（01–09）、.scratch/names-on-strata-v13/、.scratch/q3-product-switch/、.scratch/architecture-cleanup/、.scratch/runtime-logging-gaps/
 - `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
 - [2026-10-20 专名一致性进产品验收记录](../../../research/acceptance/2026-10-20-name-consistency-product.md)

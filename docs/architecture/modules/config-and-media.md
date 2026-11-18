@@ -1,6 +1,6 @@
 # 配置、配方与媒体提取
 
-状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0027](../../adr/0027-no-original-audio-copy.md)
+状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
@@ -8,7 +8,7 @@
 
 - 读取 `kototoki.toml` 得到 `Config`（键、默认值与校验的参考见[配置参考](config-reference.md)）；
 - STT／cue／媒体／内嵌字幕的配方常量与 `recipe_hash`；
-- 从输入（视频或音频文件）选音轨、派生模型输入 WAV（不流复制原始音轨，ADR-0027）；
+- 从输入（视频或音频文件）选音轨、派生模型输入 WAV（不流复制原始音轨，ADR-0007「输入范围」）；
 - 内嵌日文字幕的选轨、抽取与清洗（`kototoki/media.py`、`kototoki/embedded.py`）。
 
 不负责：是否采用字幕轨、`ja.srt` 与 `ja-embedded.json` 的落盘与跳过判定（[批次编排](batch-orchestration.md)）；翻译配方（`kototoki/translate/recipes.py`）与建表配方（`kototoki/names/recipes.py`）；`probe.json` 等 JSON 产物的身份包装、写入与跳过判定（编排经[产物契约](artifact-contract.md)完成）；VAD／ASR／对齐推理（[STT worker](stt-workers.md)）。现行配方身份见[现行决定](../../adr/CURRENT.md)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
@@ -28,7 +28,7 @@
 **配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 八个字典；`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）。
 
 - VAD：固定设备 `cuda:0`、Pyannote revision `e66f3d3b…`、`source-span-merge-v1`。
-- w0：beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链，另含整窗守卫块：复读、语速、已知幻听句三个子块（[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)）；x0：BF16、SDPA、greedy、4096。
+- w0：beam 5、FP16、日语、无前文与时间戳 token、128 Mel 特征链，另含整窗守卫块：复读、语速、已知幻听句三个子块（[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)）；x0：BF16、SDPA、greedy、4096。
 - MMS：FP32、`jpn` adapter、字典按模型类数过滤。
 - cue：切分顺序、回填方式、整窗回退每字符时长上限 0.25 s（`CUES["fallback_max_char_s"]`，`cues` 直接读它，没有第二份常量）与毫秒取整；数值规则在配置 `[cues]`，作为影响输出的配置键另入身份。
 - `SAMPLE_RATE`、`MAX_WINDOW_SAMPLES` 只在 `recipes.py` 定义。
@@ -55,10 +55,10 @@
 - 参照时长：视频输入取第一条非封面视频流，音频输入取所选音轨。取其 `duration`；没有时先取精确的 Matroska 标签 `DURATION`（大小写不敏感），再取 mkvmerge 统计标签 `DURATION-<lang>`；都没有时退回容器时长并告警；时长全无报 `MediaError`。
 - 流时长与 `format.duration` 相差超过 `MEDIA["duration_tolerance_s"]` 时取较小者并写入 `Probe.warnings`，`duration_source` 记实际来源。`probe.json` 的字段是 `has_video`、`duration_s`、`duration_source`。
 
-**extract**（`extract(path, work_dir, probe, config) -> Extract`）：视频与音频输入相同，只运行一条 ffmpeg 解码命令，写同目录临时文件后原子替换 `audio-16k.wav`；不流复制原始音轨（ADR-0027）。构造命令时校验下混布局，不支持的布局在运行 ffmpeg 前抛 `MediaError`。
+**extract**（`extract(path, work_dir, probe, config) -> Extract`）：视频与音频输入相同，只运行一条 ffmpeg 解码命令，写同目录临时文件后原子替换 `audio-16k.wav`；不流复制原始音轨（ADR-0007「输入范围」）。构造命令时校验下混布局，不支持的布局在运行 ffmpeg 前抛 `MediaError`。
 
 1. **从输入容器**按所选音轨的绝对索引解码，`-af aresample=async=1:first_pts=0,<PAN>,aresample=16000`（采样率标错时最前面加 `asetrate=<真实>,asetpts=PTS*<真实>/<声明>`，后者把时间戳拉回容器时间）（ffmpeg 默认 swr）、`pcm_s16le`、`-fflags +bitexact -flags:a +bitexact`、`-loglevel level+verbose`（每行带级别标签；不进 `MEDIA` hash）；命令行与精简后的 stderr 写入 `extract.log`。起始延迟补静音、中途间隙补零，WAV 的 sample 0 即输入 0 秒，`Extract.offset_s` 恒为 0。
-2. 时长校验对参照时长 `Extract.duration_s`：视频输入解码短于参照超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；音频输入短于参照只告警（时长可能是估算值，ADR-0020）；长于参照超过 1 s 告警，视频输入超过 1.5 倍（`MAX_OVERLONG_RATIO`，不进 `MEDIA`）抛 `MediaError`。
+2. 时长校验对参照时长 `Extract.duration_s`：视频输入解码短于参照超过 1 s 抛 `MediaError` 且不留下 `audio-16k.wav`（日志保留）；音频输入短于参照只告警（时长可能是估算值，ADR-0007「输入范围」）；长于参照超过 1 s 告警，视频输入超过 1.5 倍（`MAX_OVERLONG_RATIO`，不进 `MEDIA`）抛 `MediaError`。
 3. `Extract` 记录 PCM 数据块 SHA256、样本数、解码时长、所用 `pan`、告警与补偿统计 `compensation`：swr 报告的补入／丢弃样本数之和（输入采样率，含起始补齐，不完整，仅作参考）与净补偿秒数 `net_padding_s`（派生时长 − ffmpeg 结束统计的输入时长，已纠正时按纠正后的采样率，以它为准）。超过 0.1 s 时的 WARNING 由编排写（`job.compensation_warnings`）。
 
 **解码日志**（batch-run-fixes 03）：`extract` 流式读 stderr，不整段进内存，经 `digest_decode_log` 写精简的 `extract.log`：info、无上下文、`in#`／`out#` 行原样写；error（含 fatal）、warning 行与 swr 补偿行各留前后 100 条（样本数全数累加）；其余 verbose 行只计数；末尾附消息类型计数表。`Extract.diagnostics`（进 `probe.json`，只作诊断）含各级别条数 `levels`、所选音轨的 `decode_errors` 与前 20 类 error／warning `messages`；有 error 行时 `Extract.warnings` 加一条（不判失败）。
@@ -103,7 +103,7 @@
 
 ## 变更与决策来源
 
-- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
+- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - [技术设计](../../specs/bilingual-subtitle-pipeline.md) §1.1、§2
 - 归档 tag `archive/2026-11-18-pre-research-restructure` 中：技术设计历史记录 docs/research/2026-11-11-bilingual-pipeline-spec-history.md（§1.2 裁定表、重采样器经过）；计划 docs/plans/architecture-cleanup.md（§3 决定 2：`MEDIA` 补入布局映射与音轨选择规则）；模块页拆出的历史记录 docs/research/acceptance/2026-11-11-module-page-history-orchestration-config.md（真实视频核对与削波实测）；常量来源 experiments/corpus/prepare_round2.py（下混与重采样）、experiments/w0_demo/（vad_candidates.py、asr.py、alignment.py）、experiments/x0_demo/asr.py、experiments/qwen/run_qwen.py
 - 验收：[两部整片](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[swr 回归](../../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)、[cross 产品路径](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[ffmpeg 9.0 升级](../../../research/acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)

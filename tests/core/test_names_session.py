@@ -261,7 +261,7 @@ class V13PinTests(Case):
     """同一份文档、同一串伪回复：产品 `build_document` 发出的建表请求体、count_tokens 请求体、状态、尝试数与表项
     的 sha256 钉死，seed 序列写死。钉值取自 2026-11-11 的研究侧 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v13.py`
     `NamesClient`＋`build_one`（`names-strata-v4`）在同一输入上的输出。
-    ADR-0026 起产品请求只有 `max_tokens` 与 v4 不同（16384 对 8192）：算摘要前把它换回 8192，钉值不变。"""
+    ADR-0028「输出上限与提示预算」起产品请求只有 `max_tokens` 与 v4 不同（16384 对 8192）：算摘要前把它换回 8192，钉值不变。"""
 
     def run_digest(self, replies: list[dict[str, Any]], seed: int, *, count_error: Exception | None = None) -> str:
         self.h = Harness(self.h.root)

@@ -7,7 +7,7 @@
 ## 1. 目标与边界
 
 - 输入：`input_dir` 下（递归）的本地视频或音频文件（扩展名见[配置参考][cfg]，视频还是音频由 ffprobe 判定）。音频默认视为日语对白。
-- 输出（每个输入）：写在源文件所在目录的 `<stem>.ja-zh.srt`（ADR-0020）；`ja.srt`、译文等中间产物留在工作目录（§4）。源文件旁已有 `<stem>.ja-zh.srt` 即跳过该文件。
+- 输出（每个输入）：写在源文件所在目录的 `<stem>.ja-zh.srt`（ADR-0007「发布」）；`ja.srt`、译文等中间产物留在工作目录（§4）。源文件旁已有 `<stem>.ja-zh.srt` 即跳过该文件。
 - 入口 `python -m kototoki [kototoki.toml]` 只读一份配置文件，没有其他命令行参数；影响模型行为的解码／采样／提示常量是配方常量，留在代码里，不进配置文件（[配置参考][cfg]）。
 - 产品不变量继续生效：本地运行、ASR／CTC／翻译只跑 GPU 不回退 CPU、保留日语原文、音频与转写不进 Git 与日志。
 
@@ -15,15 +15,15 @@
 
 | 阶段 | 固定选择 | 依据 |
 | --- | --- | --- |
-| 音频分离 | 模型输入直接从输入容器按绝对流索引解码，带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV；不流复制原始音轨（§2.1） | 两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；时间戳以输入容器为准，见 §2.2；[ADR-0027](../adr/0027-no-original-audio-copy.md) |
+| 音频分离 | 模型输入直接从输入容器按绝对流索引解码，带时间戳对齐（WAV 的 sample 0 即输入 0 秒，`offset_s` 恒为 0）、按声道布局下混单声道、重采样 16 kHz、PCM16 WAV；不流复制原始音轨（§2.1） | 两套 demo 与整片证据的输入身份是 16 kHz 单声道 PCM16；时间戳以输入容器为准，见 §2.2；[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) |
 | VAD 与分窗 | Pyannote `segmentation-3.0`（revision `e66f3d3b…`），powerset 原生检测，onset／offset 0.5，`source-span-merge-v1`：≤30 s、整数样本坐标、保留块内间隙 | [ADR-0003](../adr/0003-new-pyannote-baselines.md) |
-| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗守卫（复读 `repeat-strict`、语速、已知幻听句，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v3` | [W0 契约](../../research/2026-10-stt-demo-w0-x0/README.md)、[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md) |
+| ASR `w0`（默认） | faster-whisper large-v3（CT2 FP16），固定日语，beam 5，batch 1，逐窗独立、无前文、无时间戳 token，移植的 Whisper 特征链；解码之后过整窗守卫（复读 `repeat-strict`、语速、已知幻听句，§6），产品配方 id `w0-faster-whisper-large-v3-guard-v3` | [W0 契约](../../research/2026-10-stt-demo-w0-x0/README.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md) |
 | ASR `x0` | Qwen3-ASR-1.7B-hf，CUDA BF16、SDPA、greedy、`max_new_tokens` 4096，原生 processor | [X0 契约](../../research/2026-10-stt-demo-w0-x0/README.md) |
-| ASR `cross`（可选） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0、再 x0 转写，由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变 | [ADR-0012](../adr/0012-cross-asr-judge.md)、[产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md) |
+| ASR `cross`（可选） | 同一 asr worker 内常驻 w0 与 x0：逐文件先 w0、再 x0 转写，由 Whisper 对两路的分歧区间做教师强制打分并合并（阈值 −1.0、无长度项），输出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变 | [ADR-0003](../adr/0003-new-pyannote-baselines.md)、[产品路径验收](../../research/acceptance/2026-10-19-cross-asr-acceptance.md) |
 | 强制对齐 | MMS-1b-all `jpn` adapter，CUDA FP32，窗口归一化，字符级 CTC 对齐，`text_only` 记账 | [STT worker](../architecture/modules/stt-workers.md) |
 | 日文字幕切分 | 从字符 units 组 cue，规则数值来自配置文件（§5.2） | [日文 cue](../architecture/modules/japanese-cues.md)（起点是研究期的显示契约，见 [STT demo 轮次](../../research/2026-10-stt-demo-w0-x0/README.md)） |
-| 翻译 | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，`strata launch --no-tui --model iq3_s`，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`；`confidence: high` 的专名注入；每个请求节点最多两次（seed、seed+1）；产品配方 `q3-translate-v1` | [ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)、[ADR-0018](../adr/0018-q2-sole-translation-baseline.md) |
-| 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，回复格式不合格才依次换 seed、最多 5 次请求，空表直接接受（配方 `q3-names-v3`，与 Q3 的 `names-strata-v4` 只差输出上限 16384、提示预算 32256 与空表不重试）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0014](../adr/0014-name-consistency-in-product.md)、[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)、[ADR-0026](../adr/0026-names-output-and-prompt-budget.md)、[ADR-0028](../adr/0028-names-accept-empty-table.md)、[专名一致性][names] |
+| 翻译 | Q2 规则：Strata 上的 `qwen3.8-flash-next-iq3_s`（Strata 0.2.12／build 0.1.58，`strata launch --no-tui --model iq3_s`，DFlash2），chat completions、无 grammar、思考关闭、采样 0.7／0.8／20，提示 `qwen-joint-v1`；切包 `dp10-cut`（每批待译 ≤10 条），只读邻文 `wide-context-v1`；`confidence: high` 的专名注入；每个请求节点最多两次（seed、seed+1）；产品配方 `q3-translate-v1` | [ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md) |
+| 专名建表（必开） | `ja-cues` 与 `translate` 之间的 GPU 阶段 `names`：在与翻译共用的 Strata 上把整份 `ja.srt` 一次送入，取回 `name-table-v2` 专名表并归一，回复格式不合格才依次换 seed、最多 5 次请求，空表直接接受（配方 `q3-names-v3`，与 Q3 的 `names-strata-v4` 只差输出上限 16384、提示预算 32256 与空表不重试）；表只经翻译注入（只注入出现在该批可见台词里的 `confidence: high` 写法），没有发布时替换 | [ADR-0028](../adr/0028-names-accept-empty-table.md)、[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[专名一致性][names] |
 | 双语合并 | 同一 cue 编号与时间，两行：中文在上、日文在下；中文就是翻译结果；未翻译的 cue 只有日文一行（ADR-0029） | 用户裁定 |
 
 ### 1.2 已裁定
@@ -61,7 +61,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 
 ### 2.1 不流复制原始音轨
 
-视频输入与音频输入一样，extract 只派生 `audio-16k.wav`，不再把原始音轨流复制为 `audio.<ext>`（[ADR-0027](../adr/0027-no-original-audio-copy.md)）：源文件留在原地，工作目录不交付，副本只是重复数据；复制要多读一遍源文件，还曾因坏包让可出字幕的文件整片失败。
+视频输入与音频输入一样，extract 只派生 `audio-16k.wav`，不再把原始音轨流复制为 `audio.<ext>`（[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)「输入范围」）：源文件留在原地，工作目录不交付，副本只是重复数据；复制要多读一遍源文件，还曾因坏包让可出字幕的文件整片失败。
 
 ### 2.2 时间轴与下混
 
@@ -85,11 +85,11 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 - GPU 阶段严格串行，由 `.local/gpu.lock` 保护（不抢占、不杀进程；破残留锁只认一次性的 `KOTOTOKI_BREAK_STALE_LOCK=1`）。只有编排器获取它：在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；names、translate 只在有文件需要模型时才取锁、起 Strata。锁文件记录编排器、当前 worker 与 Strata 的 pid。
 - 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`，已被占用则退出码 3。任何阶段撞 GPU 锁都是进程级冲突：整批以退出码 4 结束、不写逐文件 `failure.json`，已完成的产物保留，可续跑（ADR-0025）。
 - 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立，并发只会争抢算力与显存。
-- names 与 translate 共用编排持有的一个 Strata session（[ADR-0022](../adr/0022-product-names-on-strata.md)）：第一次真正需要模型时启动，两阶段之间不停，整批结束、出错或中断时 `strata launch --stop`。启动前核对没有别人的 launch、空闲显存足够、身份符合 ADR-0017；Strata 起不来或被拒绝（`StrataRefused`）时本批其余需要模型的影片在两个阶段都直接失败。见[专名一致性][names]、[翻译子系统][tr]。
+- names 与 translate 共用编排持有的一个 Strata session（[ADR-0029](../adr/0029-translate-per-cue-resolution.md)「Strata session」）：第一次真正需要模型时启动，两阶段之间不停，整批结束、出错或中断时 `strata launch --stop`。启动前核对没有别人的 launch、空闲显存足够、身份符合 ADR-0021「Q3 服务与运行顺序」；Strata 起不来或被拒绝（`StrataRefused`）时本批其余需要模型的影片在两个阶段都直接失败。见[专名一致性][names]、[翻译子系统][tr]。
 
 ## 4. 产物：中间产物与最终产物
 
-最终产物只有写在源文件旁的双语字幕（`<input_dir>/S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`），其余全在工作目录（ADR-0020）。`[paths] work_dir` 下有共用的 `cache/` 与每个目标目录一个工作根 `<work_dir>/<input_dir 末段名>-<绝对路径 sha12>/`（下称 `<work root>`）；每个输入的工作目录 `<work root>/<id>/`，`<id>` 是相对路径（含扩展名）SHA256 的前 12 位。目标目录改名或移动后对应不上旧工作根，从头重跑。路径、身份与原子写的权威正文是[产物契约][art]。
+最终产物只有写在源文件旁的双语字幕（`<input_dir>/S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`），其余全在工作目录（ADR-0007「工作目录」）。`[paths] work_dir` 下有共用的 `cache/` 与每个目标目录一个工作根 `<work_dir>/<input_dir 末段名>-<绝对路径 sha12>/`（下称 `<work root>`）；每个输入的工作目录 `<work root>/<id>/`，`<id>` 是相对路径（含扩展名）SHA256 的前 12 位。目标目录改名或移动后对应不上旧工作根，从头重跑。路径、身份与原子写的权威正文是[产物契约][art]。
 
 ```
 <work_dir>/
@@ -134,11 +134,11 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 - **内嵌字幕不可用**（ADR-0024）：抽取失败或清洗后零条目，记一行 WARNING，该文件回到 STT 链，不写 `failure.json`，结果不缓存。
 - **无语音**：VAD 结果为空时跳过 ASR／对齐／翻译，直接发布零条目 `ja-zh.srt` 并告警。
 - **抽取质量门**（batch-run-fixes 04）：视频输入解码时长超过参照时长 1.5 倍判 extract 失败；VAD 语音时长不足参照时长 1% 判 vad 失败。两者都写 `failure.json`。
-- **ASR 失败窗口**（w0／x0／cross 同一表示）：x0 生成触顶、w0 整窗守卫置空（复读折叠后仍命中、语速 > 20 字/秒、整窗是已知幻听句；[ADR-0023](../adr/0023-asr-repeat-guard.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)），都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker][stt]、[产物契约][art]）。
-- **Strata 基础设施失败与批次终态**（ADR-0019）：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、结构校验失败、超出 context、一条都没收下是该次尝试失败，两次都失败即节点终态，进入拆分；`StrataRefused` 不重试，本批其余需要模型的影片直接失败。
+- **ASR 失败窗口**（w0／x0／cross 同一表示）：x0 生成触顶、w0 整窗守卫置空（复读折叠后仍命中、语速 > 20 字/秒、整窗是已知幻听句；[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)），都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker][stt]、[产物契约][art]）。
+- **Strata 基础设施失败与批次终态**（ADR-0029「基础设施失败」）：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、结构校验失败、超出 context、一条都没收下是该次尝试失败，两次都失败即节点终态，进入拆分；`StrataRefused` 不重试，本批其余需要模型的影片直接失败。
 - **按条解决**（产品规则，配方另名 `q3-translate-v1`，ADR-0029）：回复结构合法即按条收下，缺失、空串、含空行的 cue 按最大连续段再问；两次都失败的节点对半拆，单条仍失败该 cue 不出中文，双语字幕里只有日文一行；未翻译清单写 `report.json` 并在汇总给出未翻译数。可靠性重试、按条追问与拆分都不是"翻译多次再挑选"（ADR-0008）。见[翻译子系统][tr]。
-- **专名建表失败**（ADR-0022）：超预算或 5 次回复格式都不合格写空表（模型回空表不算失败，ADR-0028）（`build.status` 为 `too_long`／`failed`），记 WARNING，影片照常翻译与发布；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（[专名一致性][names]）。
-- **续跑**：重跑同一命令即可，已完成的产物按身份跳过；翻译按批次增量落盘，中断后从未完成的批次继续。未翻译的 cue 对该身份是终态；要重试须改 `[translate] seed`（另起 run 目录、整片重译）；要重做已发布的文件须先删掉其 `.ja-zh.srt`（ADR-0020）。
+- **专名建表失败**（ADR-0028「建表失败」）：超预算或 5 次回复格式都不合格写空表（模型回空表不算失败，ADR-0028）（`build.status` 为 `too_long`／`failed`），记 WARNING，影片照常翻译与发布；Strata 起不来、OOM、HTTP 或传输失败是该影片 `names` 阶段的文件级失败（[专名一致性][names]）。
+- **续跑**：重跑同一命令即可，已完成的产物按身份跳过；翻译按批次增量落盘，中断后从未完成的批次继续。未翻译的 cue 对该身份是终态；要重试须改 `[translate] seed`（另起 run 目录、整片重译）；要重做已发布的文件须先删掉其 `.ja-zh.srt`（ADR-0007「发布」）。
 
 ## 7. 进程、环境与依赖
 

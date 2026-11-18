@@ -1,6 +1,6 @@
 # 阶段计划
 
-状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
@@ -50,11 +50,11 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 **引擎组成**：`ENGINE_PARTS`（`w0 → ("w0",)`、`x0 → ("x0",)`、`cross → ("w0", "x0")`）是"一个 ASR 引擎由哪些模型组成"的唯一出处：`model_files`、worker 壳 `workers/asr.start`（加载哪些适配器）与复读守卫的判定（这一路是不是 w0）都读它。它与 `ASR_RECIPES`、`config.ENGINES` 同键（`config` 在基础层，不反向导入 `plan`，靠测试保持一致）。
 
-**cross 的 asr 身份**（[ADR-0012](../../adr/0012-cross-asr-judge.md)）：
+**cross 的 asr 身份**（[ADR-0003](../../adr/0003-new-pyannote-baselines.md)）：
 
 - `ASR_RECIPES` 有 `w0`、`x0`、`cross`（→ `recipes.CROSS`）三项，其它值抛错。
 - `cross` 的 `asr.json` 身份：上游 PCM SHA256 ＋ `vad.json` SHA256 ＋ `recipe_hash(CROSS)` ＋ 两路模型文件 SHA256；`model_files("asr", models, engine="cross")` 按 `ENGINE_PARTS["cross"]` 返回 w0 与 x0 两套清单的并集。
-- `CROSS` 嵌入 `W0`、`X0` 与裁判参数，任一子配方变化即身份变化；`W0` 含整窗守卫的 `guard` 块（[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)）。
+- `CROSS` 嵌入 `W0`、`X0` 与裁判参数，任一子配方变化即身份变化；`W0` 含整窗守卫的 `guard` 块（[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)）。
 - 审计产物 `asr-w0.json`／`asr-x0.json` 用单引擎身份（`asr_identity("w0"|"x0", …)`，只含该路模型文件），`asr-judge.json` 用 cross 身份；三者不进 `STAGE_OUTPUT`，不参与 `is_current`。
 
 **模型文件清单**：
@@ -66,7 +66,7 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 **计划**：`Target(work_dir, probe, pcm_sha256, embedded=None)` 是一个文件在 CPU 阶段之后已知的常量。`Plan` 是不可变值：
 
-- `stage`：第一个需要运行的阶段，或终态 `publish`（无语音，直接发布零条目字幕）。是否已发布不归本模块，编排在扫描时按源文件旁的 `.ja-zh.srt` 是否存在判定（ADR-0020），所以没有 `done`。
+- `stage`：第一个需要运行的阶段，或终态 `publish`（无语音，直接发布零条目字幕）。是否已发布不归本模块，编排在扫描时按源文件旁的 `.ja-zh.srt` 是否存在判定（ADR-0007「发布」），所以没有 `done`。
 - `identities`：`probe` 与从 vad 起到 `stage` 为止各阶段的期望身份，键同 `sources`。
 - `no_speech`；`translate`：核对到翻译阶段后才有的 `TranslatePlan`，否则 `None`。
 - `sources`（发布记录用）：无语音时只含 `probe`、`vad`；STT 路径为 `probe`、`vad`、`asr`、`align`、`ja_cues`、`names`、`translate`；都加 `no_speech`。
@@ -104,7 +104,7 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 ## 变更与决策来源
 
-- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
+- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/14-stage-plan-module.md`、`issues/15-translate-run-key.md`）、.scratch/cross-asr-judge/、.scratch/name-consistency-product/（`issues/05-config-assets-plan.md`）
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md`
 - 验收：[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)

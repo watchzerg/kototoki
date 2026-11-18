@@ -1,4 +1,4 @@
-"""按批次落盘、可续跑的整片翻译；编排器传入的共享 `kototoki.strata.Session` 在整批影片间（names 建表与翻译）共用一个 Strata 服务（ADR-0019、ADR-0022、ADR-0029）。
+"""按批次落盘、可续跑的整片翻译；编排器传入的共享 `kototoki.strata.Session` 在整批影片间（names 建表与翻译）共用一个 Strata 服务（ADR-0029「Strata session」）。
 
 `run_step` 复制自 `experiments/translation_v3/strata.py`（去掉思考分支，回复判定改为按条，ADR-0029）。与研究侧的差别：
 

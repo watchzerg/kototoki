@@ -1,7 +1,7 @@
 # X0 吸收 WhisperX 流程：切点策略与 VAD 过滤的两窗隔离验证
 
 ## 状态
-concluded：源码核查与两窗三臂验证完成；当时未得到满足预登记无回归条件的组合，随后用户以流程设计合理性采纳 X0 流程适配（ADR-0002／0003）。
+concluded：源码核查与两窗三臂验证完成；当时未得到满足预登记无回归条件的组合，随后用户以流程设计合理性采纳 X0 流程适配（现并入 ADR-0003，原 ADR-0002）。
 
 ## 时间
 2026-10-05。
@@ -37,7 +37,7 @@ WhisperX 的哪些流程逻辑适用于 Qwen-ASR 的 X0：低能量切点、Pyan
 
 ## 结论与去向
 - 值得吸收的是"在更合适位置切片、保持原音频坐标、共用对齐接口"的思路，而非整套 WhisperX；Whisper 的 token、特征补齐、CT2 参数不适用于 Qwen。
-- 用户随后澄清：合理流程设计的采纳不以有限样本显著涨分为前提；据此建立 X0 demo 并采纳无 VAD 的流程适配，随后整片对照后改采新 Pyannote＋MMS：[ADR-0003](../../docs/adr/0003-new-pyannote-baselines.md)（[ADR-0002](../../docs/adr/0002-x0-demo-flow.md) 已并入）。旧 PyanNet 臂的分数不转移给新 Pyannote。
+- 用户随后澄清：合理流程设计的采纳不以有限样本显著涨分为前提；据此建立 X0 demo 并采纳无 VAD 的流程适配，随后整片对照后改采新 Pyannote＋MMS：[ADR-0003](../../docs/adr/0003-new-pyannote-baselines.md)（原 ADR-0002 已并入）。旧 PyanNet 臂的分数不转移给新 Pyannote。
 - 整体基线与评测方法见 [W0／X0 demo 轮次](../2026-10-stt-demo-w0-x0/README.md)；VAD 候选整片比较见 [VAD 比较](../2026-10-vad-comparison/README.md)。
 
 ## 教训

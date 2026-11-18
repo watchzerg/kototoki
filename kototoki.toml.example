@@ -4,7 +4,7 @@
 # GPU 锁固定为仓库内 .local/gpu.lock；破除死锁用环境变量 KOTOTOKI_BREAK_STALE_LOCK=1（只对本次运行生效）。
 # 解码、采样、提示等影响模型行为的常量不在这里，见 kototoki/recipes.py 与 kototoki/translate/recipes.py。
 # 专名建表与翻译共用的 Strata（0.2.12／build 0.1.58）与模型需自行安装，不在 assets.toml 里；运行前不得有别的 Strata launch 在服务。
-# 产品不启动 llama-server（ADR-0022）；assets.toml 里的 llama.cpp 与 27B 只供研究侧。
+# 产品不启动 llama-server（ADR-0029「Strata session」）；llama.cpp 与 27B 已不在 assets.toml（ADR-0033「资产清单与安装」）。
 
 [paths]
 input_dir    = "D:/movie/inbox"         # 必填：递归扫描视频与音频；双语字幕 <主名>.ja-zh.srt 写在源文件旁
@@ -48,10 +48,10 @@ sentence_endings = "。！？!?"
 soft_breaks = "、，,"
 lead_out_s = 0.3                        # 发声结束后向后延长，不越过下一条起点
 
-[translate]                             # 翻译由 Strata 自动启停（Q2，ADR-0019）：模型与端口（8080）由 Strata 管理，不可配
+[translate]                             # 翻译由 Strata 自动启停（Q2，ADR-0029「Strata session」）：模型与端口（8080）由 Strata 管理，不可配
 seed  = 20261008                        # 正整数；改 seed 即另起翻译 run、整片重译（已有 .ja-zh.srt 的文件须先删掉字幕）
 
-[names]                                 # 专名建表（与翻译共用同一个 Strata session，translate 之前，必开；ADR-0014、ADR-0019、ADR-0022）
+[names]                                 # 专名建表（与翻译共用同一个 Strata session，translate 之前，必开；ADR-0028「阶段位置」、ADR-0029「Strata session」）
 seed    = 20261019                      # 正整数；改 seed 即重建表（另起身份）。模型与端口由 Strata 管理，不可配
 # 手改 <work_dir>/<末段名>-<sha12>/<id>/name-table.json：改到 confidence 为 high 的实体或其写法 = 改了翻译注入行，
 # 删掉该片的 .ja-zh.srt 后再运行即重译并重新发布；只改 medium／low 条目不触发任何重做。

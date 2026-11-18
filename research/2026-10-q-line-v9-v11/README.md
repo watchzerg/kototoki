@@ -1,7 +1,7 @@
 # Q 线 v9–v11：通用模型（Qwen3.8-27B）在同一接缝下翻译，及专名表注入
 
 ## 状态
-concluded。v9 于 2026-10-21 结题，v10 于 2026-10-22 结题，v11 于 2026-10-23 结题；结论落成 [ADR-0015](../../docs/adr/0015-two-translation-baselines.md)（两条基线 H0、Q0）与 ADR-0016（Q1，已并入 [ADR-0017](../../docs/adr/0017-q2-strata-default-launch-baseline.md)）。Q 线基线后续沿革见 [v12–v13](../2026-11-strata-v12-v13/README.md)。
+concluded。v9 于 2026-10-21 结题，v10 于 2026-10-22 结题，v11 于 2026-10-23 结题；结论落成 [ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md)（原 ADR-0015、ADR-0016、ADR-0017，现见「H0（历史）」「Q0（历史）」「Q1 与 F1（历史）」）。Q 线基线后续沿革见 [v12–v13](../2026-11-strata-v12-v13/README.md)。
 
 ## 时间
 2026-10-21 立项（v9）至 2026-10-23 结题（v11），三轮连续执行。
@@ -50,7 +50,7 @@ v10/v11（对照写明）：
 | 注入叠加 ASR 提示；跨段截断 | N\*／Q0 | 都不进（exact 桶显著变差；截断产品全体 +0.104 显著变差） |
 
 ## 结论与去向
-- 采纳：Q0＝`qwen-wide` 作为通用模型线基线（对 H0 在剧集与电影都显著更好且非劣）；其后 ADR-0016 采 N\*（Q0＋只注入 high 的专名表）为 Q1，适用范围限产品 ASR 源。H0 基线保持为产品当时实现，直到 [ADR-0019](../../docs/adr/0019-product-translation-q2.md) 进产品。
+- 采纳：Q0＝`qwen-wide` 作为通用模型线基线（对 H0 在剧集与电影都显著更好且非劣）；其后（原 ADR-0016，现并入 ADR-0021）采 N\*（Q0＋只注入 high 的专名表）为 Q1，适用范围限产品 ASR 源。H0 基线保持为产品当时实现，直到 [ADR-0029](../../docs/adr/0029-translate-per-cue-resolution.md)（原 ADR-0019）进产品。
 - 放弃：自然度提示修订、更宽邻文、整片简报、有界思考、ASR 感知提示、跨段截断；多样本再挑选不做（[ADR-0008](../../docs/adr/0008-no-multi-translation-selection.md)）。
 - 未决项留给后续轮次：专名表质量（dev 反向的主因是表条目本身错，且错条目多为 `high`，34% 与参考多数不一致）；确认集未建；同 seed、同提示的 llama-server 输出并不确定（约 24% 的相同提示单元输出不同），所有"同 seed 配对"含一层噪声底。
 

@@ -13,7 +13,7 @@ payload 为 `schema_version`、`engine`、`offset_s`、`input`、`chunks`（照�
 保留文本 `text`、`metadata`、`stages`。cross 的 `asr.json` 取 w0 的段结构、trace 与失败窗口，段文字换成合并文本；
 三个审计产物不参与 `is_current`，窗口文字只写进 `.work/` 产物，不进日志。
 
-w0 的转写（w0 引擎，以及 cross 的 w0 那一路）在解码之后过一遍整窗守卫（`kototoki.guard`，ADR-0023、ADR-0030）：
+w0 的转写（w0 引擎，以及 cross 的 w0 那一路）在解码之后过一遍整窗守卫（`kototoki.guard`，ADR-0030）：
 复读窗口折叠后改写段文字；复读折叠后仍命中、语速超限或整窗是已知幻听句的作为失败窗口（原因 `guard:<规则名>`）置空；
 两种情况都在该窗 trace 里记 `guard`。x0 的转写不过守卫。
 本模块导入时不加载 torch／CT2，适配器在 `start` 里才导入。

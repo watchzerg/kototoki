@@ -1,6 +1,6 @@
 """产物契约：工作目录、产物文件名、身份、匹配跳过、原子写、`failure.json` 与 `published.json`。
 
-布局（规格 §4、ADR-0020）::
+布局（规格 §4、ADR-0007「工作目录」）::
 
     <input_dir>/<rel_dir>/<stem>.ja-zh.srt     最终双语字幕，写在源文件旁（已存在即跳过该文件）
     <work_dir>/cache/                          HF_HOME／TORCH_HOME 与 model-verification.json，各目标目录共用
@@ -302,7 +302,7 @@ def record_published(work_dir: Path, final_path: Path, sha256: str, sources: Map
                      translate_dir: str) -> None:
     """双语字幕写到源文件旁之后写 `published.json`（审计记录：字幕路径与 SHA256、来源身份、翻译 run 目录）。
 
-    是否需要发布只看源文件旁的字幕是否存在（ADR-0020），本记录不参与判定。
+    是否需要发布只看源文件旁的字幕是否存在（ADR-0007「发布」），本记录不参与判定。
     """
     atomic_write_json(Path(work_dir) / PUBLISHED, {
         "final": str(final_path), "sha256": _sha256(sha256, "ja-zh"), "sources": dict(sources),

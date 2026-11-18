@@ -204,7 +204,7 @@ class VideoDurationTests(unittest.TestCase):
 
 
 class AudioOnlyInputTests(unittest.TestCase):
-    """没有视频流（封面图不算）即音频输入：时长参照取所选音轨（ADR-0020）。"""
+    """没有视频流（封面图不算）即音频输入：时长参照取所选音轨（ADR-0007「输入范围」）。"""
 
     def test_audio_only_uses_chosen_audio_stream_duration(self) -> None:
         probe = media.parse_probe({"streams": [audio(0, "eng", duration="10.0"), audio(1, "jpn", duration="61.5")],
@@ -239,7 +239,7 @@ class AudioOnlyInputTests(unittest.TestCase):
 
 class ExtractPayloadTests(unittest.TestCase):
     def test_payload_has_no_audio_copy(self) -> None:
-        """ADR-0027：视频也不流复制原始音轨，`probe.json` 的 extract 记录没有 `audio_copy`。"""
+        """ADR-0007「输入范围」：视频也不流复制原始音轨，`probe.json` 的 extract 记录没有 `audio_copy`。"""
         result = media.Extract(wav=Path("audio-16k.wav"), log=Path("extract.log"), sample_rate=16000,
                                samples=16000, pcm_sha256="0" * 64, decoded_duration_s=1.0, duration_s=1.0,
                                offset_s=0.0, pan="p", compensation={}, warnings=())

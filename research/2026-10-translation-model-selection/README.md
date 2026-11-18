@@ -13,7 +13,7 @@ concluded。用户阅读四量化实测后选定 APEX-I-Compact 作为当时的�
 - 方法与源码调研（只读、未运行翻译）：Subtitle Edit、VideoLingo、pyVideoTrans 的翻译机制，以及字幕与文档翻译的上下文、语义单元、JSON 恢复、日中质量评估方法；结论是"按语义单元组织、前后只读邻文、按 ID 校验、显示与时间另行处理"，是工程综合而非已证明的最优。
 - 三个本地专用翻译模型的输入契约调研：Hy-MT2、TranslateGemma、Tower+；Hy-MT2 官方资料复核后建议带显式上下文、每窗独立请求、完整冻结采样配置。
 - 五候选固定 test 比较（A Hy-MT2 7B Q8_0、B Tower+ 9B Q8_0、C Hy-MT2 30B-A3B Q3_K_M、D TranslateGemma 12B Q8_0、E TranslateGemma 27B Q3_K_L；D、E 另加 Tower+ 做源跨度映射）。
-- Hy30 Q3_K_M 对官方 Q4_K_M 实测对照（ADR-0004 的依据）。
+- Hy30 Q3_K_M 对官方 Q4_K_M 实测对照（原 ADR-0004 的依据，现并入 ADR-0021「H0（历史）」）。
 - Hy30 四量化比较：Q3_K_M 基线、i1-Q3_K_M、i1-Q3_K_L、APEX-I-Compact，新增 1,200 窗主集＋旧 83 窗回归＋四轮正式性能＋30 分钟长跑。
 - 官方 30B 采样与前缀缓存配方（`official30b-cached-v1`）：用户的配置选择，只验证交付，不做质量比较。
 
@@ -68,9 +68,9 @@ Hy30 Q3_K_M 对官方 Q4_K_M（同一 83 窗，各 83/83 终分）：
 
 ## 结论与去向
 - 五候选：Hy-MT2 30B-A3B Q3_K_M 质量与速度居首但整卡余量小，Hy-MT2 7B Q8_0 显存余量最大；Tower+ 与两个 TranslateGemma 都明显落后，TranslateGemma 还要多一道映射并有覆盖损失。结论是条件化建议，不是统计显著的排名。
-- Q3／Q4：Q4 慢 4.18 倍而收益不稳定（主要来自部分 offload），用户保留 Q3_K_M，即 [ADR-0004](../../docs/adr/0004-hy-mt2-translation-baseline.md)（已并入 [ADR-0005](../../docs/adr/0005-apex-i-compact-translation-baseline.md) 的历史对照条款）。
-- 四量化：APEX-I-Compact 只有小幅正向自动评分信号（剧集校正区间下界仅略高于零，电影跨零），i1-Q3_K_L 的剧集收益更强但显存余量极小且有 30 分钟慢尾，i1-Q3_K_M 无稳定收益。用户结合质量、四轮完整交付与成本，作出工程选择：采纳 APEX-I-Compact，见 [ADR-0005](../../docs/adr/0005-apex-i-compact-translation-baseline.md)。采样配方 `official30b-cached-v1` 是用户配置选择，不是"采样更优"或"缓存无损"的结论；采纳检查只验证交付（短输出、49/49 层 GPU、整卡峰值约 15.8 GiB）。
-- 流程层面的后续见 [flow-v1-v4](../2026-10-translation-flow-v1-v4/README.md)、[quality-v5](../2026-10-quality-v5/README.md)、[batching-v6-v8](../2026-10-batching-v6-v8/README.md)；H0 的命名与退位见 [ADR-0015](../../docs/adr/0015-two-translation-baselines.md)、[ADR-0018](../../docs/adr/0018-q2-sole-translation-baseline.md)。产品翻译换用 Strata 上的模型，Hy-MT2 不再用于产品。
+- Q3／Q4：Q4 慢 4.18 倍而收益不稳定（主要来自部分 offload），用户保留 Q3_K_M，即原 ADR-0004（现并入 [ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md#h0历史)「H0（历史）」）。
+- 四量化：APEX-I-Compact 只有小幅正向自动评分信号（剧集校正区间下界仅略高于零，电影跨零），i1-Q3_K_L 的剧集收益更强但显存余量极小且有 30 分钟慢尾，i1-Q3_K_M 无稳定收益。用户结合质量、四轮完整交付与成本，作出工程选择：采纳 APEX-I-Compact，见 [ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md#h0历史)「H0（历史）」（原 ADR-0005）。采样配方 `official30b-cached-v1` 是用户配置选择，不是"采样更优"或"缓存无损"的结论；采纳检查只验证交付（短输出、49/49 层 GPU、整卡峰值约 15.8 GiB）。
+- 流程层面的后续见 [flow-v1-v4](../2026-10-translation-flow-v1-v4/README.md)、[quality-v5](../2026-10-quality-v5/README.md)、[batching-v6-v8](../2026-10-batching-v6-v8/README.md)；H0 的命名与退位见 [ADR-0021](../../docs/adr/0021-q3-strata-names-baseline.md#唯一基线-q3)「唯一基线 Q3」（原 ADR-0015、ADR-0018）。产品翻译换用 Strata 上的模型，Hy-MT2 不再用于产品。
 
 ## 教训
 - 旧窗口与新窗口都已参与选型，不能再称未见保留集；换模型、量化、引擎或采样都要建新配方。

@@ -4,7 +4,7 @@
 产物是否当前（`artifacts.is_current`）。本模块只产出期望身份，不比对产物内容、不写文件、不加载模型；
 模型文件 SHA256 由调用方经 `ModelSha` 回调提供（编排用 `workers/gpu.verify_models` 加 size+mtime 缓存）。
 不依赖 torch、ffmpeg 与网络；翻译阶段的 run 目录、身份与"是否需要模型"归翻译子系统（`translate.plan`），
-核对到该阶段时才导入它，并把 `ja.srt` 与 `name-table.json` 的内容交给它（表的注入行进翻译身份，ADR-0019）。
+核对到该阶段时才导入它，并把 `ja.srt` 与 `name-table.json` 的内容交给它（表的注入行进翻译身份，ADR-0029「专名注入」）。
 names 阶段的身份由本模块自己算，只经 `kototoki.names.recipes` 延迟取建表配方 hash。
 
 阶段链（规格 §3）::
@@ -229,7 +229,7 @@ class Target:
 class Plan:
     """`stage` 是第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`names`／`translate`），或终态
     `publish`（无语音，直接发布零条目字幕）。翻译阶段总要经过（run 已完成时只读回译文）；是否已发布不归本模块，
-    编排在扫描时按源文件旁的字幕是否存在判定（ADR-0020）。
+    编排在扫描时按源文件旁的字幕是否存在判定（ADR-0007「发布」）。
     `identities` 是 `probe` 与从 vad 起到 `stage`（含）各阶段的期望身份，键同 `published.json` 的 `sources`；
     采用内嵌字幕的文件没有 vad／asr／align／ja_cues，代之以 `ja_embedded`；
     `translate` 是核对到翻译阶段后翻译子系统给出的计划（run 目录、是否需要模型），此前为 None。

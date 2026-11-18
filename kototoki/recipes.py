@@ -101,7 +101,7 @@ VAD: dict[str, Any] = {
 
 # --- ASR w0（来源 experiments/w0_demo/asr.py；W0 契约 w0-pyannote-current-mms-v1） -------------------------
 # 解码与特征同 W0 基线（`baseline` 不变）；`guard` 是产品在解码之后加的整窗守卫，实现在 kototoki/guard.py：
-# 复读（ADR-0023，来源 experiments/asr_robustness_v15/repeat.py 的 `repeat-strict`）、语速与已知幻听句（ADR-0030）。
+# 复读（ADR-0030「复读 repeat-strict」，来源 experiments/asr_robustness_v15/repeat.py 的 `repeat-strict`）、语速与已知幻听句（ADR-0030）。
 
 W0: dict[str, Any] = {
     "id": "w0-faster-whisper-large-v3-guard-v3",
@@ -126,7 +126,7 @@ W0: dict[str, Any] = {
         "initial_prompt": None, "without_timestamps": True, "prefix": None, "hotwords": None,
         "max_length": "model.max_length",
     },
-    # 整窗守卫（ADR-0023、ADR-0030）：先复读，再在（折叠后的）文字上看语速与已知幻听句；第一个置空的规则生效。
+    # 整窗守卫（ADR-0030）：先复读，再在（折叠后的）文字上看语速与已知幻听句；第一个置空的规则生效。
     "guard": {
         "normalize": "kototoki.judge.normalize",
         "order": "repeat-strict, then speech-rate, then hallucination-phrase on the possibly collapsed text; "

@@ -153,7 +153,7 @@ class JobCase(unittest.TestCase):
         self.enterContext(mock.patch("kototoki.merge.merge", self._merge))
 
         # 伪建表：属性 patch `names.build_document`，按 `name_entries` 给表，在共享 session 上"请求模型"；没有发布期替换
-        # （ADR-0019）。建表配方 hash 钉成固定值，names 身份的断言不随真实配方变化。
+        # （ADR-0029「专名注入」）。建表配方 hash 钉成固定值，names 身份的断言不随真实配方变化。
         self.name_entries: list[dict] = []          # 伪建表给出的条目；默认空表
         self.names_status: dict[str, str] = {}      # work id → 伪建表终态（failed／too_long）
         self.names_errors: set[str] = set()         # work id：伪 build_document 抛 NamesError
@@ -1043,7 +1043,7 @@ class NamesTests(JobCase):
             self.assertEqual(sources["translate"]["names_sha256"], self.table_sha256(table))
 
     def test_strata_starts_once_in_names_and_stops_after_translate(self) -> None:
-        # ADR-0022：整批一个 Strata session，names 第一部启动，两阶段之间不停，翻译结束才 --stop，之后才放 GPU 锁。
+        # ADR-0029「Strata session」：整批一个 Strata session，names 第一部启动，两阶段之间不停，翻译结束才 --stop，之后才放 GPU 锁。
         self.make_inputs("a.mkv", "b.mkv")
         self.run_job()
         self.assertEqual(len(self.strata_sessions), 1)
@@ -1105,7 +1105,7 @@ class NamesTests(JobCase):
         table = artifacts.read_json(path)
         table["entries"] = [dict(GREETING, forms=[{"ja": "こんにちは", "zh": "嗨"}]), TOKYO]  # 用户校对条目
         artifacts.atomic_write_json(path, table)
-        self.final("a.mkv").unlink()  # 要重做就删掉字幕（ADR-0020）
+        self.final("a.mkv").unlink()  # 要重做就删掉字幕（ADR-0007「发布」）
         self.calls.clear()
         self.names_snapshots.clear()
         self.translate_snapshots.clear()

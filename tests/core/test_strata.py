@@ -1,5 +1,5 @@
-"""Strata 启停与共享 session 的伪 CLI 测试（ADR-0019 第 2 点、ADR-0022）：已有 launch 时拒绝且不替别人停、等上一阶段释放显存、
-`--no-tui --model iq3_s` 启动、等唯一一个 ready、按 ADR-0017 核对身份（版本／run config／`/v1/models`／`/v1/status`），不符即停并拒绝；未就绪、
+"""Strata 启停与共享 session 的伪 CLI 测试（ADR-0029「Strata session」）：已有 launch 时拒绝且不替别人停、等上一阶段释放显存、
+`--no-tui --model iq3_s` 启动、等唯一一个 ready、按 ADR-0021「Q3 服务与运行顺序」核对身份（版本／run config／`/v1/models`／`/v1/status`），不符即停并拒绝；未就绪、
 启动失败、被中断都执行 `--stop`；退出核实 `--status` 为空与显存释放，核实失败只记 ERROR、不抛出。共享 `Session`：首次才启动、
 两阶段复用、`stop` 后再起为新 session、启动失败整批累计 `MAX_START_FAILURES` 次或被拒即 `unavailable`。不调用真实 `strata`。"""
 
@@ -516,7 +516,7 @@ class SessionTests(unittest.TestCase):
         session.stop()
 
     def test_old_translate_strata_path_is_gone(self) -> None:
-        # ADR-0022：再导出模块已删除，研究侧改为直接导入 kototoki.strata
+        # ADR-0029「Strata session」：再导出模块已删除，研究侧改为直接导入 kototoki.strata
         with self.assertRaises(ImportError):
             importlib.import_module("kototoki.translate.strata")
 

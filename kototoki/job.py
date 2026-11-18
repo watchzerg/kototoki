@@ -7,7 +7,7 @@
       此后直接进 names，不经 vad／asr／align／ja-cues，ADR-0024）
     → vad → asr → align（各一个子进程 worker，`--jobs` 文件 + 退出码）
     → ja-cues（进程内）
-    → names 与 translate 共用一个 Strata session（`kototoki.strata.Session`，编排持有，ADR-0022）：第一次真正需要模型时
+    → names 与 translate 共用一个 Strata session（`kototoki.strata.Session`，编排持有，ADR-0029「Strata session」）：第一次真正需要模型时
       才启动（可能在 names，也可能在 translate），两阶段之间不停，整批结束、出错或被中断都 `strata launch --stop`
     → names（进程内；有非零条目的 `ja.srt` 要建表时才取 GPU 锁，零条目文件不碰 session）
     → translate（进程内；翻译子系统的计划说要模型时才取 GPU 锁，不需要模型的文件不碰 session）
@@ -21,7 +21,7 @@
 `strata`、`names`、`translate`、`merge` 以普通导入使用
 （都只依赖标准库层面的产品代码、不导入 `plan` 与 `job`）。
 
-工作根 `<work_dir>/<目标目录键>/`（`artifacts.work_root`，ADR-0020）。锁：启动即取工作根下的 `lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
+工作根 `<work_dir>/<目标目录键>/`（`artifacts.work_root`，ADR-0007「工作目录」）。锁：启动即取工作根下的 `lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
 锁文件记录编排器、当前 worker 与 Strata 服务的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
 锁、Job Object 与进程身份是基础层 `kototoki/procs.py` 的进程原语（复制自 `experiments/translation_v3/procs.py`，不导入）。
 
@@ -676,7 +676,7 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, untr
     """双语字幕写一份到工作目录 `publish/`（副本）→ 原子写到源文件旁 → `record_published`（审计）；成功后删 failure.json。
 
     源文件旁那份用 `write_srt` 原子写：临时文件建在目标目录内再替换，工作目录与输入不在同一卷时也不会跨卷移动。
-    审计记录只在写成功之后写。运行期间源文件旁出现了同名字幕（用户或别的工具写的）时不覆盖，按"已存在"跳过（ADR-0020）。
+    审计记录只在写成功之后写。运行期间源文件旁出现了同名字幕（用户或别的工具写的）时不覆盖，按"已存在"跳过（ADR-0007「发布」）。
     """
     if video.final.exists():
         ctx.summary.existing.append(video.relative)
@@ -748,7 +748,7 @@ def _run(ctx: _Context) -> None:
     claimed: dict[str, str] = {}  # 双语字幕路径（按平台大小写规则）→ 先占用它的相对路径
     for rel, path in stable:
         final = artifacts.final_srt_path(input_dir, rel)
-        if final.exists():  # 只看文件名，不论是否本项目生成（ADR-0020）
+        if final.exists():  # 只看文件名，不论是否本项目生成（ADR-0007「发布」）
             summary.existing.append(rel)
             logger.info(f"[scan] {rel}: {final.name} exists, skipped")
             continue

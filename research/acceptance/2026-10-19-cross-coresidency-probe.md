@@ -4,7 +4,7 @@
 2026-10-19，约 23 分钟（用户授权的 GPU 作业）。
 
 ## 对象
-[ADR-0012](../../docs/adr/0012-cross-asr-judge.md) 的 `cross` 引擎设计假设：产品 Whisper 与 Qwen3-ASR 能否在同一进程内常驻，并满足"整卡峰值加 1 GB 余量 ≤ 13.5 GB"的共驻判据；不满足则回退为三段式。
+[ADR-0003「产品 STT 引擎」](../../docs/adr/0003-new-pyannote-baselines.md#产品-stt-引擎)（原 ADR-0012）的 `cross` 引擎设计假设：产品 Whisper 与 Qwen3-ASR 能否在同一进程内常驻，并满足"整卡峰值加 1 GB 余量 ≤ 13.5 GB"的共驻判据；不满足则回退为三段式。
 
 ## 环境与版本
 RTX 5080 16 GB（WDDM）；Python 3.13、torch 2.11.0+cu128（cuDNN 9.19）、ctranslate2 4.8.3、faster-whisper 1.2.1、transformers 5.20.1。模型为产品 `WhisperAsr`（large-v3，CT2 FP16）与 `QwenAsr`（`Qwen/Qwen3-ASR-1.7B-hf`，BF16、SDPA），加载前按产品清单逐文件核对 13 个模型文件。不加载 MMS，不调用产品入口。运行前核对无其他 GPU 进程，运行中持有 GPU 锁。
@@ -22,4 +22,4 @@ RTX 5080 16 GB（WDDM）；Python 3.13、torch 2.11.0+cu128（cuDNN 9.19）、ct
 - 释放 Qwen 后整卡回到约 5.8 GB，可近似三段式回退里"只有 Whisper"阶段。
 
 ## 结论
-判定共驻，三段式回退不需要（回退未实测）。ADR-0012 的共驻判据成立。未覆盖：产品 worker 路径（见 [T6 产品验收](2026-10-19-cross-asr-acceptance.md)）、重复性与桌面占用变化、CER 与听音核对。
+判定共驻，三段式回退不需要（回退未实测）。ADR-0003「产品 STT 引擎」的共驻判据成立。未覆盖：产品 worker 路径（见 [T6 产品验收](2026-10-19-cross-asr-acceptance.md)）、重复性与桌面占用变化、CER 与听音核对。

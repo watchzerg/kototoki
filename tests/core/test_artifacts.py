@@ -223,7 +223,7 @@ class ArtifactTests(TempCase):
 
     def test_name_artifacts_are_named_and_the_table_is_listed_as_completed(self) -> None:
         self.assertEqual(a.NAME_TABLE, "name-table.json")
-        self.assertFalse(hasattr(a, "NAMES_APPLY"))  # ADR-0019：发布时替换已删除
+        self.assertFalse(hasattr(a, "NAMES_APPLY"))  # 发布时替换已删除（原 ADR-0019，现见 ADR-0028「表的使用与校对」）
         self.assertIn(a.NAME_TABLE, a.STAGE_ARTIFACTS)
         a.write_artifact(self.root / a.NAME_TABLE, self.identity(), {"entries": []})
         a.write_failure(self.root, "names", RuntimeError("boom"))

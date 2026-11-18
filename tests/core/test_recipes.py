@@ -63,8 +63,8 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(len({recipes.recipe_hash(r) for r in every}), 7)
 
     def test_pinned_asr_recipe_hashes(self) -> None:
-        # 钉住 hash：改动任一值即得到新 hash 并使已有产物失效。W0 自 ADR-0023 起带 guard 块，ADR-0030 加语速与
-        # 幻听句两条规则并换 id；CROSS 嵌套 W0 而随之改变；X0 不变。
+        # 钉住 hash：改动任一值即得到新 hash 并使已有产物失效。W0 自 ADR-0030 起带 guard 块（复读、语速与
+        # 幻听句规则，换 id）；CROSS 嵌套 W0 而随之改变；X0 不变。
         self.assertEqual(recipes.W0["id"], "w0-faster-whisper-large-v3-guard-v3")
         self.assertEqual(recipes.W0["baseline"], "w0-pyannote-current-mms-v1")  # 解码与特征仍是 W0 基线
         self.assertEqual(recipes.recipe_hash(recipes.W0),

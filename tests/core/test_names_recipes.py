@@ -1,9 +1,9 @@
 """专名建表配方 `q3-names-v3` 的身份钉子：提示、schema 与整份配方的 sha256 写死在这里，并与基线 Q3 的
-`names-strata-v4` 对照（ADR-0021、ADR-0022、ADR-0026、ADR-0028）。
+`names-strata-v4` 对照（ADR-0021、ADR-0028）。
 
 `SYSTEM_PROMPT_SHA256`、`RESPONSE_SCHEMA_SHA256` 取自 2026-10-19 的 `archive/2026-11-18-pre-research-restructure:experiments/name_consistency/build_table.py`
-（冻结的研究期实现，ADR-0013）。`Q3_BUILD_HASH` 是 ADR-0021 记录的 `names-strata-v4` hash：用产品配方的四块
-（`build`、`model`、`runtime`、`request`），把 ADR-0026 放宽的三项（`V4_LIMITS`）换回 v4 的值、去掉 ADR-0028 新增的
+（冻结的研究期实现，ADR-0028「研究线关闭」）。`Q3_BUILD_HASH` 是 ADR-0021 记录的 `names-strata-v4` hash：用产品配方的四块
+（`build`、`model`、`runtime`、`request`），把 ADR-0028「输出上限与提示预算」放宽的三项（`V4_LIMITS`）换回 v4 的值、去掉 ADR-0028 新增的
 `retry_on`（`v4_build_block`），再加上研究侧的两个说明字段拼回 v13 `s1_recipe("v4")` 的形状，hash 必须相等，这证明
 产品建表块与基线只差这四项。改动提示、schema 或任何请求参数须出新配方名，并同时更新 hash 钉子。
 """
@@ -22,7 +22,7 @@ from kototoki.translate import recipes as translate_recipes
 SYSTEM_PROMPT_SHA256 = "d8e16c0441b611129ba2bcab11a9a41ae7afe53bf1632d56ae9740b7f905dd78"
 RESPONSE_SCHEMA_SHA256 = "3004d26cef032d99f1088fcae1fc0e093b689b373490e633f6c6dcfad23117ff"
 BUILD_HASH = "d57ed0c6715f63fcb32bb034db03decf02650215af62c13ba95ae7bcdbcf33d7"  # q3-names-v2 为 2dbd324e…，v1 为 d3317926…
-# `names-strata-v4` 的三项（ADR-0021）；产品自 ADR-0026 起为 16384、49152、32256。
+# `names-strata-v4` 的三项（ADR-0021）；产品自 ADR-0028「输出上限与提示预算」起为 16384、49152、32256。
 V4_LIMITS = {"max_tokens": 8192, "context": 24576, "prompt_budget": 15872}
 # ADR-0028 起产品建表块独有、`names-strata-v4` 没有的键（v4 把空表当不合格重试）。
 PRODUCT_ONLY_KEYS = ("retry_on",)
@@ -76,7 +76,7 @@ class BuildRecipeTests(unittest.TestCase):
     def test_frozen_request_values(self):
         build = recipes.BUILD["build"]
         self.assertEqual((build["max_tokens"], build["reasoning"], build["context"]), (16384, "off", 49152))
-        self.assertEqual(build["prompt_budget"], 49152 - 16384 - 512)  # 32256（ADR-0026）
+        self.assertEqual(build["prompt_budget"], 49152 - 16384 - 512)  # 32256（ADR-0028「输出上限与提示预算」）
         self.assertEqual((build["attempts"], build["seed_step"], build["retry_on"]), (5, 1, "malformed"))
         self.assertNotIn("model_asset", build)
         self.assertEqual(recipes.BUILD["request"],

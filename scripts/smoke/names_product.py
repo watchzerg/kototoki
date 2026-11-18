@@ -1,12 +1,12 @@
 """真实模型验证：产品专名一致性模块 `kototoki.names` 在产品自动启停的 Strata 上建一张表（占 GPU、加载
-Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）。这是 ADR-0022 要求的 Strata 建表首用 smoke。
+Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）。这是 ADR-0029「Strata session」要求的 Strata 建表首用 smoke。
 
 入口：`just smoke names_product`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
 `python scripts/smoke/names_product.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。
 与 `translate_product` 同形，走产品代码：`plan.names_identity` → 共享 `strata.Session`（`StrataServer`：`--status` 为空才
-启动、`strata launch --no-tui --model iq3_s`、ADR-0017 接入检查、专家区检查、结束 `--stop` 并核实显存释放）→
+启动、`strata launch --no-tui --model iq3_s`、ADR-0021「Q3 服务与运行顺序」接入检查、专家区检查、结束 `--stop` 并核实显存释放）→
 `names.build_document`（`/v1/messages/count_tokens` 预算检查、`/v1/chat/completions` 建表，配方 `q3-names-v1`，最多 5 次
-尝试）→ `artifacts.write_artifact` → 按 Q2 规则取注入行（`translate.recipes.name_rows`，ADR-0019：产品只注入、不替换）；
+尝试）→ `artifacts.write_artifact` → 按 Q2 规则取注入行（`translate.recipes.name_rows`，ADR-0029「专名注入」：产品只注入、不替换）；
 seed 取 `config.load` 的默认值。开始前若已有 Strata launch 在服务，产品拒绝运行，本脚本照实记为失败。
 
 输入是下面内置的 12 条合成日语短句（不含任何真实字幕）：同一人名エミリア的两种写法（正确写法与一处 ASR 式误写エミリヤ）、

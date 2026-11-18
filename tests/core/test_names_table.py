@@ -601,7 +601,7 @@ class BuildTableTests(unittest.TestCase):
         self.assertEqual(result.payload["schema"], "name-table-v2")
 
     def test_budget_is_context_minus_output_minus_guard(self):
-        self.assertEqual(bt.PROMPT_BUDGET, 49152 - 16384 - 512)  # 32256（ADR-0026；此前 15872）
+        self.assertEqual(bt.PROMPT_BUDGET, 49152 - 16384 - 512)  # 32256（ADR-0028「输出上限与提示预算」；此前 15872）
 
 
 

@@ -1,6 +1,6 @@
-"""媒体：ffprobe 选音轨、从输入容器派生 16 kHz 单声道 PCM16 WAV（规格 §2）；不流复制原始音轨（ADR-0027）。
+"""媒体：ffprobe 选音轨、从输入容器派生 16 kHz 单声道 PCM16 WAV（规格 §2）；不流复制原始音轨（ADR-0007「输入范围」）。
 
-输入可以是视频或音频（ADR-0020）：除封面图外没有视频流即为音频，时长校验改对所选音轨的时长。
+输入可以是视频或音频（ADR-0007「输入范围」）：除封面图外没有视频流即为音频，时长校验改对所选音轨的时长。
 
 本模块是唯一定义时间轴零点的地方：派生 WAV 用 `aresample=async=1:first_pts=0` 补齐起始静音与
 中途间隙，sample 0 即视频 0 秒，`offset_s` 恒为 0；音轨与容器的 `start_time` 只作诊断。
@@ -460,7 +460,7 @@ def error_lines(diagnostics: Mapping[str, Any]) -> int:
 def check_duration(decoded_s: float, reference_s: float, *, has_video: bool) -> list[str]:
     """解码与参照时长（视频流或音频输入的所选音轨）偏差超过容差时：视频输入短于参照判失败（`MediaError`，
     字幕会对不上画面）；音频输入短于参照只返回告警——没有画面要对齐，且 VBR MP3 缺 Xing 头时 ffprobe 的
-    时长是按码率估的、不可信（ADR-0020）。长于参照返回告警；视频输入超过参照 `MAX_OVERLONG_RATIO` 倍判失败
+    时长是按码率估的、不可信（ADR-0007「输入范围」）。长于参照返回告警；视频输入超过参照 `MAX_OVERLONG_RATIO` 倍判失败
     （时间戳严重断裂，`aresample=async` 补出数小时静音）。"""
     tolerance = recipes.MEDIA["duration_tolerance_s"]
     if reference_s - decoded_s > tolerance:

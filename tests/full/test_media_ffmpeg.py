@@ -246,7 +246,7 @@ class DurationCheckTests(MediaFfmpegCase):
 
 
 class VideoCodecTests(MediaFfmpegCase):
-    """视频输入的各种音频编码都只派生 WAV，不留原始音轨副本（ADR-0027）。"""
+    """视频输入的各种音频编码都只派生 WAV，不留原始音轨副本（ADR-0007「输入范围」）。"""
 
     def test_codecs_decode_without_audio_copy(self) -> None:
         cases = [("flac", "mkv"), ("pcm_s16le", "mkv"), ("pcm_s16be", "mov"), ("pcm_s24be", "mov")]
@@ -264,7 +264,7 @@ class VideoCodecTests(MediaFfmpegCase):
 
 
 class AudioOnlyInputTests(MediaFfmpegCase):
-    """音频输入（ADR-0020）：WAV 照常派生，时长参照取所选音轨。"""
+    """音频输入（ADR-0007「输入范围」）：WAV 照常派生，时长参照取所选音轨。"""
 
     def test_flac_input_derives_correct_wav(self) -> None:
         path = self.media_dir / "音声.flac"

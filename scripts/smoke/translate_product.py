@@ -1,9 +1,9 @@
 """真实模型验证：产品翻译子系统 `kototoki.translate` 在产品自动启停的 Strata 上跑几批（占 GPU、加载
-Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）。这是 ADR-0017／ADR-0019 要求的 Q2 首用 smoke。
+Qwen3.8-Flash-Next，每次运行前须经用户批准；不属于任何 gate）。这是 ADR-0021「Q3 服务与运行顺序」／ADR-0029 要求的 Q2 首用 smoke。
 
 入口：`just smoke translate_product`（`scripts/smoke/run_all.py` 持有 `.local/gpu.lock` 并以
 `python scripts/smoke/translate_product.py --out <dir>` 启动本脚本；锁不存在时拒绝运行）。走产品代码：
-`translate.plan` → 共享 `strata.Session`（`StrataServer`：`--status` 为空才启动、`strata launch --no-tui`、ADR-0017 接入
+`translate.plan` → 共享 `strata.Session`（`StrataServer`：`--status` 为空才启动、`strata launch --no-tui`、ADR-0021「Q3 服务与运行顺序」接入
 检查、结束 `--stop` 并核实显存释放）→ `translate.translate_document`，配方为产品配方 `q3-translate-v1`，seed 取
 `config.load` 的默认值。开始前若已有 Strata launch 在服务，产品拒绝运行，本脚本照实记为失败。
 

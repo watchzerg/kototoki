@@ -22,6 +22,6 @@ Blocked by: —
 
 ## 分诊
 
-先对照当前代码确认问题是否还在，再决定修、只补文档，还是 wontfix。 报告针对 llama-server 时期的翻译；产品翻译与建表已改在 Strata 上（ADR-0019、ADR-0022），先确认这一条是否仍适用，不适用就 wontfix。需要核实 Strata 的身份常量是否已进翻译身份。
+先对照当前代码确认问题是否还在，再决定修、只补文档，还是 wontfix。 报告针对 llama-server 时期的翻译；产品翻译与建表已改在 Strata 上（ADR-0029、ADR-0028），先确认这一条是否仍适用，不适用就 wontfix。需要核实 Strata 的身份常量是否已进翻译身份。
 
 ## Comments

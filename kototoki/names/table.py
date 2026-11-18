@@ -1,10 +1,10 @@
 """专名表建表：整份日文 SRT 一次送入 Strata 上的 Qwen3.8-Flash-Next，取回 `name-table-v2` 表并归一（设计见
-ADR-0014、ADR-0022 与 `docs/architecture/modules/name-consistency.md`）。
+ADR-0028 与 `docs/architecture/modules/name-consistency.md`）。
 
-移植自 `experiments/name_consistency/build_table.py`（历史实现只复制，不导入），配置照抄 ADR-0013 冻结的最佳
+移植自 `experiments/name_consistency/build_table.py`（历史实现只复制，不导入），配置照抄 ADR-0028「研究线关闭」冻结的最佳
 已知配置：提示 v5、no-think 官方采样、程序兜底全开（zh 形状、称呼词黑名单、evidence<3 的 person 降级、日文写法
-形状），不调参；请求参数按基线 Q3 的 `names-strata-v4`（ADR-0021），只有输出上限与提示预算按 ADR-0026 放宽：
-`max_tokens` 16384、上下文按 49152 计（提示预算 32256），最多 5 次尝试；与 Q3 不同，空表不触发重试（ADR-0028）。`name-table-v2` 的 JSON schema 只是解析器校验的形状，不再随请求发出（Strata 的 `response_format` 会改写提示，
+形状），不调参；请求参数按基线 Q3 的 `names-strata-v4`（ADR-0021），只有输出上限与提示预算按 ADR-0028「输出上限与提示预算」放宽：
+`max_tokens` 16384、上下文按 49152 计（提示预算 32256），最多 5 次尝试；与 Q3 不同，空表不触发重试（ADR-0028「重试与空表」）。`name-table-v2` 的 JSON schema 只是解析器校验的形状，不再随请求发出（Strata 的 `response_format` 会改写提示，
 v13 §4.0）；它的 sha256 仍是配方身份的一部分。`SYSTEM_PROMPT` 与研究脚本逐字节相同，`names.recipes` 的 sha256 钉子守护。
 
 本模块不碰服务、不写文件、不打含内容的日志：对 Strata 的调用只经两个注入的回调 `chat(body) -> dict`
@@ -65,11 +65,11 @@ _JA_HIRAGANA_SUFFIXES = ("さん", "くん", "ちゃん", "さま", "たん")
 _DE_NEXT_TO_KATAKANA = re.compile("的[ァ-ヺー]|[ァ-ヺー]的")
 
 
-# 请求与预算常量（配方 `names.recipes.BUILD` 引用）。ADR-0026 起与 Q3 的 `names-strata-v4`（8192、24576、预算 15872）
+# 请求与预算常量（配方 `names.recipes.BUILD` 引用）。ADR-0028「输出上限与提示预算」起与 Q3 的 `names-strata-v4`（8192、24576、预算 15872）
 # 只差两项：输出上限 16384；上下文按 49152 计（只用于算预算、不发给服务端，Strata 实际上下文 131072），减输出上限与
 # 512 余量得到提示预算 32256。`PROMPT_BUDGET` 是 system+user 两段文本的 token 总上限；512 余量留给 chat 模板与控制
 # token。最多 5 次尝试，seed 依次 +1，取第一张合格的表（ADR-0008：不挑选）。只有格式不合格（截断、非 JSON、
-# `entries` 不是列表）才重试；空表是合法结果（ADR-0028，`RETRY_ON` 进配方）。
+# `entries` 不是列表）才重试；空表是合法结果（ADR-0028「重试与空表」，`RETRY_ON` 进配方）。
 MAX_TOKENS = 16384
 CONTEXT_SIZE = 49152
 PROMPT_GUARD_TOKENS = 512
@@ -297,7 +297,7 @@ def parse_reply(reply: str, cue_count: int, dropped: list[dict[str, Any]] | None
                 dropped_ja_shape: list[dict[str, Any]] | None = None
                 ) -> tuple[str | None, list[dict[str, Any]]]:
     """解析并校验回复，返回 (work_guess, entries)。只有格式不合格（非 JSON、顶层不是对象、`entries` 不是列表）才抛
-    ValueError；`entries` 为空列表、或条目在归一中全被丢弃，都是合法结果，返回空的 entries（ADR-0028：格式不合格
+    ValueError；`entries` 为空列表、或条目在归一中全被丢弃，都是合法结果，返回空的 entries（ADR-0028「重试与空表」：格式不合格
     才重试，内容不挑）。缺关键字段的条目丢弃。
     因 zh 形状不合被丢的实体／写法／变体追加进 `dropped`（若给出）；日文写法是称呼词（HONORIFIC_JA）而被丢的
     写法追加进 `dropped_honorific`，丢光写法的实体整条丢弃。日文写法先过形状过滤（`_clean_ja`）再查称呼词，
@@ -393,7 +393,7 @@ def _payload(seed: int, attempt: int, guess: str | None, entries: list[dict[str,
 
 def _request_body(messages: list[dict[str, str]], seed: int) -> dict[str, Any]:
     """no-think 请求体，形状与研究侧 v13 `strata_body(table._request_body(...))` 相同（27B 时期的请求体去掉
-    `response_format`、末尾加 `model`）；只有 `max_tokens` 不同：取 `MAX_TOKENS`（ADR-0026 起 16384，v13 为 8192）。"""
+    `response_format`、末尾加 `model`）；只有 `max_tokens` 不同：取 `MAX_TOKENS`（ADR-0028「输出上限与提示预算」起 16384，v13 为 8192）。"""
     return {"messages": messages, **SAMPLING, "seed": seed, "max_tokens": MAX_TOKENS,
             "chat_template_kwargs": {"enable_thinking": False}, "stream": False, "model": MODEL}
 

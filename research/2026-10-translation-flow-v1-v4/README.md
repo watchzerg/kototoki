@@ -43,10 +43,10 @@ v1 2026-10-07；v2 2026-10-08 起、2026-10-10 中止；v3 2026-10-10；v4 2026-
 v4 回溯：v3 的作品聚类 bootstrap 把 SE 低估约 2.5 倍（0.018 对作品内窗口重抽 0.044）；v3 的 15 个筛选候选 |z| 均值 0.83，与全零效应期望 0.80 一致，筛选好、确认差主要是赢家诅咒加低估的噪声。
 
 ## 结论与去向
-- 基线始终是 C0（`official30b-cached-v1`）；v3 没有配方通过确认，`b10-joint` 在确认集未复现。用户出于工程理由（更快、请求数减半、整片完整交付）采纳 `b10-joint` 为流程基线，即原 [ADR-0006](../../docs/adr/0006-b10-joint-translation-flow-baseline.md)（已并入 [ADR-0010](../../docs/adr/0010-dp10-cut-translation-flow-baseline.md)，该 ADR 记录了 `b10-joint` 的来源与 `dp10-cut` 的后继）。
+- 基线始终是 C0（`official30b-cached-v1`）；v3 没有配方通过确认，`b10-joint` 在确认集未复现。用户出于工程理由（更快、请求数减半、整片完整交付）采纳 `b10-joint` 为流程基线，即原 ADR-0006（现并入 [ADR-0021「历史流程与产品配方」](../../docs/adr/0021-q3-strata-names-baseline.md#历史流程与产品配方)，该节记录了 `b10-joint` 的来源与 `dp10-cut` 的后继）。
 - v4 `mbr8c` 通过确认但约 6 倍墙钟，且属"翻译多次再挑选"：用户放弃，规则见 [ADR-0008](../../docs/adr/0008-no-multi-translation-selection.md)（v5 的 `mbr8s` 同一结论，见 [quality-v5](../2026-10-quality-v5/README.md)）。`t03` 不采纳。
 - 不建议再投入：有界空白 grammar（空白循环约每 1400 个场景 run 出现 1 次，重试即可）、场景术语表、选择性审校（墙钟 +64%、critical 为 C0 的 4 倍）、只调邻文、b20 以上批次、token 500 级分批。
-- 后继：批次切法见 [batching-v6-v8](../2026-10-batching-v6-v8/README.md)，产品翻译配方沿革见 [ADR-0010](../../docs/adr/0010-dp10-cut-translation-flow-baseline.md)。
+- 后继：批次切法见 [batching-v6-v8](../2026-10-batching-v6-v8/README.md)，产品翻译配方沿革见 [ADR-0021「历史流程与产品配方」](../../docs/adr/0021-q3-strata-names-baseline.md#历史流程与产品配方)（原 ADR-0010）。
 - 确认集状态：v2 的 48 窗确认集从未开封（v2 中止）；v3、v4 的确认集均已开封，不得再用于确认，新的确认须用全新隔离的集合（供 `research/INDEX.md` 研究方法约束引用）。
 
 ## 教训

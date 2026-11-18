@@ -39,7 +39,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 要点：
 
-- 代码里的模型 SHA 常量保留，用于运行时自校验（`kototoki/plan.py` 的逐文件表）；core 测试断言"代码常量 == 清单"，并核对 `kototoki/config.py` 默认路径里的 ffmpeg 版本号，防止三处漂移。专名建表与翻译的模型由 Strata 管理，不在清单里（[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0022](../adr/0022-product-names-on-strata.md)）。
+- 代码里的模型 SHA 常量保留，用于运行时自校验（`kototoki/plan.py` 的逐文件表）；core 测试断言"代码常量 == 清单"，并核对 `kototoki/config.py` 默认路径里的 ffmpeg 版本号，防止三处漂移。专名建表与翻译的模型由 Strata 管理，不在清单里（[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）。
 - 清单是模型与二进制身份的唯一权威；其他文档链接清单，不再重列 SHA 表。
 - 执行逻辑放 `scripts/assets.py`（只用标准库），recipe 保持薄。
 
@@ -77,18 +77,18 @@ ffmpeg 的两种变化：
 
 ## CUDA 版本说明
 
-[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 定下的 CUDA 12.8 锁定的是 **Python 进程**：CTranslate2 只有 CUDA 12 wheel，而 cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名，同一进程只能加载一份。当时的 llama-server 是独立进程，自带 CUDA 13.4 运行时，不受此约束；llama.cpp 已于 2026-11-18 移出清单（[ADR-0032](../adr/0032-drop-llama-cpp-assets.md)）。[选版规则](technology-stack.md#选版规则)里"CUDA 12 为锚点"只约束同一进程内会冲突的组件；ffmpeg 等独立二进制各自取最新稳定版。
+[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 定下的 CUDA 12.8 锁定的是 **Python 进程**：CTranslate2 只有 CUDA 12 wheel，而 cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名，同一进程只能加载一份。当时的 llama-server 是独立进程，自带 CUDA 13.4 运行时，不受此约束；llama.cpp 已于 2026-11-18 移出清单（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。[选版规则](technology-stack.md#选版规则)里"CUDA 12 为锚点"只约束同一进程内会冲突的组件；ffmpeg 等独立二进制各自取最新稳定版。
 
 ## 当前实现
 
 - `assets.toml` 登记：
   - `tools.ffmpeg`（分支 `9.0`，只装 `bin/ffmpeg.exe`、`bin/ffprobe.exe`）。
   - 产品用到的五个模型目录：`pyannote-segmentation-3.0`（门控）、`faster-whisper-large-v3`、`w0-assets`（只含 `mel_filters.npz`，来自 whisperx 3.8.6 包内 assets，没有 HF 来源，`fetch-models` 不负责）、`qwen3-asr-1.7b-hf`、`mms-1b-all`。
-  - `hy-mt2-30b-a3b-apex-i-compact` 的条目已于 2026-11-08 删除（产品翻译不再用它，[ADR-0019](../adr/0019-product-translation-q2.md)）；研究侧 H0 仍用 `.local/models/translation/` 下已有的文件，路径由各 demo 自己管理，不在清单里。
-- llama.cpp 工具与 `qwen3.8-27b-ud-iq3_s` 模型条目已于 2026-11-18 删除（[ADR-0032](../adr/0032-drop-llama-cpp-assets.md)）。
+  - `hy-mt2-30b-a3b-apex-i-compact` 的条目已于 2026-11-08 删除（产品翻译不再用它，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）；研究侧 H0 仍用 `.local/models/translation/` 下已有的文件，路径由各 demo 自己管理，不在清单里。
+- llama.cpp 工具与 `qwen3.8-27b-ud-iq3_s` 模型条目已于 2026-11-18 删除（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。
 - `scripts/assets.py`：`install-tools`、`fetch-models`、`verify` 三个子命令；`install-tools` 查 GitHub releases 解析锁定分支的最新构建，压缩包只支持 zip，下载先写 `.partial` 并边下边算 SHA256，一致才改名；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
 - 测试（core）：`tests/core/test_assets_manifest.py` 钉住代码常量与默认路径分支号 == 清单；`tests/core/test_assets_script.py` 用本地 `file://` URL 与临时 zip 覆盖 BtbN release 解析、缺分支与缺 digest 拒绝、下载、`strip`、只解清单文件、`identity.json`、分支内新构建替换、压缩包缓存复用、非 zip 拒绝、SHA 不符清理、门控令牌、无来源模型与离线核对。
-- **外部前置：Strata**（产品翻译，[ADR-0019](../adr/0019-product-translation-q2.md)、[ADR-0017](../adr/0017-q2-strata-default-launch-baseline.md)）：Strata 0.2.12／engine build 0.1.58 安装在 `%LOCALAPPDATA%\Strata`（`terminal\current\bin\strata.cmd`），翻译模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录；两者都**不在 `assets.toml` 里**，`install`／`fetch-models`／`verify-assets` 不管它们，由用户安装与维护。产品启动翻译时按 ADR-0017 核对版本、端口 8080、run config 与上下文，不符即拒绝运行；升级 Strata 或换模型等于换翻译身份，须新决定。运行前须没有别的 Strata launch 在服务，且空闲显存 ≥14000 MiB。
+- **外部前置：Strata**（产品翻译，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）：Strata 0.2.12／engine build 0.1.58 安装在 `%LOCALAPPDATA%\Strata`（`terminal\current\bin\strata.cmd`），翻译模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录；两者都**不在 `assets.toml` 里**，`install`／`fetch-models`／`verify-assets` 不管它们，由用户安装与维护。产品启动翻译时按 ADR-0021「Q3 服务与运行顺序」核对版本、端口 8080、run config 与上下文，不符即拒绝运行；升级 Strata 或换模型等于换翻译身份，须新决定。运行前须没有别的 Strata launch 在服务，且空闲显存 ≥14000 MiB。
 - 真实模型验证（Q2 首用 smoke）`just smoke translate_product`（`scripts/smoke/translate_product.py`）走 Strata 在产品翻译代码上跑合成句，是翻译的分钟级入口。2026-11-08 首用 smoke（`.local/smoke/20261108T104209Z/`）**通过**：合成 12 条、2 包，首次尝试全部接受（格式失败 0、交付失败 0、回退 0），`reasoning_content` 全空，推理自救／非有限 logits／重复截停 0，high 条目注入 1 行生效；Strata 加载 89 s，探测核对 0.2.12／build 0.1.58、DFlash2、kv int8、spec 4；整机显存峰值 16.1 GB、内存峰值 42.9 GiB；`--stop` 后 status 为空、空闲显存 14884 MiB。**每包约 25–31 s（均值 27.8 s，输出约 130 token）**，远慢于 v12 F1（MTP、32k）的约 3.2 s；冷启动后只有 2 包，原因未查明。此前两次失败已修：子进程里 `strata launch --no-tui` 不点名模型以退出码 2 拒绝（改为 `--model iq3_s`）；研究侧 probe 按参数判断起草方式，把默认启动误认成 MTP（改读服务日志）。
 - `scripts/upgrade.py`（`just upgrade`／`upgrade-check`）：规则见上文[升级](#升级)。测试（core）`tests/core/test_upgrade_script.py` 覆盖主版本判定、去钉／锚点、uv 输出解析、清单块重写往返、默认路径切换与无影片时的 WAV 对照，不碰网络与 uv。2026-10-19 `just upgrade-check` 实测三项均为最新（跳过 pillow 12→13）；实际升级路径（非 `--check`）尚未端到端运行过，其步骤与同日的手动升级一致。
 - 2026-10-19 `just verify-assets` 在本机全部通过。2026-10-19 升级时压缩包是手动 curl 到 `.local/downloads/<name>/` 的，`install-tools` 只走了缓存复用与解压，`scripts/assets.py` 自身的真实下载路径（GitHub、HF）仍未运行过，只由本地伪 URL 覆盖。

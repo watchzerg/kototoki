@@ -1,7 +1,7 @@
 """翻译输入与分批：一部影片的 `ja.srt` 即一个场景（`Scene`／`Cue` 复制自 `experiments/translation_v3/data.py`），
 前后带只读邻文（复制自 `translation_v3/batching.py`，只留 Q2 用到的分支）：
 
-- 切包 gap-pack-v2（`dp10-cut`，ADR-0010）：整个场景用动态规划取总惩罚最低的切法（`gap_pack_cuts`）。停顿取自
+- 切包 gap-pack-v2（`dp10-cut`，ADR-0021「dp10-cut 切包」）：整个场景用动态规划取总惩罚最低的切法（`gap_pack_cuts`）。停顿取自
   `ja.srt` 自身的时间轴（秒），只用于比较长短，不做任何坐标换算。
 - 邻文 `wide-context-v1`（`qwen-wide`）：前后按条数取到场景边，与停顿无关（`neighbours`）。
 

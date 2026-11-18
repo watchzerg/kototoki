@@ -91,7 +91,7 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 | extract 并发数、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳、复读守卫；x0：BF16、greedy、4096；cross：裁判阈值 −1.0、无长度项、打分批上限 16（配方 `CROSS`） |
 | 输入扩展名、音轨语言偏好、是否用内嵌字幕 | MMS FP32、归一化、字符映射；内嵌字幕清洗规则（`EMBEDDED`） |
 | cue 显示规则（`[cues]`） | 翻译采样（0.7／0.8／20）、`dp10-cut` 切包与 `wide-context-v1` 邻文、`qwen-joint-v1` 提示、专名注入规则、模型与 Strata 身份核对、请求重试次数、失败分类、降级策略 |
-| 翻译 `seed`、专名表 `seed` | 建表提示、采样、JSON schema、`max_tokens` 16384、context 49152（提示预算 32256）、5 次尝试与重试条件、归一规则、模型与 Strata 身份（配方 `q3-names-v3`，ADR-0026、ADR-0028）；产物 schema 版本 |
+| 翻译 `seed`、专名表 `seed` | 建表提示、采样、JSON schema、`max_tokens` 16384、context 49152（提示预算 32256）、5 次尝试与重试条件、归一规则、模型与 Strata 身份（配方 `q3-names-v3`，ADR-0028）；产物 schema 版本 |
 
 ## 配置与产物身份
 
@@ -110,4 +110,4 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 
 ## 变更与决策来源
 
-原为技术设计 §10（文档架构整理票据 09，归档 tag 中的 .scratch/docs-architecture/）；该节此前的修订见技术设计历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。键的增删依据：[ADR-0012](../../adr/0012-cross-asr-judge.md)（`cross`）、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)。
+原为技术设计 §10（文档架构整理票据 09，归档 tag 中的 .scratch/docs-architecture/）；该节此前的修订见技术设计历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。键的增删依据：[ADR-0003](../../adr/0003-new-pyannote-baselines.md)（`cross`）、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)。

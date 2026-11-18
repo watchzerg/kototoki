@@ -103,7 +103,7 @@ class RecipeIdentityTests(unittest.TestCase):
 
 
 class Q2ByteIdentityTests(unittest.TestCase):
-    """产品的正常包请求必须与研究侧 Q2 逐字节相同（ADR-0019 第 1 点）。钉值取自 2026-11-11 的研究实现
+    """产品的正常包请求必须与研究侧 Q2 逐字节相同（ADR-0029「请求规则」）。钉值取自 2026-11-11 的研究实现
     （`archive/2026-11-18-pre-research-restructure:experiments/translation_v3/` 的 batching、qwen、strata 与 `scene_batching_v6/v12.py::strata_recipe_data`
     组出的 Q2）。"""
 
@@ -252,7 +252,7 @@ class BatchingTests(unittest.TestCase):
 
 
 class GapPackTests(unittest.TestCase):
-    """gap-pack-v2（ADR-0010）：dp10-cut 的切包规则。"""
+    """gap-pack-v2（ADR-0021「dp10-cut 切包」）：dp10-cut 的切包规则。"""
 
     PACK = R.DP10_CUT_PACK
 

@@ -37,11 +37,11 @@
 | VAD 与分段 | 两路统一用新 Pyannote，比较已结束 | [vad-comparison](2026-10-vad-comparison/README.md) | [ADR-0003](../docs/adr/0003-new-pyannote-baselines.md) |
 | ASR 模型候选 | 换 ASR 模型这条线由用户裁定停止，重开前提是出现新的、许可清楚的日语 ASR 模型 | [asr-candidates](2026-10-asr-candidates/README.md) | [CURRENT·STT](../docs/adr/CURRENT.md#stt-基线与产品-stt) |
 | cue 规则 | 引入 ASR token 边界的方案调研后不实现 | [cue-token-boundary](2026-10-cue-token-boundary/README.md) | [技术设计](../docs/specs/bilingual-subtitle-pipeline.md) |
-| 两路 ASR 交叉合并 | Whisper 交叉打分作可选引擎 `cross` 进产品，默认仍 w0 | [cross-asr-judge](2026-10-cross-asr-judge/README.md) | [ADR-0012](../docs/adr/0012-cross-asr-judge.md) |
-| ASR 稳健性 | v14、v15 已结题，只有整窗复读守卫进产品，后扩展为三条规则 | [asr-robustness-v14-v15](2026-11-asr-robustness-v14-v15/README.md) | [ADR-0023](../docs/adr/0023-asr-repeat-guard.md)、[ADR-0030](../docs/adr/0030-asr-window-plausibility-guard.md) |
-| 专名一致性 | 研究线已结题，重开只由用户明确要求；产品只建表并注入 | [name-consistency](2026-10-name-consistency/README.md)、[strata-v12-v13](2026-11-strata-v12-v13/README.md) | [ADR-0014](../docs/adr/0014-name-consistency-in-product.md)、[ADR-0022](../docs/adr/0022-product-names-on-strata.md) |
-| 翻译模型与量化（H0） | 历史选型；H0 已不是基线 | [translation-model-selection](2026-10-translation-model-selection/README.md) | [ADR-0005](../docs/adr/0005-apex-i-compact-translation-baseline.md) |
-| 翻译流程（H0 线 v1–v8） | 已结题；切包规则沿用到现行基线，"翻译多次再挑选"已放弃，语序重排线已关闭 | [flow-v1-v4](2026-10-translation-flow-v1-v4/README.md)、[quality-v5](2026-10-quality-v5/README.md)、[batching-v6-v8](2026-10-batching-v6-v8/README.md) | [ADR-0010](../docs/adr/0010-dp10-cut-translation-flow-baseline.md)、[ADR-0008](../docs/adr/0008-no-multi-translation-selection.md) |
+| 两路 ASR 交叉合并 | Whisper 交叉打分作可选引擎 `cross` 进产品，默认仍 w0 | [cross-asr-judge](2026-10-cross-asr-judge/README.md) | [ADR-0003](../docs/adr/0003-new-pyannote-baselines.md#产品-stt-引擎) |
+| ASR 稳健性 | v14、v15 已结题，只有整窗复读守卫进产品，后扩展为三条规则 | [asr-robustness-v14-v15](2026-11-asr-robustness-v14-v15/README.md) | [ADR-0030](../docs/adr/0030-asr-window-plausibility-guard.md) |
+| 专名一致性 | 研究线已结题，重开只由用户明确要求；产品只建表并注入 | [name-consistency](2026-10-name-consistency/README.md)、[strata-v12-v13](2026-11-strata-v12-v13/README.md) | [ADR-0028](../docs/adr/0028-names-accept-empty-table.md)、[ADR-0029](../docs/adr/0029-translate-per-cue-resolution.md#strata-session) |
+| 翻译模型与量化（H0） | 历史选型；H0 已不是基线 | [translation-model-selection](2026-10-translation-model-selection/README.md) | [ADR-0021](../docs/adr/0021-q3-strata-names-baseline.md#h0历史) |
+| 翻译流程（H0 线 v1–v8） | 已结题；切包规则沿用到现行基线，"翻译多次再挑选"已放弃，语序重排线已关闭 | [flow-v1-v4](2026-10-translation-flow-v1-v4/README.md)、[quality-v5](2026-10-quality-v5/README.md)、[batching-v6-v8](2026-10-batching-v6-v8/README.md) | [ADR-0021](../docs/adr/0021-q3-strata-names-baseline.md#dp10-cut-切包)、[ADR-0008](../docs/adr/0008-no-multi-translation-selection.md) |
 | 通用模型翻译（Q 线 v9–v13） | 已结题，现行唯一基线是 Q3 | [q-line-v9-v11](2026-10-q-line-v9-v11/README.md)、[strata-v12-v13](2026-11-strata-v12-v13/README.md) | [ADR-0021](../docs/adr/0021-q3-strata-names-baseline.md) |
 
 ## 轮次登记
@@ -79,5 +79,5 @@
 | [2026-10-19](acceptance/2026-10-19-cross-asr-acceptance.md) | `cross` 引擎 | 差 0.05 pp 未达线，用户仍采纳 |
 | [2026-10-19](acceptance/2026-10-19-cross-coresidency-probe.md) | Whisper 与 Qwen 同进程共驻 | 通过 |
 | [2026-10-19](acceptance/2026-10-19-ffmpeg-9.0-upgrade.md) | ffmpeg 9.0 升级 | 通过，派生 PCM 逐字节一致 |
-| [2026-10-20](acceptance/2026-10-20-name-consistency-product.md) | 产品专名一致性 | 通过（替换后由 ADR-0019 移出） |
+| [2026-10-20](acceptance/2026-10-20-name-consistency-product.md) | 产品专名一致性 | 通过（替换后已移出，见 ADR-0028「表的使用与校对」） |
 | [2026-11-12](acceptance/2026-11-12-product-fullflow-acceptance.md) | 产品全流程 | 通过 |

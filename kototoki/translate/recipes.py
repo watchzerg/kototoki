@@ -1,6 +1,6 @@
 """产品翻译配方 `q3-translate-v1`（ADR-0029）：Q3 的提示、专名注入、请求体、回复校验与配方 hash（翻译配方的唯一归属）。
 
-Q3 的翻译规则即 Q2（ADR-0017、ADR-0021）：Q1＝`qwen-wide`＋只注入 `confidence: high` 的专名表，模型换成 Strata 上的
+Q3 的翻译规则即 Q2（ADR-0021「Q3 翻译规则」）：Q1＝`qwen-wide`＋只注入 `confidence: high` 的专名表，模型换成 Strata 上的
 Qwen3.8-Flash-Next IQ3_S、不加参数启动。本模块把这条规则写成产品常量，研究实现只复制、不导入：
 
 - 提示 `qwen-joint-v1`：系统消息是 joint 任务文本（只读上下文之前的部分），用户消息是只读上下文与待译 JSON；
@@ -39,7 +39,7 @@ OVERFLOW = "unresolved-runs+halve-after-structural-failures+untranslated"
 VALIDATION = ("strict-json+one-translations-object; per-cue nonempty-string+no-blank-line; "
               "missing/empty/blank-line unresolved; extra ids ignored; order ignored")
 
-# 切包：v3 `dp10-cut` 的 gap-pack-v2 参数逐字照抄（ADR-0010 第 2–3 点），只用 `group_gap=None` 分支。
+# 切包：v3 `dp10-cut` 的 gap-pack-v2 参数逐字照抄（ADR-0021「dp10-cut 切包」），只用 `group_gap=None` 分支。
 GAP_PACK_VERSION = "gap-pack-v2"
 TARGET = 10
 DP10_CUT_PACK: dict[str, Any] = {
@@ -67,7 +67,7 @@ NAMES_FILTER = "window"
 NAMES_ROWS = "confidence high; one row per forms[] {source: ja, translation: zh}; dedupe by ja; skip empty"
 REQUEST_SHAPE = "chat-completions+no-grammar+usage-prompt-tokens"
 
-# Strata 服务身份（ADR-0017"服务"一节）的常量在中间层 `kototoki.strata`（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、
+# Strata 服务身份（ADR-0021「Q3 服务与运行顺序」）的常量在中间层 `kototoki.strata`（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、
 # `STRATA_RESOLVED`），建表配方取同一组值；产品用 `strata launch --no-tui --model iq3_s` 启动，`strata.probe` 逐项核对。
 
 RECIPE: dict[str, Any] = {

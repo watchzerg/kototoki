@@ -88,22 +88,22 @@ class LoadTests(unittest.TestCase):
     def test_names_has_only_a_seed(self) -> None:
         cfg = config.load(self.write(MINIMAL + "[names]\nseed = 1\n"), environ={})
         self.assertEqual(cfg.names, config.NamesConfig(seed=1))
-        self.assertFalse(hasattr(cfg.models, "names"))  # 建表模型由 Strata 管理（ADR-0022）
+        self.assertFalse(hasattr(cfg.models, "names"))  # 建表模型由 Strata 管理（ADR-0029「Strata session」）
         self.assertFalse(hasattr(cfg.paths, "llama_server"))
 
     def test_unknown_keys_and_sections_are_errors(self) -> None:
         for text, needle in ((MINIMAL + "bogus = 1\n", "bogus"),
                              (MINIMAL + "[names]\nthink = true\n", "think"),
-                             (MINIMAL + "[names]\nenabled = true\n", "enabled"),  # ADR-0019 删除，建表必开
-                             (MINIMAL + "[names]\nmodel = \"g/x.gguf\"\n", "model"),  # ADR-0022 删除，建表走 Strata
+                             (MINIMAL + "[names]\nenabled = true\n", "enabled"),  # 已删除（原 ADR-0019，现见 ADR-0028「阶段位置」），建表必开
+                             (MINIMAL + "[names]\nmodel = \"g/x.gguf\"\n", "model"),  # 已删除（原 ADR-0022，现见 ADR-0028「阶段位置」），建表走 Strata
                              (MINIMAL + "[names]\nport = 8081\n", "port"),
-                             (MINIMAL + 'llama_server = "x.exe"\n', "llama_server"),  # ADR-0022 删除
+                             (MINIMAL + 'llama_server = "x.exe"\n', "llama_server"),  # 已删除（原 ADR-0022，现见 ADR-0028「阶段位置」）
                              (MINIMAL + "[translate]\nmodel = \"x.gguf\"\n", "model"),
                              (MINIMAL + "[translate]\nport = 8080\n", "port"),
                              (MINIMAL + "[vad]\ndevice = \"cpu\"\n", "device"),
                              (MINIMAL + "[run]\nbreak_stale_lock = true\n", "break_stale_lock"),
-                             (MINIMAL + 'output_dir = "out"\n', "output_dir"),  # ADR-0020 删除
-                             (MINIMAL + "[run]\nforce = true\n", "force"),  # ADR-0020 删除
+                             (MINIMAL + 'output_dir = "out"\n', "output_dir"),  # 已删除（原 ADR-0020，现见 ADR-0007「工作目录」）
+                             (MINIMAL + "[run]\nforce = true\n", "force"),  # 已删除（原 ADR-0020，现见 ADR-0007「工作目录」）
                              (MINIMAL + '[input]\nvideo_extensions = [".mkv"]\n', "video_extensions"),  # 改名 extensions
                              (MINIMAL + "[extra]\nx = 1\n", "[extra]"),
                              (MINIMAL + "[asr.whisper]\nmodel = \"x\"\n", "[asr.whisper]")):

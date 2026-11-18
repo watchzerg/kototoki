@@ -1,5 +1,5 @@
 """代码常量 == 资产清单 `assets.toml`：防止模型 SHA 表、默认路径里的版本号漂移。
-翻译与专名建表的模型由 Strata 管理（ADR-0019、ADR-0022），不在清单里；清单只列产品用到的二进制与模型（llama.cpp 与 27B 条目已由 ADR-0032 删除）。
+翻译与专名建表的模型由 Strata 管理（ADR-0029「Strata session」），不在清单里；清单只列产品用到的二进制与模型（llama.cpp 与 27B 条目已由 ADR-0033「资产清单与安装」删除）。
 
 清单是身份的唯一权威（docs/development/dependencies.md）；代码常量保留用于运行时自校验，这里逐项钉住相等。
 """
@@ -40,8 +40,8 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(defaults["asr.w0"]["mel_assets"], MODELS["w0-assets"]["dir"])
         self.assertEqual(defaults["asr.x0"]["model"], MODELS["qwen3-asr-1.7b-hf"]["dir"])
         self.assertEqual(defaults["align"]["model"], MODELS["mms-1b-all"]["dir"])
-        self.assertNotIn("model", defaults["names"])  # 建表模型由 Strata 管理（ADR-0022）
-        self.assertNotIn("qwen3.8-27b-ud-iq3_s", MODELS)  # ADR-0032 删除
+        self.assertNotIn("model", defaults["names"])  # 建表模型由 Strata 管理（ADR-0029「Strata session」）
+        self.assertNotIn("qwen3.8-27b-ud-iq3_s", MODELS)  # ADR-0033「资产清单与安装」删除
         self.assertEqual(defaults["paths"]["models_root"], ".local/models")
 
 
@@ -51,11 +51,11 @@ class ToolPathTests(unittest.TestCase):
         ffmpeg = TOOLS["ffmpeg"]["branch"]
         self.assertEqual(paths["ffmpeg"], f".local/tools/ffmpeg/{ffmpeg}/bin/ffmpeg.exe")
         self.assertEqual(paths["ffprobe"], f".local/tools/ffmpeg/{ffmpeg}/bin/ffprobe.exe")
-        self.assertNotIn("llama_server", paths)  # 产品不起 llama-server（ADR-0022）
+        self.assertNotIn("llama_server", paths)  # 产品不起 llama-server（ADR-0029「Strata session」）
 
     def test_manifest_locks_the_files_the_product_runs(self) -> None:
         self.assertLessEqual({"bin/ffmpeg.exe", "bin/ffprobe.exe"}, set(TOOLS["ffmpeg"]["files"]))
-        self.assertEqual(set(TOOLS), {"ffmpeg"})  # llama.cpp 已由 ADR-0032 删除
+        self.assertEqual(set(TOOLS), {"ffmpeg"})  # llama.cpp 已由 ADR-0033「资产清单与安装」删除
 
 
 if __name__ == "__main__":

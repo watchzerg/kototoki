@@ -1,4 +1,4 @@
-"""Strata 服务与共享 session：产品唯一的推理服务，names 建表与翻译共用（ADR-0019、ADR-0022）。只有这一个实现，不抽象后端协议。
+"""Strata 服务与共享 session：产品唯一的推理服务，names 建表与翻译共用（ADR-0029「Strata session」）。只有这一个实现，不抽象后端协议。
 
 中间层（与 `local_client` 同层，不属基础层）：起停 Strata 进程（`strata` CLI）、轮询空闲显存（`nvidia_smi`、
 `wait_for_free_vram`，ADR-0025 起从原 `llama_server.py` 并入本模块）、核对身份、持有整批共用的 session。
@@ -10,7 +10,7 @@
 - 进入：`strata launch --status` 必须没有任何正在服务的 launch（不抢占别人的 Strata，也不替别人停）；空闲显存
   达到 `MIN_FREE_MIB`（上一个 GPU worker 已退出、显存已释放）；可用内存达到 `MIN_AVAILABLE_RAM_GIB`（等满
   `RAM_WAIT_S` 仍不够只记 WARNING 照常启动）；执行 `strata launch --no-tui --model iq3_s`；轮询到唯一一个
-  ready 的 launch 后按 ADR-0017 的接入检查核对身份（版本、端口 8080 本机、run config 的模型／`--max-context 131072`、
+  ready 的 launch 后按 ADR-0021「Q3 服务与运行顺序」的接入检查核对身份（版本、端口 8080 本机、run config 的模型／`--max-context 131072`、
   本次启动在服务日志里写下的起草方式为 DFlash2、`/v1/models`、`/v1/status` 原生上下文 131072），不符即停掉并拒绝
   （`StrataRefused`）。
 
@@ -28,7 +28,7 @@
 不加参数的 `strata launch` 只能在终端里走交互向导；子进程里（或带 `--no-tui`）必须点名 `--preset` 或 `--model`，
 否则以退出码 2 拒绝。`--model iq3_s` 就是默认选择本身：2026-11-08 本机 `strata launch --plan` 与
 `strata launch --no-tui --model iq3_s --plan` 的计划逐行相同，只差前者多一行"未点名模型，按本机选了 IQ3_S"的提示
-（ADR-0019）。服务的进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
+（ADR-0029「Strata session」）。服务的进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
 
 运行证据写在 session 目录：`strata.json`（接入时观察到的身份）、`resources.json`（`/v1/status` 采样的整机显存与内存
 峰值、服务日志的事件计数）、`strata-final.json`（停止与显存释放的核实结果）。
@@ -69,7 +69,7 @@ __all__ = [
     "run_cli", "running", "strata_cmd", "wait_for_free_vram",
 ]
 
-# Strata 服务身份（ADR-0017"服务"一节）：产品用 `strata launch --no-tui --model iq3_s` 启动，`probe` 逐项核对。
+# Strata 服务身份（ADR-0021「Q3 服务与运行顺序」）：产品用 `strata launch --no-tui --model iq3_s` 启动，`probe` 逐项核对。
 # 翻译配方 `q3-translate-v1` 与建表配方 `q3-names-v3` 的运行时身份都取这里的值。
 MODEL = "qwen3.8-flash-next-iq3_s"
 STRATA_VERSION = "0.2.12"
@@ -100,7 +100,7 @@ SAMPLE_SECONDS = 5.0
 # 服务日志中按会话计数的事件（只计数，不复制日志）：推理循环自救、logits 非有限、单 token 重复截停。
 LOG_EVENTS = {"reasoning_recoveries": "repeated reasoning detected", "nonfinite_logits": "logits became non-finite",
               "repeat_stops": "times in a row: ended as"}
-SESSIONS_DIR = "strata-sessions"   # 工作根下 session 证据的根（ADR-0022 前为 translate-sessions）
+SESSIONS_DIR = "strata-sessions"   # 工作根下 session 证据的根（names 并入共用 session 前为 translate-sessions，ADR-0029「Strata session」）
 MAX_START_FAILURES = 3              # 整批 Strata 启动失败的上限（与翻译"3 次连续 server_start 即放弃"、names 旧规则"整批 3 次"同量）
 
 FREE_VRAM_TIMEOUT_SECONDS = 120.0
@@ -147,7 +147,7 @@ def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS,
 
 
 class StrataRefused(RuntimeError):
-    """Strata 不能用于本批（已有别的 launch 在服务、身份与 ADR-0017 不符、专家区未锁进内存、启动额度用尽）；重启无济于事，不重试。"""
+    """Strata 不能用于本批（已有别的 launch 在服务、身份与 ADR-0021「Q3 服务与运行顺序」不符、专家区未锁进内存、启动额度用尽）；重启无济于事，不重试。"""
 
 
 def strata_cmd() -> str:
@@ -187,7 +187,7 @@ def drafting_from_log(text: str) -> tuple[str | None, str | None]:
 
 def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str], dict],
           log_text: str) -> dict[str, Any]:
-    """按 ADR-0017 核对已 ready 的 launch，返回观察到的值（不含 API key）；不符抛 `StrataRefused`。
+    """按 ADR-0021「Q3 服务与运行顺序」核对已 ready 的 launch，返回观察到的值（不含 API key）；不符抛 `StrataRefused`。
 
     改编自 `experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数；
     起草方式取自本次启动的服务日志 `log_text`（见模块说明）。

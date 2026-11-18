@@ -377,7 +377,7 @@ def check_product_ownership(root: Path) -> list[str]:
 
 
 def check_adr_index(root: Path) -> list[str]:
-    """ADR 文件、决定索引"全部 ADR"表（含跳转页一行）与"编号从 N 起"三者一致。"""
+    """ADR 文件、决定索引"全部 ADR"表与"编号从 N 起"三者一致。"""
     index = root / ADR_INDEX
     if not index.is_file():
         return []
@@ -396,14 +396,9 @@ def check_adr_index(root: Path) -> list[str]:
         row = re.match(r"^\|\s*\[(\d{4})\]\(", line)
         if row:
             listed[row.group(1)] = number
-        if line.startswith("跳转页"):
-            first = re.search(r"编号从\s*(\d{4})\s*起", line)
-            if first:
-                following = (first.group(1), number)
-            for group in re.split(r"[；。]", line.split("新 ADR")[0]):
-                if "→" in group:
-                    for jump in re.findall(r"\d{4}", group.split("→")[0]):
-                        listed[jump] = number
+        first = re.search(r"编号从\s*(\d{4})\s*起", line)
+        if first:
+            following = (first.group(1), number)
     errors = [f"{name}:1 \"全部 ADR\"没有登记 {number}" for number in sorted(files - set(listed))]
     errors += [f"{name}:{listed[number]} 登记的 {number} 没有对应的 ADR 文件"
                for number in sorted(set(listed) - files)]

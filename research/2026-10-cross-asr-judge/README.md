@@ -1,7 +1,7 @@
 # 两路 ASR 交叉合并：oracle 上限、声学裁判与交叉打分
 
 ## 状态
-concluded。三轮离线测算与一次裁判选型调研均在 2026-10-19 当天结题；结论进入产品可选引擎 `cross`（[ADR-0012](../../docs/adr/0012-cross-asr-judge.md)，默认仍是 `w0`）。
+concluded。三轮离线测算与一次裁判选型调研均在 2026-10-19 当天结题；结论进入产品可选引擎 `cross`（[ADR-0003「产品 STT 引擎」](../../docs/adr/0003-new-pyannote-baselines.md#产品-stt-引擎)，原 ADR-0012；默认仍是 `w0`）。
 
 ## 时间
 2026-10-19 立项并结题（四份报告同日完成）。产品路径验收与共驻探针见 `../acceptance/`。
@@ -45,7 +45,7 @@ concluded。三轮离线测算与一次裁判选型调研均在 2026-10-19 当�
 - 调研结论：MMS 是"顺手"而非最优，声学 CTC 看不出同读异形；交叉打分排第 1，风险是自偏好。
 
 ## 结论与去向
-- 采纳：Whisper 教师强制打分作裁判（d > −1.0 取 x0），以可选引擎 `cross` 进产品，默认保持 `w0`（[ADR-0012](../../docs/adr/0012-cross-asr-judge.md)）。产品路径验收（官方整片口径）合计 CER 15.25% → 14.30%（−0.95 pp，差预设 1.0 pp 线 0.05 pp，用户知悉后仍采用），共驻显存探针整卡峰值 10688 MiB，见 [cross 产品验收](../acceptance/2026-10-19-cross-asr-acceptance.md)与[共驻探针](../acceptance/2026-10-19-cross-coresidency-probe.md)。
+- 采纳：Whisper 教师强制打分作裁判（d > −1.0 取 x0），以可选引擎 `cross` 进产品，默认保持 `w0`（[ADR-0003「产品 STT 引擎」](../../docs/adr/0003-new-pyannote-baselines.md#产品-stt-引擎)，原 ADR-0012）。产品路径验收（官方整片口径）合计 CER 15.25% → 14.30%（−0.95 pp，差预设 1.0 pp 线 0.05 pp，用户知悉后仍采用），共驻显存探针整卡峰值 10688 MiB，见 [cross 产品验收](../acceptance/2026-10-19-cross-asr-acceptance.md)与[共驻探针](../acceptance/2026-10-19-cross-coresidency-probe.md)。
 - 放弃：MMS 裁判、Qwen 当裁判、多路叠加。声学裁判线（Parakeet-ja 试装等）与换 ASR 模型线不继续。
 - 未覆盖：译文层收益（需外部裁判）、听音核对、剧集与新材料；Whisper 的 EOT 概率；18 个裁判配置之间没有独立验证集。
 

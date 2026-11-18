@@ -41,7 +41,7 @@ concluded：三个新候选在两部整片上均未超过 W0／X0，基线不变
 
 ## 结论与去向
 - 放弃：三个新候选作为替代 ASR；保留现有基线，优先 W0。其中 Cohere 可留作速度对照，Granite 不再继续，Nemotron 的流式能力未测。
-- 基线与产品 STT 引擎的现行定义见 [ADR-0003](../../docs/adr/0003-new-pyannote-baselines.md) 与 [ADR-0012](../../docs/adr/0012-cross-asr-judge.md)（可选 cross 引擎：x0 转写＋Whisper 交叉打分裁判，另见 CURRENT.md 的 STT 一节）。
+- 基线与产品 STT 引擎的现行定义见 [ADR-0003](../../docs/adr/0003-new-pyannote-baselines.md)（含「产品 STT 引擎」，原 ADR-0012；可选 cross 引擎：x0 转写＋Whisper 交叉打分裁判，另见 CURRENT.md 的 STT 一节）。
 - `no_speech_prob` 规则不进产品，改用整窗幻听句匹配：[ADR-0030](../../docs/adr/0030-asr-window-plausibility-guard.md)。
 - 基线前序见 [W0／X0 demo 轮次](../2026-10-stt-demo-w0-x0/README.md) 与 [VAD 比较](../2026-10-vad-comparison/README.md)。
 

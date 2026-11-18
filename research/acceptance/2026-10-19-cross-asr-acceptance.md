@@ -4,7 +4,7 @@
 2026-10-19（用户授权的 GPU 作业，整批约 29 分钟）。产品代码为 T0–T5 已合入的 main，本次未改代码。
 
 ## 对象
-[ADR-0012](../../docs/adr/0012-cross-asr-judge.md) 的可选引擎 `cross`（配方 `cross-w0-x0-whisper-judge-v1`）：产品路径上的质量增益、与共驻探针的一致性、显存与墙钟、翻译阶段能否在 asr worker 退出后正常启动。
+[ADR-0003「产品 STT 引擎」](../../docs/adr/0003-new-pyannote-baselines.md#产品-stt-引擎)（原 ADR-0012）的可选引擎 `cross`（配方 `cross-w0-x0-whisper-judge-v1`）：产品路径上的质量增益、与共驻探针的一致性、显存与墙钟、翻译阶段能否在 asr worker 退出后正常启动。
 
 ## 环境与版本
 Python 3.13、torch 2.11.0+cu128、faster-whisper 1.2.1、ctranslate2 4.8.3、transformers 5.20.1；`Qwen/Qwen3-ASR-1.7B-hf` revision `bcd2b5b7`；产品翻译配方 `dp10-cut-degrade-v1`（H0，llama.cpp b11669）；RTX 5080。配置由 swr 回归用的 w0 配置复制，只改 `stt.engine = "cross"` 与输出目录；运行前核对无 GPU 进程与锁。
@@ -29,4 +29,4 @@ Python 3.13、torch 2.11.0+cu128、faster-whisper 1.2.1、ctranslate2 4.8.3、tr
 - 与 cross 无关的发现：个别 51–84 ms 的极短 VAD 窗口在 align 阶段因 CTC 帧数不足失败（w0 单独运行同样存在）；cross 的每文件统计日志行因 logger 名称没有输出（只记录，未修）。
 
 ## 结论
-工程行为与设计全部吻合，裁判在产品路径上与探针逐区间一致；质量线一条通过（两部都降）、一条差 0.05 pp 未达。用户知悉后仍裁定采用，`cross` 为可选引擎、默认保持 `w0`（ADR-0012）。未覆盖：译文层收益、听音核对、表记改动对 CER 的拆分、剧集与新材料。
+工程行为与设计全部吻合，裁判在产品路径上与探针逐区间一致；质量线一条通过（两部都降）、一条差 0.05 pp 未达。用户知悉后仍裁定采用，`cross` 为可选引擎、默认保持 `w0`（ADR-0003「产品 STT 引擎」）。未覆盖：译文层收益、听音核对、表记改动对 CER 的拆分、剧集与新材料。

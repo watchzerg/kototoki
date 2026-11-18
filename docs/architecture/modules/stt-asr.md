@@ -1,6 +1,6 @@
 # STT ASR：w0／x0 引擎、cross 裁判与整窗守卫
 
-状态：current；权威决定：[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)
+状态：current；权威决定：[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
@@ -10,7 +10,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 ## 当前行为规格
 
-**引擎与模型键**：`config.engine` 取 `w0`（默认）、`x0` 或 `cross`。加载哪些适配器、读哪些模型键按 `plan.ENGINE_PARTS`：w0 只读 `w0`／`w0_mel_assets`，x0 只读 `x0`，cross 三者都读；`recipe_hash` 分别为 `recipes.W0`、`X0`、`CROSS` 的 hash。`W0` 含 `guard` 块（ADR-0023、ADR-0030），`CROSS` 嵌套 `W0` 与 `X0`。
+**引擎与模型键**：`config.engine` 取 `w0`（默认）、`x0` 或 `cross`。加载哪些适配器、读哪些模型键按 `plan.ENGINE_PARTS`：w0 只读 `w0`／`w0_mel_assets`，x0 只读 `x0`，cross 三者都读；`recipe_hash` 分别为 `recipes.W0`、`X0`、`CROSS` 的 hash。`W0` 含 `guard` 块（ADR-0030），`CROSS` 嵌套 `W0` 与 `X0`。
 
 **`asr.json`**（三种引擎同构）：`schema_version`、`engine`、`offset_s`、`input`、`chunks`（照抄 `vad.json`）、`original_segments`（与窗口一一对应：`text`、秒与整数样本、`avg_logprob`）、`asr_traces`、`failed_windows`、保留文本 `text`、`metadata`、`stages`。
 
@@ -34,7 +34,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 ### w0 整窗守卫
 
-[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)；纯逻辑 `kototoki/guard.py`，壳内 `workers.asr.apply_guard`。w0 转写返回之后、组装文档之前，壳对每个**未失败**的窗口调用 `guard.apply(text, end − start)`。三条规则都在规范化文本（`judge.normalize`：NFKC、去标点与空白）上判定，参数在 `recipes.W0["guard"]`，不是配置项；无法规范化的文字（跨簇 NFKC 组合）三条都不命中。顺序：
+[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)；纯逻辑 `kototoki/guard.py`，壳内 `workers.asr.apply_guard`。w0 转写返回之后、组装文档之前，壳对每个**未失败**的窗口调用 `guard.apply(text, end − start)`。三条规则都在规范化文本（`judge.normalize`：NFKC、去标点与空白）上判定，参数在 `recipes.W0["guard"]`，不是配置项；无法规范化的文字（跨簇 NFKC 组合）三条都不命中。顺序：
 
 1. **复读 `repeat-strict`**：周期 ≥2 字的单元相邻重复 ≥10 份（同一字符连写按周期 2 计），或 ≥3 字的子串不重叠出现 ≥10 次；且重复部分覆盖该窗规范化文字 ≥50%（覆盖率四舍五入到 4 位小数）。
    - 折叠（`action: collapse`）：在原文上保留覆盖最多的那段相邻重复的第一个单元，删掉其后各次重复所占的原文区间（含夹在其中的标点），其余照抄。
@@ -53,7 +53,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 ### cross 引擎
 
-`engine = "cross"`（[ADR-0012](../../adr/0012-cross-asr-judge.md)，可选）：同一 asr worker 进程内 w0 与 x0 各转写一遍，再由 Whisper 对两路的分歧区间做教师强制打分并合并，写出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变，align 及之后只看到 `asr.json`。
+`engine = "cross"`（[ADR-0003](../../adr/0003-new-pyannote-baselines.md)，可选）：同一 asr worker 进程内 w0 与 x0 各转写一遍，再由 Whisper 对两路的分歧区间做教师强制打分并合并，写出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变，align 及之后只看到 `asr.json`。
 
 - **加载**：`models` 同时需要 `w0`、`w0_mel_assets`、`x0`，模型核对两路的全部文件。`start` 按 `ENGINE_PARTS` 次序先加载 `WhisperAsr`（CT2 fp16）再加载 `QwenAsr`（bf16），两者常驻到进程退出，分别记加载耗时；仍先 `import torch` 再导入 CT2。
 - **共驻**：产品只有两模型同进程共驻这一种路径，运行时不看显存、不回退。
@@ -124,7 +124,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 ## 变更与决策来源
 
-- [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
+- [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 研究：[交叉打分](../../../research/2026-10-cross-asr-judge/README.md)、[v15](../../../research/2026-11-asr-robustness-v14-v15/README.md)；`no_speech_prob` 测量（归档 experiments/asr_nospeech/，票据 batch-run-fixes 09）
 - 验收：[cross 共驻探针](../../../research/acceptance/2026-10-19-cross-coresidency-probe.md)、[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)、[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)
 - 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、.scratch/cross-asr-judge/、.scratch/asr-repeat-guard/、.scratch/batch-run-fixes/（`issues/09-short-window-asr-overflow.md`）、.scratch/runtime-logging-gaps/

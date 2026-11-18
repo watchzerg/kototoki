@@ -1,7 +1,7 @@
 # ADR-0008：不自动选用"翻译多次再挑选"的方法
 
-状态：已接受。合并整理于 2026-11-08（保留现行规则；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。"约束"一节提到的产品配方 `dp10-cut-degrade-v1` 已由 [ADR-0019](0019-product-translation-q2.md) 的 `q2-degrade-v1` 替代；规则本身不变（2026-11-11 标注，用户委托 agent 裁定）。  
-范围：翻译质量探索与产品的取舍规则。H0 基线见 [ADR-0005](0005-apex-i-compact-translation-baseline.md)、[ADR-0010](0010-dp10-cut-translation-flow-baseline.md)，两条基线的关系见 [ADR-0015](0015-two-translation-baselines.md)。
+状态：已接受。合并整理于 2026-11-08（保留现行规则；历次变更见[决定索引·演进链](INDEX.md#演进链)，原文见 Git 历史）。产品翻译现行配方见 [ADR-0029](0029-translate-per-cue-resolution.md)；规则本身不变。  
+范围：翻译质量探索与产品的取舍规则。翻译基线与 H0 等历史身份见 [ADR-0021](0021-q3-strata-names-baseline.md)。
 
 ## 决定
 
@@ -29,5 +29,5 @@
 
 ## 约束与未关闭项
 
-- 产品翻译保持单次生成：H0 产品配方 `dp10-cut-degrade-v1`（见 ADR-0010）；Q 线同样单次生成。后续质量探索在单次生成前提下找方向，如提示、上下文、术语、后处理与模型本身。
+- 产品翻译保持单次生成（现行 `q3-translate-v1`，见 ADR-0029）；研究侧 Q 线同样单次生成。后续质量探索在单次生成前提下找方向，如提示、上下文、术语、后处理与模型本身。
 - v4、v5 的多样本代码（`archive/2026-11-18-pre-research-restructure:experiments/translation_v4` 的 `mbr8`、`archive/2026-11-18-pre-research-restructure:experiments/quality_v5` 的 `mbr_cheap.py`、`mbr_semantic.py`、`parallel_probe.py`）作为历史证据保留，只在用户明确要求时复用。
