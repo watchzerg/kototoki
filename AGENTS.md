@@ -34,7 +34,7 @@
 
 ### 重任务与环境
 
-- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，以及 `research/` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。
+- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，以及 `research/` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。用户批准的计划里写明的重任务视为已授权，一口气跑完再汇报；超出计划的重任务或破坏性操作再问。Windows 上长任务与 worktree 的坑见[开发工作流](docs/development/workflow.md#windows-上的长任务与-worktree)。
 - `.local/gpu.lock` 标记正在运行的 GPU 作业：不抢占、不杀其他进程；用 PowerShell `Get-Process` 核实真实进程，而不是信任文档声称在跑的内容。
 - `just install`、`just upgrade`／`uv sync|add|lock` 会改环境且可能联网：先问。
 - 大目录（`.local/`、`.venv/`）会拖慢 Grep／Glob，搜索时限定子路径。

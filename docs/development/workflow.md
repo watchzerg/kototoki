@@ -10,6 +10,15 @@
 - 行尾统一为 LF：`.gitattributes` 的 `* text=auto eol=lf` 让仓库存 LF、任何平台检出也是 LF（优先于 `core.autocrlf`），`.editorconfig` 让编辑器新建 LF 文件；改文件不必再做字节级保护。
 - 产品用的 ffmpeg 在 `.local/tools/<name>/<branch>/`（清单只锁维护分支，实际版本记在 `identity.json`），模型在 `.local/models/`（清单锁 revision 与 SHA256），布局见[依赖布局与资产清单](dependencies.md)。
 
+## Windows 上的长任务与 worktree
+
+agent 在本机运行长任务、并行票据时踩过的坑：
+
+- **后台任务的生命周期不可靠**：Claude Code 后台任务的 2 小时上限与 TaskStop 在本机表现不一致：2026-11-12 产品批量到点连进程树被杀（留下陈旧锁，用 `KOTOTOKI_BREAK_STALE_LOCK=1` 续跑）；2026-10-23 Git Bash 编排脚本在 TaskStop 后仍连子进程存活，误以为被杀而另起替代链，导致多条链同时运行。因此：可能超过 2 小时的运行用 PowerShell `Start-Process` 脱离启动（[批量运行](../agents/production-runs.md#跑之前)）；停止或超时后用 `Get-CimInstance Win32_Process | ? CommandLine -match '<脚本名>'` 核实真实进程，不信任工具的"已停止"；多步编排链每一步幂等（产物已在则跳过、加锁），不另起替代链；要改变后续行为时改被调用的子脚本或入口，不改正在运行的脚本文件。
+- **重定向输出要带 `PYTHONUTF8=1`**：mise 未激活的 shell 不会自动带上。把 `just smoke` 等命令的 stdout 重定向到文件或管道时，Python 在 cp1252 下转发 tqdm 进度条字符会抛 `UnicodeEncodeError`，约 10 秒即崩（2026-11-11 白费一次授权的 GPU 运行）。它只防崩溃不防乱码，可读副本另需设 pwsh 控制台编码（[README](../../README.md)）。
+- **worktree 没有 `.venv`**：在 worktree 里 `uv run`／`just test` 会试图新建环境（联网、改环境）。在 worktree 根目录用主仓库的解释器跑测试：`<主仓库>\.venv\Scripts\python.exe -m unittest discover -s tests/core -t .`（`package = false`，`kototoki` 从 cwd 导入）。并行票据各用一个 worktree、文件集合不相交。
+- **核对 worktree 基底**：Agent 工具的 `isolation: worktree` 可能从落后的提交建 worktree（2026-10-19 因此在合回时覆盖了较新的改动）。开工前核对 `git log -1`，或自己用 `git worktree add --detach <path> HEAD`；合回用 `git diff <基底>` 出补丁、在主仓库 `git apply --3way`。补丁文件用 Bash 写，PowerShell `Out-File` 带 BOM 会让 `git apply` 失败。
+
 ## 命令与门禁
 
 Use `uv run --locked --offline ...` for product code.
