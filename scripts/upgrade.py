@@ -2,13 +2,10 @@
 
 用法（经 `just upgrade` 调用；联网、改环境与 `assets.toml`，须先问）：
 
-    python scripts/upgrade.py [--check] [--films DIR] [python] [llama.cpp] [ffmpeg]   # 省略组件即全部
+    python scripts/upgrade.py [--check] [--films DIR] [python] [ffmpeg]   # 省略组件即全部
 
 - python：CUDA 12 锚点（`ANCHORS`）保持原钉版；其余直接依赖取 uv 解析出的最新稳定版并重新钉版；
   传递依赖一起升，但跳过主版本升级（日历版本号除外），跳过项列入报告。
-- llama.cpp：GitHub 最新稳定版（`releases/latest`）的 `nightly-tag.txt` 指向的构建，CUDA 主版本与清单现有记录相同、
-  取其中最高的 `win-cuda-*-x64`。产品不再用 llama.cpp（ADR-0022，建表与翻译都在 Strata 上），产品配置里没有它的默认路径，
-  升级只改清单与安装目录，供研究侧使用。
 - ffmpeg：BtbN 最新带日期 tag 的 autobuild 中最高维护分支的 win64 gpl 构建；用产品 extract 代码在 `--films`
   的每部 `.mkv` 上与当前默认构建对照派生 WAV，PCM、样本数、补偿记录与告警全部相同才切换默认路径，否则清单还原。
 - `--check` 只报告可升级项，不改任何文件。
@@ -51,7 +48,7 @@ DEFAULT_PATH_FILES = ("kototoki/config.py", "kototoki.toml.example")
 # CUDA 12 锚点：torch 系取 cu128 索引、CTranslate2 只有 CUDA 12 wheel；升级须人工决定（docs/development/technology-stack.md 选版规则）。
 ANCHORS = frozenset({"torch", "torchaudio", "torchcodec", "ctranslate2"})
 GITHUB_API = "https://api.github.com/repos"
-COMPONENTS = ("python", "llama.cpp", "ffmpeg")
+COMPONENTS = ("python", "ffmpeg")
 
 
 class UpgradeError(RuntimeError):
@@ -90,13 +87,6 @@ def fetch_json(url: str) -> Any:
     with urlopen(Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "kototoki-upgrade"})) as r:
         return json.load(r)
 
-
-def fetch_text(url: str) -> str:
-    with urlopen(Request(url, headers={"User-Agent": "kototoki-upgrade"})) as response:
-        return response.read().decode("utf-8")
-
-
-# --- python -----------------------------------------------------------------------------------
 
 def pinned_dependencies(pyproject_text: str) -> dict[str, tuple[str, str]]:
     """{规范名: (原依赖串, 钉住的版本)}：`[project].dependencies` 里用 `==` 钉住的非锚点依赖。"""
@@ -263,50 +253,6 @@ def install_new_tool(name: str, tool: dict[str, Any], *, fetch_files: Callable[[
     return result
 
 
-# --- llama.cpp --------------------------------------------------------------------------------
-
-def pick_llama(release: Mapping[str, Any], tag: str, cuda_major: str) -> tuple[str, dict, dict]:
-    """(cuda 版本, 主程序 asset, cudart asset)：同 CUDA 主版本里最高的 win x64 构建。"""
-    builds = {}
-    for asset in release["assets"]:
-        if m := re.fullmatch(rf"llama-{re.escape(tag)}-bin-win-cuda-({cuda_major}\.\d+)-x64\.zip", asset["name"]):
-            builds[m.group(1)] = asset
-    if not builds:
-        raise UpgradeError(f"llama.cpp {tag}: no win-cuda-{cuda_major}.x x64 build")
-    cuda = max(builds, key=lambda v: tuple(map(int, v.split("."))))
-    cudart = next((a for a in release["assets"] if a["name"] == f"cudart-llama-bin-win-cuda-{cuda}-x64.zip"), None)
-    if cudart is None:
-        raise UpgradeError(f"llama.cpp {tag}: missing cudart-llama-bin-win-cuda-{cuda}-x64.zip")
-    return cuda, builds[cuda], cudart
-
-
-def upgrade_llama(check: bool) -> dict[str, Any]:
-    current = assets.load_manifest()["tools"]["llama.cpp"]
-    stable = fetch_json(f"{GITHUB_API}/ggml-org/llama.cpp/releases/latest")
-    pointer = next((a for a in stable["assets"] if a["name"] == "nightly-tag.txt"), None)
-    if pointer is None:
-        raise UpgradeError(f"llama.cpp {stable['tag_name']}: no nightly-tag.txt asset")
-    tag = fetch_text(pointer["browser_download_url"]).strip()
-    if tag == current.get("upstream_tag"):
-        return {"status": "up to date", "version": current["version"], "stable": stable["tag_name"]}
-    release = fetch_json(f"{GITHUB_API}/ggml-org/llama.cpp/releases/tags/{tag}")
-    cuda_major = re.search(r"cuda(\d+)\.", current["version"]).group(1)
-    cuda, main_asset, cudart = pick_llama(release, tag, cuda_major)
-    version = f"{tag}-cuda{cuda}"
-    if check:
-        return {"status": "available", "old": current["version"], "new": version, "stable": stable["tag_name"]}
-    commit = fetch_json(f"{GITHUB_API}/ggml-org/llama.cpp/git/ref/tags/{tag}")["object"]["sha"]
-    tool = {"version": version, "source": release["html_url"], "upstream_tag": tag, "upstream_commit": commit,
-            "published_at": release["published_at"],
-            "note": f"稳定版 {stable['tag_name']}（{stable['published_at'][:10]}）的 nightly-tag.txt 指向 {tag}",
-            "archives": [{"name": a["name"], "url": a["browser_download_url"], "sha256": digest(a)}
-                         for a in (main_asset, cudart)]}
-    result = install_new_tool("llama.cpp", tool,
-                              fetch_files=lambda paths: {k: v for p in paths for k, v in zip_entries(p).items()})
-    result["pending"] = "产品不用 llama.cpp（ADR-0022）；研究侧 demo 按需自行验证"
-    return result
-
-
 # --- ffmpeg -----------------------------------------------------------------------------------
 
 FFMPEG_ASSET = re.compile(r"ffmpeg-(n[\d.]+-\d+-g[0-9a-f]+)-win64-gpl-(\d+)\.(\d+)\.zip")
@@ -379,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     out = REPORT_ROOT / utc_now().replace(":", "").replace("-", "")
     report: dict[str, Any] = {"created_at": utc_now(), "check": args.check}
-    actions = {"python": lambda: upgrade_python(args.check), "llama.cpp": lambda: upgrade_llama(args.check),
+    actions = {"python": lambda: upgrade_python(args.check),
                "ffmpeg": lambda: upgrade_ffmpeg(args.check, args.films, out)}
     failed = False
     for name in args.components or COMPONENTS:  # 一项失败不阻断其余各项

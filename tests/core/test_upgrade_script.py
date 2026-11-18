@@ -73,23 +73,22 @@ class ManifestTests(unittest.TestCase):
     def test_replacing_one_tool_keeps_neighbours(self) -> None:
         text = upgrade.assets.MANIFEST.read_text(encoding="utf-8")
         manifest = tomllib.loads(text)
-        new = {"version": "b2-cuda13.5", "source": "s", "note": "说明",
-               "archives": [{"name": "a.zip", "url": "u", "sha256": "f" * 64}],
-               "files": {"llama-server.exe": {"sha256": "e" * 64, "size": 3}}}
-        replaced = tomllib.loads(upgrade.replace_tool_block(text, "llama.cpp", upgrade.render_tool("llama.cpp", new)))
-        self.assertEqual(replaced["tools"]["llama.cpp"], new)
-        self.assertEqual(replaced["tools"]["ffmpeg"], manifest["tools"]["ffmpeg"])
+        new = {"version": "n9.9-1-gabc", "source": "s", "note": "说明",
+               "archives": [{"name": "a.zip", "url": "u", "sha256": "f" * 64, "strip": "a/"}],
+               "files": {"bin/ffmpeg.exe": {"sha256": "e" * 64, "size": 3}}}
+        replaced = tomllib.loads(upgrade.replace_tool_block(text, "ffmpeg", upgrade.render_tool("ffmpeg", new)))
+        self.assertEqual(replaced["tools"]["ffmpeg"], new)
         self.assertEqual(replaced["models"], manifest["models"])
 
     def test_switch_default_paths_only_touches_matching_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "a.py").write_text('p = ".local/tools/ffmpeg/old/bin/ffmpeg.exe"\n', encoding="utf-8")
-            (root / "b.toml").write_text('x = ".local/tools/llama.cpp/old/llama-server.exe"\n', encoding="utf-8")
+            (root / "b.toml").write_text('x = ".local/tools/other/old/tool.exe"\n', encoding="utf-8")
             changed = upgrade.switch_default_paths("ffmpeg", "old", "new", ("a.py", "b.toml"), root)
             self.assertEqual(changed, ["a.py"])
             self.assertIn(".local/tools/ffmpeg/new/bin/", (root / "a.py").read_text(encoding="utf-8"))
-            self.assertIn("llama.cpp/old/", (root / "b.toml").read_text(encoding="utf-8"))
+            self.assertIn("other/old/", (root / "b.toml").read_text(encoding="utf-8"))
 
     def test_zip_entries_strip_and_filter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,21 +107,6 @@ class ManifestTests(unittest.TestCase):
 
 
 class ReleasePickTests(unittest.TestCase):
-    def test_llama_picks_highest_build_within_cuda_major(self) -> None:
-        release = {"assets": [asset(n) for n in (
-            "llama-b9-bin-win-cuda-12.4-x64.zip", "llama-b9-bin-win-cuda-13.4-x64.zip",
-            "llama-b9-bin-win-cuda-13.6-x64.zip", "llama-b9-bin-win-cuda-14.0-x64.zip",
-            "llama-b9-bin-win-cuda-13.6-arm64.zip", "cudart-llama-bin-win-cuda-13.6-x64.zip",
-            "cudart-llama-bin-win-cuda-13.4-x64.zip")]}
-        cuda, main, cudart = upgrade.pick_llama(release, "b9", "13")
-        self.assertEqual((cuda, main["name"], cudart["name"]),
-                         ("13.6", "llama-b9-bin-win-cuda-13.6-x64.zip", "cudart-llama-bin-win-cuda-13.6-x64.zip"))
-
-    def test_llama_without_matching_cudart_fails(self) -> None:
-        release = {"assets": [asset("llama-b9-bin-win-cuda-13.6-x64.zip")]}
-        with self.assertRaises(upgrade.UpgradeError):
-            upgrade.pick_llama(release, "b9", "13")
-
     def test_ffmpeg_picks_highest_branch_of_dated_autobuild(self) -> None:
         releases = [
             {"tag_name": "latest", "prerelease": False, "assets": [asset("ffmpeg-n9.9-latest-win64-gpl-9.9.zip")]},

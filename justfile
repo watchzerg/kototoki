@@ -16,21 +16,19 @@ subtitles dir:
 check:
     uv run --locked --offline python -m compileall -q kototoki scripts tests
 
-setup:
-    uv sync --locked
-
 # --- Contract recipes (docs/development/workflow.md#命令与门禁) ---
 
 # Verify uv/just versions (mise.toml) and Python (.python-version); never syncs or downloads.
 check-toolchain:
     uv run --no-project --no-python-downloads --offline python scripts/check_toolchain.py
 
-# 安装根环境（uv.lock）后按 assets.toml 安装 ffmpeg、llama.cpp（改环境、可能联网，须先问；docs/development/dependencies.md）。
-install: setup
+# 按 uv.lock 同步根环境，再按 assets.toml 安装 ffmpeg（改环境、可能联网，须先问；docs/development/dependencies.md）。
+install:
+    uv sync --locked
     uv run --locked --offline python -X utf8 scripts/assets.py install-tools
 
-# 按选版规则把 Python 依赖、llama.cpp、ffmpeg 升到最新稳定版（联网、改环境与 assets.toml，须先问；
-# docs/development/dependencies.md#升级）；可只列组件（python、llama.cpp、ffmpeg）。随后跑 core、full 测试与资产核对，smoke 另行批准。
+# 按选版规则把 Python 依赖、ffmpeg 升到最新稳定版（联网、改环境与 assets.toml，须先问；
+# docs/development/dependencies.md#升级）；可只列组件（python、ffmpeg）。随后跑 core、full 测试与资产核对，smoke 另行批准。
 upgrade *args:
     uv run --no-project --no-python-downloads --offline python -X utf8 scripts/upgrade.py {{args}}
     just test

@@ -28,6 +28,7 @@
 | 内嵌日文字幕 | 开关开着且有可用日文文本字幕轨时跳过 STT，字幕轨抽取清洗后从 `names` 起走原链；失败回到 STT。见 [CURRENT·内嵌日文字幕](CURRENT.md#内嵌日文字幕) | [0024](0024-embedded-japanese-subtitles.md) |
 | 产品包边界与失败级别 | GPU 锁冲突一律进程级结束整批；产品不为研究侧留代码；核心测试不导入研究代码，等价取值在 core 钉字面量（不再有实时对照层）。见 [CURRENT·产品包边界与失败级别](CURRENT.md#产品包边界与失败级别) | [0025](0025-product-package-boundaries.md)、[0031](0031-research-layout-and-lightweight-records.md) |
 | 研究与文档布局 | 研究一轮一目录放 `research/`，记录只写策略、版本、测试与结论，不写哈希、本机路径与明细；冻结靠 git 与归档 tag，不靠字节锁；产品不导入 `research/`。见 [CURRENT·研究与文档布局](CURRENT.md#研究与文档布局) | [0031](0031-research-layout-and-lightweight-records.md) |
+| 资产清单与安装 | `assets.toml` 只列产品用到的二进制（ffmpeg）与 STT 模型，llama.cpp 与 27B 已移出；`just install` 同步环境并安装清单里的工具，没有单独的 `setup`。见 [CURRENT·资产清单与安装](CURRENT.md#资产清单与安装) | [0032](0032-drop-llama-cpp-assets.md) |
 
 ### 未关闭项
 
@@ -90,6 +91,7 @@
   3. → [0022](0022-product-names-on-strata.md)（11-09）：产品不再起 llama-server，`ManagedServer` 等只剩研究侧使用者，留在原文件；等价由 `tests/core/` 导入 v13 守门。
   4. → [0025](0025-product-package-boundaries.md)（11-11）：产品不为研究侧留代码（`llama_server.py` 拆成产品的 `local_client.py` 与 `experiments/translation_v3/llama_server.py`），研究侧导入行随产品符号机械改，`tests/core` 不导入 `experiments.*`、实时对照移到 `tests/equivalence/`；GPU 锁冲突一律进程级（退出码 4）。
   5. → [0031](0031-research-layout-and-lightweight-records.md)（11-18）：删除 `experiments/`、`kototoki_eval/` 与 `tests/equivalence/`；研究改放 `research/<轮次>/`，可以导入产品、产品不导入研究；等价取值只在 core 钉字面量。
+  6. → [0032](0032-drop-llama-cpp-assets.md)（11-18）：研究侧不再有使用者，资产清单去掉 llama.cpp 与 27B；`setup` 并入 `install`。
 
 ## 全部 ADR
 
@@ -108,7 +110,7 @@
 | [0019](0019-product-translation-q2.md) | 产品翻译切到 Q2 | 有效；第 2 点中的 llama-server 建表与"不同时驻留"由 0022 替代；第 4 点的降级与第 5 点的配方名、hash 由 0029 替代 |
 | [0020](0020-media-inputs-work-dir-and-side-by-side-publish.md) | 音频输入、工作目录移出目标目录、双语字幕发布到源文件旁 | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 唯一翻译基线 Q3（Q2 规则＋Strata 建表，最多 5 次请求） | 有效 |
-| [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效；第 6 点中 `llama_server.py`"不挪不删"与第 1 点中"由 `tests/core/` 导入 v13 对照"由 0025 替代；第 1、2 点中的 `max_tokens`、context／预算与配方名 `q3-names-v1` 由 0026 替代；第 1 点中把空表算作失败的部分由 0028 替代 |
+| [0022](0022-product-names-on-strata.md) | 产品建表切到 Strata（对齐 Q3；names 与翻译共用一个 Strata session） | 有效；第 6 点中 `llama_server.py`"不挪不删"与第 1 点中"由 `tests/core/` 导入 v13 对照"由 0025 替代；第 1、2 点中的 `max_tokens`、context／预算与配方名 `q3-names-v1` 由 0026 替代；第 1 点中把空表算作失败的部分由 0028 替代；第 6 点中保留 llama.cpp 与 27B 清单条目由 0032 替代 |
 | [0023](0023-asr-repeat-guard.md) | ASR 阶段整窗复读守卫（`repeat-strict`＋折叠） | 已接受，2026-11-11 已实现；第 4 点配方 id／hash 与第 5 点"不管插入套话"由 0030 替代 |
 | [0024](0024-embedded-japanese-subtitles.md) | 有内嵌日文文本字幕轨的文件跳过 STT | 已接受，2026-11-11 已实现；2026-11-12 真实片源（Black Panther）运行通过，forced 判定补认标题（`embedded-ja-subtitle-v2`） |
 | [0025](0025-product-package-boundaries.md) | 产品包边界与失败级别（GPU 锁冲突进程级、产品不为研究侧留代码、核心测试不导入研究代码） | 已接受（2026-11-11）；第 4 点中 `tests/equivalence/` 实时对照层由 0031 替代 |
@@ -118,8 +120,9 @@
 | [0029](0029-translate-per-cue-resolution.md) | 产品翻译按条收下、只追问未解决的 cue（`q3-translate-v1`） | 已接受，2026-11-17 已实现 |
 | [0030](0030-asr-window-plausibility-guard.md) | ASR 整窗守卫加语速与已知幻听句两条规则（`guard-v3`） | 已接受，2026-11-18 已实现 |
 | [0031](0031-research-layout-and-lightweight-records.md) | 研究按轮次放进 `research/`，记录精简，冻结靠 git | 已接受（2026-11-18） |
+| [0032](0032-drop-llama-cpp-assets.md) | 资产清单去掉 llama.cpp 与 27B，`install` 并入环境同步 | 已接受，2026-11-18 已实现 |
 
-跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0032 起。
+跳转页：0001、0002 → 0003；0004 → 0005；0006、0009、0011 → 0010；0013 → 0014；0016 → 0017。新 ADR 编号从 0033 起。
 
 ## 记录新决定
 
@@ -129,11 +132,7 @@
 2. **处理旧 ADR**：默认只在被替代的 ADR 状态行末尾追加"某点自某日起由 ADR-NNNN 替代"，正文不动。只有用户授权合并精简时，才把旧篇改成跳转页、把有效条款并入新篇。
 3. **改本页**：在"当前有效决定"里改对应行（一句话加权威链接）并在页尾"更新记录"加一行；在"演进链"的对应链末尾追加一环；在"全部 ADR"里加一行并更新被替代那篇的状态；新发现的不一致或未关闭项写进[待用户裁定事项](../pending-decisions.md)，裁定了其中某项时从那一页删行。
 4. **改 [CURRENT.md](CURRENT.md)**：把对应小节改写成新的完整现行定义（配方 id、hash、模型与启动方式、权威条款），并更新"部分被取代的 ADR 仍有效的条款"表；其中每个 hash 与配方 id 都要能在某篇 ADR 正文里逐字找到。
-5. **同步摘要入口**：
-   - 基线变化时，改 [AGENTS.md](../../AGENTS.md)"现行决定与研究约束"中的基线句（只写基线名，定义在 CURRENT.md）；
-   - 术语有变化时，改 [GLOSSARY.md](../../GLOSSARY.md)；
-   - 来自研究轮次的决定，在[研究索引](../../research/INDEX.md#轮次登记)改该轮状态，并在该轮 README 的"结论与去向"注明裁定结果；
-   - 涉及代码时，按[随交付同步](../agents/documentation.md#随交付同步)更新模块页与 README。
+5. **同步摘要入口**：基线变化时，改 [AGENTS.md](../../AGENTS.md)"现行决定与研究约束"中的基线句（只写基线名，定义在 CURRENT.md）；术语有变化时，改 [GLOSSARY.md](../../GLOSSARY.md)；来自研究轮次的决定，在[研究索引](../../research/INDEX.md#轮次登记)改该轮状态，并在该轮 README 的"结论与去向"注明裁定结果；涉及代码时，按[随交付同步](../agents/documentation.md#随交付同步)更新模块页与 README。
 
 不在本页记录的：研究过程、实验数据、未采纳的候选。这些放在 `research/`。
 
@@ -141,6 +140,7 @@
 
 "当前有效决定"表的改动日志，新的一行加在最前。
 
+- 2026-11-18：ADR-0032 资产清单去掉 llama.cpp 与 27B、`setup` 并入 `install`，新增"资产清单与安装"行。
 - 2026-11-18（research-restructure）：ADR-0031 研究与文档布局，新增"研究与文档布局"行；"产品包边界与失败级别"行去掉实时对照层并加 0031。
 - 2026-11-17／18（batch-run-fixes，均采纳并实现）：ADR-0030 ASR 整窗守卫加语速与已知幻听句两条规则（`w0-faster-whisper-large-v3-guard-v3`，票 09，11-18），"ASR 复读守卫"行改名为"ASR 整窗守卫"并加 0030；ADR-0029 产品翻译按条收下、只追问未解决的 cue（`q3-translate-v1`，票 08），"产品翻译"行改配方名与规则并加 0029；ADR-0028 产品建表空表不再重试（`q3-names-v3`，票 07），"专名一致性"行改配方名并加 0028；ADR-0027 不再流复制原始音轨（票 05），"产品架构"行加 0027。
 - 2026-11-11（文档架构整理）：表压成每行一句话，完整定义移到 [CURRENT.md](CURRENT.md)；spec §8 的 7 项由用户委托 agent 裁定（结果见该 spec §9）：ADR-0007、0008、0010、0014、0015、0017、0019、0021 状态行追加过时条款的说明，现行表各行不变。

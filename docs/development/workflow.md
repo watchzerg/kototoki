@@ -6,9 +6,9 @@
 
 验证目标是原生 Windows（pwsh、RTX 5080）；macOS 未验证。mise、uv、just 由用户安装，版本固定在 `mise.toml`，解释器固定在 `.python-version`；工具分工与依赖变更规则的权威正文是 [Python 工具链](toolchain.md)，平台要求见 [Windows 与 NVIDIA](windows-nvidia.md)。
 
-- 根环境即产品环境：Python 3.13 + 统一 CUDA 12.8 推理栈（torch 2.11.0+cu128 等，版本见[技术选型](technology-stack.md#已选依赖)）。`just install`（`just setup` 即 `uv sync --locked`，再按清单安装 ffmpeg、llama.cpp）与 `just fetch-models` 会改环境且可能联网，须先问用户。
+- 根环境即产品环境：Python 3.13 + 统一 CUDA 12.8 推理栈（torch 2.11.0+cu128 等，版本见[技术选型](technology-stack.md#已选依赖)）。`just install`（`uv sync --locked`，再按清单安装 ffmpeg）与 `just fetch-models` 会改环境且可能联网，须先问用户。
 - 行尾统一为 LF：`.gitattributes` 的 `* text=auto eol=lf` 让仓库存 LF、任何平台检出也是 LF（优先于 `core.autocrlf`），`.editorconfig` 让编辑器新建 LF 文件；改文件不必再做字节级保护。
-- 产品用的 ffmpeg 与研究期用过的官方 llama.cpp 在 `.local/tools/<name>/<version>/`（各带 `identity.json`），模型在 `.local/models/`；二者的版本与 SHA256 由资产清单 `assets.toml` 锁定，布局见[依赖布局与资产清单](dependencies.md)。
+- 产品用的 ffmpeg 在 `.local/tools/<name>/<version>/`（带 `identity.json`），模型在 `.local/models/`；二者的版本与 SHA256 由资产清单 `assets.toml` 锁定，布局见[依赖布局与资产清单](dependencies.md)。
 
 ## 命令与门禁
 
@@ -23,10 +23,10 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 | recipe | 当前实现 |
 | --- | --- |
 | `check-toolchain` | `scripts/check_toolchain.py`：核对 uv、just 与 `mise.toml`、Python 与 `.python-version` 一致；用 `uv run --no-project --no-python-downloads --offline`，不同步环境 |
-| `install` | 依赖 `setup`（`uv sync --locked`），再 `scripts/assets.py install-tools`：按 `assets.toml` 安装 `tools`；已装且一致时只补缺失的 `identity.json`，否则下载 zip（缓存于 `.local/downloads/<name>/`）、解出清单文件并核对；没有压缩包 SHA256 的记录拒绝安装。联网、改环境，须先问 |
+| `install` | `uv sync --locked`，再 `scripts/assets.py install-tools`：按 `assets.toml` 安装 `tools`；已装且一致时只补缺失的 `identity.json`，否则下载 zip（缓存于 `.local/downloads/<name>/`）、解出清单文件并核对；没有压缩包 SHA256 的记录拒绝安装。联网、改环境，须先问 |
 | `fetch-models` | `scripts/assets.py fetch-models`：按清单从 HF 固定 revision 下载缺失或不符的模型文件，门控模型取 `HF_TOKEN`；几十 GB、联网，须先问 |
 | `verify-assets` | `scripts/assets.py verify`：离线核对 tools 与 models（大小、SHA256 经 size+mtime 缓存 `.local/cache/assets-verify.json`，tools 还要求 `identity.json`） |
-| `upgrade` | `scripts/upgrade.py [组件 ...]` 后接 `test`、`test-full`、`verify-assets`：按[选版规则](dependencies.md#升级)把 Python 依赖、llama.cpp、ffmpeg 升到最新稳定版，报告写 `.local/upgrade/<UTC>/report.json`；脚本用 `uv run --no-project`，自身调用 `uv lock`／`uv sync`。联网、改环境与 `assets.toml`，须先问；不跑 smoke |
+| `upgrade` | `scripts/upgrade.py [组件 ...]` 后接 `test`、`test-full`、`verify-assets`：按[选版规则](dependencies.md#升级)把 Python 依赖、ffmpeg 升到最新稳定版，报告写 `.local/upgrade/<UTC>/report.json`；脚本用 `uv run --no-project`，自身调用 `uv lock`／`uv sync`。联网、改环境与 `assets.toml`，须先问；不跑 smoke |
 | `upgrade-check` | `scripts/upgrade.py --check`：只报告可升级项与被跳过的传递依赖主版本升级，不改文件；联网查询 PyPI 与 GitHub |
 | `fmt`、`lint`、`typecheck` | 项目尚未选定格式化、lint 与类型检查工具，按契约非零退出并说明原因；不在任何 gate 内 |
 | `test` | `unittest discover -s tests/core -t . -v [参数 ...]`：core 层；可追加 unittest 参数（如 `-k 名称片段`）定向运行 |

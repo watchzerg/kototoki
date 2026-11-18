@@ -126,6 +126,10 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 
 研究一轮一目录 `research/<YYYY-MM>-<slug>/`，在 [research/INDEX.md](../../research/INDEX.md) 登记；README 按 `research/TEMPLATE.md` 填必填项，不写哈希（git commit 除外）、本机绝对路径、逐条明细与执行台账；冻结靠 git 与归档 tag `archive/2026-11-18-pre-research-restructure`，代码不对文档做 sha256 自检；产品不导入 `research/`，研究可以导入产品；`.scratch/<slug>/` 只放进行中的产品侧计划，完工后删除（[0031](0031-research-layout-and-lightweight-records.md) 第 1–10 点）。
 
+### 资产清单与安装
+
+`assets.toml` 只列产品用到的二进制（ffmpeg）与 STT 模型；llama.cpp 工具与 Qwen3.8-27B 条目已删除，`scripts/upgrade.py` 只升 `python` 与 `ffmpeg`；`just install` 先 `uv sync --locked` 再安装清单里的工具，没有单独的 `setup`（[0032](0032-drop-llama-cpp-assets.md) 第 1–3 点）。研究需要清单外的二进制或模型时由该轮自行记录与准备（第 4 点）。
+
 ### 方法禁区
 
 不自动选用"翻译多次再挑选"；可靠性重试与按条追问、对半拆分不算在内；边界情况先问（[0008](0008-no-multi-translation-selection.md) 第 1–2 点、范围；0029 依据）。
@@ -140,7 +144,7 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 | [0017](0017-q2-strata-default-launch-baseline.md) | 第 3 点；身份节的 Q1 规则、Q2 两处改动、服务、请求、接入检查、配方身份（均为 Q3 组成部分） | 第 1 点 → 0021；第 2 点对照对象经 0018 第 2 点扩展、再由 0021 改为 Q3 |
 | [0018](0018-q2-sole-translation-baseline.md) | 第 2、4 点（改为针对 Q3）、第 3 点"H0 不再是基线"、第 5 点 | 第 1 点 → 0021；第 3 点"产品当前的翻译实现" → 0019 |
 | [0019](0019-product-translation-q2.md) | 第 1–3、6 点；第 4 点的基础设施失败与 `StrataRefused` | 第 2 点 llama-server 建表与不同时驻留 → 0022；第 4 点 10→5→1 降级、单条保留日文与空行判失败，第 5 点配方名、hash 与 run 目录名 → 0029 |
-| [0022](0022-product-names-on-strata.md) | 第 1 点其余（提示、采样、请求形状、预检、seed 序列与 5 次尝试）、第 3–5 点 | 第 1 点 `max_tokens` 8192、context 24576／预算 15872，第 2 点配方名 `q3-names-v1` → 0026；第 6 点与第 1 点"由 `tests/core/` 导入 v13 对照" → 0025；第 1 点把空表算作失败 → 0028 |
+| [0022](0022-product-names-on-strata.md) | 第 1 点其余（提示、采样、请求形状、预检、seed 序列与 5 次尝试）、第 3–5 点 | 第 1 点 `max_tokens` 8192、context 24576／预算 15872，第 2 点配方名 `q3-names-v1` → 0026；第 6 点与第 1 点"由 `tests/core/` 导入 v13 对照" → 0025；第 1 点把空表算作失败 → 0028；第 6 点保留 llama.cpp 与 27B 清单条目 → 0032 |
 | [0023](0023-asr-repeat-guard.md) | 第 1–3 点；第 4 点的 `guard` 块与 hash 级联 | 第 4 点配方 id 与 hash、第 5 点"不管低压缩比的插入套话" → 0030 |
 | [0025](0025-product-package-boundaries.md) | 第 1–3 点；第 4 点中 `tests/core` 不导入研究代码与钉字面量 | 第 4 点 `tests/equivalence/` 实时对照层与 `just test-equivalence` → 0031 |
 | [0026](0026-names-output-and-prompt-budget.md) | 第 1、2、4 点 | 第 3 点配方名 `q3-names-v2` 与 hash → 0028 |

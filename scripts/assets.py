@@ -127,7 +127,7 @@ def _extract(archive: Path, base: Path, files: Mapping[str, Any], strip: str) ->
 
 
 def write_identity(base: Path, name: str, tool: Mapping[str, Any]) -> Path:
-    """安装目录的 `identity.json`，格式沿用 llama.cpp：来源、压缩包（SHA256 未知记 null）、逐文件 SHA256。"""
+    """安装目录的 `identity.json`，格式：来源、压缩包（SHA256 未知记 null）、逐文件 SHA256。"""
     extra = {key: value for key, value in tool.items() if key not in ("version", "archives", "files")}
     identity = {"identity": f"{name}-{tool['version']}", "created_at": utc_now(), "version": tool["version"], **extra,
                 "archives": [{"name": a["name"], "url": a["url"], "sha256": a.get("sha256")} for a in tool["archives"]],
