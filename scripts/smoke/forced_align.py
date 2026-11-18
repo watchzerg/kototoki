@@ -7,8 +7,8 @@ b. 冻结窗口：加载 MMS（CUDA FP32、jpn adapter），对冻结 W0 结果�
    用同一份 emission 分别跑 CUDA 与 CPU 的 forced_align，路径必须一致；
    与冻结记录（torch 2.8.0 下产出）的对比只作参考，不构成门禁。
 
-不使用 `MmsAligner`（其构造函数断言 torchaudio 2.8.0），只复用 `experiments.w0_demo.alignment`
-中的纯函数。不添加任何私有 DLL 目录。结果里只有计数、哈希、布尔、耗时与版本，不含音频内容或转写文本。
+不使用 `MmsAligner`，只复用产品 `kototoki.align` 中的纯函数（原为研究侧 `archive/2026-11-18-pre-research-restructure:experiments/w0_demo/alignment.py`，
+见归档 tag）。不添加任何私有 DLL 目录。结果里只有计数、哈希、布尔、耗时与版本，不含音频内容或转写文本。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def read_pcm(path: Path) -> tuple[Any, str]:
-    """与 experiments/w0_demo/run.py 的 read_audio 一致：pcm_sha256 是原始 PCM16 字节的 sha256。"""
+    """与研究期 w0 demo（归档 tag）的 read_audio 一致：pcm_sha256 是原始 PCM16 字节的 sha256。"""
     import numpy as np
 
     with wave.open(str(path), "rb") as source:
@@ -163,7 +163,7 @@ def load_mms(torch: Any) -> tuple[Any, Any, dict[str, int], int, dict[str, Any]]
 
 def frozen_window_check(torch: Any, failures: list[str]) -> dict[str, Any]:
     """b. 冻结窗口：真实 MMS emission 上的 CUDA / CPU forced_align，并与冻结记录对照（仅参考）。"""
-    from experiments.w0_demo.alignment import character_targets, mms_numeric_policy, normalize_window
+    from kototoki.align import character_targets, mms_numeric_policy, normalize_window
 
     result: dict[str, Any] = {"window_index": WINDOW_INDEX}
     frozen = json.loads(FROZEN_RUN.read_text(encoding="utf-8"))
@@ -247,7 +247,7 @@ def frozen_window_check(torch: Any, failures: list[str]) -> dict[str, Any]:
 
 def main() -> int:
     args = smokelib.parse_args("Smoke: torchaudio forced_align / merge_tokens on CUDA.")
-    sys.path.insert(0, str(smokelib.REPO))  # 为了 import experiments.w0_demo
+    sys.path.insert(0, str(smokelib.REPO))  # 为了 import kototoki.align
     timer = smokelib.Timer()
     failures: list[str] = []
     result: dict[str, Any] = {"passed": False, "versions": {}, "device": "unavailable", "failures": failures}

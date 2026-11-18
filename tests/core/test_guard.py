@@ -1,7 +1,7 @@
 """ASR 整窗复读守卫（`kototoki.guard`，ADR-0023）的纯逻辑测试。
 
-等价守门把产品移植在一组固定文本上的命中与折叠结果钉成 sha256；与研究侧 `experiments.asr_robustness_v15.repeat`
-的实时对照在 `tests/equivalence/test_guard.py`（core 测试不导入 experiments）。
+等价守门把产品移植在一组固定文本上的命中与折叠结果钉成 sha256；研究侧原实现是
+`archive/2026-11-18-pre-research-restructure:experiments/asr_robustness_v15/repeat.py`（已删除，core 测试不导入研究代码）。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ FILLER = "今日は良い天気なので外へ出かけて買い物をします�
 
 
 def equivalence_texts() -> list[str]:
-    """固定样本：手写边界用例加 300 条种子 23 的随机用例（`tests/equivalence/test_guard.py` 复用同一组）。"""
+    """固定样本：手写边界用例加 300 条种子 23 的随机用例（研究期的实时对照层曾复用同一组）。"""
     fixed = ["", "うっ" * 9, "うっ" * 10, "うっ…" * 22, "あ" * 19, "あ" * 20, "あ" * 45, FILLER,
              "うっ" * 10 + FILLER[:20], "うっ" * 10 + FILLER[:21], "まって、" + "うっ…" * 22 + "だめ。",
              "ねえ" + "たすけて！" * 12 + "おわり", "".join(f"たすけ{index}" for index in range(10)),
@@ -56,7 +56,7 @@ class RuleTests(unittest.TestCase):
 
     def test_module_stays_in_the_base_layer(self) -> None:
         code = ("import sys, kototoki.guard; "
-                "bad = [m for m in sys.modules if m.split('.')[0] in ('torch', 'experiments', 'kototoki_eval', "
+                "bad = [m for m in sys.modules if m.split('.')[0] in ('torch', 'research', "
                 "'numpy')]; sys.exit(1 if bad else 0)")
         self.assertEqual(subprocess.run([sys.executable, "-c", code], cwd=REPO).returncode, 0)
 
@@ -174,8 +174,8 @@ class WindowGuardTests(unittest.TestCase):
 class ResearchPinTests(unittest.TestCase):
     """产品移植在固定样本上的逐条结果（是否命中、折叠或置空、折叠后文本、period、copies、removed_raw_chars）钉成 sha256。
 
-    钉值取自 2026-11-11 的研究实现 `experiments.asr_robustness_v15.repeat`（`flagged`／`collapse`，`repeat-strict`
-    参数，折叠后仍命中则置空），由 `tests/equivalence/test_guard.py` 实时对照。"""
+    钉值取自 2026-11-11 的研究实现 `archive/2026-11-18-pre-research-restructure:experiments/asr_robustness_v15/repeat.py`（`flagged`／`collapse`，`repeat-strict`
+    参数，折叠后仍命中则置空）。"""
 
     PINNED_SHA256 = "b18bedec9074643bcc31fe61cf3f7e5cb56a09007595f5fea759cddb3914ba4b"
 

@@ -1,7 +1,7 @@
 """专名建表的离线测试：不联网、不加载模型。
 
 Parse／Cap／Shape／Honorific／PromptV5／JaShape／Confidence 用例移植自
-`experiments/name_consistency/test_build_table.py`（不导入 experiments），去掉 renormalize 与 main；
+`archive/2026-11-18-pre-research-restructure:experiments/name_consistency/test_build_table.py`，去掉 renormalize 与 main；
 Render 与 BuildTable 针对产品接口 `build_messages(SourceDocument)`、`build_table(document, chat, tokenize, seed)`。
 """
 

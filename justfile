@@ -1,9 +1,5 @@
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
-# 冻结的 experiments recipe 在历史根环境（Python 3.12、无依赖）中运行，保持原有跳过行为与运行身份；
-# 产品根环境（Torch 等）不用于它们（docs/development/workflow.md#测试分层与资源边界）。
-legacy := "uv run --no-project --no-python-downloads --offline --python 3.12"
-
 default:
     @just --list
 
@@ -12,63 +8,13 @@ default:
 test *args:
     uv run --locked --offline python -m unittest discover -s tests/core -t . -v {{args}}
 
-# 研究期离线测试，只读保留，不属于 gate-core（docs/development/workflow.md#测试分层与资源边界）。
-experiments-test:
-    {{legacy}} python -m unittest discover -s experiments/tests -t . -v
-    {{legacy}} python -m unittest discover -s experiments/corpus -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/provision -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/whisper -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/japanese_ctc -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/qwen -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/crisp -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/display -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/analysis -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/performance -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/w0_demo -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/x0_demo -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/vad_comparison -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/fullfilm_comparison -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/asr_candidates -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/asr_robustness_v14 -t . -p 'test_*.py' -v
-    {{legacy}} python -m unittest discover -s experiments/asr_robustness_v15 -t . -p 'test_*.py' -v
-
-x0-demo *args:
-    {{legacy}} python -m experiments.x0_demo.run {{args}}
-
-translation-test:
-    {{legacy}} python -m unittest experiments.translation_demo.test_demo experiments.translation_eval.test_runner experiments.translation_judge.test_runner experiments.translation_judge.test_subagents experiments.translation_compat.test_compat -v
-
-translation-demo *args:
-    {{legacy}} python -m experiments.translation_demo_runtime {{args}}
-
-# 历史记录：ADR-0005 的翻译基线入口，使用 b11429 兼容引擎；产品改用官方 b11583（ADR-0007），本 recipe 只供复现。
-translation-baseline *args:
-    {{legacy}} python -X utf8 -m experiments.translation_demo_runtime {{args}} --candidate hy-mt2-30b-a3b-apex-i-compact --engine '.local/translation-evaluation/20261006-v1/hy30-compat/runtime/llama-server.exe' --engine-identity '.local/translation-evaluation/20261006-v1/hy30-compat/runtime/identity.json' --layers 99 --sampling-profile official30b-cached-v1 --n-predict 4096 --context-size 8192 --threads 8 --threads-batch 8
-
-# Adopted full-SRT flow baseline (ADR-0010): APEX + official30b-cached-v1 + v3 recipe dp10-cut. GPU.
-translation-srt *args:
-    {{legacy}} python -X utf8 -m experiments.translation_v3 translate-srt --recipe dp10-cut {{args}}
-
-translation-eval *args:
-    {{legacy}} python -m experiments.translation_eval {{args}}
-
-translation-flow *args:
-    {{legacy}} python -m experiments.translation_flow {{args}}
-
-translation-flow-test:
-    {{legacy}} python -m unittest experiments.translation_flow.test_srt experiments.translation_flow.test_worker experiments.translation_flow.test_cli experiments.translation_flow.test_costs experiments.translation_flow.test_judge_loop experiments.translation_flow.test_project_evaluation experiments.translation_flow.test_screening experiments.translation_flow.test_dispatch experiments.translation_eval.test_runner -v
-
-# 冻结的 test_v2_common_diagnostics、test_v2_confirmation_evaluation 仍从旧的 tests 位置导入，原样保留、不再列入。
-translation-flow-v2-test:
-    {{legacy}} python -m unittest experiments.translation_flow.test_v2_prepare experiments.translation_flow.test_v2_common_source experiments.translation_flow.test_v2_output_budget experiments.translation_flow.test_v2_ordered_text experiments.translation_flow.test_combined_stage experiments.translation_flow.test_v2_prepare_integrity experiments.translation_flow.test_v2_worker experiments.translation_flow.test_v2_semantic experiments.translation_flow.test_v2_delivery experiments.translation_flow.test_v2_reproject experiments.translation_flow.test_v2_statistics experiments.translation_flow.test_v2_timing experiments.translation_flow.test_v2_evaluation experiments.translation_flow.test_v2_trial experiments.translation_flow.test_v2_confirmation experiments.translation_flow.test_v2_confirmation_dispatch experiments.translation_flow.test_v2_universal_review experiments.translation_flow.test_v2_matched_evaluation experiments.translation_flow.test_v2_fluency_runner experiments.translation_flow.test_v2_consistency experiments.translation_flow.test_v2_consistency_custody experiments.translation_flow.test_v2_consistency_runner experiments.translation_flow.test_v2_unit_diagnostics experiments.translation_flow.test_v2_unit_custody experiments.translation_flow.test_v2_unit_main_proof experiments.translation_flow.test_v2_review_evaluation experiments.translation_flow.test_v2_judge_dispatch experiments.translation_flow.test_v2_risk_reconciliation experiments.translation_flow.test_v2_risk_runner experiments.translation_flow.test_v2_risk_transport_runner -v
-
 # 用默认配置为 DIR（相对路径按调用目录解析）下的视频与音频生成双语字幕：占 GPU、加载模型、可能跑数小时（须先问）。
 # 只设 input_dir，其余取默认；要改其他键请写 kototoki.toml 并用 python -m kototoki（scripts/subtitles.py）。退出码同产品入口。
 subtitles dir:
     uv run --locked --offline python scripts/subtitles.py '{{replace(join(invocation_directory_native(), dir), "'", "''")}}'; exit $LASTEXITCODE
 
 check:
-    uv run --locked --offline python -m compileall -q kototoki kototoki_eval experiments scripts tests
+    uv run --locked --offline python -m compileall -q kototoki scripts tests
 
 setup:
     uv sync --locked
@@ -116,10 +62,6 @@ typecheck:
 test-full *args:
     uv run --locked --offline python -m unittest discover -s tests/full -t . -v {{args}}
 
-# equivalence：产品与研究实现（experiments.*）的实时等价对照，根环境；不加载模型、不占 GPU、不持锁；参数同 test。
-test-equivalence *args:
-    uv run --locked --offline python -m unittest discover -s tests/equivalence -t . -v {{args}}
-
 # 真实模型验证（占 GPU、加载模型，每次须先经用户批准；不属于任何 gate）：每项独立子进程，持 .local/gpu.lock，
 # 结果写 .local/smoke/；可只跑指定项。
 smoke *args:
@@ -131,4 +73,4 @@ docs-check:
 # lint、typecheck 未选定工具，不在门禁内；以编译检查 check 代替（docs/development/workflow.md#命令与门禁）。
 gate-core: check-toolchain docs-check check test
 
-gate-full: gate-core test-full test-equivalence
+gate-full: gate-core test-full

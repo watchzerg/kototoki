@@ -1,7 +1,7 @@
 """`kototoki.local_client` 的测试：OOM 识别、本机客户端的 trace 与回环限制。
 
 2026-11-11 架构整理票据 05（ADR-0025）由 `test_llama_server.py` 拆出：llama-server 生命周期的测试随代码搬到
-`experiments/translation_v3/test_llama_server.py`，显存轮询的测试并入 `test_strata.py`。
+`archive/2026-11-18-pre-research-restructure:experiments/translation_v3/test_llama_server.py`，显存轮询的测试并入 `test_strata.py`。
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class LlamaClientTraceTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.trace.iterdir()), ["00001", "chat-03", "count-02"])
 
     def test_research_only_methods_are_not_in_the_product_client(self):
-        # ADR-0025：`/tokenize`、`/completion` 只有研究侧用，在 experiments/translation_v3/llama_server.py
+        # ADR-0025：`/tokenize`、`/completion` 只有研究侧用，在 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/llama_server.py`
         self.assertFalse(hasattr(self.client, "tokenize"))
         self.assertFalse(hasattr(self.client, "complete"))
 

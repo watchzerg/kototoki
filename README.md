@@ -30,3 +30,7 @@
 - **评估素材**：Heaven's Feel II／III 原版日文字幕为精确主参考，I 与 Black Panther 只作补充，素材规则见 [STT demo 轮次](research/2026-10-stt-demo-w0-x0/README.md#测试)。
 
 模型比较、流程探索、验收与各轮结论登记在[研究索引](research/INDEX.md)；历史报告中的 W0／W1／X0 指当时身份，分数不直接归给当前基线。
+
+## 第三方许可
+
+`kototoki/asr_whisper.py` 与 `kototoki/align.py` 中改编自 WhisperX 与 OpenAI Whisper 的代码，其许可声明在 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)（模块注释里的 `archive/2026-11-18-pre-research-restructure:experiments/w0_demo/THIRD_PARTY_NOTICES.txt` 是迁移前的位置）。

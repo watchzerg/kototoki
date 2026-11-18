@@ -1,8 +1,7 @@
-"""产品配方 `q3-translate-v1` 的身份钉子：配方 hash、与研究侧 Q2（`experiments/translation_v3/{qwen,strata}.py`＋
-`scene_batching_v6/v12.py::strata_recipe_data`）逐字节一致的切包、邻文、提示与请求体（摘要钉子），注入行与研究
+"""产品配方 `q3-translate-v1` 的身份钉子：配方 hash、与研究侧 Q2（归档 tag 中的 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/`
+`qwen.py`、`strata.py` 与 `scene_batching_v6/v12.py::strata_recipe_data`）逐字节一致的切包、邻文、提示与请求体（摘要钉子），注入行与研究
 `names11.py::product_tables` 的规则一致（字面量钉子），回复校验。gap-pack-v2 切包用例移植自
-`experiments/scene_batching_v6/test_v7.py`。与研究实现的实时对照在 `tests/equivalence/test_translate_recipes.py`，
-本文件不导入 experiments。"""
+`archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/test_v7.py`。本文件不导入研究代码。"""
 
 from __future__ import annotations
 
@@ -95,7 +94,7 @@ class RecipeIdentityTests(unittest.TestCase):
         self.assertTrue(recipe["validation"].startswith("strict-json+one-translations-object; per-cue "))
 
     def test_packing_is_the_v3_dp10_cut_pack(self) -> None:
-        # 取自 2026-11-11 的 `experiments.translation_v3.recipes.BUILTIN["dp10-cut"].gap_pack`。
+        # 取自 2026-11-11 的 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/recipes.py` 中 `BUILTIN["dp10-cut"].gap_pack`。
         pack = {"min": 6, "max": 10, "soft_gap": 2.0, "hard_gap": 20.0, "soft_weight": 1.0, "small_penalty": 1000.0,
                 "group_gap": None, "group_max": 10, "context_both_below": 1.0, "context_before_below": 5.0,
                 "max_visible": 12, "cut_penalty": [[0.5, 6.0], [1.0, 3.0], [2.0, 1.0]]}
@@ -105,8 +104,8 @@ class RecipeIdentityTests(unittest.TestCase):
 
 class Q2ByteIdentityTests(unittest.TestCase):
     """产品的正常包请求必须与研究侧 Q2 逐字节相同（ADR-0019 第 1 点）。钉值取自 2026-11-11 的研究实现
-    （`experiments.translation_v3.{batching,qwen,strata}` 与 `scene_batching_v6.v12.strata_recipe_data` 组出的 Q2），
-    由 `tests/equivalence/test_translate_recipes.py` 实时对照。"""
+    （`archive/2026-11-18-pre-research-restructure:experiments/translation_v3/` 的 batching、qwen、strata 与 `scene_batching_v6/v12.py::strata_recipe_data`
+    组出的 Q2）。"""
 
     BATCHES_SHA256 = "b64af8526604f759934a18efec15f36645464a0018c4070ae326a6ba80944687"
     PLAIN_BODY_SHA256 = "fa3ce2aa14439b779726b49e9ba61b97489611bdfac4fa399aa1ad70152f6a61"
@@ -147,7 +146,7 @@ class Q2ByteIdentityTests(unittest.TestCase):
         table = {"entries": [entity("high", ("セイバー", "Saber"), ("セイバ", "Saber")), entity("medium", ("士郎", "士郎")),
                              entity("high", ("セイバー", "塞巴"), ("凛", "凛")), entity("low", ("桜", "樱")),
                              entity("high", (" ", "空"), ("遠坂", " "))]}
-        # 取自 2026-11-11 的 `experiments.scene_batching_v6.names11.product_tables("high")` 在同一张表上的输出。
+        # 取自 2026-11-11 的 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/names11.py` 中 `product_tables("high")` 在同一张表上的输出。
         self.assertEqual(R.name_rows(table), [{"source": "セイバー", "translation": "Saber"},
                                               {"source": "セイバ", "translation": "Saber"},
                                               {"source": "凛", "translation": "凛"}])

@@ -1,7 +1,6 @@
 """kototoki.judge 的离线测试：分歧区间、raw／normalized 假设、判定边界、分批打分、合并、守卫与汇总、
 x0 清洗与整文件裁判 `judge_file` 的逐窗决策，
-以及在合成样例上与研究脚本 `experiments/quality_v5` 结果的 sha256 钉子（实时对照在
-`tests/equivalence/test_judge.py`，core 测试不导入 experiments）。"""
+以及在合成样例上与研究脚本 `archive/2026-11-18-pre-research-restructure:experiments/quality_v5/` 结果的 sha256 钉子（core 测试不导入研究代码）。"""
 
 from __future__ import annotations
 
@@ -304,9 +303,8 @@ class JudgeFileTests(unittest.TestCase):
 
 
 class ResearchPinTests(unittest.TestCase):
-    """合成样例上的逐项结果钉成 sha256；钉值取自 2026-11-11 的研究实现 `experiments.quality_v5`
-    （`asr_pair_oracle`、`asr_pair_cross_score`、`asr_pair_ctc_judge`）与 `kototoki_eval.schema.normalize`，
-    由 `tests/equivalence/test_judge.py` 实时对照。"""
+    """合成样例上的逐项结果钉成 sha256；钉值取自 2026-11-11 的研究实现 `archive/2026-11-18-pre-research-restructure:experiments/quality_v5/`
+    （`asr_pair_oracle`、`asr_pair_cross_score`、`asr_pair_ctc_judge`）与 `archive/2026-11-18-pre-research-restructure:kototoki_eval/schema.py` 的 `normalize`。"""
 
     INTERVALS_SHA256 = "6b3af256f3ff06455b5e910afb3994f0d685d9af0b97abffc3094e90bf60154d"
     HYPOTHESES_SHA256 = "ae141c739e7b7ac2f8e3530a7842702dd9f24a40c7c8df3c25b92b428f4ef841"
@@ -336,7 +334,7 @@ class ImportBoundaryTests(unittest.TestCase):
     def test_judge_is_base_layer(self):
         code = (
             "import sys, kototoki.judge\n"
-            "banned = {'torch', 'ctranslate2', 'faster_whisper', 'transformers', 'kototoki_eval', 'experiments'}\n"
+            "banned = {'torch', 'ctranslate2', 'faster_whisper', 'transformers', 'research'}\n"
             "bad = sorted(m for m in sys.modules if m.split('.')[0] in banned)\n"
             "print(bad)\n"
             "sys.exit(1 if bad else 0)\n")

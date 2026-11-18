@@ -1363,11 +1363,11 @@ class IdentityTests(JobCase):
 
 class ImportAndDirTests(JobCase):
     def test_job_and_main_import_no_inference_stack(self) -> None:
-        # 编排器以普通导入使用的 Strata、专名、翻译与合并模块同样不得带进推理栈或 experiments。
+        # 编排器以普通导入使用的 Strata、专名、翻译与合并模块同样不得带进推理栈或研究代码。
         code = (
             "import sys, kototoki.job, kototoki.__main__, kototoki.names, kototoki.translate\n"
             "banned = {'torch', 'ctranslate2', 'faster_whisper', 'transformers', 'pyannote', 'torchaudio',\n"
-            "          'torchcodec', 'experiments'}\n"
+            "          'torchcodec', 'research'}\n"
             "bad = sorted(m for m in sys.modules if m.split('.')[0] in banned)\n"
             "print(bad)\n"
             "sys.exit(1 if bad else 0)\n")

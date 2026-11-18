@@ -69,7 +69,7 @@ class ProcessLockTests(unittest.TestCase):
 
     def test_external_lock_without_pid_created_is_checked_by_pid_alone(self) -> None:
         # 研究侧写入方只记 pid：存活检查拿到 created=None，存活即拒绝，从不抢占。
-        text = json.dumps({"pid": OTHER_PID, "owner": "experiments"})
+        text = json.dumps({"pid": OTHER_PID, "owner": "research"})
         self.write(text)
         for break_stale in (False, True):
             with self.subTest(break_stale=break_stale):

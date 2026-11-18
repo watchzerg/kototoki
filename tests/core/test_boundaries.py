@@ -1,5 +1,5 @@
-"""全仓库导入边界（ADR-0025 决定 4）：产品包 `kototoki/` 不导入 `experiments`、`kototoki_eval`；`tests/core/` 不导入
-`experiments`（与研究实现的对照放 `tests/equivalence/`）。AST 扫描，覆盖 `import`、`from ... import`，以及首参为字符串
+"""全仓库导入边界（ADR-0031 R5、ADR-0025 决定 4）：产品包 `kototoki/` 与 `tests/core/` 都不导入 `research`
+（研究可以导入产品，反向不行）。AST 扫描，覆盖 `import`、`from ... import`，以及首参为字符串
 字面量的 `importlib.import_module` 与 `__import__`。"""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from pathlib import Path
 import unittest
 
 REPO = Path(__file__).resolve().parents[2]
-RESEARCH = ("experiments", "kototoki_eval")
+RESEARCH = ("research",)
 
 
 def imported_roots(tree: ast.AST) -> set[str]:
@@ -41,19 +41,22 @@ def violations(directory: str, banned: tuple[str, ...]) -> list[str]:
 
 class ScannerTests(unittest.TestCase):
     def test_every_import_form_is_detected(self) -> None:
-        source = ("import experiments.x\nimport os, kototoki_eval\nfrom experiments import y\nfrom experiments.a.b import c\n"
-                  "import importlib\nimportlib.import_module('experiments.z')\n__import__('kototoki_eval.s')\n"
-                  "from . import experiments\nname = 'experiments'\nimportlib.import_module(name)\n")
-        self.assertEqual(imported_roots(ast.parse(source)), {"experiments", "kototoki_eval", "os", "importlib"})
-        self.assertEqual(imported_roots(ast.parse("from .experiments import a\nimport kototoki.guard\n")), {"kototoki"})
+        source = ("import research.x\nimport os, toolz\nfrom research import y\nfrom research.a.b import c\n"
+                  "import importlib\nimportlib.import_module('research.z')\n__import__('toolz.s')\n"
+                  "from . import research\nname = 'research'\nimportlib.import_module(name)\n")
+        self.assertEqual(imported_roots(ast.parse(source)), {"research", "toolz", "os", "importlib"})
+        self.assertEqual(imported_roots(ast.parse("from .research import a\nimport kototoki.guard\n")), {"kototoki"})
+
+    def test_violations_reports_banned_roots(self) -> None:
+        self.assertIn("tests/core/test_boundaries.py: unittest", violations("tests/core", ("unittest",)))
 
 
 class RepoBoundaryTests(unittest.TestCase):
-    def test_product_package_does_not_import_research_code(self) -> None:
+    def test_product_package_does_not_import_research(self) -> None:
         self.assertEqual(violations("kototoki", RESEARCH), [])
 
-    def test_core_tests_do_not_import_experiments(self) -> None:
-        self.assertEqual(violations("tests/core", ("experiments",)), [])
+    def test_core_tests_do_not_import_research(self) -> None:
+        self.assertEqual(violations("tests/core", RESEARCH), [])
 
 
 if __name__ == "__main__":

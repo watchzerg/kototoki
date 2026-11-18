@@ -74,7 +74,7 @@ def dll_file_version(path: str) -> str | None:
 
 
 def read_pcm(path: Path) -> tuple[Any, str]:
-    """与 experiments/w0_demo/run.py 的 read_audio 一致：pcm_sha256 是原始 PCM16 字节的 sha256。"""
+    """与研究期 w0 demo（归档 tag）的 read_audio 一致：pcm_sha256 是原始 PCM16 字节的 sha256。"""
     import numpy as np
 
     with wave.open(str(path), "rb") as source:
@@ -88,7 +88,7 @@ def read_pcm(path: Path) -> tuple[Any, str]:
 
 def child_main(tag: str, out: Path) -> int:
     """单个子进程：torch 在前，ctranslate2 / faster_whisper 在后；结果以 CT2_CHILD 行输出。"""
-    sys.path.insert(0, str(smokelib.REPO))  # 为了 import experiments.w0_demo.asr（导入无副作用，仅 stdlib）
+    sys.path.insert(0, str(smokelib.REPO))  # 为了 import kototoki.asr_whisper（torch 与 ct2 此时已按序导入）
     result: dict[str, Any] = {"tag": tag, "ok": False, "stage": "start", "failures": [],
                               "ptx_jit_disabled": os.environ.get("CUDA_DISABLE_PTX_JIT") == "1"}
     failures: list[str] = result["failures"]
@@ -118,7 +118,7 @@ def child_main(tag: str, out: Path) -> int:
         result["ct2"] = {"version": ctranslate2.__version__, "faster_whisper": faster_whisper.__version__,
                          "cuda_device_count": ctranslate2.get_cuda_device_count(),
                          "supported_compute_types_cuda": sorted(ctranslate2.get_supported_compute_types("cuda"))}
-        from experiments.w0_demo.asr import features, generate
+        from kototoki.asr_whisper import features, generate
 
         result["stage"] = "prepare_input"
         import numpy as np

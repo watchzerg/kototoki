@@ -1,12 +1,11 @@
 """专名建表配方 `q3-names-v3` 的身份钉子：提示、schema 与整份配方的 sha256 写死在这里，并与基线 Q3 的
 `names-strata-v4` 对照（ADR-0021、ADR-0022、ADR-0026、ADR-0028）。
 
-`SYSTEM_PROMPT_SHA256`、`RESPONSE_SCHEMA_SHA256` 取自 2026-10-19 的 `experiments/name_consistency/build_table.py`
+`SYSTEM_PROMPT_SHA256`、`RESPONSE_SCHEMA_SHA256` 取自 2026-10-19 的 `archive/2026-11-18-pre-research-restructure:experiments/name_consistency/build_table.py`
 （冻结的研究期实现，ADR-0013）。`Q3_BUILD_HASH` 是 ADR-0021 记录的 `names-strata-v4` hash：用产品配方的四块
 （`build`、`model`、`runtime`、`request`），把 ADR-0026 放宽的三项（`V4_LIMITS`）换回 v4 的值、去掉 ADR-0028 新增的
 `retry_on`（`v4_build_block`），再加上研究侧的两个说明字段拼回 v13 `s1_recipe("v4")` 的形状，hash 必须相等，这证明
-产品建表块与基线只差这四项（与 v13 实时对照在
-`tests/equivalence/test_names.py`）。改动提示、schema 或任何请求参数须出新配方名，并同时更新 hash 钉子。
+产品建表块与基线只差这四项。改动提示、schema 或任何请求参数须出新配方名，并同时更新 hash 钉子。
 """
 
 from __future__ import annotations
@@ -35,7 +34,7 @@ def v4_build_block(build: dict) -> dict:
 
 Q3_BUILD_HASH = "38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0"
 # v13 `s1_recipe("v4")` 里研究侧自己的说明字段（产品配方不含）；文字照抄，改动即与 ADR-0021 的 hash 不符。
-# `endpoint` 与名字取自 2026-11-11 的 `experiments.scene_batching_v6.v13`（`COUNT_TOKENS`、`VARIANTS["v4"]["name"]`）。
+# `endpoint` 与名字取自 2026-11-11 的 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v13.py`（`COUNT_TOKENS`、`VARIANTS["v4"]["name"]`）。
 V13_PROMPT_BUDGET_CHECK = {"endpoint": "/v1/messages/count_tokens", "segments": ["system", "user"], "sum": True,
                            "fallback": "no precheck; usage.prompt_tokens recorded, over budget flagged"}
 V13_RETRIES = "build_table again with seed + 2k while it fails; at most attempts requests; first ok kept"
