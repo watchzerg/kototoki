@@ -1,6 +1,6 @@
 # ADR-0030：ASR 整窗守卫加语速与已知幻听句两条规则（`guard-v3`）
 
-状态：已接受（2026-11-17／18，用户决定，依据 [batch-run-fixes 09](../../.scratch/batch-run-fixes/issues/09-short-window-asr-overflow.md)），已实现（2026-11-18）：产品 W0 配方 id 为 `w0-faster-whisper-large-v3-guard-v3`，`recipe_hash` W0 为 `6a47318c7732534270f64d14bb5da9830a79fdcae9f6d84e01a309532d62403b`、CROSS 为 `bd5bc55527a539beab598e98f687f1bcbbcc6c23b3ba3a823fd3e9dfb46338e3`。
+状态：已接受（2026-11-17／18，用户决定，依据 batch-run-fixes 09（`archive/2026-11-18-pre-research-restructure:.scratch/batch-run-fixes/issues/09-short-window-asr-overflow.md`）），已实现（2026-11-18）：产品 W0 配方 id 为 `w0-faster-whisper-large-v3-guard-v3`，`recipe_hash` W0 为 `6a47318c7732534270f64d14bb5da9830a79fdcae9f6d84e01a309532d62403b`、CROSS 为 `bd5bc55527a539beab598e98f687f1bcbbcc6c23b3ba3a823fd3e9dfb46338e3`。
 
 本 ADR 替代 [ADR-0023](0023-asr-repeat-guard.md) 的两处内容：第 4 点的配方 id 与 hash；第 5 点"不管低压缩比的插入套话"。ADR-0023 的复读规则与折叠动作不变。[ADR-0003](0003-new-pyannote-baselines.md) 的 W0 基线身份不变，[ADR-0012](0012-cross-asr-judge.md) 的 `cross` 规则不变。
 

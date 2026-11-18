@@ -1,6 +1,6 @@
 # ADR-0028：产品建表只在回复格式不合格时重试，空表是合法结果（`q3-names-v3`）
 
-状态：已接受（2026-11-17，用户决定，依据 [batch-run-fixes 07](../../.scratch/batch-run-fixes/issues/07-names-empty-list.md)）、已实现（同日）。替代 [ADR-0022](0022-product-names-on-strata.md) 第 1 点"失败后依次换 seed""5 次都失败"中把空表算作失败的部分（沿用自 v13，回复无有效条目即不合格），以及 [ADR-0026](0026-names-output-and-prompt-budget.md) 第 3 点的配方名与 hash。[ADR-0021](0021-q3-strata-names-baseline.md) 的基线 Q3（`names-strata-v4`）身份不变。  
+状态：已接受（2026-11-17，用户决定，依据 batch-run-fixes 07（`archive/2026-11-18-pre-research-restructure:.scratch/batch-run-fixes/issues/07-names-empty-list.md`））、已实现（同日）。替代 [ADR-0022](0022-product-names-on-strata.md) 第 1 点"失败后依次换 seed""5 次都失败"中把空表算作失败的部分（沿用自 v13，回复无有效条目即不合格），以及 [ADR-0026](0026-names-output-and-prompt-budget.md) 第 3 点的配方名与 hash。[ADR-0021](0021-q3-strata-names-baseline.md) 的基线 Q3（`names-strata-v4`）身份不变。  
 范围：产品包 `kototoki/names/` 的回复判定与配方。不改提示、schema、采样、归一规则、尝试次数、seed 序列、请求形状、输出上限与提示预算。
 
 ## 决定

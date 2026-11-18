@@ -1,6 +1,6 @@
 # ADR-0029：产品翻译按条收下、只追问没解决的 cue（`q3-translate-v1`）
 
-状态：已接受（2026-11-17，用户决定，依据 [batch-run-fixes 08](../../.scratch/batch-run-fixes/issues/08-short-cue-translation.md)）、已实现（同日）。替代 [ADR-0019](0019-product-translation-q2.md) 第 4 点中的 10→5→1 降级、"单条仍失败只保留日文"与"含空行按解析失败处理"，以及第 5 点的配方名 `q2-degrade-v1`、hash 与 run 目录名。[ADR-0021](0021-q3-strata-names-baseline.md) 的基线 Q3 身份不变。  
+状态：已接受（2026-11-17，用户决定，依据 batch-run-fixes 08（`archive/2026-11-18-pre-research-restructure:.scratch/batch-run-fixes/issues/08-short-cue-translation.md`））、已实现（同日）。替代 [ADR-0019](0019-product-translation-q2.md) 第 4 点中的 10→5→1 降级、"单条仍失败只保留日文"与"含空行按解析失败处理"，以及第 5 点的配方名 `q2-degrade-v1`、hash 与 run 目录名。[ADR-0021](0021-q3-strata-names-baseline.md) 的基线 Q3 身份不变。  
 范围：产品包 `kototoki/translate/` 的回复判定与失败路径、`kototoki/merge.py` 对未翻译 cue 的输出、编排的计数字段。不改切包、邻文、提示、专名注入、采样、请求形状、每个请求的尝试次数与 Strata 启动方式；首个请求即全部合格的批次，请求体与研究侧仍逐字节相同。
 
 ## 决定
