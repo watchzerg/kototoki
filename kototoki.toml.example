@@ -10,8 +10,8 @@
 input_dir    = "D:/movie/inbox"         # 必填：递归扫描视频与音频；双语字幕 <主名>.ja-zh.srt 写在源文件旁
 # work_dir   = "D:/kototoki-work"       # 中间产物；省略时为仓库内 .local/work；其下按目标目录分子目录 <末段名>-<sha12>/；不得在 input_dir 内
 models_root  = ".local/models"
-ffmpeg       = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe"
-ffprobe      = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe"
+ffmpeg       = ".local/tools/ffmpeg/9.0/bin/ffmpeg.exe"
+ffprobe      = ".local/tools/ffmpeg/9.0/bin/ffprobe.exe"
 
 [input]
 extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi",           # 视频还是音频由 ffprobe 判定

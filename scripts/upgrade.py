@@ -6,19 +6,18 @@
 
 - python：CUDA 12 锚点（`ANCHORS`）保持原钉版；其余直接依赖取 uv 解析出的最新稳定版并重新钉版；
   传递依赖一起升，但跳过主版本升级（日历版本号除外），跳过项列入报告。
-- ffmpeg：BtbN 最新带日期 tag 的 autobuild 中最高维护分支的 win64 gpl 构建；用产品 extract 代码在 `--films`
-  的每部 `.mkv` 上与当前默认构建对照派生 WAV，PCM、样本数、补偿记录与告警全部相同才切换默认路径，否则清单还原。
+- ffmpeg：清单只锁维护分支（ADR-0033），分支内的新构建由 `just install` 跟进；这里把分支换到 BtbN 最新带日期
+  autobuild 里最高的维护分支，装好新分支、改清单与默认路径。`--films` 下有 `.mkv` 且旧分支仍装着时，用产品 extract
+  代码对照两个分支派生的 WAV（PCM、样本数、补偿与告警），结果只写进报告，不阻止切换。
 - `--check` 只报告可升级项，不改任何文件。
 
-压缩包 SHA256 取自 GitHub 的 asset digest（缺失则拒绝），清单写法同 `scripts/assets.py`。只用标准库与仓库内同样只依赖
-标准库的模块。报告写 `.local/upgrade/<UTC>/report.json`；文档同步与 smoke 不在本脚本内，结束时列出待办。
+只用标准库与仓库内同样只依赖标准库的模块。报告写 `.local/upgrade/<UTC>/report.json`；文档同步与 smoke 不在本脚本内，结束时列出待办。
 """
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping, Sequence
-import hashlib
+from collections.abc import Mapping, Sequence
 import json
 from pathlib import Path
 import re
@@ -28,8 +27,6 @@ import sys
 import tomllib
 from types import SimpleNamespace
 from typing import Any
-from urllib.request import Request, urlopen
-import zipfile
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -43,7 +40,7 @@ PYPROJECT = REPO / "pyproject.toml"
 LOCK = REPO / "uv.lock"
 REPORT_ROOT = REPO / ".local" / "upgrade"
 DEFAULT_FILMS = REPO / ".local" / "bilingual-fullfilm-08" / "input"
-# 默认路径里带工具版本号的文件；版本号由 tests/core/test_assets_manifest.py 钉住与清单一致。
+# 默认路径里带工具分支号的文件；分支号由 tests/core/test_assets_manifest.py 钉住与清单一致。
 DEFAULT_PATH_FILES = ("kototoki/config.py", "kototoki.toml.example")
 # CUDA 12 锚点：torch 系取 cu128 索引、CTranslate2 只有 CUDA 12 wheel；升级须人工决定（docs/development/technology-stack.md 选版规则）。
 ANCHORS = frozenset({"torch", "torchaudio", "torchcodec", "ctranslate2"})
@@ -81,11 +78,6 @@ def run_uv(*args: str) -> str:
     if result.returncode != 0:
         raise UpgradeError(f"uv {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()[-2000:]}")
     return result.stderr + result.stdout
-
-
-def fetch_json(url: str) -> Any:
-    with urlopen(Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "kototoki-upgrade"})) as r:
-        return json.load(r)
 
 
 def pinned_dependencies(pyproject_text: str) -> dict[str, tuple[str, str]]:
@@ -163,16 +155,9 @@ def _key(name: str) -> str:
 
 
 def render_tool(name: str, tool: Mapping[str, Any]) -> str:
-    key, value = _key(name), lambda v: json.dumps(v, ensure_ascii=False)
-    lines = [f"[tools.{key}]"]
-    lines += [f"{field} = {value(tool[field])}" for field in
-              ("version", "source", "upstream_tag", "upstream_commit", "published_at", "note") if field in tool]
-    for archive in tool["archives"]:
-        lines += ["", f"[[tools.{key}.archives]]"]
-        lines += [f"{field} = {value(archive[field])}" for field in ("name", "url", "sha256", "strip") if field in archive]
-    lines += ["", f"[tools.{key}.files]"]
-    lines += [f'{value(path)} = {{ sha256 = "{e["sha256"]}", size = {e["size"]} }}' for path, e in sorted(tool["files"].items())]
-    return "\n".join(lines) + "\n"
+    value = lambda v: json.dumps(v, ensure_ascii=False)
+    return "\n".join([f"[tools.{_key(name)}]"] + [f"{field} = {value(tool[field])}" for field in
+                      ("branch", "repo", "note", "files") if field in tool]) + "\n"
 
 
 def replace_tool_block(text: str, name: str, rendered: str) -> str:
@@ -206,70 +191,7 @@ def switch_default_paths(name: str, old: str, new: str, files: Sequence[str] = D
     return changed
 
 
-def zip_entries(archive: Path, strip: str = "", only: set[str] | None = None) -> dict[str, dict[str, Any]]:
-    entries = {}
-    with zipfile.ZipFile(archive) as bundle:
-        for member in bundle.infolist():
-            if member.is_dir() or not member.filename.startswith(strip):
-                continue
-            relative = member.filename[len(strip):]
-            if only is None or relative in only:
-                entries[relative] = {"sha256": hashlib.sha256(bundle.read(member)).hexdigest(), "size": member.file_size}
-    return entries
-
-
-def digest(asset: Mapping[str, Any]) -> str:
-    value = asset.get("digest") or ""
-    if not value.startswith("sha256:"):
-        raise UpgradeError(f"GitHub asset {asset['name']} has no sha256 digest; cannot pin it")
-    return value.removeprefix("sha256:")
-
-
-def install_new_tool(name: str, tool: dict[str, Any], *, fetch_files: Callable[[list[Path]], dict[str, Any]],
-                     verify: Callable[[str, str], dict[str, Any]] | None = None) -> dict[str, Any]:
-    """下载压缩包、写清单、安装；`verify(old, new)` 返回 {"passed": bool, ...}，不通过则清单还原、默认路径不切换。"""
-    current = assets.load_manifest()["tools"][name]
-    paths = []
-    for archive in tool["archives"]:
-        cached = assets.DOWNLOADS_ROOT / name / archive["name"]
-        if not (cached.is_file() and assets._sha256(cached) == archive["sha256"]):
-            assets.download(archive["url"], cached, archive["sha256"])
-        paths.append(cached)
-    tool["files"] = fetch_files(paths)
-    original = assets.MANIFEST.read_text(encoding="utf-8")
-    assets.MANIFEST.write_text(replace_tool_block(original, name, render_tool(name, tool)), encoding="utf-8", newline="\n")
-    result: dict[str, Any] = {"old": current["version"], "new": tool["version"]}
-    try:
-        print(f"tools.{name}: {assets.install_tool(name, assets.load_manifest()['tools'][name])}", flush=True)
-        if verify is not None:
-            result["verify"] = verify(current["version"], tool["version"])
-            if not result["verify"]["passed"]:
-                raise UpgradeError(f"{name} {tool['version']} failed verification; see report")
-    except BaseException:
-        assets.MANIFEST.write_text(original, encoding="utf-8", newline="\n")
-        raise
-    result["default_paths_changed"] = switch_default_paths(name, current["version"], tool["version"])
-    result["status"] = "upgraded"
-    return result
-
-
 # --- ffmpeg -----------------------------------------------------------------------------------
-
-FFMPEG_ASSET = re.compile(r"ffmpeg-(n[\d.]+-\d+-g[0-9a-f]+)-win64-gpl-(\d+)\.(\d+)\.zip")
-
-
-def pick_ffmpeg(releases: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any], Mapping[str, Any], str, str]:
-    """(release, asset, 版本, 分支)：最新带日期 tag 的 autobuild 里最高维护分支的 win64 gpl 构建。"""
-    release = next((r for r in releases if r["tag_name"].startswith("autobuild-") and not r["prerelease"]), None)
-    if release is None:
-        raise UpgradeError("BtbN/FFmpeg-Builds: no dated autobuild release")
-    builds = [(int(m.group(2)), int(m.group(3)), m.group(1), a) for a in release["assets"]
-              if (m := FFMPEG_ASSET.fullmatch(a["name"]))]
-    if not builds:
-        raise UpgradeError(f"BtbN {release['tag_name']}: no release-branch win64 gpl build")
-    major, minor, version, asset = max(builds, key=lambda b: (b[0], b[1]))
-    return release, asset, version, f"{major}.{minor}"
-
 
 def compare_derived_wav(films_dir: Path, out: Path, old_bin: Path, new_bin: Path) -> dict[str, Any]:
     """两个构建各用产品 extract 代码派生每部影片的 16 kHz WAV，比较样本数、PCM SHA256、补偿与告警。"""
@@ -298,21 +220,30 @@ def compare_derived_wav(films_dir: Path, out: Path, old_bin: Path, new_bin: Path
 
 def upgrade_ffmpeg(check: bool, films: Path, out: Path) -> dict[str, Any]:
     current = assets.load_manifest()["tools"]["ffmpeg"]
-    release, asset, version, branch = pick_ffmpeg(fetch_json(f"{GITHUB_API}/BtbN/FFmpeg-Builds/releases?per_page=10"))
-    if version == current["version"]:
-        return {"status": "up to date", "version": version}
+    releases = assets.fetch_json(f"{GITHUB_API}/{current['repo']}/releases?per_page=10")
+    release, builds = assets.btbn_builds(releases)
+    if not builds:
+        raise UpgradeError(f"{current['repo']} {release['tag_name']}: no release-branch win64 gpl build")
+    newest = max(builds, key=lambda branch: tuple(map(int, branch.split("."))))
+    if newest == current["branch"]:
+        installed = assets.read_identity(assets.tool_dir("ffmpeg", current)) or {}
+        return {"status": "up to date", "branch": newest, "latest_build": builds[newest][0],
+                "installed_build": installed.get("version")}  # 两者不同时跑 `just install`
     if check:
-        return {"status": "available", "old": current["version"], "new": version}
-    strip = asset["name"].removesuffix(".zip") + "/"
-    tool = {"version": version, "source": release["html_url"],
-            "note": f"BtbN win64 gpl 构建，{branch} 维护分支；取自 {release['tag_name']}",
-            "archives": [{"name": asset["name"], "url": asset["browser_download_url"], "sha256": digest(asset),
-                          "strip": strip}]}
-    tools_root = assets.TOOLS_ROOT / "ffmpeg"
-    return install_new_tool(
-        "ffmpeg", tool,
-        fetch_files=lambda paths: zip_entries(paths[0], strip, {"bin/ffmpeg.exe", "bin/ffprobe.exe"}),
-        verify=lambda old, new: compare_derived_wav(films, out / "ffmpeg", tools_root / old / "bin", tools_root / new / "bin"))
+        return {"status": "available", "old": current["branch"], "new": newest, "build": builds[newest][0]}
+    tool = {**current, "branch": newest}
+    print(f"tools.ffmpeg: {assets.install_tool('ffmpeg', tool, resolve=lambda n, t: assets.resolve_build(n, t, releases))}",
+          flush=True)
+    root = assets.TOOLS_ROOT / "ffmpeg"
+    old_bin, new_bin = root / current["branch"] / "bin", root / newest / "bin"
+    comparison = (compare_derived_wav(films, out / "ffmpeg", old_bin, new_bin) if (old_bin / "ffmpeg.exe").is_file()
+                  else {"passed": None, "reason": f"old branch {current['branch']} is not installed"})
+    original = assets.MANIFEST.read_text(encoding="utf-8")
+    assets.MANIFEST.write_text(replace_tool_block(original, "ffmpeg", render_tool("ffmpeg", tool)), encoding="utf-8",
+                               newline="\n")
+    return {"status": "upgraded", "old": current["branch"], "new": newest, "build": builds[newest][0],
+            "wav_check": comparison,
+            "default_paths_changed": switch_default_paths("ffmpeg", current["branch"], newest)}
 
 
 # --- 入口 -------------------------------------------------------------------------------------
@@ -321,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("components", nargs="*", choices=COMPONENTS, metavar="component")
     parser.add_argument("--check", action="store_true", help="只报告可升级项，不改文件")
-    parser.add_argument("--films", type=Path, default=DEFAULT_FILMS, help="ffmpeg 派生 WAV 核对用的 .mkv 目录")
+    parser.add_argument("--films", type=Path, default=DEFAULT_FILMS, help="ffmpeg 换分支时对照派生 WAV 用的 .mkv 目录（只记入报告）")
     args = parser.parse_args(argv)
     out = REPORT_ROOT / utc_now().replace(":", "").replace("-", "")
     report: dict[str, Any] = {"created_at": utc_now(), "check": args.check}
@@ -340,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if any(report.get(n, {}).get("status") == "upgraded" for n in COMPONENTS):
             print(f"report: {out / 'report.json'}\n待办：同步 docs/development/technology-stack.md 与 dependencies.md；"
-                  "ffmpeg 升级补验收记录；按报告的 pending 申请真实模型验证（smoke）。", flush=True)
+                  "ffmpeg 换分支后看报告里的 wav_check，补验收记录；按报告的 pending 申请真实模型验证（smoke）。", flush=True)
     return 1 if failed else 0
 
 

@@ -366,6 +366,16 @@ SWR = "[Parsed_aresample_0 @ 000002aed5ab9180] [SWR @ 000002aed2d1c180] "
 IN = "[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001a1e8a13ec0] "
 
 
+class FfmpegVersionTests(unittest.TestCase):
+    def test_parses_build_version_from_version_banner(self) -> None:
+        banner = "ffmpeg version n9.0.2-31-gaaaaaaaaaa-20261117 Copyright (c) 2000-2026\nbuilt with gcc 15\n"
+        self.assertEqual(media.parse_ffmpeg_version(banner), "n9.0.2-31-gaaaaaaaaaa-20261117")
+        self.assertIsNone(media.parse_ffmpeg_version("not ffmpeg"))
+
+    def test_missing_binary_is_unavailable(self) -> None:
+        self.assertEqual(media.ffmpeg_version(Path(tempfile.gettempdir()) / "no-such-dir" / "ffmpeg.exe"), "unavailable")
+
+
 class DecodeLogTests(unittest.TestCase):
     """`digest_decode_log`：精简 `extract.log`、按级别与类型计数（batch-run-fixes 03）。"""
 

@@ -15,8 +15,8 @@
 input_dir   = "<影片目录的绝对路径>"     # 必填；递归扫描视频与音频；双语字幕 <主名>.ja-zh.srt 写在源文件旁
 work_dir    = ".local/work"             # 缓存与各目标目录的工作根
 models_root = ".local/models"           # [vad]、[asr.*]、[align] 的相对模型路径相对于它
-ffmpeg      = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe"
-ffprobe     = ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe"
+ffmpeg      = ".local/tools/ffmpeg/9.0/bin/ffmpeg.exe"
+ffprobe     = ".local/tools/ffmpeg/9.0/bin/ffprobe.exe"
 
 [input]
 extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi",

@@ -1,24 +1,15 @@
 # 资产清单：除 Python 包外，产品依赖的二进制与模型身份的唯一权威。
 # 格式、布局与 recipe 职责见 docs/development/dependencies.md；执行逻辑在 scripts/assets.py。
-# 代码里的 SHA 常量（kototoki/plan.py、kototoki/names/recipes.py 的建表模型资产）与 kototoki/config.py 默认路径里的版本号
-# 由 tests/core/test_assets_manifest.py 钉住与本文件一致。
+# 代码里的模型 SHA 常量（kototoki/plan.py）与 kototoki/config.py 默认路径里的工具分支号由
+# tests/core/test_assets_manifest.py 钉住与本文件一致。
 
-# --- 下载的二进制：安装到 .local/tools/<name>/<version>/ ---------------------------------------
+# --- 下载的二进制：只锁分支，安装到 .local/tools/<name>/<branch>/ ---------------------------------------
 
 [tools.ffmpeg]
-version = "n9.0.2-28-g669f5ab083"
-source = "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-10-18-13-01"
-note = "BtbN win64 gpl 构建，9.0 维护分支（9.0.2 之后 28 个提交），2026-10-19 取自当时最新稳定版 9.0.2 对应的分支构建"
-
-[[tools.ffmpeg.archives]]
-name = "ffmpeg-n9.0.2-28-g669f5ab083-win64-gpl-9.0.zip"
-url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-18-13-01/ffmpeg-n9.0.2-28-g669f5ab083-win64-gpl-9.0.zip"
-sha256 = "a38198cc130ed3fa02097d0baebcea9c1b8a9d9d3d1d8161d691d1f03709158b"
-strip = "ffmpeg-n9.0.2-28-g669f5ab083-win64-gpl-9.0/"
-
-[tools.ffmpeg.files]
-"bin/ffmpeg.exe" = { sha256 = "f9c4d64e3012fa2740efaabe260b64149f3e4c25a63c4fa39e8091e4a19f686f", size = 165159424 }
-"bin/ffprobe.exe" = { sha256 = "04bde2c18043338085b73d2aaaefc86b865820ccd90144d8578231e6bf229c35", size = 164957696 }
+branch = "9.0"
+repo = "BtbN/FFmpeg-Builds"
+note = "BtbN win64 gpl 构建；只锁维护分支，install 取该分支最新的带日期 autobuild，实际版本与 SHA256 记在安装目录的 identity.json（ADR-0033）"
+files = ["bin/ffmpeg.exe", "bin/ffprobe.exe"]
 
 
 # --- 模型：位于 .local/models/<dir>/；HF 下载地址为 https://huggingface.co/<repo>/resolve/<revision>/<file> ---

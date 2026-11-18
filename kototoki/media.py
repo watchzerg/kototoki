@@ -480,6 +480,23 @@ def check_duration(decoded_s: float, reference_s: float, *, has_video: bool) -> 
 
 # --- 子进程 ---------------------------------------------------------------------------------
 
+FFMPEG_VERSION = re.compile(r"^ffmpeg version (\S+)", re.MULTILINE)
+
+
+def parse_ffmpeg_version(text: str) -> str | None:
+    match = FFMPEG_VERSION.search(text)
+    return match.group(1) if match else None
+
+
+def ffmpeg_version(ffmpeg: Path) -> str:
+    """`ffmpeg -version` 报的构建版本（如 `n9.0.2-31-g…`），写进运行日志首行；取不到时为 `unavailable`。"""
+    try:
+        result = _run([str(ffmpeg), "-version"])
+    except OSError:
+        return "unavailable"
+    return (result.returncode == 0 and parse_ffmpeg_version(result.stdout)) or "unavailable"
+
+
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
                           errors="replace", check=False)

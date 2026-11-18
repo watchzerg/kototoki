@@ -86,6 +86,7 @@ class JobCase(unittest.TestCase):
         self.subtitle_extracted: list[str] = []
         if self.FAKE_MEDIA:
             self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
+            self.enterContext(mock.patch("kototoki.job.media.ffmpeg_version", return_value="n0.0-fake"))
             self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
             self.enterContext(mock.patch("kototoki.job.media.extract_subtitle", side_effect=self._extract_subtitle))
         self.empty_cues: set[str] = set()  # 相对路径：伪 cue 构建给出零条目 `ja.srt`
@@ -1558,7 +1559,8 @@ class RunLogTests(JobCase):
         self.make_inputs("a.mkv")
         _, file = self.run_logged()
         self.assertEqual(LOG_LINE.match(file[0])[2],
-                         f"[run] start: config={self.config.source} input={self.input} engine={self.config.engine}")
+                         f"[run] start: config={self.config.source} input={self.input} engine={self.config.engine} "
+                         "ffmpeg=n0.0-fake")
         self.assertIn(f"[lock] GPU acquired: {self.config.gpu_lock}", self.entries_at(file, "INFO"))
 
     def test_unexpected_exception_is_logged_as_aborted_with_summary(self) -> None:

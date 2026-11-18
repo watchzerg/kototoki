@@ -37,8 +37,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "input_dir": REQUIRED,
         "work_dir": ".local/work",
         "models_root": ".local/models",
-        "ffmpeg": ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffmpeg.exe",
-        "ffprobe": ".local/tools/ffmpeg/n9.0.2-28-g669f5ab083/bin/ffprobe.exe",
+        "ffmpeg": ".local/tools/ffmpeg/9.0/bin/ffmpeg.exe",
+        "ffprobe": ".local/tools/ffmpeg/9.0/bin/ffprobe.exe",
     },
     "input": {
         # 视频与音频；是否有视频流由 ffprobe 判定，不看扩展名（ADR-0020）。

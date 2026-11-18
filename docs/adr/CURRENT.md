@@ -130,6 +130,8 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 
 `assets.toml` 只列产品用到的二进制（ffmpeg）与 STT 模型；llama.cpp 工具与 Qwen3.8-27B 条目已删除，`scripts/upgrade.py` 只升 `python` 与 `ffmpeg`；`just install` 先 `uv sync --locked` 再安装清单里的工具，没有单独的 `setup`（[0032](0032-drop-llama-cpp-assets.md) 第 1–3 点）。研究需要清单外的二进制或模型时由该轮自行记录与准备（第 4 点）。
 
+ffmpeg 只锁维护分支（当前 `9.0`）：`just install` 取 BtbN 该分支最新的构建，装在 `.local/tools/ffmpeg/<branch>/`，实际版本与逐文件 SHA256 写进 `identity.json`；运行日志首行记 `ffmpeg=<实际版本>`；`just upgrade ffmpeg` 显式换到最高维护分支，派生 WAV 对照只记入报告（[0033](0033-ffmpeg-branch-lock.md) 第 1–4 点）。
+
 ### 方法禁区
 
 不自动选用"翻译多次再挑选"；可靠性重试与按条追问、对半拆分不算在内；边界情况先问（[0008](0008-no-multi-translation-selection.md) 第 1–2 点、范围；0029 依据）。

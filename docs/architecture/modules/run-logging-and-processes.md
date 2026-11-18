@@ -30,7 +30,7 @@
   ```
 
   文件级失败的 ERROR 行带异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；不带 traceback 的 FAILED 行（同类失败已记过、Strata 不可用之后、worker 崩溃或启动失败）改为 `<类型>: <异常消息首行>`（截到 200 字符），例 `[publish] FAILED S1/ep02.mkv: OSError: [WinError 17] …`。失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`，没有 traceback 也没有消息。
-- **文件**：`<work root>/run-<UTC戳>.log` 与控制台逐行相同，是权威副本。控制台流的编码取决于调用方，产品不改（batch-run-fixes 06.5）：pwsh `*>` 重定向时按 `[Console]::OutputEncoding`（新开的 pwsh 默认 OEM 代码页，如 ibm437）解码子进程输出，即使设了 `PYTHONUTF8=1`，非 ASCII 文件名也成乱码；确需重定向时调用方先设 `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`（2026-11-17 本机复现与验证）。`<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后编排只读本次启动追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计：裸 traceback、tqdm 残行与 torch 自己写的 `W1109 20:31:52…` 这类 glog 行都不按本格式、不计数。Strata session 的证据（接入身份、资源峰值、停止核实）另在 `<work root>/strata-sessions/`（[翻译子系统](translation-subsystem.md)）。
+- **文件**：`<work root>/run-<UTC戳>.log` 与控制台逐行相同，是权威副本。控制台流的编码取决于调用方，产品不改（batch-run-fixes 06.5）：pwsh `*>` 重定向时按 `[Console]::OutputEncoding`（新开的 pwsh 默认 OEM 代码页）解码子进程输出，设了 `PYTHONUTF8=1` 非 ASCII 文件名也乱码；重定向前先设 `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`（2026-11-17 本机验证）。`<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后只读本次追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计：裸 traceback、tqdm 残行与 torch 的 `W1109 20:31:52…` 这类 glog 行都不计。Strata session 的证据（接入身份、资源峰值、停止核实）另在 `<work root>/strata-sessions/`（[翻译子系统](translation-subsystem.md)）。
 - **内容**：
   1. 转写、cue 与窗口文字、译文、专名表条目与 `work_guess`、提示词、grammar、模型响应正文不进任何日志；失败窗口只记序号与 reason。
   2. 带 traceback 的失败行只记异常类型，traceback 随后：源码行加末行的 `<类型>: <异常消息>`（消息可能含文件路径，不含转写；校验消息是固定文本，如 `Duplicate JSON key` 不带键名）；异常消息不做通用截断。把异常首行嵌进一行日志的地方都截到 200 字符：不带 traceback 的 FAILED 行（`job._Context.fail`）；翻译的批次尝试失败行、Strata 重启行、放弃行与 `Strata refused` 行（`kototoki/translate/generate.py`）；`[strata] start failed` 与 `unavailable` 行（`kototoki/strata.py`）；names 的尝试失败行（`kototoki/names/table.py`）与 `count_tokens` 不可用行（`kototoki/names/__init__.py`，`build.prompt_check` 仍记 300 字符）。翻译子系统的"意外异常"行不带 traceback，由编排的 FAILED 行带。
@@ -38,7 +38,7 @@
   4. 一事一行、每阶段三件套、结尾汇总：各阶段（extract、vad、asr、align、cues、names、translate）的 end 行统一为 `[x] end: N done, M failed, T.Ts`，发布行为 `[publish] done <相对路径>…`；`[scan]` 汇总行的 to process、with subtitles、unstable、failed 相加等于总数。秒数写 `12.3s`（无空格），MiB、GiB、tok 带空格。翻译批次行带输出 token 数、tok/s 与 cache（取不到的字段省略）。
   5. 告警是级别不是措辞：消息里不写 `WARNING`。
 - **运行的首尾**（`job.run`）：
-  - 进入日志上下文后第一行是 INFO `[run] start: config=<配置文件> input=<输入目录> engine=<engine>`（绝对路径，不记模型 SHA 与 commit）。
+  - 进入日志上下文后第一行是 INFO `[run] start: config=<配置文件> input=<输入目录> engine=<engine> ffmpeg=<版本>`（ffmpeg 取不到为 `unavailable`；不记模型 SHA 与 commit）。
   - 锁：工作根锁在日志挂接之前取得，破了残留锁时随后补记；GPU 锁取得时记 INFO `[lock] GPU acquired: <路径>`。任一把锁破除了残留锁（`KOTOTOKI_BREAK_STALE_LOCK=1`）时记 WARNING `[lock] replaced stale <work directory lock|GPU lock> (pid <n>[, worker_stage <s>][, server_pid <n>])`，旧锁没有整数 pid 时写 `(no owner pid)`；证据另在新锁文件的 `replaced_stale_lock` 里，锁释放即删。
   - 任何逃出流程的异常（Ctrl+C、`GpuLocked`、Strata 启停异常、未预期的 `OSError` 等 `BaseException`）在日志上下文内记 ERROR `[run] ABORTED: <异常类型>`，`KeyboardInterrupt` 不带 traceback，其余带；随后原样抛出，退出码不变。
   - `[summary]` 的两类行（总计行与逐个 `failed at <stage>` 行）在任何退出路径都写，中断时写已知的计数。

@@ -718,7 +718,8 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
         gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"input_dir": str(input_dir)})
         ctx = _Context(config, Summary(), root, stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
         with _run_logging(root / f"run-{stamp}.log", console):
-            logger.info(f"[run] start: config={config.source} input={input_dir} engine={config.engine}")
+            logger.info(f"[run] start: config={config.source} input={input_dir} engine={config.engine} "
+                        f"ffmpeg={media.ffmpeg_version(config.paths.ffmpeg)}")
             if work_lock.stale is not None:
                 logger.warning(_stale_line(work_lock))
             try:

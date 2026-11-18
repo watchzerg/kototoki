@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 from pathlib import Path
 import tempfile
 import tomllib
 import unittest
-import zipfile
 
 from kototoki import config
 
@@ -26,10 +24,6 @@ dependencies = [
     "numpy",
 ]
 """
-
-
-def asset(name: str, digest: str | None = "sha256:" + "0" * 64) -> dict:
-    return {"name": name, "browser_download_url": f"https://example.invalid/{name}", "digest": digest}
 
 
 class VersionRuleTests(unittest.TestCase):
@@ -73,9 +67,7 @@ class ManifestTests(unittest.TestCase):
     def test_replacing_one_tool_keeps_neighbours(self) -> None:
         text = upgrade.assets.MANIFEST.read_text(encoding="utf-8")
         manifest = tomllib.loads(text)
-        new = {"version": "n9.9-1-gabc", "source": "s", "note": "说明",
-               "archives": [{"name": "a.zip", "url": "u", "sha256": "f" * 64, "strip": "a/"}],
-               "files": {"bin/ffmpeg.exe": {"sha256": "e" * 64, "size": 3}}}
+        new = {"branch": "9.9", "repo": "BtbN/FFmpeg-Builds", "note": 'say "hi"', "files": ["bin/ffmpeg.exe"]}
         replaced = tomllib.loads(upgrade.replace_tool_block(text, "ffmpeg", upgrade.render_tool("ffmpeg", new)))
         self.assertEqual(replaced["tools"]["ffmpeg"], new)
         self.assertEqual(replaced["models"], manifest["models"])
@@ -90,36 +82,8 @@ class ManifestTests(unittest.TestCase):
             self.assertIn(".local/tools/ffmpeg/new/bin/", (root / "a.py").read_text(encoding="utf-8"))
             self.assertIn("other/old/", (root / "b.toml").read_text(encoding="utf-8"))
 
-    def test_zip_entries_strip_and_filter(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "f.zip"
-            with zipfile.ZipFile(path, "w") as bundle:
-                bundle.writestr("top/bin/ffmpeg.exe", b"ff")
-                bundle.writestr("top/bin/ffplay.exe", b"pl")
-                bundle.writestr("top/doc/x.html", b"d")
-            entries = upgrade.zip_entries(path, "top/", {"bin/ffmpeg.exe"})
-            self.assertEqual(entries, {"bin/ffmpeg.exe": {"sha256": hashlib.sha256(b"ff").hexdigest(), "size": 2}})
 
-    def test_missing_digest_is_refused(self) -> None:
-        with self.assertRaises(upgrade.UpgradeError):
-            upgrade.digest(asset("a.zip", None))
-        self.assertEqual(upgrade.digest(asset("a.zip", "sha256:" + "a" * 64)), "a" * 64)
-
-
-class ReleasePickTests(unittest.TestCase):
-    def test_ffmpeg_picks_highest_branch_of_dated_autobuild(self) -> None:
-        releases = [
-            {"tag_name": "latest", "prerelease": False, "assets": [asset("ffmpeg-n9.9-latest-win64-gpl-9.9.zip")]},
-            {"tag_name": "autobuild-2026-10-18-13-01", "prerelease": False, "assets": [asset(n) for n in (
-                "ffmpeg-N-127650-geceaa54a38-win64-gpl.zip", "ffmpeg-n8.1.3-18-g46d899d7a0-win64-gpl-8.1.zip",
-                "ffmpeg-n9.0.2-28-g669f5ab083-win64-gpl-9.0.zip", "ffmpeg-n9.0.2-28-g669f5ab083-win64-lgpl-9.0.zip",
-                "ffmpeg-n9.0.2-28-g669f5ab083-win64-gpl-shared-9.0.zip")]},
-        ]
-        release, chosen, version, branch = upgrade.pick_ffmpeg(releases)
-        self.assertEqual((release["tag_name"], chosen["name"], version, branch),
-                         ("autobuild-2026-10-18-13-01", "ffmpeg-n9.0.2-28-g669f5ab083-win64-gpl-9.0.zip",
-                          "n9.0.2-28-g669f5ab083", "9.0"))
-
+class WavCheckTests(unittest.TestCase):
     def test_wav_check_without_films_does_not_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = upgrade.compare_derived_wav(Path(tmp), Path(tmp) / "out", Path(tmp), Path(tmp))

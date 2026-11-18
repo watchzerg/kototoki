@@ -46,9 +46,9 @@ class ModelConstantsTests(unittest.TestCase):
 
 
 class ToolPathTests(unittest.TestCase):
-    def test_default_binary_paths_carry_manifest_versions(self) -> None:
+    def test_default_binary_paths_carry_manifest_branch(self) -> None:
         paths = config.DEFAULTS["paths"]
-        ffmpeg = TOOLS["ffmpeg"]["version"]
+        ffmpeg = TOOLS["ffmpeg"]["branch"]
         self.assertEqual(paths["ffmpeg"], f".local/tools/ffmpeg/{ffmpeg}/bin/ffmpeg.exe")
         self.assertEqual(paths["ffprobe"], f".local/tools/ffmpeg/{ffmpeg}/bin/ffprobe.exe")
         self.assertNotIn("llama_server", paths)  # 产品不起 llama-server（ADR-0022）
