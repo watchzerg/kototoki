@@ -20,6 +20,7 @@ ROUND = "# 轮次\n\n" + "".join(f"## {h}\n\n内容\n\n" for h in (
     "状态", "时间", "问题", "策略", "环境与版本", "测试", "结果", "结论与去向"))
 ACCEPTANCE = "# 验收\n\n" + "".join(f"## {h}\n\n内容\n\n" for h in (
     "时间", "对象", "环境与版本", "测试", "结果", "结论"))
+RUN = "# 跑次\n\n" + "".join(f"## {h}\n\n内容\n\n" for h in ("运行", "版本", "输入", "结果", "问题"))
 ADR_INDEX = (
     "# 决定索引\n\n## 全部 ADR\n\n| 编号 | 主题 |\n| --- | --- |\n"
     "| [0002](0002-b.md) | b |\n\n跳转页：0001 → 0002。新 ADR 编号从 0003 起。\n")
@@ -49,6 +50,9 @@ class CheckDocsTest(unittest.TestCase):
         self.write("research/INDEX.md", "# 研究\n\n[轮次](2026-01-demo/README.md) [验收](acceptance/2026-01-02-x.md)\n")
         self.write("research/2026-01-demo/README.md", ROUND)
         self.write("research/acceptance/2026-01-02-x.md", ACCEPTANCE)
+        self.write("runs/INDEX.md", "# 跑次\n\n[模板](TEMPLATE.md) [首跑](2026-01-03-a.md)\n")
+        self.write("runs/TEMPLATE.md", "# 模板\n")
+        self.write("runs/2026-01-03-a.md", RUN)
 
     def write(self, name: str, text: str) -> None:
         path = self.root / name
@@ -127,6 +131,21 @@ class CheckDocsTest(unittest.TestCase):
             f"tests/core/test_x.py:3 盘符绝对路径：{fictional}"])
         with mock.patch.dict(check_docs.ALLOWED_ABSOLUTE_PATHS, {("tests/core/test_x.py", f"{drive}/movies"): "虚构"}):
             self.assertEqual(self.errors(), [f"research/2026-01-demo/README.md:35 盘符绝对路径：{local}"])
+
+    def test_run_record_needs_headings_registration_and_no_media_names(self) -> None:
+        self.write("runs/2026-01-04-b.md", RUN.replace("## 问题", "## 发现") + "输入集 1234567890ab，工作 id 0a1b2c3d4e5f\n")
+        self.assertEqual(self.errors(), ["runs/2026-01-04-b.md:1 缺少必填标题：## 问题",
+                                         "runs/2026-01-04-b.md:1 没有在 runs/INDEX.md 登记"])
+        self.write("runs/2026-01-04-b.md", RUN + "失败的是 Show S01E02.MKV 与 `ep.wav`\n" + "ab" * 32 + "\n")
+        self.write("runs/INDEX.md", "# 跑次\n\n[首跑](2026-01-03-a.md) [次跑](2026-01-04-b.md)\n")
+        self.assertEqual(self.errors(), ["runs/2026-01-04-b.md:23 跑次记录里有媒体文件名：S01E02.MKV",
+                                         "runs/2026-01-04-b.md:23 跑次记录里有媒体文件名：ep.wav",
+                                         "runs/2026-01-04-b.md:24 跑次记录里有 64 位十六进制串"])
+
+    def test_required_headings_match_run_template(self) -> None:
+        template = (config.REPO_ROOT / "runs" / "TEMPLATE.md").read_text(encoding="utf-8")
+        for heading in check_docs.RUN_HEADINGS:
+            self.assertIn(f"\n## {heading}\n", template, heading)
 
     def test_required_headings_match_research_template(self) -> None:
         template = (config.REPO_ROOT / "research" / "TEMPLATE.md").read_text(encoding="utf-8")

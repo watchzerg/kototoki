@@ -1,6 +1,6 @@
 """检查仓库文档的结构约束；只依赖标准库，不联网。每条错误带文件与行号。
 
-链接与锚点：根目录 README、AGENTS、GLOSSARY、CODING_STANDARDS，docs/ 与 research/ 下全部 Markdown，
+链接与锚点：根目录 README、AGENTS、GLOSSARY、CODING_STANDARDS，docs/、research/ 与 runs/ 下全部 Markdown，
 .scratch/**/*.md。模块页（docs/architecture/modules/*.md）必须能从 docs/architecture/INDEX.md 沿链接到达。
 指向仓库之外的相对链接（相邻仓库，本机未必存在）不检查，只计数。
 
@@ -9,8 +9,11 @@
 ADR 文件、决定索引"全部 ADR"表与"编号从 N 起"三者一致。
 
 研究记录（ADR-0031 R8）：research/<轮次>/README.md 含 research/TEMPLATE.md 的必填标题，
-research/acceptance/*.md 含验收模板的必填标题；research/、docs/、tests/ 不出现盘符绝对路径
+research/acceptance/*.md 含验收模板的必填标题；research/、runs/、docs/、tests/ 不出现盘符绝对路径
 （ALLOWED_ABSOLUTE_PATHS 列出的测试虚构路径除外）；research/ 不出现 64 位十六进制串。
+
+跑次记录（docs/agents/production-runs.md）：runs/ 下除 INDEX、TEMPLATE 外每篇含 runs/TEMPLATE.md 的必填
+标题并在 runs/INDEX.md 登记；不出现 64 位十六进制串与媒体文件名（影片文件名不进 Git）。
 
 预算：AGENTS.md、各 INDEX.md、活正文的字符数、行数与行长（数值见下方常量）。
 活文档里反引号包住的仓库路径必须存在。状态行含 3 个以上日期只告警。
@@ -29,6 +32,8 @@ MODULES = Path("docs/architecture/modules")
 RESEARCH = Path("research")
 RESEARCH_INDEX = Path("research/INDEX.md")
 ACCEPTANCE = Path("research/acceptance")
+RUNS = Path("runs")
+RUNS_INDEX = Path("runs/INDEX.md")
 ADR_INDEX = Path("docs/adr/INDEX.md")
 PRODUCT = Path("kototoki")
 
@@ -47,7 +52,7 @@ BUDGET_WHITELIST: dict[str, Budget] = {
 }
 
 # 路径检查认的顶层目录；.local/ 等未跟踪目录不查。
-PATH_ROOTS = ("kototoki/", "research/", "scripts/", "tests/", "docs/", ".scratch/", ".claude/")
+PATH_ROOTS = ("kototoki/", "research/", "runs/", "scripts/", "tests/", "docs/", ".scratch/", ".claude/")
 # 活文档里作为历史或规则提到、并不存在的路径：路径 -> 原因。
 REMOVED_PATHS: dict[str, str] = {
     "kototoki/llama_server.py": "ADR-0025 拆掉；决定索引演进链按历史提到",
@@ -71,8 +76,13 @@ FROZEN_DEAD_TARGETS = {
 # 研究记录的必填二级标题，与 research/TEMPLATE.md 一致（tests/core/test_check_docs.py 核对）。
 ROUND_HEADINGS = ("状态", "时间", "问题", "策略", "环境与版本", "测试", "结果", "结论与去向")
 ACCEPTANCE_HEADINGS = ("时间", "对象", "环境与版本", "测试", "结果", "结论")
+# 跑次记录的必填二级标题，与 runs/TEMPLATE.md 一致。
+RUN_HEADINGS = ("运行", "版本", "输入", "结果", "问题")
+# 跑次记录里像媒体文件名的词：影片文件名不进 Git。
+MEDIA_NAME = re.compile(r"[^\s`/\\]+\.(?:mkv|mp4|m4v|avi|mov|m2ts|webm|wmv|flv|wav|flac|mp3|m4a|aac)\b",
+                        re.IGNORECASE)
 # 盘符绝对路径检查的范围与允许的虚构路径：(文件, 路径前缀) -> 原因。
-ABSOLUTE_PATH_SCOPE = ("research", "docs", "tests")
+ABSOLUTE_PATH_SCOPE = ("research", "runs", "docs", "tests")
 ABSOLUTE_PATH_SUFFIXES = (".md", ".py", ".toml", ".json", ".txt")
 ABSOLUTE_PATH = re.compile(r"(?<![A-Za-z0-9\\])[A-Za-z]:[\\/][^\s`'\")\]|，。；、]*")
 ALLOWED_ABSOLUTE_PATHS: dict[tuple[str, str], str] = {
@@ -170,8 +180,9 @@ def anchors(lines: list[tuple[int, str]]) -> set[str]:
 def link_scope(root: Path) -> set[Path]:
     """做链接与锚点检查的文件。"""
     files = {root / name for name in ROOT_DOCUMENTS} | set((root / "docs").rglob("*.md"))
-    if (root / RESEARCH).is_dir():
-        files |= set((root / RESEARCH).rglob("*.md"))
+    for directory in (RESEARCH, RUNS):
+        if (root / directory).is_dir():
+            files |= set((root / directory).rglob("*.md"))
     if (root / ".scratch").is_dir():
         files |= set((root / ".scratch").rglob("*.md"))
     return files
@@ -190,6 +201,7 @@ def living_documents(root: Path) -> dict[Path, Budget]:
     for path in (root / "docs").rglob("INDEX.md"):
         result[path] = INDEX_BUDGET
     result[root / RESEARCH_INDEX] = INDEX_BUDGET
+    result[root / RUNS_INDEX] = INDEX_BUDGET
     result[root / "AGENTS.md"] = AGENTS_BUDGET
     return {path: budget for path, budget in result.items() if path.is_file()}
 
@@ -266,13 +278,7 @@ def research_records(root: Path) -> list[tuple[Path, tuple[str, ...]]]:
 def check_research(root: Path) -> list[str]:
     """研究记录的必填标题、在 research/INDEX.md 登记、不含 64 位十六进制串（ADR-0031 R2、R3、R8）。"""
     errors = []
-    index = root / RESEARCH_INDEX
-    registered: set[str] = set()
-    if index.is_file():
-        for _, raw in link_targets(body_lines(index.read_text(encoding="utf-8"))):
-            path = urlsplit(raw.strip("<>")).path
-            if path:
-                registered.add((index.parent / unquote(path)).resolve().as_posix())
+    registered = registered_links(root / RESEARCH_INDEX)
     for path, required in research_records(root):
         name = path.relative_to(root).as_posix()
         if not path.is_file():
@@ -295,8 +301,43 @@ def check_research(root: Path) -> list[str]:
     return errors
 
 
+def registered_links(index: Path) -> set[str]:
+    """索引页链接到的文件（解析后的绝对路径）。"""
+    registered: set[str] = set()
+    if index.is_file():
+        for _, raw in link_targets(body_lines(index.read_text(encoding="utf-8"))):
+            path = urlsplit(raw.strip("<>")).path
+            if path:
+                registered.add((index.parent / unquote(path)).resolve().as_posix())
+    return registered
+
+
+def check_runs(root: Path) -> list[str]:
+    """跑次记录的必填标题、在 runs/INDEX.md 登记、不含 64 位十六进制串与媒体文件名。"""
+    errors: list[str] = []
+    runs = root / RUNS
+    if not runs.is_dir():
+        return errors
+    registered = registered_links(root / RUNS_INDEX)
+    for path in sorted(runs.rglob("*.md")):
+        name = path.relative_to(root).as_posix()
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, 1):
+            if HEX64.search(line):
+                errors.append(f"{name}:{number} 跑次记录里有 64 位十六进制串")
+            errors += [f"{name}:{number} 跑次记录里有媒体文件名：{token}" for token in MEDIA_NAME.findall(line)]
+        if path.parent != runs or path.name in ("INDEX.md", "TEMPLATE.md"):
+            continue
+        headings = {match.group(1) for _, line in body_lines("\n".join(lines))
+                    if (match := re.match(r"^##\s+(.+?)\s*$", line))}
+        errors += [f"{name}:1 缺少必填标题：## {heading}" for heading in RUN_HEADINGS if heading not in headings]
+        if path.resolve().as_posix() not in registered:
+            errors.append(f"{name}:1 没有在 {RUNS_INDEX.as_posix()} 登记")
+    return errors
+
+
 def check_absolute_paths(root: Path) -> list[str]:
-    """research/、docs/、tests/ 不写盘符绝对路径；测试里的虚构路径登记在 ALLOWED_ABSOLUTE_PATHS。"""
+    """research/、runs/、docs/、tests/ 不写盘符绝对路径；测试里的虚构路径登记在 ALLOWED_ABSOLUTE_PATHS。"""
     errors = []
     for scope in ABSOLUTE_PATH_SCOPE:
         if not (root / scope).is_dir():
@@ -447,6 +488,7 @@ def check_all(root: Path) -> tuple[list[str], list[str], int, int, int]:
     errors += budget_errors
     errors += check_paths(root)
     errors += check_research(root)
+    errors += check_runs(root)
     errors += check_absolute_paths(root)
     errors += check_product_ownership(root)
     errors += check_adr_index(root)

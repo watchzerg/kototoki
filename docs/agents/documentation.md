@@ -25,6 +25,7 @@
 | 评审时反复出现的判断类问题 | `CODING_STANDARDS.md` |
 | 工具链、命令、门禁的约定 | `docs/development/` |
 | 带时点的比较或实验结果 | `research/<轮次>/README.md` 并在 [research/INDEX.md](../../research/INDEX.md) 登记 |
+| 产品批量运行的结果与观察到的问题 | `runs/<日期>-<slug>.md` 并在 [runs/INDEX.md](../../runs/INDEX.md) 登记；问题转 run-findings 票据（[批量运行与跑次记录](production-runs.md)） |
 
 ## 权威归属与创建时机
 

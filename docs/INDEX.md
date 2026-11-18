@@ -30,6 +30,7 @@
 | [测试设计与验收](agents/testing.md) | 测试怎么写、归哪类、怎么验收 |
 | [文档维护规则](agents/documentation.md) | 文档放哪、怎么同步 |
 | [翻译评估方法](agents/translation-evaluation.md) | 新的翻译对比用什么裁判、统计口径与对照规则 |
+| [批量运行与跑次记录](agents/production-runs.md)、[跑次索引](../runs/INDEX.md) | 替用户跑产品批量时怎么跑、跑完记什么、问题怎么转票据；历次运行的记录 |
 | [tracker 约定](agents/issue-tracker.md)、[标签映射](agents/triage-labels.md)、[领域文档规则](agents/domain.md) | 工程 skills 的票据、标签与领域文档约定 |
 
 按需创建的目录：`specs/`、`operations/`、`adr/`、`architecture/modules/`。创建条件见[文档维护规则](agents/documentation.md#权威归属与创建时机)。
@@ -42,6 +43,7 @@
 | --- | --- | --- |
 | [工具链](development/toolchain.md)、[Windows 与 NVIDIA](development/windows-nvidia.md)、[推理选型原则](development/inference-selection.md) | 本行；[开发工作流](development/workflow.md)摘要并链接 | 工具链、平台与推理选型的权威正文 |
 | `research/` | [研究索引](../research/INDEX.md) | 研究轮次（一轮一目录）与产品验收记录（[ADR-0031](adr/0031-research-layout-and-lightweight-records.md)） |
+| `runs/` | [跑次索引](../runs/INDEX.md) | 产品批量运行一次一篇的记录（[批量运行与跑次记录](agents/production-runs.md)） |
 | `.scratch/<slug>/` | [tracker 约定](agents/issue-tracker.md) | 进行中的产品侧计划、票据与执行提示词；完工后删除 |
 
 重组前的旧材料（旧调研报告、计划、执行台账、测试记录、操作指南与研究代码）只在归档 tag `archive/2026-11-18-pre-research-restructure` 里。

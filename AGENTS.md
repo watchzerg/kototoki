@@ -61,5 +61,6 @@
 | 查现行决定与基线身份（翻译 Q3、产品翻译与建表、W0／X0）；用户采纳或变更决定 | [CURRENT.md](docs/adr/CURRENT.md)；[记录新决定](docs/adr/INDEX.md#记录新决定) |
 | 新的翻译对比、裁判与统计口径 | [翻译评估方法](docs/agents/translation-evaluation.md)（旧 Codex 流程只作历史） |
 | 调研、实验、复用已有结论，查研究轮次或验收记录 | [研究索引](research/INDEX.md)；新轮次按 `research/TEMPLATE.md` 建目录并登记 |
+| 跑产品批量、写跑次记录、据跑次开票 | [批量运行与跑次记录](docs/agents/production-runs.md)；记录在 [runs/](runs/INDEX.md) |
 | 选择或对比 STT 引擎、模型、对齐器 | [推理选型原则](docs/development/inference-selection.md) |
 | 接续旧任务 | 进行中的 `.scratch/<slug>/spec.md` 与票据，**先对照仓库核实状态**；已结题的工作看 ADR、模块页或 git 历史 |
