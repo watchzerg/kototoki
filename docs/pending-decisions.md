@@ -17,7 +17,7 @@
 
 ## 文档架构整理中提出
 
-2026-11-11 文档架构整理执行中记下的 7 项（[spec §8](../.scratch/docs-architecture/spec.md#8-待用户裁定)）已由用户委托 agent 裁定并落实，结果见 [spec §9](../.scratch/docs-architecture/spec.md#9-裁定结果)。
+2026-11-11 文档架构整理执行中记下的 7 项（`archive/2026-11-18-pre-research-restructure:.scratch/docs-architecture/spec.md` §8）已由用户委托 agent 裁定并落实，结果见同一文件 §9。
 
 ## 未验证与已知限制（不需要裁定，仅列示）
 

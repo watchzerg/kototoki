@@ -110,4 +110,4 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 
 ## 变更与决策来源
 
-原为技术设计 §10（文档架构整理票据 09，`.scratch/docs-architecture/`）；该节此前的修订见技术设计历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。键的增删依据：[ADR-0012](../../adr/0012-cross-asr-judge.md)（`cross`）、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)。
+原为技术设计 §10（文档架构整理票据 09，归档 tag 中的 .scratch/docs-architecture/）；该节此前的修订见技术设计历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。键的增删依据：[ADR-0012](../../adr/0012-cross-asr-judge.md)（`cross`）、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0022](../../adr/0022-product-names-on-strata.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)。

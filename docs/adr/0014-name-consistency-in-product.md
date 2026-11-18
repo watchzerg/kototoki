@@ -15,7 +15,7 @@
 6. **`published.json.sources` 含 `names`（表的身份）与 `names_apply`（审计产物的身份）两个键。** 表或审计产物的身份变化会使已发布结果过期，下次整批运行重新发布，不重译、不起 Hy-MT2。用户改过且非 `force` 的最终文件照常被发布前置判定挡住。
 7. **表可人工校对。** 表是 `.work/<id>/` 里的产物：用户改 `name-table.json` 的 `entries`（改错名、删条目）后重跑，只重做替换与发布。机制是 `is_current` 只比较 `identity` 块，手改不触发重建；文件 sha256 变化使 `names_apply` 身份变化，`published.json` 不再匹配。重建（改 `ja.srt`、改 `[names] seed`、`BUILD` 配方变化）会覆盖手改，不做保护。
 8. **隐私。** 专名表条目是转写内容，只在工作目录，不进日志，日志只记计数。
-9. **研究目录继续冻结。** `archive/2026-11-18-pre-research-restructure:experiments/name_consistency/`（101 项离线测试）只读，产品只复制、不导入；冻结证据（六份报告、`.local/name-consistency/` 的表与矩阵、`.scratch/name-consistency/` 的票据）需要改动时新增带版本的文件。
+9. **研究目录继续冻结。** `archive/2026-11-18-pre-research-restructure:experiments/name_consistency/`（101 项离线测试）只读，产品只复制、不导入；冻结证据（六份报告、`.local/name-consistency/` 的表与矩阵、归档 tag 中的 .scratch/name-consistency/ 的票据）需要改动时新增带版本的文件。
 10. **与翻译基线的关系。** H0 链在发布时跑这套替换（配方见 [ADR-0015](0015-two-translation-baselines.md)）；Q 线直接用 `names` 建表注入、不做替换（[ADR-0017](0017-q2-strata-default-launch-baseline.md)）。[ADR-0008](0008-no-multi-translation-selection.md) 不涉及：建表每部只一次请求，不是翻译多次再挑选。
 
 ## 依据
