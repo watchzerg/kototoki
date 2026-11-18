@@ -125,7 +125,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 ## 变更与决策来源
 
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
-- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`、`issues/14-stage-plan-module.md`）、`.scratch/cross-asr-judge/`、.scratch/runtime-logging-gaps/
+- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`、`issues/14-stage-plan-module.md`）、.scratch/cross-asr-judge/、.scratch/runtime-logging-gaps/
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/asr-repeat-guard.md`
 - 验收：[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[swr 回归](../../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)
 - 历史记录：模块页拆出的历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md`）、技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）

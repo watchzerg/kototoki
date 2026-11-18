@@ -99,7 +99,7 @@
 ## 变更与决策来源
 
 - [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0012](../../adr/0012-cross-asr-judge.md)、[ADR-0014](../../adr/0014-name-consistency-in-product.md)、[ADR-0019](../../adr/0019-product-translation-q2.md)、[ADR-0020](../../adr/0020-media-inputs-work-dir-and-side-by-side-publish.md)、[ADR-0023](../../adr/0023-asr-repeat-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
-- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/00-foundation.md`）、`.scratch/cross-asr-judge/`、.scratch/name-consistency-product/、`.scratch/architecture-review/`（2026-10-19 审计 B-1、B-13）
+- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/00-foundation.md`）、.scratch/cross-asr-judge/、.scratch/name-consistency-product/、`.scratch/architecture-review/`（2026-10-19 审计 B-1、B-13）
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
 - 验收：[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)
 - 历史：技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）

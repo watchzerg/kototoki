@@ -1,6 +1,6 @@
 # 01 ASR 质量第三轮：稳健性
 
-Status: needs-triage
+Status: resolved
 Type: research
 
 ## 背景
@@ -30,6 +30,10 @@ Type: research
 
 - 研究按 `research/TEMPLATE.md` 建轮次目录并登记在 `research/INDEX.md`。逐项写明做了什么、两部上的 CER 变化、成本（GPU 时长、下载量），以及是否建议改默认。
 - 有可采纳的改动时，列出需要用户裁定的事项（许可、改默认、ADR）。
+
+## Answer
+
+2026-11-18 结题：本票的候选方向 1–3 已作为 v14、v15 两轮执行完毕，结论见 [ASR 稳健性 v14–v15 轮次](../../../research/2026-11-asr-robustness-v14-v15/README.md)。只有 `repeat-strict` 守卫进了产品（ADR-0023），补窗重解码与后校正被否决，这条线已关闭。
 
 ## Comments
 

@@ -1,6 +1,6 @@
 # 首次大批量运行暴露的主程序问题
 
-Status: in-progress
+Status: resolved
 建票：2026-11-16。范围：产品包 `kototoki/`（抽取、发布、运行日志、专名、翻译、识别）。
 
 ## 1. 依据
