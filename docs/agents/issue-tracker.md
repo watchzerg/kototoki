@@ -15,9 +15,12 @@ Track tasks as Markdown under `.scratch/<feature-slug>/`. The directory is track
 - Append discussion under `## Comments`.
 - Write human-facing specs, tickets, and comments in Simplified Chinese.
 
-A feature directory is editable while the work is in progress. Once its spec is
-`resolved` (or stopped), the whole directory is frozen evidence: do not rewrite, rename
-or reformat it; follow-up work gets a new `<feature-slug>`.
+`.scratch/` holds only in-progress product-side work (ADR-0031, R7). A feature
+directory is editable while the work is in progress. When its spec is `resolved`
+(or stopped), write the durable conclusions into the module pages or an ADR, then
+delete the directory; git history keeps the record. Follow-up work gets a new
+`<feature-slug>`. Research rounds do not use `.scratch/`: their plan, code and
+conclusions live in `research/<YYYY-MM>-<slug>/` (see `research/INDEX.md`).
 
 The same privacy rules as the rest of the repository apply: no secrets, recordings,
 transcripts or subtitle text beyond short inline examples.

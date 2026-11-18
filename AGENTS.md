@@ -24,20 +24,20 @@
 - **保留原语言**：日语转写仍为日语。
 - **不进 Git 与日志**：模型权重、缓存、录音、生成的转写、密钥、`.local/`；默认不打印音频内容和完整转写。
 
-### 冻结证据与现行决定
+### 现行决定与研究约束
 
-- **冻结的历史证据只读**：调研与验收报告、`docs/context/*`、`docs/plans/*`、ADR 正文（只追加状态行）、已结题的 `.scratch/<slug>/`，以及 Codex 时代的翻译裁判链（`experiments/translation_judge/`、`experiments/translation_flow/v2_*`、`experiments/translation_eval/`、参考 prompt），后者带 sha256 自检和记录在案的 `gpt-6.1-sol`／`codex-cli` 身份。需要改动时新增带版本的文件；原文件不重命名、不重排版、不"现代化"。改任何既有文档前，先搜代码里有没有对它的 sha256 或内容断言。
 - 现行决定的完整定义在 [CURRENT.md](docs/adr/CURRENT.md)，沿革在[决定索引](docs/adr/INDEX.md)。翻译只有**一条基线 Q3**，直到用户另行决定：新测试以 Q3 为对照，引用 Q2、Q1、Q0、F1、H0 时写明。
 - 翻译代码中的 `reasoning_effort:no_think` 是 Hy-MT2 chat-template token，不是 agent 设置；`reasoning_effort` 不做批量替换。
 - **不自动选用"翻译多次再挑选"的方法**（多样本／多 seed＋MBR 或 reranking、best-of-N、多次全量翻译投票及其更省变体）：不提议、不列候选、不在无人值守时执行，除非用户明确要求；边界情况先问（[ADR-0008](docs/adr/0008-no-multi-translation-selection.md)）。
-- 已结题的研究线不重开、已开封的确认集不再用于确认：专名一致性研究线（[CURRENT·专名](docs/adr/CURRENT.md#专名)）不提议新轮次；v3、v4、v5 确认集已开封，新的确认用全新隔离的集合；第二轮（v2）已停止，其台账只按节读取、作业不恢复，先验只取[v1/v2 教训](docs/research/2026-10-10-hy30-flow-v1-v2-lessons.md)。重开只由用户明确要求。
+- 已结题的研究线不重开，重开只由用户明确要求；确认集与已停止轮次的约束见[研究索引·研究方法约束](research/INDEX.md#研究方法约束)。
+- 研究一轮一目录放 `research/`，记录精简、冻结靠 git 与归档 tag，不靠字节锁（[ADR-0031](docs/adr/0031-research-layout-and-lightweight-records.md)）。
 
 ### 重任务与环境
 
-- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、`just x0-demo`、`just translation-demo`、`just translation-baseline`、`just translation-srt`、`just translation-flow`、`just translation-eval`，产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，W0 的 `.local/envs/whisper-latest/Scripts/python.exe -m experiments.w0_demo.run`，以及 `experiments.*` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。
+- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，以及 `research/` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。
 - `.local/gpu.lock` 标记正在运行的 GPU 作业：不抢占、不杀其他进程；用 PowerShell `Get-Process` 核实真实进程，而不是信任文档声称在跑的内容。
 - `just setup`、`just install`、`just upgrade`／`uv sync|add|lock` 会改环境且可能联网：先问。
-- 大目录（`.local/`、`.venv/`、`docs/research/*appendices`）会拖慢 Grep／Glob，搜索时限定子路径。
+- 大目录（`.local/`、`.venv/`）会拖慢 Grep／Glob，搜索时限定子路径。
 
 ### 委派
 
@@ -60,7 +60,6 @@
 | 读取、创建、更新或分类票据 | [tracker 约定](docs/agents/issue-tracker.md)、[标签映射](docs/agents/triage-labels.md) |
 | 查现行决定与基线身份（翻译 Q3、产品翻译与建表、W0／X0）；用户采纳或变更决定 | [CURRENT.md](docs/adr/CURRENT.md)；[记录新决定](docs/adr/INDEX.md#记录新决定) |
 | 新的翻译对比、裁判与统计口径 | [翻译评估方法](docs/agents/translation-evaluation.md)（旧 Codex 流程只作历史） |
-| 调研、实验、复用已有结论，查研究轮次（含已结题的翻译流程 v1–v8、专名） | [调研索引](docs/research/INDEX.md)；新产出放 `docs/research/` 并登记 |
-| 测试、benchmark、运行或修改 W0／X0 | [基线测试指南](docs/guides/baseline-testing.md) → demo README → 契约。复用并更新 `experiments/w0_demo/`、`experiments/x0_demo/`；配方变更先出新版本并记录验证；CLI 须显式选择新 Pyannote（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)） |
+| 调研、实验、复用已有结论，查研究轮次或验收记录 | [研究索引](research/INDEX.md)；新轮次按 `research/TEMPLATE.md` 建目录并登记 |
 | 选择或对比 STT 引擎、模型、对齐器 | [推理选型原则](docs/development/inference-selection.md) |
-| 接续旧任务 | `docs/context/` 台账（冻结证据，不整读），**先对照仓库核实状态** |
+| 接续旧任务 | 进行中的 `.scratch/<slug>/spec.md` 与票据，**先对照仓库核实状态**；已结题的工作看 ADR、模块页或 git 历史 |

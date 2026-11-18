@@ -7,8 +7,8 @@
 每份文档只属于以下一态，不混写：
 
 - **存量当前正文**：描述同一仓库版本的已实现系统，持续改写，每条规则只有一处权威，其他位置摘要加链接。不按迭代追加"本次增量"章节。
-- **本次增量**：说明这次改变什么、验收什么、涉及哪些当前正文。由 issue tracker 承载：计划写 `.scratch/<slug>/spec.md`，票据、执行提示词、验收脚本放同一目录（[tracker 约定](issue-tracker.md)）；`.scratch/` 已纳入 Git。进行中可改；结题时确认已实现的规则都已写入当前正文、未实现的范围另开票据，此后整个目录按历史证据冻结。模块页的"变更与决策来源"链接到对应目录。
-- **历史证据**：调研、实验、验收记录、已结题的 `.scratch/<slug>/`，带时点和适用条件，永不改写、不归档。正文中的"当前""尚未实施"只描述记录时点。
+- **本次增量**：说明这次改变什么、验收什么、涉及哪些当前正文。产品侧的增量由 issue tracker 承载：计划写 `.scratch/<slug>/spec.md`，票据、执行提示词、验收脚本放同一目录（[tracker 约定](issue-tracker.md)）；`.scratch/` 已纳入 Git。进行中可改；完工时把已实现的规则写入当前正文、未实现的范围另开票据，然后删除该目录（git 历史可追溯）。研究轮次的计划写在 `research/<轮次>/` 里，不用 `.scratch/`。
+- **研究记录**：调研、实验、验收记录，放 `research/`，带时点和适用条件，按 [ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) 精简书写（R2、R3）。冻结靠 git：结题后状态写 `concluded`／`stopped`，修错、修链接、精简随时可以做，原始材料从归档 tag `archive/2026-11-18-pre-research-restructure` 或 git 历史取；代码不对文档做 sha256 自检。正文中的"当前""尚未实施"只描述记录时点。
 
 代码是实际行为的证据，当前正文是预期行为依据。两者冲突时就地记录实现差异并明确修代码还是修文档，不把缺陷改写为正常行为，也不把待实现设计写成现状。
 
@@ -21,10 +21,10 @@
 | 术语的定义或取舍 | `GLOSSARY.md` |
 | 难以逆转、事后看不出原因、有真实取舍的决定 | `docs/adr/` 新增一条，并按[决定索引·记录新决定](../adr/INDEX.md#记录新决定)同步 `docs/adr/INDEX.md` |
 | 已实现行为或结构的澄清 | 所属模块页或模块边界 |
-| 尚未实现的需求、范围或计划 | `.scratch/<slug>/` 的 spec 与票据 |
+| 尚未实现的产品需求、范围或计划 | `.scratch/<slug>/` 的 spec 与票据；研究轮次的计划写在轮次目录 |
 | 评审时反复出现的判断类问题 | `CODING_STANDARDS.md` |
 | 工具链、命令、门禁的约定 | `docs/development/` |
-| 带时点的比较或实验结果 | `docs/research/` 并登记索引 |
+| 带时点的比较或实验结果 | `research/<轮次>/README.md` 并在 [research/INDEX.md](../../research/INDEX.md) 登记 |
 
 ## 权威归属与创建时机
 
@@ -44,10 +44,10 @@
 | 跨模块流程 | `docs/architecture/collaborations.md` | 流程涉及三个以上模块时 | 模块页链接参与的流程 |
 | 用户可见行为规格 | `docs/specs/<topic>.md` | 行为横跨多个模块或有非开发读者时；否则写在模块页 | 模块页引用不重写 |
 | 重要决策的背景、选择与后果 | `docs/adr/NNNN-<slug>.md`，状态写 frontmatter | 第一条 ADR 时 | 当前正文采用最终规则；替代旧决定时双向链接 |
-| 调研、实验、验收证据 | `docs/research/`，验收在 `acceptance/` | 索引初始化，文件按需 | 历史证据不冒充当前覆盖 |
+| 调研、实验、验收证据 | `research/<YYYY-MM>-<slug>/README.md`，验收在 `research/acceptance/`，登记在 `research/INDEX.md` | 立项时 | 研究记录不冒充当前覆盖 |
 | 工具链、命令、门禁、测试分层 | `docs/development/` | 初始化，阶段 3 填入 | 模块页链接测试入口，不复制执行说明 |
 | 部署、运行配置、发布与回滚 | `docs/operations/` | 有可部署产物时 | development 链接发布入口 |
-| 计划、票据、执行提示词、验收脚本 | `.scratch/<slug>/` | 立项时 | 结题后整目录冻结；当前正文只链接，不复述计划 |
+| 产品侧计划、票据、执行提示词、验收脚本 | `.scratch/<slug>/` | 立项时 | 完工后结论写进模块页或 ADR，删除目录；当前正文不链接 `.scratch` 目录 |
 
 ## 模块页模板
 
@@ -72,7 +72,7 @@
 关键源文件与符号、相关测试及覆盖行为、已知限制和未验证范围。
 
 ## 变更与决策来源
-已吸收的票据、增量规格、ADR、调研；只用于追溯。
+已吸收的 ADR、研究轮次（或归档 tag 路径）；只用于追溯。
 ```
 
 ## 随交付同步
@@ -114,14 +114,16 @@ grep -rnE '<待填 (初始化|阶段3|首个模块|按需)：' --exclude-dir=.gi
   research exploratory/concluded. State limitations and open questions explicitly.
 - Research must include source links, access dates, relevant versions, and a
   distinction between observations and inferences. Experiments and evaluation
-  reports must include enough model, hardware, configuration, and input details
-  to reproduce the results.
+  records state the model, engine version, hardware and the kind and size of the
+  test data (R2); they do not carry file hashes, local absolute paths or per-item
+  detail (R3).
 - Specs should include scope, exclusions, observable behavior, and acceptance
   criteria.
 - ADRs use `NNNN-short-title.md`, starting at `0001`. Status is one of
   proposed/accepted/rejected/superseded. Mark acceptance only when the decision has actually been
   adopted; record the basis. Supersede accepted decisions with a linked new ADR
-  rather than rewriting their history; on the old ADR only append to the status line.
+  rather than rewriting their history; on the old ADR only append to the status line
+  (fixing links in an ADR body is allowed, ADR-0031).
   `docs/adr/INDEX.md` is the one living page: update its current-decisions table,
   evolution chain and ADR list in the same commit as the new ADR.
 - Plans and research do not supersede requirements by themselves. For conflicts,
@@ -130,12 +132,6 @@ grep -rnE '<待填 (初始化|阶段3|首个模块|按需)：' --exclude-dir=.gi
 - Keep private recordings, transcripts, model weights, secrets, and large
   generated outputs outside documentation and Git. Link reproducible procedures
   and permitted artifact locations instead.
-
-## 既有目录
-
-`docs/plans/`、`docs/context/`、`docs/archive/`、`docs/guides/`、`docs/testing/` 是采用本规则前的目录，现有文件按冻结证据规则原位保留并在[文档索引](../INDEX.md#项目特有入口)登记，不再新增文件。`docs/plans/` 里 2026-11-09 之后新增的 3 篇（当时 `.scratch/` 不进 Git，计划没有别的落点）同样原位冻结，不回迁。
-
-新内容按上文落点表放置：计划与进度进 `.scratch/<slug>/`，验证与验收记录进 `docs/research/acceptance/`，操作说明进 README 或 `docs/operations/`，评估方法与契约进模块页、`docs/specs/` 或 `docs/agents/`，交接文档不进仓库。
 
 ## 命名
 
