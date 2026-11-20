@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    # 控制台代码页可能不是 UTF-8（本机根环境默认 cp1252）；文件名无法显示时转义，不崩溃。
+    # 文件名可能含非 UTF-8 字节（surrogateescape 解码），UTF-8 输出时会抛错；转义显示，不崩溃。
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(errors="backslashreplace")  # type: ignore[union-attr]
     sys.exit(main())

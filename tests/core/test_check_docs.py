@@ -120,17 +120,17 @@ class CheckDocsTest(unittest.TestCase):
         self.write("research/2026-01-demo/run.py", "SHA = '" + "ab" * 32 + "'\n")
         self.assertEqual(self.errors(), ["research/2026-01-demo/run.py:1 研究记录里有 64 位十六进制串"])
 
-    def test_drive_letter_paths_are_reported_unless_allowed(self) -> None:
-        drive = "D" + ":"  # 拼出来，免得本测试文件自己被盘符检查命中
-        fictional, local = f"{drive}/movies/ep01.mkv", drive + r"\data\set"
+    def test_machine_paths_are_reported_unless_allowed(self) -> None:
+        home = "/" + "home"  # 拼出来，免得本测试文件自己被路径检查命中
+        fictional, local = f"{home}/u/movies/ep01.mkv", "/" + "data/set"
         self.write("tests/core/test_x.py",
-                   'URL = "https://example.com/a"\nRE = r"\\d\\d:\\d\\dZ"\n' + f'PATH = "{fictional}"\n')
+                   'URL = "https://example.com/data/a"\nP = "/proc/meminfo /srv/in"\n' + f'PATH = "{fictional}"\n')
         self.write("research/2026-01-demo/README.md", ROUND + f"数据在 {local} 下\n")
         self.assertEqual(self.errors(), [
-            f"research/2026-01-demo/README.md:35 盘符绝对路径：{local}",
-            f"tests/core/test_x.py:3 盘符绝对路径：{fictional}"])
-        with mock.patch.dict(check_docs.ALLOWED_ABSOLUTE_PATHS, {("tests/core/test_x.py", f"{drive}/movies"): "虚构"}):
-            self.assertEqual(self.errors(), [f"research/2026-01-demo/README.md:35 盘符绝对路径：{local}"])
+            f"research/2026-01-demo/README.md:35 本机绝对路径：{local}",
+            f"tests/core/test_x.py:3 本机绝对路径：{fictional}"])
+        with mock.patch.dict(check_docs.ALLOWED_ABSOLUTE_PATHS, {("tests/core/test_x.py", f"{home}/u"): "虚构"}):
+            self.assertEqual(self.errors(), [f"research/2026-01-demo/README.md:35 本机绝对路径：{local}"])
 
     def test_run_record_needs_headings_registration_and_no_media_names(self) -> None:
         self.write("runs/2026-01-04-b.md", RUN.replace("## 问题", "## 发现") + "输入集 1234567890ab，工作 id 0a1b2c3d4e5f\n")

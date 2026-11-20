@@ -14,7 +14,7 @@ PROBE = {
     "streams": [{"index": 0, "codec_name": "h264", "duration": "10.0", "tags": {"title": "x"}},
                 {"index": 1, "codec_name": "aac", "channels": 2, "channel_layout": "stereo",
                  "sample_rate": "48000", "start_time": "0.021", "duration": "10.0", "tags": {"language": "jpn"}}],
-    "format": {"filename": "D:/movies/ep01.mkv", "duration": "10.05", "tags": {"encoder": "x"}},
+    "format": {"filename": "/srv/movies/ep01.mkv", "duration": "10.05", "tags": {"encoder": "x"}},
 }
 
 
@@ -30,11 +30,13 @@ class TempCase(unittest.TestCase):
 class WorkDirTests(TempCase):
     def test_work_id_is_sha12_of_posix_relative_path_with_extension(self) -> None:
         self.assertEqual(a.work_id("S1/ep01.mkv"), a.sha256_bytes(b"S1/ep01.mkv")[:12])
-        self.assertEqual(a.work_id("S1\\ep01.mkv"), a.work_id("S1/ep01.mkv"))
+        # `:` 与 `\` 在 Linux 上是合法文件名字符，按字面进摘要
+        self.assertEqual(a.work_id("Re:Zero 01.mkv"), a.sha256_bytes("Re:Zero 01.mkv".encode())[:12])
+        self.assertNotEqual(a.work_id("S1\\ep01.mkv"), a.work_id("S1/ep01.mkv"))
         self.assertNotEqual(a.work_id("S1/ep01.mkv"), a.work_id("S1/ep01.mp4"))
 
     def test_rejects_paths_outside_input_dir(self) -> None:
-        for bad in ("/abs/ep.mkv", "../ep.mkv", "C:/ep.mkv", "C:ep.mkv", "S1/ep.mkv:stream", ""):
+        for bad in ("/abs/ep.mkv", "../ep.mkv", "S1/../../ep.mkv", ""):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 a.work_id(bad)
 
@@ -60,29 +62,18 @@ class WorkDirTests(TempCase):
         self.assertEqual(a.final_srt_path(self.root, "ep01.mkv"), self.root / "ep01.ja-zh.srt")
         self.assertEqual(a.final_srt_path(self.root, "S1/ep01.mkv"), self.root / "S1" / "ep01.ja-zh.srt")
         self.assertEqual(a.final_srt_path(self.root, "S1/OVA/a.b.mp4"), self.root / "S1" / "OVA" / "a.b.ja-zh.srt")
-        self.assertEqual(a.final_srt_path(self.root, "S1\\ep01.mkv"), a.final_srt_path(self.root, "S1/ep01.mkv"))
+        self.assertEqual(a.final_srt_path(self.root, "S1\\ep01.mkv"), self.root / "S1\\ep01.ja-zh.srt")  # `\` 是文件名字符
         self.assertEqual(a.FINAL_SUFFIX, ".ja-zh.srt")
 
 
 class InputKeyTests(TempCase):
-    def test_key_is_name_dash_sha12_of_normcased_resolved_path(self) -> None:
+    def test_key_is_name_dash_sha12_of_resolved_path(self) -> None:
         directory = self.root / "Anime"
         directory.mkdir()
-        digest = a.sha256_bytes(os.path.normcase(str(directory.resolve())).encode("utf-8"))[:12]
+        digest = a.sha256_bytes(str(directory.resolve()).encode("utf-8"))[:12]
         self.assertEqual(a.input_key(directory), f"Anime-{digest}")
         self.assertEqual(a.input_key(directory), a.input_key(directory))  # 稳定
         self.assertEqual(a.input_key(directory / ".." / "Anime"), a.input_key(directory))  # 路径先 resolve
-
-    def test_case_variants_share_a_key_only_where_normcase_folds_case(self) -> None:
-        # 摘要只受 normcase 影响：大小写不同的同一路径在 Windows 上同键，在区分大小写的平台上异键。
-        directory = self.root / "Anime"
-        directory.mkdir()
-        digest = a.input_key(directory).rsplit("-", 1)[1]
-        folded = a.sha256_bytes(os.path.normcase(str(directory.resolve())).encode("utf-8"))[:12]
-        self.assertEqual(digest, folded)
-        if os.path.normcase("A") == os.path.normcase("a"):
-            with mock.patch.object(Path, "resolve", lambda self, strict=False: Path(str(self).upper())):
-                self.assertEqual(a.input_key(directory).rsplit("-", 1)[1], digest)
 
     def test_different_input_dirs_get_different_roots(self) -> None:
         one, two = self.root / "one" / "Anime", self.root / "two" / "Anime"
@@ -126,7 +117,7 @@ class IdentityTests(TempCase):
         self.assertEqual(fingerprint["streams"][1], {
             "index": 1, "codec_name": "aac", "channels": 2, "channel_layout": "stereo",
             "sample_rate": "48000", "start_time": "0.021", "duration": "10.0"})
-        self.assertNotIn("D:/movies", json.dumps(fingerprint))
+        self.assertNotIn("/srv/movies", json.dumps(fingerprint))
         self.assertNotIn("tags", json.dumps(fingerprint))
 
     def test_video_identity_ignores_location_and_tracks_size_mtime_probe(self) -> None:
@@ -135,7 +126,7 @@ class IdentityTests(TempCase):
         self.assertEqual(identity["relative_path"], "S1/ep01.mkv")
         self.assertNotIn(str(self.root), json.dumps(identity))
         retagged = json.loads(json.dumps(PROBE))
-        retagged["format"]["filename"] = "E:/elsewhere.mkv"
+        retagged["format"]["filename"] = "/srv/elsewhere.mkv"
         retagged["streams"][1]["tags"] = {}
         self.assertEqual(a.video_identity(self.root / "in", "S1/ep01.mkv", retagged), identity)
         changed = json.loads(json.dumps(PROBE))
@@ -151,7 +142,7 @@ class IdentityTests(TempCase):
         self.assertEqual(identity, {"upstream": {"pcm": SHA_A}, "recipe_hash": SHA_B,
                                     "models": {"seg": SHA_C}, "config": {"seed": 7}})
         for kwargs in ({"upstream": {}, "recipe_hash": SHA_B},
-                       {"upstream": {"pcm": "D:/x/audio-16k.wav"}, "recipe_hash": SHA_B},
+                       {"upstream": {"pcm": "/srv/x/audio-16k.wav"}, "recipe_hash": SHA_B},
                        {"upstream": {"pcm": SHA_A}, "recipe_hash": "v1"},
                        {"upstream": {"pcm": SHA_A}, "recipe_hash": SHA_B, "models": {"seg": "/models/seg.bin"}}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
@@ -296,36 +287,10 @@ class PublishRecordTests(TempCase):
 
 
 class AtomicWriteTests(TempCase):
-    def test_replace_retries_permission_error_then_succeeds(self) -> None:
-        calls, sleeps = [], []
-
-        def flaky(source: Path, target: Path) -> None:
-            calls.append(1)
-            if len(calls) < 3:
-                raise PermissionError("in use")
-            os.replace(source, target)
-
-        source, target = self.root / "s", self.root / "t"
-        source.write_text("x", encoding="utf-8")
-        a.replace_with_retry(source, target, replace=flaky, sleep=sleeps.append)
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(sleeps, [0.1, 0.2])
-        self.assertEqual(target.read_text(encoding="utf-8"), "x")
-
-    def test_replace_gives_up_after_limit(self) -> None:
-        def locked(source: Path, target: Path) -> None:
-            raise PermissionError("in use")
-
-        sleeps: list[float] = []
-        with self.assertRaises(PermissionError):
-            a.replace_with_retry(self.root / "s", self.root / "t", replace=locked, sleep=sleeps.append)
-        self.assertEqual(len(sleeps), a.REPLACE_ATTEMPTS - 1)
-        self.assertLessEqual(max(sleeps), 0.5)
-
     def test_failed_write_leaves_target_and_no_temp_file(self) -> None:
         target = self.root / "out.json"
         a.atomic_write_json(target, {"v": 1})
-        with mock.patch.object(a, "replace_with_retry", side_effect=PermissionError("locked")):
+        with mock.patch("os.replace", side_effect=PermissionError("locked")):
             with self.assertRaises(PermissionError):
                 a.atomic_write_json(target, {"v": 2})
         self.assertEqual(a.read_json(target), {"v": 1})

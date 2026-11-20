@@ -1,5 +1,3 @@
-set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
-
 default:
     @just --list
 
@@ -11,7 +9,7 @@ test *args:
 # 用默认配置为 DIR（相对路径按调用目录解析）下的视频与音频生成双语字幕：占 GPU、加载模型、可能跑数小时（须先问）。
 # 只设 input_dir，其余取默认；要改其他键请写 kototoki.toml 并用 python -m kototoki（scripts/subtitles.py）。退出码同产品入口。
 subtitles dir:
-    uv run --locked --offline python scripts/subtitles.py '{{replace(join(invocation_directory_native(), dir), "'", "''")}}'; exit $LASTEXITCODE
+    uv run --locked --offline python scripts/subtitles.py {{quote(join(invocation_directory(), dir))}}
 
 check:
     uv run --locked --offline python -m compileall -q kototoki scripts tests
@@ -55,9 +53,10 @@ lint:
 typecheck:
     @echo "typecheck: no type checker selected (see docs/development/toolchain.md)" && exit 1
 
-# full 产品测试：离线集成（项目内 ffmpeg、fake worker），不加载模型、不占 GPU、不持锁；参数同 test。
+# full 产品测试：离线集成（系统 ffmpeg、fake worker），不加载模型、不占 GPU、不持 .local/gpu.lock；参数同 test。
+# 经 with_lock.py 持主机级锁串行，不同 worktree 同时跑不互相干扰（ADR-0034「子进程与长任务」）。
 test-full *args:
-    uv run --locked --offline python -m unittest discover -s tests/full -t . -v {{args}}
+    uv run --no-project --no-python-downloads --offline python scripts/with_lock.py uv run --locked --offline python -m unittest discover -s tests/full -t . -v {{args}}
 
 # 真实模型验证（占 GPU、加载模型，每次须先经用户批准；不属于任何 gate）：每项独立子进程，持 .local/gpu.lock，
 # 结果写 .local/smoke/；可只跑指定项。

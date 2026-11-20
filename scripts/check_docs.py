@@ -9,8 +9,8 @@
 ADR 文件、决定索引"全部 ADR"表与"编号从 N 起"三者一致。
 
 研究记录（ADR-0031 R8）：research/<轮次>/README.md 含 research/TEMPLATE.md 的必填标题，
-research/acceptance/*.md 含验收模板的必填标题；research/、runs/、docs/、tests/ 不出现盘符绝对路径
-（ALLOWED_ABSOLUTE_PATHS 列出的测试虚构路径除外）；research/ 不出现 64 位十六进制串。
+research/acceptance/*.md 含验收模板的必填标题；research/、runs/、docs/、tests/ 不出现本机绝对路径
+（`/home`、`/data`、`/mnt`、`/media` 下；ALLOWED_ABSOLUTE_PATHS 列出的测试虚构路径除外）；research/ 不出现 64 位十六进制串。
 
 跑次记录（docs/agents/production-runs.md）：runs/ 下除 INDEX、TEMPLATE 外每篇含 runs/TEMPLATE.md 的必填
 标题并在 runs/INDEX.md 登记；不出现 64 位十六进制串与媒体文件名（影片文件名不进 Git）。
@@ -21,7 +21,6 @@ research/acceptance/*.md 含验收模板的必填标题；research/、runs/、do
 
 import argparse
 import re
-import sys
 import unicodedata
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -81,20 +80,11 @@ RUN_HEADINGS = ("运行", "版本", "输入", "结果", "问题")
 # 跑次记录里像媒体文件名的词：影片文件名不进 Git。
 MEDIA_NAME = re.compile(r"[^\s`/\\]+\.(?:mkv|mp4|m4v|avi|mov|m2ts|webm|wmv|flv|wav|flac|mp3|m4a|aac)\b",
                         re.IGNORECASE)
-# 盘符绝对路径检查的范围与允许的虚构路径：(文件, 路径前缀) -> 原因。
+# 本机绝对路径（用户目录与数据盘）检查的范围与允许的虚构路径：(文件, 路径前缀) -> 原因。
 ABSOLUTE_PATH_SCOPE = ("research", "runs", "docs", "tests")
 ABSOLUTE_PATH_SUFFIXES = (".md", ".py", ".toml", ".json", ".txt")
-ABSOLUTE_PATH = re.compile(r"(?<![A-Za-z0-9\\])[A-Za-z]:[\\/][^\s`'\")\]|，。；、]*")
-ALLOWED_ABSOLUTE_PATHS: dict[tuple[str, str], str] = {
-    ("tests/core/test_artifacts.py", "D:/movies"): "测试身份不含绝对路径用的虚构路径",
-    ("tests/core/test_artifacts.py", "C:/ep.mkv"): "同上",
-    ("tests/core/test_artifacts.py", "E:/elsewhere.mkv"): "同上",
-    ("tests/core/test_artifacts.py", "D:/x/audio-16k.wav"): "同上",
-    ("tests/core/test_config.py", "D:/abs/mms"): "测试配置里绝对路径原样保留用的虚构路径",
-    ("tests/core/test_media.py", "D:/tools"): "测试 ffmpeg 路径拼接用的虚构路径",
-    ("tests/core/test_media.py", "D:/影片"): "同上",
-    ("tests/core/test_strata.py", "D:/mtp/rt"): "测试 Strata runtime 目录用的虚构路径",
-}
+ABSOLUTE_PATH = re.compile(r"(?<![\w./-])/(?:home|data|mnt|media)/[^\s`'\")\]|，。；、]*")
+ALLOWED_ABSOLUTE_PATHS: dict[tuple[str, str], str] = {}
 HEX64 = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])")
 
 OWNERSHIP_SECTION = "代码与验证入口"
@@ -337,7 +327,7 @@ def check_runs(root: Path) -> list[str]:
 
 
 def check_absolute_paths(root: Path) -> list[str]:
-    """research/、runs/、docs/、tests/ 不写盘符绝对路径；测试里的虚构路径登记在 ALLOWED_ABSOLUTE_PATHS。"""
+    """research/、runs/、docs/、tests/ 不写本机绝对路径；测试里的虚构路径登记在 ALLOWED_ABSOLUTE_PATHS。"""
     errors = []
     for scope in ABSOLUTE_PATH_SCOPE:
         if not (root / scope).is_dir():
@@ -349,8 +339,8 @@ def check_absolute_paths(root: Path) -> list[str]:
             allowed = [prefix for file, prefix in ALLOWED_ABSOLUTE_PATHS if file == name]
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 for token in ABSOLUTE_PATH.findall(line):
-                    if not any(token.replace("\\", "/").startswith(prefix) for prefix in allowed):
-                        errors.append(f"{name}:{number} 盘符绝对路径：{token}")
+                    if not any(token.startswith(prefix) for prefix in allowed):
+                        errors.append(f"{name}:{number} 本机绝对路径：{token}")
     return errors
 
 
@@ -499,8 +489,6 @@ def main() -> int:
         help="项目根目录；默认是本脚本所在 scripts/ 的上级，从别处调用时传目标项目根",
     )
     args = parser.parse_args()
-    # 错误信息含中文与文档里的任意字符；控制台代码页不是 UTF-8（本机默认 cp1252）时转义而不崩溃。
-    sys.stdout.reconfigure(errors="backslashreplace")
     root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     errors, warnings, documents, links, external = check_all(root)
     for warning in warnings:

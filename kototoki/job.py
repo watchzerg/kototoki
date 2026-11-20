@@ -745,7 +745,7 @@ def _run(ctx: _Context) -> None:
     stable, summary.unstable = stable_files(found, config.run.stable_check_s, ctx.sleep)
     for rel in summary.unstable:
         logger.warning(f"[scan] {rel}: size still changing, skipped this run")
-    claimed: dict[str, str] = {}  # 双语字幕路径（按平台大小写规则）→ 先占用它的相对路径
+    claimed: dict[Path, str] = {}  # 双语字幕路径 → 先占用它的相对路径
     for rel, path in stable:
         final = artifacts.final_srt_path(input_dir, rel)
         if final.exists():  # 只看文件名，不论是否本项目生成（ADR-0007「发布」）
@@ -759,12 +759,11 @@ def _run(ctx: _Context) -> None:
             logger.error(f"[scan] FAILED {rel}: {type(error).__name__}", exc_info=error)
             continue
         video = VideoFile(rel, path, work_dir, final)
-        key = os.path.normcase(str(final))
-        if key in claimed:
+        if final in claimed:
             ctx.fail(video, "scan", FinalPathCollision(
-                f"subtitle path of {rel!r} is already taken by {claimed[key]!r} (same stem in the same directory)"))
+                f"subtitle path of {rel!r} is already taken by {claimed[final]!r} (same stem in the same directory)"))
             continue
-        claimed[key] = rel
+        claimed[final] = rel
         ctx.files.append(video)
     logger.info(f"[scan] {summary.total} file(s): {len(ctx.files)} to process, {len(summary.existing)} with "
                 f"subtitles, {len(summary.unstable)} unstable, "

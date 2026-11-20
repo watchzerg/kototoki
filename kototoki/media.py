@@ -30,7 +30,7 @@ from typing import IO, Any
 import wave
 
 from kototoki import recipes
-from kototoki.artifacts import AUDIO_16K, EXTRACT_LOG, replace_with_retry
+from kototoki.artifacts import AUDIO_16K, EXTRACT_LOG
 from kototoki.config import Config
 from kototoki.procs import contained
 
@@ -576,7 +576,7 @@ def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> 
         warnings = check_duration(decoded_s, probe_result.duration_s, has_video=probe_result.has_video)
         if errors := error_lines(diagnostics):
             warnings.append(f"ffmpeg reported {errors} error line(s) while decoding; see {EXTRACT_LOG}")
-        replace_with_retry(partial, target)
+        os.replace(partial, target)
     finally:
         partial.unlink(missing_ok=True)
     return Extract(wav=target, log=log_path, sample_rate=rate, samples=samples,

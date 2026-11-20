@@ -98,22 +98,6 @@ def object_hash(value: Any) -> str:
     return sha256_bytes(canonical(value).encode("utf-8"))
 
 
-REPLACE_ATTEMPTS = 20
-
-
-def replace_with_retry(source: Path, target: Path, *, replace: Callable[[Any, Any], None] = os.replace,
-                       sleep: Callable[[float], None] = time.sleep) -> None:
-    """os.replace；Windows 上目标被播放器或扫描器短暂占用（PermissionError）时重试。"""
-    for attempt in range(REPLACE_ATTEMPTS):
-        try:
-            replace(source, target)
-            return
-        except PermissionError:
-            if attempt == REPLACE_ATTEMPTS - 1:
-                raise
-            sleep(min(0.5, 0.1 * (attempt + 1)))
-
-
 def atomic_write_text(path: Path, text: str) -> None:
     """写同目录临时文件并 fsync，再原子替换目标；UTF-8 无 BOM、LF；失败时删除临时文件。"""
     path = Path(path)
@@ -124,7 +108,7 @@ def atomic_write_text(path: Path, text: str) -> None:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        replace_with_retry(temporary, path)
+        os.replace(temporary, path)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -141,10 +125,9 @@ def read_json(path: Path) -> Any:
 # --- 路径与工作目录 -----------------------------------------------------------------------
 
 def _relative(relative: str | PurePosixPath) -> PurePosixPath:
-    """输入目录内的相对路径，统一为正斜杠形式。"""
-    path = PurePosixPath(str(relative).replace("\\", "/"))
-    # 任何段含 ":" 都拒绝：盘符、驱动器相对路径与 NTFS 备用数据流。
-    if path.is_absolute() or not path.parts or ".." in path.parts or any(":" in part for part in path.parts):
+    """输入目录内的相对路径（POSIX 形式；`:`、`\\` 是合法文件名字符，原样保留）。"""
+    path = PurePosixPath(str(relative))
+    if path.is_absolute() or not path.parts or ".." in path.parts:
         raise ValueError(f"Expected a path relative to the input directory: {relative!r}")
     return path
 
@@ -155,9 +138,9 @@ def work_id(relative: str | PurePosixPath) -> str:
 
 
 def input_key(input_dir: Path) -> str:
-    """目标目录键：`<末段名>-<绝对路径 sha12>`；路径按平台大小写规则归一，盘符根目录的末段名记为 `root`。"""
+    """目标目录键：`<末段名>-<绝对路径 sha12>`；根目录 `/` 的末段名记为 `root`。"""
     resolved = Path(input_dir).resolve()
-    digest = sha256_bytes(os.path.normcase(str(resolved)).encode("utf-8"))[:WORK_ID_LENGTH]
+    digest = sha256_bytes(str(resolved).encode("utf-8"))[:WORK_ID_LENGTH]
     return f"{resolved.name or 'root'}-{digest}"
 
 

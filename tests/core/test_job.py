@@ -7,6 +7,7 @@ GPU 阶段由 `fake_worker.py` 子进程顶替。
 from __future__ import annotations
 
 import contextlib
+import errno
 from dataclasses import replace
 import hashlib
 import io
@@ -478,7 +479,7 @@ class WorkRootTests(JobCase):
 
         self.enterContext(mock.patch("kototoki.translate.translate_document", look_then_translate))
         self.run_job()
-        digest = hashlib.sha256(os.path.normcase(str(self.input)).encode("utf-8")).hexdigest()[:12]
+        digest = hashlib.sha256(str(self.input).encode("utf-8")).hexdigest()[:12]
         self.assertEqual(self.work_root, self.work / f"in-{digest}")
         self.assertEqual(seen, [{"lock": True, "work_dir": self.work_root / self.ids("a.mkv")[0]}])
         self.assertFalse((self.work_root / artifacts.LOCK).exists())  # 结束即释放
@@ -867,17 +868,17 @@ class PublishTests(JobCase):
         self.assertIn("[summary] 2 file(s): 2 published", console.getvalue())
 
     def test_publish_never_moves_across_directories(self) -> None:
-        """回归：工作目录与输入不在同一卷时 `os.replace` 跨卷失败（WinError 17）。
+        """回归：工作目录与输入不在同一文件系统时 `os.replace` 跨设备失败（EXDEV）。
         打桩成"跨目录替换即抛 EXDEV"，发布仍须成功：临时文件建在目标目录内。"""
         self.make_inputs("a.mkv")
-        real = artifacts.replace_with_retry
+        real = os.replace
 
         def same_volume_only(source, target, **kwargs):
             if Path(source).parent != Path(target).parent:
-                raise OSError(18, "The system cannot move the file to a different disk drive")
+                raise OSError(errno.EXDEV, "Invalid cross-device link")
             return real(source, target, **kwargs)
 
-        with mock.patch.object(artifacts, "replace_with_retry", side_effect=same_volume_only):
+        with mock.patch("os.replace", side_effect=same_volume_only):
             summary = self.run_job()
         self.assertEqual((summary.published, summary.failed), (["a.mkv"], {}))
         self.assertEqual(self.published("a.mkv")["sha256"], artifacts.sha256_file(self.final("a.mkv")))
@@ -886,7 +887,7 @@ class PublishTests(JobCase):
     def test_failed_publish_writes_no_audit_record(self) -> None:
         self.make_inputs("a.mkv")
         self.untranslated = 2  # 汇总的未翻译数在翻译完成时计，发布失败也不漏（batch-run-fixes 06.1）
-        real = artifacts.replace_with_retry
+        real = os.replace
         final = self.final("a.mkv")
 
         def locked_final(source, target, **kwargs):
@@ -894,7 +895,7 @@ class PublishTests(JobCase):
                 raise PermissionError("locked")
             return real(source, target, **kwargs)
 
-        with mock.patch.object(artifacts, "replace_with_retry", side_effect=locked_final):
+        with mock.patch("os.replace", side_effect=locked_final):
             summary = self.run_job()
         self.assertEqual((summary.failed, summary.untranslated_cues), ({"a.mkv": "publish"}, 2))
         self.assertFalse(final.exists())

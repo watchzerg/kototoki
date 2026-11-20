@@ -22,7 +22,7 @@ from kototoki.local_client import InfraFailure
 from kototoki.strata import Session, StrataRefused, StrataServer, wait_for_free_vram
 
 # Strata 默认启动真实写下的参数形状（0.2.12 Windows 与 0.2.13.1 Linux 相同）：总带 `--mtp <权重目录>`，DFlash2 不在 run config 里（2026-11-08 smoke）。
-DEFAULT_ARGS = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--mtp", "/data/strata/mtp/rt", "--max-context", "131072",
+DEFAULT_ARGS = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--mtp", "/opt/strata/mtp/rt", "--max-context", "131072",
                 "--kv", "int8", "--kv-resident", "32768", "--vision"]
 DFLASH_LINE = "[strata] drafting: DFlash2 alone (--draft dflash2, --draft-conf 0.7)\n"
 
@@ -59,7 +59,7 @@ class FakeStrata:
 
     def launch_row(self) -> dict[str, Any]:
         config = self.root / "launch.json"
-        config.write_text(json.dumps({"model_name": self.model_name, "exe": "llama-server.exe", "args": self.args,
+        config.write_text(json.dumps({"model_name": self.model_name, "exe": "component:strata-engine", "args": self.args,
                                       "host": "127.0.0.1", "log": "x.log"}), encoding="utf-8")
         return {"name": "k1", "profile": "p", "state": self.state, "port": 8080, "host": "127.0.0.1", "pid": 4242,
                 "config": str(config)}
@@ -179,7 +179,7 @@ class StrataServerTests(unittest.TestCase):
     def test_probe_mismatch_stops_the_launch_and_refuses(self) -> None:
         cases = [("drafting_line", "[strata] drafting: MTP alone (--spec 4)\n", "drafting 'mtp'"),
                  ("drafting_line", None, "drafting None"),  # 本次启动没写起草行：不拿上一次的行充数
-                 ("args", ["--mtp", "/data/strata/mtp/rt", "--max-context", "65536"], "--max-context '65536'"),
+                 ("args", ["--mtp", "/opt/strata/mtp/rt", "--max-context", "65536"], "--max-context '65536'"),
                  ("model_name", "qwen3.8-27b", "model 'qwen3.8-27b'"),
                  ("version", "strata 0.3.0 (build 0.2.0)", "must be on the 0.2 line"),
                  ("version", "strata 0.20.1 (build 0.1.59)", "must be on the 0.2 line"),

@@ -42,8 +42,7 @@ def append_log(record: dict) -> None:
 def lock_snapshot() -> dict | None:
     """编排器在 Popen 之后才把 worker_pid 写进锁；轮询到它出现（最多 10 s）再取快照。
 
-    Windows 上 venv 的 python.exe 是启动器，会再起真正的解释器，`Popen.pid` 可能是父进程，
-    所以不比较 pid，只等上一个 worker 的记录被清掉、新的写入。
+    只关心锁里的 worker 记录被替换：不比较 pid，只等上一个 worker 的记录被清掉、新的写入。
     """
     path = os.environ.get("KOTOTOKI_FAKE_GPU_LOCK")
     if not path:

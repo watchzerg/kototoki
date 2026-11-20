@@ -318,7 +318,7 @@ class SubtitleSelectionTests(unittest.TestCase):
 
 class CommandTests(unittest.TestCase):
     ffmpeg = Path("/opt/tools dir/ffmpeg")
-    video = Path("D:/影片 dir/第1話.mkv")
+    video = Path("/srv/影片 dir/第1話.mkv")
 
     def test_subtitle_command_converts_one_stream_to_srt_on_stdout(self) -> None:
         command = media.subtitle_command(self.ffmpeg, self.video, 4)
