@@ -5,7 +5,7 @@
 ## 跑之前
 
 1. 先问：产品入口占 GPU、加载模型、可能跑数小时（AGENTS.md 常驻约束）。用户说"跑这批"即视为同意本次运行。
-2. 用 PowerShell `Get-Process` 核实没有别的 GPU 作业；`.local/gpu.lock` 存在时不抢占、不杀进程。
+2. 用 `ps -p <pid>`／`pgrep` 核实没有别的 GPU 作业；`.local/gpu.lock` 存在时不抢占、不杀进程。
 3. 可能超过 2 小时的运行不用 Bash 的后台运行（2 小时上限会连进程树杀掉），用 PowerShell `Start-Process` 脱离启动，看产品自己的 `run-*.log` 监控进度。
 4. 记下 `git rev-parse --short HEAD` 与 `git status --short` 是否为空：运行日志不记 commit，这两项只能由跑次记录补上。
 

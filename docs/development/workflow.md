@@ -47,7 +47,7 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 
 `smoke` 的细节：
 
-- 各项是 `scripts/smoke/<名称>.py`，列在 `scripts/smoke/run_all.py` 的 `SMOKES`，省略名称时按其顺序全跑；每项在独立子进程中以 `--out <dir>` 运行，子进程 PATH 去掉 `whisper-runtime-provisional`、设离线变量；运行期间持有 `.local/gpu.lock`，结果写 `.local/smoke/<UTC 时间>/`；每项打印开始行与结束行（PASS／FAIL、耗时、`.log` 路径），中途异常或 Ctrl+C 时先回收子进程再删锁，汇总照常打印；父进程输出编不了的字符转义，重定向到非 UTF-8 也不崩溃。
+- 各项是 `scripts/smoke/<名称>.py`，列在 `scripts/smoke/run_all.py` 的 `SMOKES`，省略名称时按其顺序全跑；每项在独立子进程中以 `--out <dir>` 运行，子进程设离线变量；运行期间持有 `.local/gpu.lock`，结果写 `.local/smoke/<UTC 时间>/`；每项打印开始行与结束行（PASS／FAIL、耗时、`.log` 路径），中途异常或 Ctrl+C 时先回收子进程再删锁，汇总照常打印。
 - 其中包括：三项环境 smoke（`forced_align`、`vad_pyannote`、`ct2_after_torch`；llama-server 的 `llama_stock` 随产品不再用 llama.cpp 于 2026-11-14 移除）；冻结窗口门禁 `stt_frozen_window`（见 [STT worker](../architecture/modules/stt-workers.md)）与 x0 同窗门禁 `x0_frozen_window`。
 - Q2 首用 smoke `translate_product`：产品 `kototoki.translate` 的 plan → Session → `translate_document`，经 Strata 自动启停与外部前置的 Strata（当时 0.2.12／build 0.1.58，Windows），产品配方 `q3-translate-v1`；只记计数、哈希与耗时，见[翻译子系统](../architecture/modules/translation-subsystem.md)；运行前须没有别的 Strata launch 在服务。
 - 产品专名 smoke `names_product`：产品 `kototoki.names` 的 `names_identity` → 共享 `strata.Session` → `build_document` → `write_artifact`，在产品自动启停的 Strata 上按 Q3 规则建表（配方 `q3-names-v3`，ADR-0028「建表配方」），输入为脚本内置的 12 条合成日语短句；通过条件含专家区锁进内存、`build.status == ok`、至少一条 person、全程无 llama-server、`--stop` 后显存释放；只记计数、哈希、耗时与资源峰值，见[专名一致性](../architecture/modules/name-consistency.md)。
@@ -64,7 +64,7 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 - 没有产品与研究实现的实时对照层：研究直接调用产品实现；core 里需要钉住的取值以字面量钉，注释写来源（ADR 或归档 tag 路径）；`tests/core/test_boundaries.py` 以 AST 扫描要求 `kototoki/` 不导入 `research`，`tests/core` 自身不导入 `research`（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)）。`gate-full` = `gate-core` + `test-full`。
 - `fake_worker.py` 留在 `tests/` 根，供两层共用。`just check` 编译 `kototoki`、`scripts` 与 `tests`。
 - 真实模型验证（不是测试，不属于任何 gate）：入口是 `just smoke`（`scripts/smoke/`），每次运行都须用户批准。
-- 独占资源：GPU，由 `.local/gpu.lock` 标记运行中的作业；同一时间一个作业，不抢占、不删除活跃锁，先用 PowerShell `Get-Process` 核实真实进程。产品只起 Strata（建表与翻译共用一个 session），固定占用 127.0.0.1:8080，且同一时间只允许一个 Strata launch；llama-server 默认也用 8080，不能与 Strata 同时运行。运行产物写入 `.local/` 下的新目录，拒绝覆盖。
+- 独占资源：GPU，由 `.local/gpu.lock` 标记运行中的作业；同一时间一个作业，不抢占、不删除活跃锁，先用 `ps -p <pid>`／`pgrep` 核实真实进程。产品只起 Strata（建表与翻译共用一个 session），固定占用 127.0.0.1:8080，且同一时间只允许一个 Strata launch；llama-server 默认也用 8080，不能与 Strata 同时运行。运行产物写入 `.local/` 下的新目录，拒绝覆盖。
 - `scripts/with_lock.py`（主机锁）依赖 `fcntl`，原生 Windows 不可用，当前没有 recipe 使用它。
 
 ## 发布

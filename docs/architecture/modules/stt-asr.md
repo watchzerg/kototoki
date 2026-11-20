@@ -20,7 +20,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 **ASR w0**（`asr_whisper.WhisperAsr`）：
 
-- 模块顶层先 `import torch` 再 `import ctranslate2`、`faster_whisper`，cuDNN 子库因此来自 torch，CT2 自带的 `cudnn64_9.dll` 与之并存；不设私有 DLL 目录与 PATH。
+- 模块顶层先 `import torch` 再 `import ctranslate2`、`faster_whisper`：CT2 的 Linux wheel 不自带 CUDA 运行库，按 soname 加载 `libcublas.so.12`、`libcudnn.so.9`，复用 torch 已从 `site-packages/nvidia/` 加载的那一份；不设 `LD_LIBRARY_PATH`。smoke `ct2_after_torch` 核对这一点（Linux 上尚待首跑）。
 - 特征链与解码参数同 W0 契约，参数取自 `recipes.W0`；mel 资产 SHA256 不符、模型不在 CUDA float16 上即失败。
 - 窗口输入要求整数样本（`schema.validate_windows`）。
 - 单窗解码抛 `RuntimeError` 时该窗文字为空、trace 为 `null` 并作为失败窗口返回，壳用 `protocol.fail_window` 记入 `failed_windows`，继续下一窗。

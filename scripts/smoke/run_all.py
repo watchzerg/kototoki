@@ -3,9 +3,8 @@
 
 用法：`python scripts/smoke/run_all.py [名称 ...]`，省略名称时按 SMOKES 顺序全跑；每项是本目录下的
 `<名称>.py`，以 `--out <dir>` 启动。
-每项一个子进程，避免 PyAV 与 torchcodec 的 FFmpeg DLL 在同一进程相遇；子进程 PATH 去掉
-`whisper-runtime-provisional`，并设置离线变量。结果写入 `.local/smoke/<UTC 时间>/`，
-运行期间持有 `.local/gpu.lock`，已存在时拒绝启动（用 Get-Process 核实后再处理）。
+每项一个子进程，避免 PyAV 与 torchcodec 各自的 FFmpeg 库在同一进程相遇；子进程设置离线变量。结果写入
+`.local/smoke/<UTC 时间>/`，运行期间持有 `.local/gpu.lock`，已存在时拒绝启动（用 `ps -p <pid>` 核实后再处理）。
 每项打印开始行与结束行（PASS／FAIL、耗时、该项 `.log`）；中途异常或 Ctrl+C 时先回收仍在运行的子进程再删锁，汇总照常打印。
 """
 
@@ -25,13 +24,10 @@ REPO = HERE.parents[1]
 GPU_LOCK = REPO / ".local/gpu.lock"
 SMOKES = ("forced_align", "vad_pyannote", "ct2_after_torch", "stt_frozen_window", "x0_frozen_window",
           "translate_product", "names_product", "whisper_score")
-PRIVATE_DLL_DIR = "whisper-runtime-provisional"
 
 
 def child_env() -> dict[str, str]:
     env = dict(os.environ)
-    path = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry and PRIVATE_DLL_DIR not in entry.lower()]
-    env["PATH"] = os.pathsep.join(path)
     cache = REPO / ".local/cache/smoke"
     env.update(PYTHONUTF8="1", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", PYANNOTE_METRICS_ENABLED="0",
                HF_HOME=str(cache / "hf"), TORCH_HOME=str(cache / "torch"))
@@ -45,7 +41,7 @@ def acquire_lock() -> None:
             json.dump({"pid": os.getpid(), "job": "scripts/smoke/run_all.py",
                        "created_at_utc": datetime.now(timezone.utc).isoformat()}, stream)
     except FileExistsError:
-        raise SystemExit(f"{GPU_LOCK} exists; verify the owning process with Get-Process before removing it") from None
+        raise SystemExit(f"{GPU_LOCK} exists; verify the owning process with `ps -p <pid>` before removing it") from None
 
 
 def utc_now() -> str:
@@ -80,7 +76,6 @@ def run_one(index: int, total: int, name: str, out: Path, env: dict[str, str]) -
 
 
 def main() -> int:
-    sys.stdout.reconfigure(errors="backslashreplace")  # 重定向到 cp1252 时，子进程的 CJK 行与进度条不让父进程崩溃
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("names", nargs="*", metavar="name", help=f"可选：{', '.join(SMOKES)}")
     names = parser.parse_args().names or list(SMOKES)

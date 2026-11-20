@@ -156,7 +156,10 @@ Type: research
    - 专家区以 `expert arena: cudaHostRegister … ok` 判 `ram`，本机 2026-11-19 的引擎日志判为 `ram`；可用内存改读 `/proc/meminfo` 的 `MemAvailable`；
    - `probe` 只要求 `strata 0.2.` 开头；翻译与建表配方的 runtime 去掉 `strata`／`engine_build`，新 hash 写进 ADR-0034「身份」与 CURRENT.md；
    - 待办：`MIN_AVAILABLE_RAM_GIB`（52 GiB，Windows 时期标定）在第 8 项验收首次跑产品时按 Linux 实测重标。
-6. smoke 脚本的 Linux 化（`smokelib`、`ct2_after_torch`）。
+6. ~~smoke 脚本的 Linux 化~~：已完成（2026-11-20），只改代码，未跑真实模型。
+   - `smokelib.loaded_modules` 改读 `/proc/self/maps`，`list_llama_servers` 改用 `pgrep -x`；
+   - `ct2_after_torch` 的通过条件改为：已加载的 `libcudnn*`／`libcublas*`／`libcudart*` 全部来自 `site-packages/nvidia/`（CT2 Linux wheel 不自带 CUDA 运行库，按 soname 复用 torch 那一份）；
+   - `vad_pyannote` 只记录加载的 FFmpeg 共享库；`run_all`、`stt_frozen_window` 去掉 `whisper-runtime-provisional` 过滤与 cp1252 转义；锁冲突提示改用 `ps -p`。
 7. 文档全面同步、`justfile`（删 pwsh 写法，`gate-full` 接 `with_lock.py`）、`workflow.md` 长任务改 `systemd-run --user`。
 8. 验收（每一步都是重任务，逐项先问）：`just install` → `just fetch-models` → `gate-full` → `just smoke` → 小批量的 `just subtitles`。
 

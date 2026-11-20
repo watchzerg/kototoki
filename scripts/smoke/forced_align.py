@@ -8,7 +8,7 @@ b. 冻结窗口：加载 MMS（CUDA FP32、jpn adapter），对冻结 W0 结果�
    与冻结记录（torch 2.8.0 下产出）的对比只作参考，不构成门禁。
 
 不使用 `MmsAligner`，只复用产品 `kototoki.align` 中的纯函数（原为研究侧 `archive/2026-11-18-pre-research-restructure:experiments/w0_demo/alignment.py`，
-见归档 tag）。不添加任何私有 DLL 目录。结果里只有计数、哈希、布尔、耗时与版本，不含音频内容或转写文本。
+见归档 tag）。结果里只有计数、哈希、布尔、耗时与版本，不含音频内容或转写文本。
 """
 
 from __future__ import annotations

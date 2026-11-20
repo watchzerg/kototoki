@@ -1,4 +1,4 @@
-"""环境 smoke 的共用小工具：结果输出、进程已加载模块清单、仓库路径、正在运行的 llama-server 进程。
+"""环境 smoke 的共用小工具：结果输出、进程已加载的共享库清单、仓库路径、正在运行的 llama-server 进程。
 
 每个 smoke 脚本由 `run_all.py` 在独立子进程中以 `python scripts/smoke/<name>.py --out <dir>` 启动，
 结束时调用 `finish()` 写 `<dir>/<name>.json` 并在 stdout 打印一行 `SMOKE_RESULT <json>`。
@@ -8,8 +8,6 @@
 from __future__ import annotations
 
 import argparse
-import ctypes
-from ctypes import wintypes
 from datetime import datetime, timezone
 import json
 import os
@@ -34,35 +32,18 @@ def parse_args(description: str) -> argparse.Namespace:
 
 
 def loaded_modules() -> list[str]:
-    """当前进程实际加载的全部 DLL 路径（Windows psapi）。"""
-    psapi = ctypes.WinDLL("psapi", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-    psapi.EnumProcessModulesEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.HMODULE), wintypes.DWORD,
-                                           ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
-    psapi.GetModuleFileNameExW.argtypes = [wintypes.HANDLE, wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
-    process = kernel32.GetCurrentProcess()
-    needed = wintypes.DWORD()
-    size = 1024
-    while True:
-        modules = (wintypes.HMODULE * size)()
-        if not psapi.EnumProcessModulesEx(process, modules, ctypes.sizeof(modules), ctypes.byref(needed), 0x03):
-            raise ctypes.WinError(ctypes.get_last_error())
-        count = needed.value // ctypes.sizeof(wintypes.HMODULE)
-        if count <= size:
-            break
-        size = count
-    buffer = ctypes.create_unicode_buffer(32768)
-    paths = []
-    for handle in modules[:count]:
-        if psapi.GetModuleFileNameExW(process, handle, buffer, len(buffer)):
-            paths.append(buffer.value)
-    return sorted(paths, key=str.lower)
+    """当前进程映射进来的全部共享库路径（`/proc/self/maps`）。"""
+    paths = set()
+    for line in Path("/proc/self/maps").read_text(encoding="utf-8").splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) == 6 and fields[5].startswith("/") and ".so" in Path(fields[5]).name:
+            paths.add(fields[5])
+    return sorted(paths)
 
 
 def modules_matching(prefixes: tuple[str, ...]) -> list[str]:
-    """按 DLL 基名前缀（不区分大小写）筛选已加载模块。"""
-    return [path for path in loaded_modules() if Path(path).name.lower().startswith(prefixes)]
+    """按共享库文件名前缀（如 `libcudnn`）筛选已加载的库。"""
+    return [path for path in loaded_modules() if Path(path).name.startswith(prefixes)]
 
 
 def package_versions(*names: str) -> dict[str, str | None]:
@@ -87,21 +68,9 @@ class Timer:
 
 
 def list_llama_servers() -> list[int]:
-    """正在运行的 `llama-server.exe` 的 pid（非 Windows 为空）。ADR-0025 起从产品 `kototoki/llama_server.py` 搬来，
-    产品已不起 llama-server，只有 smoke 用它核实全程没有 llama-server。"""
-    if sys.platform != "win32":
-        return []
-    try:
-        result = subprocess.run(["tasklist", "/FI", "IMAGENAME eq llama-server.exe", "/FO", "CSV", "/NH"],
-                                capture_output=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    pids = []
-    for line in result.stdout.decode("utf-8", "replace").splitlines():
-        parts = [part.strip('"') for part in line.split('","')]
-        if len(parts) > 1 and parts[0].lower().startswith("llama-server") and parts[1].isdigit():
-            pids.append(int(parts[1]))
-    return pids
+    """正在运行的 `llama-server` 的 pid。ADR-0025 起产品已不起 llama-server，只有 smoke 用它核实全程没有 llama-server。"""
+    result = subprocess.run(["pgrep", "-x", "llama-server"], capture_output=True, text=True, check=False)
+    return [int(pid) for pid in result.stdout.split()]
 
 
 def finish(out: Path, name: str, result: dict[str, Any]) -> int:

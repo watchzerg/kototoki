@@ -44,7 +44,7 @@
   | torchcodec | 0.17.0+cpu | `pytorch-cpu` 显式索引；为什么用 CPU 构建见[选版规则](#选版规则) |
   | transformers | 5.20.1 | PyPI（2026-10-19 由 5.19.0 升级；真实模型验证待跑） |
   | pyannote.audio | 4.0.7 | PyPI |
-  | faster-whisper／ctranslate2 | 1.2.1／4.8.3 | PyPI；ASR 进程须先 `import torch`。Linux 上 torch 经 `nvidia-*-cu12` wheel 带来 cuBLAS／cuDNN 9.19 等运行库；CT2 能否加载它们尚未验证（ADR-0034「未验证与已知限制」）。Windows 时期 smoke 的 DLL 结论只作历史 |
+  | faster-whisper／ctranslate2 | 1.2.1／4.8.3 | PyPI；ASR 进程须先 `import torch`。Linux 上 torch 经 `nvidia-*-cu12` wheel 带来 cuBLAS／cuDNN 9.19 等运行库；CT2 按 soname 复用这一份，由 smoke `ct2_after_torch` 核对，尚待首跑（ADR-0034「未验证与已知限制」）。Windows 时期 smoke 的 DLL 结论只作历史 |
   | numpy | 2.5.5 | PyPI |
 
   传递依赖以 `uv.lock` 为准（mpmath 受 sympy `<1.4`、setuptools 受 torch `<82` 约束）。改 `environments` 后不能只 `uv lock`：uv 会沿用旧 lock 里按旧平台记下的依赖元数据，torch 的 `nvidia-*` 依赖就这样被漏掉（2026-11-20 实测），须删 lock 重新解析或对相关包 `--upgrade-package`。测试只用标准库 `unittest`，没有开发依赖组。

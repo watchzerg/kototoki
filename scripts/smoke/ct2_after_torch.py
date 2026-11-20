@@ -1,20 +1,19 @@
 """smoke `ct2_after_torch`：同一进程先 `import torch` 并初始化 CUDA，再导入 ctranslate2 / faster_whisper，
-验证 faster-whisper large-v3 在没有私有 DLL 目录的情况下可在 RTX 5080 上解码。
+验证 faster-whisper large-v3 可在 RTX 5080 上解码，且 CT2 用的是 torch 已加载的那一份 CUDA 12 运行库。
 
 结构：父进程依次启动三个 `--child <tag>` 子进程（同一解释器、同一环境，tag 决定是否附加变量）：
 - `cold`：第一次启动；
 - `warm`：第二次启动，记录模型加载与解码耗时；
 - `nojit`：附加 `CUDA_DISABLE_PTX_JIT=1`。解码成功说明 CT2 自带 sm_120 原生 kernel；
   以 "no kernel image" 一类错误失败则记录为依赖 PTX JIT（这是发现，不是失败）。
-通过条件：`cold` 与 `warm` 均解码成功，PATH 与已加载模块均不含 `whisper-runtime-provisional`，
-且已加载的 cudnn / cublas / cudart DLL 除 CT2 wheel 自带的 `cudnn64_9.dll`（其 `__init__` 按全路径加载的
-cuDNN 9.10 调度器，2026-10-14 用户接受与 torch 的 9.19 并存）外，全部位于 torch 包的 `lib` 目录下。
+通过条件：`cold` 与 `warm` 均解码成功，且已加载的 `libcudnn*`／`libcublas*`／`libcudart*` 全部来自
+`site-packages/nvidia/`（torch cu128 依赖的 `nvidia-*-cu12` wheel）。CT2 的 Linux wheel 不自带 CUDA 运行库，按 soname
+`dlopen` `libcublas.so.12`、`libcudnn.so.9`，同一进程里复用 torch 已加载的那一份；系统里另有一份时这里会查出来。
 结果只含版本、计数、哈希、布尔与耗时；不输出转写文本，也不保存解码文本。
 """
 
 from __future__ import annotations
 
-import ctypes
 import hashlib
 import importlib.util
 import json
@@ -24,7 +23,6 @@ import subprocess
 import sys
 import time
 import wave
-from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +30,7 @@ import smokelib
 
 NAME = "ct2_after_torch"
 CHILD_PREFIX = "CT2_CHILD "
-PRIVATE_DLL_DIR = "whisper-runtime-provisional"
-DLL_PREFIXES = ("cudnn", "cublas", "cudart")
-CT2_OWN_DLLS = ("cudnn64_9.dll",)  # CT2 wheel 自带、允许在 torch/lib 之外加载的 DLL
+LIB_PREFIXES = ("libcudnn", "libcublas", "libcudart")
 FROZEN_RUN = smokelib.REPO / ".local/w0-demo/pyannote-gpu-v1-w0-pyannote-current-hf-ii-window-01/result.json"
 AUDIO = smokelib.REPO / ".local/round2/corpus/audio/hf-ii-window-01.wav"
 MODEL_PATH = smokelib.REPO / ".local/models/faster-whisper-large-v3"
@@ -47,30 +43,6 @@ NO_KERNEL_PATTERN = re.compile(
     r"PTX .*(unsupported|not supported)", re.IGNORECASE)
 # 子进程序列：(tag, 额外环境变量)
 CHILDREN = (("cold", {}), ("warm", {}), ("nojit", {"CUDA_DISABLE_PTX_JIT": "1"}))
-
-
-def norm(path: str | Path) -> str:
-    return os.path.normcase(os.path.realpath(str(path)))
-
-
-def dll_file_version(path: str) -> str | None:
-    """用 version.dll 读取 DLL 的文件版本；失败返回 None。"""
-    try:
-        version = ctypes.WinDLL("version", use_last_error=True)
-        size = version.GetFileVersionInfoSizeW(path, None)
-        if not size:
-            return None
-        buffer = ctypes.create_string_buffer(size)
-        if not version.GetFileVersionInfoW(path, 0, size, buffer):
-            return None
-        pointer, length = ctypes.c_void_p(), wintypes.UINT()
-        if not version.VerQueryValueW(buffer, "\\", ctypes.byref(pointer), ctypes.byref(length)):
-            return None
-        info = ctypes.cast(pointer, ctypes.POINTER(ctypes.c_uint32 * 13)).contents  # VS_FIXEDFILEINFO
-        high, low = info[4], info[5]
-        return f"{high >> 16}.{high & 0xFFFF}.{low >> 16}.{low & 0xFFFF}"
-    except Exception:  # noqa: BLE001 - 版本信息只是参考
-        return None
 
 
 def read_pcm(path: Path) -> tuple[Any, str]:
@@ -94,11 +66,6 @@ def child_main(tag: str, out: Path) -> int:
     failures: list[str] = result["failures"]
     started = time.perf_counter()
     try:
-        path_entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if PRIVATE_DLL_DIR in entry.lower()]
-        result["private_dll_dir_in_path"] = bool(path_entries)
-        if path_entries:
-            failures.append("PATH contains whisper-runtime-provisional")
-
         result["stage"] = "import_torch"
         import torch
 
@@ -108,7 +75,7 @@ def child_main(tag: str, out: Path) -> int:
                            "device": torch.cuda.get_device_name(0),
                            "capability": list(torch.cuda.get_device_capability(0)),
                            "arch_list": torch.cuda.get_arch_list()}
-        modules_after_torch = smokelib.modules_matching(DLL_PREFIXES)
+        modules_after_torch = smokelib.modules_matching(LIB_PREFIXES)
 
         result["stage"] = "import_ct2"
         import ctranslate2
@@ -171,28 +138,22 @@ def child_main(tag: str, out: Path) -> int:
             failures.append("decode produced no tokens")
 
         result["stage"] = "inspect_modules"
-        torch_lib = norm(Path(torch.__file__).parent / "lib")
-        ct2_dir = norm(Path(ctranslate2.__file__).parent)
-        loaded = smokelib.modules_matching(DLL_PREFIXES)
-        ct2_own = [path for path in loaded if norm(Path(path).parent) == ct2_dir and Path(path).name.lower() in CT2_OWN_DLLS]
-        outside = [path for path in loaded if not norm(path).startswith(torch_lib + os.sep) and path not in ct2_own]
-        private = [path for path in smokelib.loaded_modules() if PRIVATE_DLL_DIR in path.lower()]
-        result["dlls"] = {
-            "torch_lib_dir": str(Path(torch.__file__).parent / "lib"),
-            "loaded": [{"name": Path(path).name, "path": path, "file_version": dll_file_version(path)} for path in loaded],
+        nvidia_dir = os.path.realpath(Path(torch.__file__).parent.parent / "nvidia")
+        loaded = smokelib.modules_matching(LIB_PREFIXES)
+        outside = [path for path in loaded if not os.path.realpath(path).startswith(nvidia_dir + os.sep)]
+        names = [Path(path).name for path in loaded]
+        result["cuda_libs"] = {
+            "nvidia_dir": nvidia_dir,
+            "loaded": loaded,
             "loaded_after_torch_only": [Path(path).name for path in modules_after_torch],
-            "new_after_ct2": sorted(set(Path(p).name.lower() for p in loaded) - set(Path(p).name.lower() for p in modules_after_torch)),
-            "ct2_own_loaded": ct2_own,
-            "outside_torch_lib": outside,
-            "all_under_torch_lib": bool(loaded) and not outside,
-            "private_dll_dir_modules": private,
+            "new_after_ct2": sorted(set(names) - set(Path(p).name for p in modules_after_torch)),
+            "duplicate_names": sorted({name for name in names if names.count(name) > 1}),
+            "outside_nvidia_dir": outside,
         }
         if not loaded:
-            failures.append("no cudnn/cublas/cudart module loaded")
+            failures.append("no cudnn/cublas/cudart library loaded")
         if outside:
-            failures.append(f"{len(outside)} cuda dll(s) loaded from outside the torch lib directory")
-        if private:
-            failures.append("a loaded module comes from whisper-runtime-provisional")
+            failures.append(f"{len(outside)} CUDA librar(ies) loaded from outside site-packages/nvidia")
         result["stage"] = "done"
         result["ok"] = not failures
     except Exception as error:  # noqa: BLE001 - 记录阶段与错误，父进程负责分类
@@ -236,16 +197,16 @@ def classify_nojit(child: dict[str, Any]) -> str:
     return "inconclusive_failure"
 
 
-def package_dll_listing() -> dict[str, Any]:
-    """不导入 ctranslate2，直接列出其 wheel 目录里附带的 DLL 名称。"""
+def package_lib_listing() -> dict[str, Any]:
+    """不导入 ctranslate2，直接列出其 wheel 附带的共享库名称。"""
     spec = importlib.util.find_spec("ctranslate2")
     if spec is None or not spec.submodule_search_locations:
         return {"found": False}
     package_dir = Path(list(spec.submodule_search_locations)[0])
     roots = [package_dir, package_dir.parent / "ctranslate2.libs"]
-    listing = {str(root.name): sorted(item.name for item in root.glob("*.dll")) for root in roots if root.is_dir()}
-    shipped = sorted(name for names in listing.values() for name in names if name.lower().startswith(DLL_PREFIXES))
-    return {"found": True, "package_dir": str(package_dir), "dlls": listing, "ships_cuda_runtime_dlls": shipped}
+    listing = {str(root.name): sorted(item.name for item in root.glob("*.so*")) for root in roots if root.is_dir()}
+    shipped = sorted(name for names in listing.values() for name in names if name.startswith(LIB_PREFIXES))
+    return {"found": True, "package_dir": str(package_dir), "libs": listing, "ships_cuda_runtime_libs": shipped}
 
 
 def main() -> int:
@@ -263,24 +224,21 @@ def main() -> int:
     failures: list[str] = []
     result: dict[str, Any] = {"passed": False, "versions": smokelib.package_versions(
         "torch", "ctranslate2", "faster-whisper", "transformers", "numpy", "torchaudio"), "device": "unavailable",
-        "failures": failures, "path_has_private_dll_dir": any(
-            PRIVATE_DLL_DIR in entry.lower() for entry in os.environ.get("PATH", "").split(os.pathsep))}
-    if result["path_has_private_dll_dir"]:
-        failures.append("PATH contains whisper-runtime-provisional")
-    result["ctranslate2_wheel"] = package_dll_listing()
+        "failures": failures}
+    result["ctranslate2_wheel"] = package_lib_listing()
 
     children: dict[str, dict[str, Any]] = {}
     for tag, extra_env in CHILDREN:
         children[tag] = run_child(tag, extra_env, args.out)
-    result["children"] = {tag: {key: value for key, value in child.items() if key != "dlls"} for tag, child in children.items()}
+    result["children"] = {tag: {key: value for key, value in child.items() if key != "cuda_libs"} for tag, child in children.items()}
     cold, warm, nojit = children["cold"], children["warm"], children["nojit"]
     for tag in ("cold", "warm"):
         if not children[tag].get("ok"):
             failures.append(f"child {tag} failed: " + "; ".join(children[tag].get("failures", [])))
     for tag in ("cold", "warm"):
-        dlls = children[tag].get("dlls")
-        if dlls:
-            result.setdefault("dlls", {})[tag] = dlls
+        libs = children[tag].get("cuda_libs")
+        if libs:
+            result.setdefault("cuda_libs", {})[tag] = libs
     first = cold if cold.get("torch") else warm
     if first.get("torch"):
         result["device"] = first["torch"]["device"]

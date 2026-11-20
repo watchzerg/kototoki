@@ -1,15 +1,13 @@
 """smoke #2：pyannote.audio 4.0.7＋torchcodec 0.17 在产品环境导入，对 10 s 内存波形做 VAD 推理。
 
-记录导入后与推理后进程实际加载的 FFmpeg DLL（avcodec／avformat／avutil／swresample／swscale）。
-一个都没有时，VAD worker 不需要把 FFmpeg 目录加入 PATH（规格 §7.1）。
+记录导入后与推理后进程实际加载的 FFmpeg 共享库（`libavcodec` 等）；只作记录，不是通过条件。产品给 pyannote 的是
+内存波形，不经 torchcodec 解码。
 波形取自冻结窗口 hf-ii-window-01 第一个 ASR 窗口起点后的 10 s，只记录区间数与时长，不记录内容。
 """
 
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 import sys
 import warnings
 import wave
@@ -21,17 +19,7 @@ RESULT = smokelib.REPO / ".local/w0-demo/pyannote-gpu-v1-w0-pyannote-current-hf-
 CHECKPOINT = smokelib.REPO / ".local/models/vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"
 SAMPLE_RATE = 16000
 SECONDS = 10
-FFMPEG_PREFIXES = ("avcodec", "avformat", "avutil", "avdevice", "avfilter", "swresample", "swscale", "postproc")
-
-
-def path_ffmpeg_dirs() -> list[str]:
-    """PATH 中含 FFmpeg 共享 DLL 的目录；只用于解释观察结果。"""
-    hits = []
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
-        folder = Path(entry)
-        if entry and folder.is_dir() and any(folder.glob("avcodec*.dll")):
-            hits.append(entry)
-    return hits
+FFMPEG_PREFIXES = ("libavcodec", "libavformat", "libavutil", "libavdevice", "libavfilter", "libswresample", "libswscale")
 
 
 def load_waveform():
@@ -88,10 +76,7 @@ def main() -> int:
         "audio_seconds": len(audio) / SAMPLE_RATE, "speech_intervals": len(intervals),
         "speech_seconds": round(sum(end - start for start, end in intervals), 3),
         "import_warnings": import_warnings,
-        "ffmpeg_dlls_after_import": after_import, "ffmpeg_dlls_after_inference": after_infer,
-        "path_dirs_with_ffmpeg_dlls": path_ffmpeg_dirs(),
-        "conclusion": ("no FFmpeg DLL loaded: VAD worker does not need FFmpeg on PATH" if not after_infer
-                       else "FFmpeg DLLs loaded: VAD worker needs dirname(paths.ffmpeg) on PATH"),
+        "ffmpeg_libs_after_import": after_import, "ffmpeg_libs_after_inference": after_infer,
     })
 
 

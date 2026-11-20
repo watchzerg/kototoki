@@ -1,4 +1,4 @@
-"""`scripts/smoke/run_all.py` 的编码与子进程回收：用临时目录里的假步骤脚本，不跑真实 smoke、不碰 GPU。"""
+"""`scripts/smoke/run_all.py` 的步骤输出与子进程回收：用临时目录里的假步骤脚本，不跑真实 smoke、不碰 GPU。"""
 
 from __future__ import annotations
 
@@ -30,9 +30,6 @@ class InterruptOn(io.StringIO):
     def __init__(self, marker: str) -> None:
         super().__init__()
         self.marker = marker
-
-    def reconfigure(self, **_: object) -> None:
-        pass
 
     def write(self, text: str) -> int:
         if text.startswith(self.marker):
@@ -69,14 +66,13 @@ class SmokeRunnerTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["run_all.py", *names]), mock.patch.object(sys, "stdout", stdout):
             return run_all.main()
 
-    def test_cp1252_stdout_survives_cjk_child_output_and_prints_step_lines(self) -> None:
-        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="\n")
+    def test_step_lines_and_cjk_child_output_are_forwarded(self) -> None:
+        stdout = io.StringIO()
         self.assertEqual(self.run_main(stdout, "cjk", "bad"), 1)
-        stdout.flush()
-        text = stdout.buffer.getvalue().decode("cp1252")
+        text = stdout.getvalue()
         lines = text.splitlines()
         self.assertRegex(lines[0], r"^=== \[1/2\] cjk start \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
-        self.assertIn("[cjk] \\u65e5\\u672c\\u8a9e", text)  # 编不了的字符转义，不崩溃
+        self.assertIn("[cjk] 日本語の行", text)
         self.assertRegex(text, r"=== \[1/2\] cjk PASS in \d+\.\ds, log .*cjk\.log")
         self.assertRegex(text, r"=== \[2/2\] bad FAIL \(exit 3\) in \d+\.\ds, log .*bad\.log")
         self.assertRegex(text, r"cjk: PASS in \d+\.\ds\nbad: FAIL \(exit 3\) in \d+\.\ds\nresults: ")

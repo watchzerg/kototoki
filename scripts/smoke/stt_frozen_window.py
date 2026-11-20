@@ -38,14 +38,11 @@ NAME = "stt_frozen_window"
 AUDIO = "round2/corpus/audio/hf-ii-window-01.wav"
 REFERENCE = "w0-demo/pyannote-gpu-v1-w0-pyannote-current-hf-ii-window-01/result.json"
 TOLERANCE_S = 0.020
-PRIVATE_DLL_DIR = "whisper-runtime-provisional"
 
 
 def child_env(cache: Path) -> dict[str, str]:
-    """编排器将来传给 worker 的环境：UTF-8、离线、共用缓存；去掉历史私有 DLL 目录。"""
+    """编排器将来传给 worker 的环境：UTF-8、离线、共用缓存。"""
     env = dict(os.environ)
-    env["PATH"] = os.pathsep.join(entry for entry in env.get("PATH", "").split(os.pathsep)
-                                  if entry and PRIVATE_DLL_DIR not in entry.lower())
     env.update(PYTHONUTF8="1", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_DATASETS_OFFLINE="1",
                HF_HUB_DISABLE_TELEMETRY="1", PYANNOTE_METRICS_ENABLED="0", TOKENIZERS_PARALLELISM="false",
                HF_HOME=str(cache), TORCH_HOME=str(cache))
