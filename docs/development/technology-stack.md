@@ -4,7 +4,7 @@
 
 ## 运行时与工具链
 
-- Python 3.13（`.python-version` 写 `3.13`，补丁版本由 uv 决定；`pyproject.toml` 要求 `>=3.13,<3.14`）；根项目即产品项目 `kototoki`，`[tool.uv] package = false` 不打包，`environments` 只解析 `sys_platform == 'linux'`（[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。
+- Python 3.14（`.python-version` 写 `3.14`，补丁版本由 uv 决定；`pyproject.toml` 要求 `>=3.14,<3.15`；2026-11-20 由 3.13 升级，[ADR-0036](../adr/0036-python-3-14.md)）；根项目即产品项目 `kototoki`，`[tool.uv] package = false` 不打包，`environments` 只解析 `sys_platform == 'linux'`（[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。
 - mise 只固定 uv 与 just 的版本（`mise.toml`，没有 `[env]`）；一次性准备：`mise trust && mise install`，shell 里激活 mise（[ADR-0034「工具链分层」](../adr/0034-ubuntu-only-platform.md#工具链分层)）。
 - uv 管理解释器、根环境与 `uv.lock`，用默认布局：解释器在 uv 共享目录，依赖在 `.venv/`；just 是任务入口。
 - 产品推理在根环境（统一 CUDA 12.8）中运行；产品翻译（2026-11-08 起，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）与专名建表（2026-11-09 起，[ADR-0028](../adr/0028-names-accept-empty-table.md)）都用独立安装的 Strata 0.2 版本线（本机 0.2.13.1／build 0.1.59.1，`strata` 在 PATH 上，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录），由产品用 `strata launch --no-tui --model iq3_s`／`--stop` 自动启停、整批一个 session；它是外部前置，不在 `assets.toml` 里，由用户维护（见[依赖布局](dependencies.md)）。产品不起 llama-server，清单里也不再有 llama.cpp（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。选型依据见 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 与下文[选版规则](#选版规则)。
@@ -20,7 +20,7 @@
 
 ### 选版规则
 
-用户 2026-10-14 明确：CUDA 12 与 Python 3.13 是固定锚点；被它们限制的组件随之锁定（torch／torchaudio／torchcodec 取 cu128 索引上的最新版本，CTranslate2 取 CUDA 12 wheel 的最新版本）；不受影响的组件一律取最新稳定版（transformers、pyannote.audio、faster-whisper、numpy 等），以 `uv lock` 当日的最新稳定版为准并记录。锚点的依据：CTranslate2 只有 CUDA 12 wheel，cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名、同一进程只能加载一份（[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)，另见[依赖布局的 CUDA 版本说明](dependencies.md#cuda-版本说明)）；Python 3.15 没有 CTranslate2／torchaudio／torchcodec 的 wheel，3.14 的边角依赖未核。
+用户 2026-10-14 明确：CUDA 12 与 Python 是固定锚点（Python 起初为 3.13，2026-11-20 改为 3.14，[ADR-0036](../adr/0036-python-3-14.md)）；被它们限制的组件随之锁定（torch／torchaudio／torchcodec 取 cu128 索引上的最新版本，CTranslate2 取 CUDA 12 wheel 的最新版本）；不受影响的组件一律取最新稳定版（transformers、pyannote.audio、faster-whisper、numpy 等），以 `uv lock` 当日的最新稳定版为准并记录。锚点的依据：CTranslate2 只有 CUDA 12 wheel，cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名、同一进程只能加载一份（[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)，另见[依赖布局的 CUDA 版本说明](dependencies.md#cuda-版本说明)）；Python 3.15 没有 torchaudio／torchcodec 的 wheel（2026-11-20 核实）。
 
 - Linux 上复核锚点（2026-11-20）：
   - CTranslate2 的 Linux wheel 在运行时加载 `libcublas.so.12`，最新的 4.9.0 也是如此，仍然没有 CUDA 13 构建。
@@ -36,7 +36,7 @@
 
 ## 已选依赖
 
-- 根项目运行时依赖（迁到 Ubuntu 后 2026-11-20 删掉旧 lock 重新解析，只解析 Linux；直接依赖版本不变，传递依赖取当日最新稳定版；按[选版规则](#选版规则)：CUDA 12 与 Python 3.13 为锚点）：
+- 根项目运行时依赖（迁到 Ubuntu 后 2026-11-20 删掉旧 lock 重新解析，只解析 Linux；直接依赖版本不变，传递依赖取当日最新稳定版；同日改用 Python 3.14 重新解析，版本均不变；按[选版规则](#选版规则)：CUDA 12 与 Python 3.14 为锚点）：
 
   | 包 | 版本 | 来源 |
   | --- | --- | --- |

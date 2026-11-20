@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import unittest
+from pathlib import Path
 
 from kototoki import config, procs
 
@@ -44,7 +45,7 @@ class ContainedChildTests(unittest.TestCase):
             self.assertTrue(procs.pid_alive(child))
             # 等 setpriv 设好 PDEATHSIG 并 exec 成 sleep，再杀父进程；否则测的是启动窗口里的竞态
             deadline = time.monotonic() + 5.0
-            while open(f"/proc/{child}/comm", encoding="ascii").read().strip() != "sleep":
+            while Path(f"/proc/{child}/comm").read_text(encoding="ascii").strip() != "sleep":
                 self.assertLess(time.monotonic(), deadline, "setpriv did not exec the child")
                 time.sleep(0.01)
             self.assertNotEqual(os.getpgid(child), os.getpgid(parent.pid))  # 终端 Ctrl+C 不直达子进程

@@ -22,7 +22,7 @@
 | 方法禁区 | 不自动选用"翻译多次再挑选"类方法；可靠性重试、按条追问与拆分不算 | [0008](0008-no-multi-translation-selection.md) |
 | 产品包边界与失败级别 | GPU 锁冲突进程级结束整批；产品不为研究侧留代码；核心测试不导入研究代码 | [0025](0025-product-package-boundaries.md) |
 | 研究与文档布局 | 研究一轮一目录放 `research/`，记录精简，冻结靠 git 与归档 tag；产品不导入 `research/` | [0031](0031-research-layout-and-lightweight-records.md) |
-| 平台、工具链与外部前置 | 只面向 Ubuntu；mise 管 uv 与 just，uv 管 Python 与依赖；ffmpeg 用系统包；`assets.toml` 只列 STT 模型；Strata 只锁 0.2 版本线、实际版本不进配方身份（已实现，待真实模型验收） | [0034](0034-ubuntu-only-platform.md) |
+| 平台、工具链与外部前置 | 只面向 Ubuntu；mise 管 uv 与 just，uv 管 Python 与依赖；ffmpeg 用系统包；`assets.toml` 只列 STT 模型；Strata 只锁 0.2 版本线、实际版本不进配方身份（已实现，待真实模型验收）；Python 3.14 | [0034](0034-ubuntu-only-platform.md)、[0036](0036-python-3-14.md) |
 
 ### 未关闭项
 
@@ -40,7 +40,7 @@
 - **专名与产品建表**：0013（10-19，研究线结题）→ 0014（10-19，进产品 `names` 阶段，27B 建表）→ 0019（11-08，只注入不替换）→ 0022（11-09，切到 Strata，`q3-names-v1`）→ 0026（11-12，放宽输出上限与预算，`q3-names-v2`）→ 0028（11-17，空表合法，`q3-names-v3`）。现行见 [0028](0028-names-accept-empty-table.md)。
 - **产品输入、工作目录与发布**：0007（10-13，只扫视频、镜像发布到 `output_dir`）→ 0020（11-08，音频输入、`work_dir`、发布到源文件旁）→ 0024（11-11，内嵌日文字幕跳过 STT）→ 0027（11-17，不再流复制原始音轨）。现行见 [0007](0007-bilingual-subtitle-pipeline-architecture.md)、[0024](0024-embedded-japanese-subtitles.md)。
 - **产品包与研究代码的边界**：0007（10-13，产品不导入 `experiments.*`）→ 0014（10-19，共享 `llama_server.py`）→ 0022（11-09，产品不再起 llama-server）→ 0025（11-11，产品不为研究侧留代码，GPU 锁冲突进程级）→ 0031（11-18，删除研究代码，研究改放 `research/`）。现行见 [0025](0025-product-package-boundaries.md)、[0031](0031-research-layout-and-lightweight-records.md)。
-- **资产清单与平台**：0032（11-18，去掉 llama.cpp 与 27B，`setup` 并入 `install`）→ [0033](0033-ffmpeg-branch-lock.md)（11-18，ffmpeg 只锁维护分支）→ 0034（11-20，迁到 Ubuntu，ffmpeg 用系统包，Strata 只锁 0.2）。现行见 [0034](0034-ubuntu-only-platform.md)。
+- **资产清单与平台**：0032（11-18，去掉 llama.cpp 与 27B，`setup` 并入 `install`）→ [0033](0033-ffmpeg-branch-lock.md)（11-18，ffmpeg 只锁维护分支）→ 0034（11-20，迁到 Ubuntu，ffmpeg 用系统包，Strata 只锁 0.2）→ [0036](0036-python-3-14.md)（11-20，Python 3.13 → 3.14）。现行见 [0034](0034-ubuntu-only-platform.md)、[0036](0036-python-3-14.md)。
 - **方法禁区**：[0008](0008-no-multi-translation-selection.md)（10-16），放弃 v4 `mbr8c` 与 v5 `mbr8s`。
 
 ## 全部 ADR
@@ -48,7 +48,7 @@
 | 编号 | 主题 | 状态 |
 | --- | --- | --- |
 | [0003](0003-new-pyannote-baselines.md) | STT 基线、设备与产品 STT 引擎 | 有效；默认引擎由 0035 替代（并入 0001、0002、0012） |
-| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 产品架构、输入与发布 | 有效（并入 0020、0027） |
+| [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 产品架构、输入与发布 | 有效；Python 版本由 0036 替代（并入 0020、0027） |
 | [0008](0008-no-multi-translation-selection.md) | 不自动选用"翻译多次再挑选" | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 翻译基线 Q3 与历史翻译身份 | 有效；Strata 版本条款由 0034 替代（并入 0004、0005、0006、0009、0010、0011、0015、0016、0017、0018） |
 | [0024](0024-embedded-japanese-subtitles.md) | 有内嵌日文文本字幕轨的文件跳过 STT | 有效 |
@@ -59,9 +59,10 @@
 | [0031](0031-research-layout-and-lightweight-records.md) | 研究按轮次放进 `research/`，记录精简，冻结靠 git | 有效 |
 | [0033](0033-ffmpeg-branch-lock.md) | 资产清单与安装，ffmpeg 只锁维护分支 | 被 0034 替代（并入 0032） |
 | [0035](0035-cross-default-native-whisper-features.md) | 默认 STT 引擎 `cross`，W0 特征用 faster-whisper 自带计算 | 有效 |
-| [0034](0034-ubuntu-only-platform.md) | 只面向 Ubuntu，工具链与外部前置按 Linux 原生做法重定 | 有效，尚未实现；替代 0033 全文、0029 与 0021 的 Strata 版本条款 |
+| [0034](0034-ubuntu-only-platform.md) | 只面向 Ubuntu，工具链与外部前置按 Linux 原生做法重定 | 有效，尚未实现；替代 0033 全文、0029 与 0021 的 Strata 版本条款；Python 版本由 0036 替代 |
+| [0036](0036-python-3-14.md) | Python 锚点由 3.13 改为 3.14 | 有效 |
 
-新 ADR 编号从 0036 起。
+新 ADR 编号从 0037 起。
 
 ## 记录新决定
 
@@ -79,6 +80,7 @@
 
 "当前有效决定"表的改动日志，新的一行加在最前。
 
+- 2026-11-20：ADR-0036 Python 锚点由 3.13 改为 3.14，直接依赖版本不变。
 - 2026-11-20（ubuntu-port）：ADR-0035 默认 STT 引擎改为 `cross`，W0 特征改用 faster-whisper 自带计算（`w0-faster-whisper-large-v3-fwmel-guard-v3`）。
 - 2026-11-20（ubuntu-port）：ADR-0034 只面向 Ubuntu，取代 ADR-0033；Strata 只锁 0.2 版本线、实际版本不进配方身份；"资产清单与安装"行改为"平台、工具链与外部前置"。
 - 2026-11-18（ADR 合并）：按主题合并为 11 篇，删除 22 篇被并掉的 ADR 与跳转页；表改为每主题一行一篇 ADR，CURRENT.md 改为速查页。

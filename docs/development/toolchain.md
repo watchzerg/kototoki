@@ -40,7 +40,7 @@ neighboring repository's selections are references, not existing installations.
 清单与实测边界见[GPU 补测报告](../../research/2026-10-vad-comparison/README.md)。
 
 `just test`、`just test-full` 分别发现 `tests/core/`、`tests/full/` 下的产品测试（分层见[开发工作流](workflow.md#测试分层与资源边界)）；
-根环境自票据 01 起是产品环境（Python 3.13，统一 CUDA 12.8：torch／torchaudio 2.11.0+cu128 走显式 `pytorch-cu128` 索引，其余来自 PyPI，版本见[技术选型](technology-stack.md#已选依赖)）；`just smoke` 在其中运行 `scripts/smoke/` 的真实模型验证。
+根环境自票据 01 起是产品环境（Python 3.14，统一 CUDA 12.8：torch／torchaudio 2.11.0+cu128 走显式 `pytorch-cu128` 索引，其余来自 PyPI，版本见[技术选型](technology-stack.md#已选依赖)）；`just smoke` 在其中运行 `scripts/smoke/` 的真实模型验证。
 `just check` 执行 Python 编译检查，不等同 lint 或类型检查。
 研究期隔离环境的实际版本、锁文件范围与离线恢复入口见[环境清单](../../research/2026-10-stt-landscape/README.md)。
 

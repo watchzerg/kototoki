@@ -82,7 +82,8 @@ class LlamaClient:
             error = f"{type(exc).__name__}: {exc}"
             if isinstance(exc, HTTPError):
                 status = exc.code
-                raw_bytes = exc.read()
+                with exc:  # 读完即关，不让错误响应挂到垃圾回收；code 与 str(exc) 不受影响
+                    raw_bytes = exc.read()
             raise
         finally:
             if trace is not None:

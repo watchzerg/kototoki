@@ -161,7 +161,7 @@ class CheckDocsTest(unittest.TestCase):
         errors = self.errors()
         self.assertEqual(errors, [
             "research/INDEX.md:1 超出预算：行数 153 > 150",
-            f"research/INDEX.md:3 超出预算：最长行 {len(open(self.root / 'research/INDEX.md', encoding='utf-8').read().splitlines()[2])} > 400"])
+            f"research/INDEX.md:3 超出预算：最长行 {len((self.root / 'research/INDEX.md').read_text(encoding='utf-8').splitlines()[2])} > 400"])
 
     def test_living_document_budget_and_agents_budget(self) -> None:
         self.write("docs/architecture/modules/alpha.md", MODULE_PAGE + "字\n" * 6000)

@@ -26,6 +26,13 @@ EMPTY_TABLE: dict[str, Any] = {"entries": []}
 REL = "S1/ep01.mkv"  # 输入目录内的相对路径：只进 session start 日志行
 
 
+def closed_http_error(code: int, msg: str) -> HTTPError:
+    """伪造的 HTTP 错误：产品的 LocalClient 读完正文即关，这里同样先关；code 与 str 不受影响。"""
+    error = HTTPError("http://127.0.0.1:8080/v1/chat/completions", code, msg, {}, None)
+    error.close()
+    return error
+
+
 def document(n: int, word: str = "台詞"):
     """每条 1.5 s、相邻停顿 0.5 s，每 10 条之间留 20 s 停顿：dp10-cut 在此恰好切出 10 条一批，续跑与降级测试只关心
     批次机制。切包与邻文规则本身见 `test_translate_recipes`。"""
@@ -82,7 +89,7 @@ class FakeClient:
         if callable(behaviour):
             behaviour()
         if behaviour == "oom":
-            raise HTTPError("http://127.0.0.1:8080/v1/chat/completions", 500, "CUDA error: out of memory", {}, None)
+            raise closed_http_error(500, "CUDA error: out of memory")
         user = body["messages"][1]["content"]
         cache_n = 0 if self.server.completions == 1 and not self.server.harness.warm_cache else 5
         base = {"usage": {"prompt_tokens": len(user), "completion_tokens": 12}, "timings": {"cache_n": cache_n}}
@@ -98,8 +105,7 @@ class FakeClient:
         target, _ = json.JSONDecoder().raw_decode(user.split("【待译 JSON】\n", 1)[1])
         limit = self.server.harness.max_targets
         if limit is not None and len(target["translations"]) > limit:
-            raise HTTPError("http://127.0.0.1:8080/v1/chat/completions", 400,
-                            "the request exceeds the available context size", {}, None)
+            raise closed_http_error(400, "the request exceeds the available context size")
         if self.server.harness.poison & set(target["translations"]):
             return reply("{not json")
         texts = {k: "译" + k + ("\n\n续" if behaviour == "blank_line" else "") for k in target["translations"]}
@@ -696,7 +702,7 @@ class TranslateDocumentTests(unittest.TestCase):
             last_exchange = str(exchange)
 
             def chat_completion(self, body: dict[str, Any]) -> dict[str, Any]:
-                raise HTTPError("http://127.0.0.1:8080/v1/chat/completions", 400, "Bad Request", {}, None)
+                raise closed_http_error(400, "Bad Request")
 
         messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "台詞0ですね"}]
         record: dict[str, Any] = {}

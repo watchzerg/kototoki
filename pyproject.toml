@@ -2,7 +2,7 @@
 name = "kototoki"
 version = "0.0.1"
 description = "Local Japanese video to Japanese/Chinese/bilingual SRT pipeline"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "torch==2.11.0",
     "torchaudio==2.11.0",

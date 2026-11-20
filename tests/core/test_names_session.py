@@ -36,7 +36,9 @@ def reply(content: str = GOOD, finish: str = "stop", prompt_tokens: int = 20) ->
 
 
 def http_error(code: int = 500) -> HTTPError:
-    return HTTPError("http://127.0.0.1:8080/x", code, "error", {}, io.BytesIO(b""))
+    error = HTTPError("http://127.0.0.1:8080/x", code, "error", {}, io.BytesIO(b""))
+    error.close()  # 产品的 LocalClient 读完正文即关；伪造的错误同样先关，code 与 str 不受影响
+    return error
 
 
 class FakeServer:

@@ -1,6 +1,6 @@
 # ADR-0034：只面向 Ubuntu，工具链与外部前置按 Linux 原生做法重定
 
-状态：已接受，2026-11-20（用户裁定），实现中：代码、脚本与文档已按本决定改完，Linux 上的真实模型验收（fetch-models、smoke、小批量）待做；验收通过后删掉"实现中"字样。
+状态：已接受，2026-11-20（用户裁定），实现中：代码、脚本与文档已按本决定改完，Linux 上的真实模型验收（fetch-models、smoke、小批量）待做；验收通过后删掉"实现中"字样。「工具链分层」第 2 点的 Python 版本自 2026-11-20 起由 ADR-0036 替代。
 替代关系：
 - 取代 [ADR-0033](0033-ffmpeg-branch-lock.md) 全文；
 - 取代 [ADR-0029](0029-translate-per-cue-resolution.md)「Strata session」第 4 点与第 8 点中有关版本的部分；

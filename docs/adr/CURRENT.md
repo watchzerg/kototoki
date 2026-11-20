@@ -61,7 +61,7 @@ ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU，产品�
 
 ### 产品架构
 
-阶段 × 整批推进，每阶段一个子进程，阶段链 `vad` → `asr` → `align`（MMS）→ `cues` → `names` → `translate` → publish；统一 CUDA 12.8、Python 3.13 环境；翻译单元是日文 cue；`kototoki.toml` 驱动、无 CLI；产物带输入身份与配方 hash 续跑（[0007](0007-bilingual-subtitle-pipeline-architecture.md)）。
+阶段 × 整批推进，每阶段一个子进程，阶段链 `vad` → `asr` → `align`（MMS）→ `cues` → `names` → `translate` → publish；统一 CUDA 12.8、Python 3.14 环境；翻译单元是日文 cue；`kototoki.toml` 驱动、无 CLI；产物带输入身份与配方 hash 续跑（[0007](0007-bilingual-subtitle-pipeline-architecture.md)，Python 版本见 [0036](0036-python-3-14.md)）。
 
 ### 输入、工作目录与发布
 
@@ -84,7 +84,7 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 代码已按此实现，Linux 上的真实模型验收（fetch-models、smoke、小批量）待做。
 
 - 平台：只面向 Ubuntu，不比对 Windows 时期结果，旧数据不迁移（[0034「平台」](0034-ubuntu-only-platform.md#平台)）。
-- 工具链：mise 钉 uv 与 just；uv 按 `.python-version`（`3.13`）管解释器、按 `uv.lock` 管依赖，默认布局（[0034「工具链分层」](0034-ubuntu-only-platform.md#工具链分层)）。
+- 工具链：mise 钉 uv 与 just；uv 按 `.python-version`（`3.14`）管解释器、按 `uv.lock` 管依赖，默认布局（[0034「工具链分层」](0034-ubuntu-only-platform.md#工具链分层)、[0036](0036-python-3-14.md)）。
 - 外部前置：NVIDIA 驱动、apt 系统 ffmpeg（默认从 PATH 查找，实际版本记入运行日志首行）、Strata 0.2；`assets.toml` 只列 STT 模型，`just install` 只做 `uv sync --locked`（[0034「外部前置」](0034-ubuntu-only-platform.md#外部前置)、[「ffmpeg」](0034-ubuntu-only-platform.md#ffmpeg)）。
 - 子进程：`PR_SET_PDEATHSIG`＋独立进程组；长任务用 `systemd-run --user`（[0034「子进程与长任务」](0034-ubuntu-only-platform.md#子进程与长任务)）。
 
