@@ -81,7 +81,7 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 
 ### 平台、工具链与外部前置
 
-尚未实现（实现前代码仍是 [0033](0033-ffmpeg-branch-lock.md) 的 Windows 做法）。
+代码已按此实现，Linux 上的真实模型验收（fetch-models、smoke、小批量）待做。
 
 - 平台：只面向 Ubuntu，不比对 Windows 时期结果，旧数据不迁移（[0034「平台」](0034-ubuntu-only-platform.md#平台)）。
 - 工具链：mise 钉 uv 与 just；uv 按 `.python-version`（`3.13`）管解释器、按 `uv.lock` 管依赖，默认布局（[0034「工具链分层」](0034-ubuntu-only-platform.md#工具链分层)）。

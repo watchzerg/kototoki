@@ -19,7 +19,7 @@
 
 ### 平台
 
-- 本项目只面向 Ubuntu：代码、脚本、文档与工具选型按 Linux 原生做法设计，不写 Windows／macOS 分支，也不为它们补兼容或测试。2026-11 从原生 Windows 迁来，迁移完成前仓库里残留的 Windows 写法（pwsh、`%LOCALAPPDATA%`、`.exe`、ctypes `WinDLL` 等）属待清理项，不作为现行约定。
+- 本项目只面向 Ubuntu：代码、脚本、文档与工具选型按 Linux 原生做法设计，不写 Windows／macOS 分支，也不为它们补兼容或测试。2026-11 从原生 Windows 迁来（[ADR-0034](docs/adr/0034-ubuntu-only-platform.md)），Windows 时期的 ADR、验收与跑次只作历史。
 
 ### 产品不变量
 
@@ -38,7 +38,7 @@
 
 ### 重任务与环境
 
-- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，以及 `research/` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。用户批准的计划里写明的重任务视为已授权，一口气跑完再汇报；超出计划的重任务或破坏性操作再问。Windows 上长任务与 worktree 的坑见[开发工作流](docs/development/workflow.md#windows-上的长任务与-worktree)。
+- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，以及 `research/` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。用户批准的计划里写明的重任务视为已授权，一口气跑完再汇报；超出计划的重任务或破坏性操作再问。长任务用 `systemd-run --user` 启动，写法与 worktree 的坑见[开发工作流](docs/development/workflow.md#长任务与-worktree)。
 - `.local/gpu.lock` 标记正在运行的 GPU 作业：不抢占、不杀其他进程；用 `ps -p <pid>`／`pgrep` 核实真实进程，而不是信任文档声称在跑的内容。
 - `just install`、`just upgrade`／`uv sync|add|lock` 会改环境且可能联网：先问。
 - 大目录（`.local/`、`.venv/`）会拖慢 Grep／Glob，搜索时限定子路径。

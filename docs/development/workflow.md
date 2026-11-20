@@ -4,20 +4,22 @@
 
 ## 环境
 
-验证目标是原生 Windows（pwsh、RTX 5080）；macOS 未验证。mise、uv、just 由用户安装，版本固定在 `mise.toml`，解释器固定在 `.python-version`；工具分工与依赖变更规则的权威正文是 [Python 工具链](toolchain.md)，平台要求见 [Windows 与 NVIDIA](windows-nvidia.md)。
+只面向 Ubuntu（x86_64、RTX 5080，[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。mise、uv、just 由用户安装，版本固定在 `mise.toml`，解释器固定在 `.python-version`；工具分工与依赖变更规则的权威正文是 [Python 工具链](toolchain.md)，平台要求见 [Ubuntu 与 NVIDIA](ubuntu-nvidia.md)。
 
 - 根环境即产品环境：Python 3.13 + 统一 CUDA 12.8 推理栈（torch 2.11.0+cu128 等，版本见[技术选型](technology-stack.md#已选依赖)）。`just install`（`uv sync --locked`）与 `just fetch-models` 会改环境且可能联网，须先问用户。
 - 行尾统一为 LF：`.gitattributes` 的 `* text=auto eol=lf` 让仓库存 LF、任何平台检出也是 LF（优先于 `core.autocrlf`），`.editorconfig` 让编辑器新建 LF 文件；改文件不必再做字节级保护。
 - ffmpeg 是 apt 系统包，从 PATH 调用；模型在 `.local/models/`（清单锁 revision 与 SHA256），布局见[依赖布局与资产清单](dependencies.md)。
 
-## Windows 上的长任务与 worktree
+## 长任务与 worktree
 
-agent 在本机运行长任务、并行票据时踩过的坑：
-
-- **后台任务的生命周期不可靠**：Claude Code 后台任务的 2 小时上限与 TaskStop 在本机表现不一致：2026-11-12 产品批量到点连进程树被杀（留下陈旧锁，用 `KOTOTOKI_BREAK_STALE_LOCK=1` 续跑）；2026-10-23 Git Bash 编排脚本在 TaskStop 后仍连子进程存活，误以为被杀而另起替代链，导致多条链同时运行。因此：可能超过 2 小时的运行用 PowerShell `Start-Process` 脱离启动（[批量运行](../agents/production-runs.md#跑之前)）；停止或超时后用 `Get-CimInstance Win32_Process | ? CommandLine -match '<脚本名>'` 核实真实进程，不信任工具的"已停止"；多步编排链每一步幂等（产物已在则跳过、加锁），不另起替代链；要改变后续行为时改被调用的子脚本或入口，不改正在运行的脚本文件。
-- **重定向输出要带 `PYTHONUTF8=1`**：mise 未激活的 shell 不会自动带上。把 `just smoke` 等命令的 stdout 重定向到文件或管道时，Python 在 cp1252 下转发 tqdm 进度条字符会抛 `UnicodeEncodeError`，约 10 秒即崩（2026-11-11 白费一次授权的 GPU 运行）。它只防崩溃不防乱码，可读副本另需设 pwsh 控制台编码（[README](../../README.md)）。
-- **worktree 没有 `.venv`**：在 worktree 里 `uv run`／`just test` 会试图新建环境（联网、改环境）。在 worktree 根目录用主仓库的解释器跑测试：`<主仓库>\.venv\Scripts\python.exe -m unittest discover -s tests/core -t .`（`package = false`，`kototoki` 从 cwd 导入）。并行票据各用一个 worktree、文件集合不相交。
-- **核对 worktree 基底**：Agent 工具的 `isolation: worktree` 可能从落后的提交建 worktree（2026-10-19 因此在合回时覆盖了较新的改动）。开工前核对 `git log -1`，或自己用 `git worktree add --detach <path> HEAD`；合回用 `git diff <基底>` 出补丁、在主仓库 `git apply --3way`。补丁文件用 Bash 写，PowerShell `Out-File` 带 BOM 会让 `git apply` 失败。
+- **长任务用 `systemd-run --user` 启动**（ADR-0034「子进程与长任务」）：整批运行与 smoke 可能超过 Claude Code 后台任务的 2 小时上限（到点连进程树被杀，2026-11-12 因此留下陈旧锁）。写法：
+  `systemd-run --user --unit=kototoki-<名字> --same-dir --collect just subtitles <目录>`（`--same-dir` 沿用当前目录，`--collect` 失败后也清掉单元）。单元不继承当前 shell 的环境，PATH 取 user manager 的（`systemctl --user show-environment`），本机已含 mise shims 与 `~/.local/bin`，`just`、`strata` 都能解析（2026-11-20 核实）。
+  - 看进度：产品自己的 `run-*.log`，或 `journalctl --user -u kototoki-<名字> -f`；看状态 `systemctl --user status kototoki-<名字>`。
+  - 停止：`systemctl --user stop kototoki-<名字>`，整个 cgroup（编排器、worker、ffmpeg）一起收尾；Strata 服务由 `strata launch` 另起，不在其中，用 `strata launch --status` 核对。
+  - 不信任工具的"已停止"，用 `ps -p <pid>`／`pgrep -f <脚本名>` 核实真实进程；多步编排链每一步幂等（产物已在则跳过、加锁），不另起替代链；要改变后续行为时改被调用的子脚本或入口，不改正在运行的脚本文件。
+  - 交互调试可以用 tmux。
+- **worktree 没有 `.venv`**：在 worktree 里 `uv run`／`just test` 会试图新建环境（联网、改环境）。在 worktree 根目录用主仓库的解释器跑测试：`<主仓库>/.venv/bin/python -m unittest discover -s tests/core -t .`（`package = false`，`kototoki` 从 cwd 导入）。并行票据各用一个 worktree、文件集合不相交。
+- **核对 worktree 基底**：Agent 工具的 `isolation: worktree` 可能从落后的提交建 worktree（2026-10-19 因此在合回时覆盖了较新的改动）。开工前核对 `git log -1`，或自己用 `git worktree add --detach <path> HEAD`；合回用 `git diff <基底>` 出补丁、在主仓库 `git apply --3way`。
 
 ## 命令与门禁
 
@@ -60,12 +62,11 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 分层标准（core 与 full 都不调用真实模型）见[测试设计与验收](../agents/testing.md#分层)；本节是目录、入口与资源合同。
 
 - core：`tests/core/` 下的产品 `unittest` 测试，`just test` 以 `discover -s tests/core -t .` 收录（`tests/__init__.py`、`tests/core/__init__.py` 须保留，模块以 `tests.core.*` 导入）；覆盖产品包 `kototoki/` 的全部模块，各模块的测试清单与覆盖行为见其模块页"代码与验证入口"（[架构总览的模块地图](../architecture/INDEX.md#模块地图)）。进程内或本解释器子进程：GPU 阶段由 `tests/fake_worker.py` 子进程顶替、翻译用伪 server 对象／伪客户端、导入边界用 `sys.executable -c` 子进程核对；不调用外部二进制、不碰网络与 socket、不读真实视频、不加载模型。
-- full：`tests/full/` 下的离线集成测试，`just test-full` 以 `discover -s tests/full -t .` 收录；用项目内 ffmpeg（`config.load` 的默认路径，`assets.toml` 锁定）合成秒级小样本：`test_media_ffmpeg`（媒体提取）与 `test_job_ffmpeg`（端到端：真实媒体阶段、fake worker 顶替 GPU 阶段、假翻译 session，检查发布结果）。不加载模型、不占 GPU，因此不需要 `.local/gpu.lock`。
+- full：`tests/full/` 下的离线集成测试，`just test-full` 以 `discover -s tests/full -t .` 收录；用系统 ffmpeg（`config.load` 默认从 PATH 查找）合成秒级小样本：`test_media_ffmpeg`（媒体提取）与 `test_job_ffmpeg`（端到端：真实媒体阶段、fake worker 顶替 GPU 阶段、假翻译 session，检查发布结果）。不加载模型、不占 GPU，因此不需要 `.local/gpu.lock`；经 `scripts/with_lock.py` 持主机级锁（默认 `~/.cache/gate-full.lock`，`flock`）串行，不同 worktree 同时跑不互相干扰。
 - 没有产品与研究实现的实时对照层：研究直接调用产品实现；core 里需要钉住的取值以字面量钉，注释写来源（ADR 或归档 tag 路径）；`tests/core/test_boundaries.py` 以 AST 扫描要求 `kototoki/` 不导入 `research`，`tests/core` 自身不导入 `research`（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)）。`gate-full` = `gate-core` + `test-full`。
 - `fake_worker.py` 留在 `tests/` 根，供两层共用。`just check` 编译 `kototoki`、`scripts` 与 `tests`。
 - 真实模型验证（不是测试，不属于任何 gate）：入口是 `just smoke`（`scripts/smoke/`），每次运行都须用户批准。
 - 独占资源：GPU，由 `.local/gpu.lock` 标记运行中的作业；同一时间一个作业，不抢占、不删除活跃锁，先用 `ps -p <pid>`／`pgrep` 核实真实进程。产品只起 Strata（建表与翻译共用一个 session），固定占用 127.0.0.1:8080，且同一时间只允许一个 Strata launch；llama-server 默认也用 8080，不能与 Strata 同时运行。运行产物写入 `.local/` 下的新目录，拒绝覆盖。
-- `scripts/with_lock.py`（主机锁）依赖 `fcntl`，原生 Windows 不可用，当前没有 recipe 使用它。
 
 ## 发布
 

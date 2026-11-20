@@ -41,7 +41,7 @@
 
 | 路径 | 目录索引 | 说明 |
 | --- | --- | --- |
-| [工具链](development/toolchain.md)、[Windows 与 NVIDIA](development/windows-nvidia.md)、[推理选型原则](development/inference-selection.md) | 本行；[开发工作流](development/workflow.md)摘要并链接 | 工具链、平台与推理选型的权威正文 |
+| [工具链](development/toolchain.md)、[Ubuntu 与 NVIDIA](development/ubuntu-nvidia.md)、[推理选型原则](development/inference-selection.md) | 本行；[开发工作流](development/workflow.md)摘要并链接 | 工具链、平台与推理选型的权威正文 |
 | `research/` | [研究索引](../research/INDEX.md) | 研究轮次（一轮一目录）与产品验收记录（[ADR-0031](adr/0031-research-layout-and-lightweight-records.md)） |
 | `runs/` | [跑次索引](../runs/INDEX.md) | 产品批量运行一次一篇的记录（[批量运行与跑次记录](agents/production-runs.md)） |
 | `.scratch/<slug>/` | [tracker 约定](agents/issue-tracker.md) | 进行中的产品侧计划、票据与执行提示词；完工后删除 |

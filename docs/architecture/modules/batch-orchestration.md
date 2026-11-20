@@ -27,7 +27,7 @@
 2. 扫描：递归列出扩展名（大小写不敏感，`[input] extensions`）匹配的文件，按相对路径排序；两次采样（间隔 `stable_check_s`）大小不变才处理，否则本次跳过。
    - 源文件旁已有 `<主名>.ja-zh.srt`（`final_srt_path`，只看文件名，不论来源）的文件记入 `Summary.existing` 并跳过，不登记工作目录、不 probe、不进任何阶段，也不动残留的 `failure.json`。
    - 否则登记 `<work root>/<id>`；`register_work_dir` 抛异常（`index.json` 损坏、短 id 碰撞）只记该文件 `scan` 失败，没有工作目录因而不写 `failure.json`，整批继续。
-   - 同目录主名相同、扩展名不同的文件（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕路径，按相对路径顺序后出现的那个记 `scan` 失败（`FinalPathCollision`，写 `failure.json`）；Windows 下路径比较忽略大小写。
+   - 同目录主名相同、扩展名不同的文件（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕路径，按相对路径顺序后出现的那个记 `scan` 失败（`FinalPathCollision`，写 `failure.json`）；路径比较区分大小写。
 3. probe／extract：线程池（`extract_workers`）对每个文件跑 ffprobe（每次都跑，得到输入文件身份）。
    - `[input] use_embedded_subtitles` 开着且 `media.select_subtitle` 选出可用的日文文本字幕轨时先走"内嵌日文字幕"（见下）；采用后该文件不提取音频。
    - 否则（或字幕轨不可用时）`probe.json` 身份匹配且 `audio-16k.wav` 在时跳过 extract；不然先删除工作目录里上次强杀留下的 `.*.partial*` 与 `.*.tmp`（`clean_leftovers`），再 extract 并写 `probe.json`（probe payload 加 `extract` 记录，含 PCM SHA256）。

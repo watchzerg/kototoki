@@ -8,7 +8,7 @@ Scope: engine, model, precision, and forced-alignment selection for local STT.
 
 ## Constraints and priorities
 
-- 以用户 RTX 5080 上的原生 Windows 为目标。ASR 和强制对齐必须使用 GPU，不回退 CPU。
+- 以用户 RTX 5080 上的 Ubuntu 为目标（[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。ASR 和强制对齐必须使用 GPU，不回退 CPU。
   VAD 可使用 CPU 或 GPU，不以 GPU 支持作为资格条件；比较检测质量、稳定性、集成成本和
   实测端到端性能。普通 CPU 音频／文件处理与不依赖 GPU 的单元测试仍然允许。
 - Consider GPU implementations beyond a CUDA-only shortlist, including routes
@@ -62,7 +62,7 @@ do not assume every engine supports every listed artifact.
 
 | Dimension | User preference | Required clarification during research |
 | --- | --- | --- |
-| Engine or integration route | faster-whisper, WhisperX, official Qwen implementation, Crisp | Identify exact upstream project, release, GPU backend, Windows support, and integration boundary. |
+| Engine or integration route | faster-whisper, WhisperX, official Qwen implementation, Crisp | Identify exact upstream project, release, GPU backend, Linux support, and integration boundary. |
 | Whisper models | large-v2, large-v3, anime.ja | Resolve exact repository/checkpoint and any conversion provenance; preserve the distinction between base and fine-tuned models. |
 | Qwen ASR models | 1.7b-f16, 1.7b-amine-q8_0 | Resolve exact model family, artifact, revision, precision, and compatible engine. |
 | Alignment | Qwen ASR + forceAligner | Resolve the intended aligner/model and verify GPU execution, language support, and timing quality separately from ASR. |

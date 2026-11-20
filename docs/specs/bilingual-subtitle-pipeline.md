@@ -153,7 +153,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 ```
 
 - worker 之间只通过 `<work root>/<id>/` 下的 JSON 交接，每阶段重验输入身份；编排器与 worker 用同一解释器（`sys.executable`）。
-- 所有 worker 与 Strata CLI 子进程放进 KILL_ON_JOB_CLOSE Job Object；Strata 服务由 `strata launch` 在后台启动、不在 Job Object 内，靠 session 退出时的 `--stop` 收尾，编排器被强杀时它可能残留，下次运行拒绝，须手动 `strata launch --stop`。
+- 所有 worker、ffmpeg 与 Strata CLI 子进程经 `setpriv --pdeathsig KILL` 启动，编排器一死即被杀（GPU worker 与 Strata CLI 另开进程组，[运行日志与进程][run]）；Strata 服务由 `strata launch` 在后台启动、不受其约束，靠 session 退出时的 `--stop` 收尾，编排器被强杀时它可能残留，下次运行拒绝，须手动 `strata launch --stop`。
 - 编排器为 worker 设置离线环境（`HF_HUB_OFFLINE=1`、`HF_HOME`／`TORCH_HOME` 指向 `<work_dir>/cache/` 等）与 `PYTHONUTF8=1`。ASR worker 先 `import torch` 再导入 CTranslate2；"编排器不 import torch"有测试。细节见[批次编排][orch]与 [STT worker][stt]。
 
 ### 7.2–7.4 环境、代码布局、上游版本
@@ -179,7 +179,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 | §2 各阶段细则、§2.1、§2.2 时长校验与下混 | [配置、配方与媒体提取][media]、各模块页 |
 | §4、§6 的逐模块细则 | [产物契约][art]、[阶段计划][plan]、[批次编排][orch]、[翻译子系统][tr]、[专名一致性][names] |
 | §5.2 规则表 | [配置参考][cfg]、[日文 cue][cues] |
-| §7.1 的 DLL 与导入细节 | [STT worker][stt]、[批次编排][orch] |
+| §7.1 的动态库与导入细节 | [STT worker][stt]、[批次编排][orch] |
 | §7.2–§7.4 | [技术选型](../development/technology-stack.md)、[依赖布局与资产清单](../development/dependencies.md)；原文在历史记录（同上） |
 | §10 | [配置参考][cfg] |
 
@@ -195,3 +195,4 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 [orch]: ../architecture/modules/batch-orchestration.md
 [plan]: ../architecture/modules/stage-plan.md
 [art]: ../architecture/modules/artifact-contract.md
+[run]: ../architecture/modules/run-logging-and-processes.md

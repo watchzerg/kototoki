@@ -14,10 +14,10 @@
 
 - 最终产物只有写在源文件旁的双语字幕：`S1/ep01.mkv` → `<input_dir>/S1/ep01.ja-zh.srt`（`final_srt_path`，后缀常量 `FINAL_SUFFIX`）。`final_srt_path` 只用主名，同目录主名相同、扩展名不同的输入会映射到同一份字幕路径，由编排在扫描阶段检测并让后者失败。
 - 工作目录在 `[paths] work_dir` 下：`cache/` 放 `HF_HOME`／`TORCH_HOME` 与 `model-verification.json`（`cache_dir`，各目标目录共用）。
-- 每个目标目录一个工作根 `<work_dir>/<input_dir 末段名>-<绝对路径 sha12>/`（`input_key`／`work_root`；路径按平台大小写规则归一，盘符根的末段名记为 `root`），内含 `lock`、`input.json`（`record_input`，目标目录绝对路径，只供人查）、`index.json`。
-- 每个输入的工作目录是 `<work root>/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`）。
+- 每个目标目录一个工作根 `<work_dir>/<input_dir 末段名>-<绝对路径 sha12>/`（`input_key`／`work_root`；摘要取 resolve 后的路径原文，根目录 `/` 的末段名记为 `root`），内含 `lock`、`input.json`（`record_input`，目标目录绝对路径，只供人查）、`index.json`。
+- 每个输入的工作目录是 `<work root>/<id>/`，`<id>` 是输入目录内相对路径（含扩展名，统一正斜杠）UTF-8 的 SHA256 前 12 位（`work_id`；`:`、`\` 是文件名字符，按字面计入）。
 - `register_work_dir(root, relative)` 在 `index.json` 登记 id ↔ 相对路径，同一 id 已登记为另一路径时报错（短 id 碰撞）；它读改写 `index.json`，由编排器在扫描阶段串行调用。
-- 相对路径不得是绝对路径、含 `..` 或任何段含 `:`（盘符、NTFS 备用数据流）。
+- 相对路径不得是绝对路径、为空或含 `..`。
 - 产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`JA_EMBEDDED`、`NAME_TABLE`、`PUBLISHED`、`FAILURE` 等）；`STAGE_ARTIFACTS` 是阶段产物清单。翻译 run 目录的键归翻译子系统（`translate.plan`），本模块不拼它。
 
 **坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）。`align.json` 的 `units[].start/end` 也是 WAV 本地秒、不含 offset；offset 只由日文 cue 加一次，`ja-cues.json` 与 SRT 的 cue 时间是最终 SRT 时间。
@@ -35,7 +35,7 @@
 - `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在双语字幕写到源文件旁**之后**写 `published.json`：最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录（`translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。它只是审计记录，不参与任何判定。
 - 是否需要发布只看源文件旁的 `<主名>.ja-zh.srt` 是否存在（只看文件名，编排在扫描阶段判定，ADR-0007「发布」）；要重做就删掉该字幕。
 
-**原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；Windows `PermissionError`（播放器或扫描器占用）时最多尝试 20 次、间隔递增至 0.5 s（`replace_with_retry`）；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
+**原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
 
 **worker 协议**（`kototoki/workers/protocol.py`）：
 
@@ -94,7 +94,7 @@
 - `tests/core/test_artifacts.py`：短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、工作根键与最终字幕路径、`published.json` 审计记录、原子写重试与临时文件清理。
 - `tests/core/test_protocol.py`：jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`；`classify_launch` 的正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件。
 - `tests/core/test_srt.py`：空 SRT、取整边界、严格解析、UTF-8 无 BOM。
-- 未验证：真实 Windows 文件占用下的重试行为只用注入的 `replace` 模拟。worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
+- worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
 
 ## 变更与决策来源
 

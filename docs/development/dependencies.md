@@ -66,7 +66,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 ## CUDA 版本说明
 
-[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 定下的 CUDA 12.8 锁定的是 **Python 进程**：CTranslate2 只有 CUDA 12 wheel，而 cuDNN 9 的 DLL 在 CUDA 12 与 13 构建间同名，同一进程只能加载一份。当时的 llama-server 是独立进程，自带 CUDA 13.4 运行时，不受此约束；llama.cpp 已于 2026-11-18 移出清单（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。[选版规则](technology-stack.md#选版规则)里"CUDA 12 为锚点"只约束同一进程内会冲突的组件；ffmpeg 等独立二进制各自取最新稳定版。
+[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 定下的 CUDA 12.8 锁定的是 **Python 进程**：CTranslate2 只有 CUDA 12 wheel，而 cuDNN 9 的动态库（`libcudnn*.so.9`）在 CUDA 12 与 13 构建间同名，同一进程只能加载一份。当时的 llama-server 是独立进程，自带 CUDA 13.4 运行时，不受此约束；llama.cpp 已于 2026-11-18 移出清单（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。[选版规则](technology-stack.md#选版规则)里"CUDA 12 为锚点"只约束同一进程内会冲突的组件；ffmpeg 等独立二进制各自取最新稳定版。
 
 ## 当前实现
 

@@ -160,7 +160,12 @@ Type: research
    - `smokelib.loaded_modules` 改读 `/proc/self/maps`，`list_llama_servers` 改用 `pgrep -x`；
    - `ct2_after_torch` 的通过条件改为：已加载的 `libcudnn*`／`libcublas*`／`libcudart*` 全部来自 `site-packages/nvidia/`（CT2 Linux wheel 不自带 CUDA 运行库，按 soname 复用 torch 那一份）；
    - `vad_pyannote` 只记录加载的 FFmpeg 共享库；`run_all`、`stt_frozen_window` 去掉 `whisper-runtime-provisional` 过滤与 cp1252 转义；锁冲突提示改用 `ps -p`。
-7. 文档全面同步、`justfile`（删 pwsh 写法，`gate-full` 接 `with_lock.py`）、`workflow.md` 长任务改 `systemd-run --user`。
+7. ~~文档全面同步与残留清理~~：已完成（2026-11-20）。
+   - 代码：删 `replace_with_retry`（直接 `os.replace`）与两处 `normcase`；相对路径里的 `:`、`\` 按字面保留（原先会拒绝 `Re:Zero 01.mkv` 这类合法文件名）；`__main__` 的输出转义保留，理由改为非 UTF-8 文件名；
+   - `justfile`：删 `windows-shell`，`subtitles` 用 `quote()`；`test-full` 经 `with_lock.py`（`gate-full` 随之串行）；
+   - `check_docs` 的本机路径检查改查 `/home`、`/data`、`/mnt`、`/media`，测试虚构路径改为 `/srv`、`/opt`；
+   - 文档：`windows-nvidia.md` 改写为 `ubuntu-nvidia.md`；`workflow.md` 长任务一节改为 `systemd-run --user`（本机试跑过空命令）；README、AGENTS、production-runs、artifact-contract、规格等同步；
+   - 未改：`.claude/settings.json` 里的 `PowerShell(...)` 权限条目（改权限清单需用户本人操作）。
 8. 验收（每一步都是重任务，逐项先问）：`just install` → `just fetch-models` → `gate-full` → `just smoke` → 小批量的 `just subtitles`。
 
 ## Comments

@@ -53,5 +53,5 @@ Keep environment setup, model downloads, and inference separate. Routine test
 recipes should not upgrade dependencies or acquire model weights. Recipes must
 not implicitly commit, push, or publish.
 
-See [Windows and NVIDIA](windows-nvidia.md) for platform requirements and
+See [Ubuntu and NVIDIA](ubuntu-nvidia.md) for platform requirements and
 [testing](../agents/testing.md) for verification boundaries.
