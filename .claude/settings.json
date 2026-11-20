@@ -10,8 +10,8 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(nvidia-smi:*)",
-      "PowerShell(nvidia-smi:*)",
-      "PowerShell(Get-Process:*)"
+      "Bash(pgrep:*)",
+      "Bash(ps -p:*)"
     ],
     "ask": [
       "Bash(just install)",
