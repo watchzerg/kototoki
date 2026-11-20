@@ -4,9 +4,8 @@
 Whisper（MIT），见 `experiments/w0_demo/THIRD_PARTY_NOTICES.txt`）。去掉了私有 DLL 目录与 PATH 逻辑。
 
 导入顺序是接口的一部分：本模块**先 `import torch` 再导入 `ctranslate2`／`faster_whisper`**，
-cublas／cudart 与 cuDNN 子库因此来自 torch；CT2 随后按全路径加载自带的 `cudnn64_9.dll`
-（9.10 调度器），与 torch 的 9.19 并存（票据 01 smoke #3，用户已接受）。有测试钉住这一顺序。
-CT2 在 sm_120 上依赖 PTX JIT：冷启动首窗解码约 27 s，之后约 5 s。
+CT2 的 Linux wheel 不自带 CUDA 运行库，按 soname 复用 torch 已从 `site-packages/nvidia/` 加载的 cuBLAS／cuDNN
+（smoke `ct2_after_torch` 核对）。有测试钉住这一顺序。
 
 模块页：docs/architecture/modules/stt-asr.md。
 """

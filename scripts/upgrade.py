@@ -134,7 +134,7 @@ def upgrade_python(check: bool) -> dict[str, Any]:
         LOCK.write_text(original_lock, encoding="utf-8", newline="\n")
         raise
     return {"status": "upgraded", "changes": changes, "skipped_major": skipped,
-            "pending": "just smoke vad_pyannote forced_align stt_frozen_window x0_frozen_window（占 GPU，须用户批准）"}
+            "pending": "just smoke ct2_after_torch 与小批量 just subtitles（占 GPU，须用户批准）"}
 
 
 # --- 入口 -------------------------------------------------------------------------------------

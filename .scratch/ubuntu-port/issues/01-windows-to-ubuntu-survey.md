@@ -166,6 +166,7 @@ Type: research
    - `check_docs` 的本机路径检查改查 `/home`、`/data`、`/mnt`、`/media`，测试虚构路径改为 `/srv`、`/opt`；
    - 文档：`windows-nvidia.md` 改写为 `ubuntu-nvidia.md`；`workflow.md` 长任务一节改为 `systemd-run --user`（本机试跑过空命令）；README、AGENTS、production-runs、artifact-contract、规格等同步；
    - 未改：`.claude/settings.json` 里的 `PowerShell(...)` 权限条目（改权限清单需用户本人操作）。
+   - 2026-11-20 用户决定：删除依赖研究期本地数据（`.local/round2`、`.local/w0-demo`，迁机后已不存在）的五项 smoke（`stt_frozen_window`、`x0_frozen_window`、`forced_align`、`vad_pyannote`、`whisper_score`），`ct2_after_torch` 改为合成音频、单进程、只核对能解码与 CUDA 库来源。
 8. 验收（每一步都是重任务，逐项先问）：`just install` → `just fetch-models` → `gate-full` → `just smoke` → 小批量的 `just subtitles`。
 
 ## Comments

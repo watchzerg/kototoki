@@ -118,8 +118,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
   - `cross`：四个产物齐全且身份分别按单引擎／cross 计算、边界 d 保持 w0、偏好 x0 的区间被切换、w0 失败窗口仍记失败、x0 失败窗口取 w0、打分出错与数量不符取 w0 且日志不含文字、w0 那一路之后失败时四个产物都不写、合并结果被对齐消费。
   - 加载：先 Whisper 后 Qwen 并拆分两路模型身份、单引擎只加载自己的部件（`CrossStartupTest`）。
   - 字节：四个 cross 产物与单引擎 `asr.json` 钉成 sha256（`AsrArtifactBytesTest`，`time.perf_counter` 固定）。
-- 打分门禁（真实模型验证，占 GPU，须用户批准，不属于任何测试层与 gate）：`just smoke whisper_score`（`scripts/smoke/whisper_score.py`）；取冻结窗口的前几个 VAD 窗口，产品转写文本的分数须比字符打乱文本至少高 20 nat、空文本恰为 0、每 token 分数与产品 `avg_logprob` 差 < 0.5 nat；规则写在脚本头部。
-- 冻结窗口门禁 `stt_frozen_window`／`x0_frozen_window` 见 [STT worker](stt-workers.md#代码与验证入口)。
+- 真实模型验证：`just smoke ct2_after_torch`（CT2 的 CUDA 库来源）；其余路径由小批量 `just subtitles` 覆盖（[STT worker](stt-workers.md#代码与验证入口)）。
 - 未验证：显存紧张的机器上 `cross` 共驻能否放下（没有回退路径）、w0 失败窗口以 x0 替代（不做）、数值确定性、译文层收益与新材料确认；x0 触顶的真实路径。
 
 ## 变更与决策来源

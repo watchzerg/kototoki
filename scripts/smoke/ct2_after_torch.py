@@ -1,258 +1,75 @@
-"""smoke `ct2_after_torch`：同一进程先 `import torch` 并初始化 CUDA，再导入 ctranslate2 / faster_whisper，
-验证 faster-whisper large-v3 可在 RTX 5080 上解码，且 CT2 用的是 torch 已加载的那一份 CUDA 12 运行库。
+"""smoke `ct2_after_torch`：同一进程先 `import torch` 并初始化 CUDA，再导入 ctranslate2／faster_whisper，
+验证 faster-whisper large-v3 能在 GPU 上以 float16 解码，且 CT2 用的是 torch 已加载的那一份 CUDA 12 运行库。
 
-结构：父进程依次启动三个 `--child <tag>` 子进程（同一解释器、同一环境，tag 决定是否附加变量）：
-- `cold`：第一次启动；
-- `warm`：第二次启动，记录模型加载与解码耗时；
-- `nojit`：附加 `CUDA_DISABLE_PTX_JIT=1`。解码成功说明 CT2 自带 sm_120 原生 kernel；
-  以 "no kernel image" 一类错误失败则记录为依赖 PTX JIT（这是发现，不是失败）。
-通过条件：`cold` 与 `warm` 均解码成功，且已加载的 `libcudnn*`／`libcublas*`／`libcudart*` 全部来自
-`site-packages/nvidia/`（torch cu128 依赖的 `nvidia-*-cu12` wheel）。CT2 的 Linux wheel 不自带 CUDA 运行库，按 soname
-`dlopen` `libcublas.so.12`、`libcudnn.so.9`，同一进程里复用 torch 已加载的那一份；系统里另有一份时这里会查出来。
-结果只含版本、计数、哈希、布尔与耗时；不输出转写文本，也不保存解码文本。
+CT2 的 Linux wheel 不自带 CUDA 运行库，按 soname `dlopen` `libcublas.so.12`、`libcudnn.so.9`，同一进程里复用 torch
+从 `site-packages/nvidia/`（`nvidia-*-cu12` wheel）加载的那一份；系统里另有一份被加载时这里会查出来。
+输入是合成的 5 s 正弦波，作为一个窗口交给产品的 `WhisperAsr.transcribe`；只检查能跑通，不对照任何参考结果。
+通过条件：解码完成、模型实际为 CUDA float16、已加载的 `libcudnn*`／`libcublas*`／`libcudart*` 全部来自
+`site-packages/nvidia/`。结果只含版本、计数、布尔与耗时，不保存解码文本。
 """
 
 from __future__ import annotations
 
-import hashlib
-import importlib.util
-import json
 import os
-import re
-import subprocess
 import sys
 import time
-import wave
 from pathlib import Path
 from typing import Any
 
 import smokelib
 
+sys.path.insert(0, str(smokelib.REPO))
+
+import torch  # noqa: E402 - 顺序是被验证的对象：torch 在前
+
 NAME = "ct2_after_torch"
-CHILD_PREFIX = "CT2_CHILD "
 LIB_PREFIXES = ("libcudnn", "libcublas", "libcudart")
-FROZEN_RUN = smokelib.REPO / ".local/w0-demo/pyannote-gpu-v1-w0-pyannote-current-hf-ii-window-01/result.json"
-AUDIO = smokelib.REPO / ".local/round2/corpus/audio/hf-ii-window-01.wav"
-MODEL_PATH = smokelib.REPO / ".local/models/faster-whisper-large-v3"
-MEL_PATH = smokelib.REPO / ".local/models/w0-assets/mel_filters.npz"
-MEL_SHA256 = "7450ae70723a5ef9d341e3cee628c7cb0177f36ce42c44b7ed2bf3325f0f6d4c"  # 与 WhisperAsr._load 的固定值一致
-WINDOW_INDEX = 0
-CHILD_TIMEOUT_S = 1800
-NO_KERNEL_PATTERN = re.compile(
-    r"no kernel image|invalid device function|NoKernelImage|unsupported (gpu )?architecture|"
-    r"PTX .*(unsupported|not supported)", re.IGNORECASE)
-# 子进程序列：(tag, 额外环境变量)
-CHILDREN = (("cold", {}), ("warm", {}), ("nojit", {"CUDA_DISABLE_PTX_JIT": "1"}))
-
-
-def read_pcm(path: Path) -> tuple[Any, str]:
-    """与研究期 w0 demo（归档 tag）的 read_audio 一致：pcm_sha256 是原始 PCM16 字节的 sha256。"""
-    import numpy as np
-
-    with wave.open(str(path), "rb") as source:
-        if (source.getnchannels(), source.getframerate(), source.getsampwidth(), source.getcomptype()) != (1, 16000, 2, "NONE"):
-            raise ValueError("Input must be mono 16000 Hz PCM16 WAV")
-        pcm = source.readframes(source.getnframes())
-    return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0, hashlib.sha256(pcm).hexdigest()
-
-
-# ---------------------------------------------------------------- 子进程
-
-def child_main(tag: str, out: Path) -> int:
-    """单个子进程：torch 在前，ctranslate2 / faster_whisper 在后；结果以 CT2_CHILD 行输出。"""
-    sys.path.insert(0, str(smokelib.REPO))  # 为了 import kototoki.asr_whisper（torch 与 ct2 此时已按序导入）
-    result: dict[str, Any] = {"tag": tag, "ok": False, "stage": "start", "failures": [],
-                              "ptx_jit_disabled": os.environ.get("CUDA_DISABLE_PTX_JIT") == "1"}
-    failures: list[str] = result["failures"]
-    started = time.perf_counter()
-    try:
-        result["stage"] = "import_torch"
-        import torch
-
-        torch.zeros(1, device="cuda").add_(1).item()  # 初始化 CUDA，让 cudnn / cublas 的加载先于 CT2
-        result["torch"] = {"version": torch.__version__, "cuda": torch.version.cuda,
-                           "cudnn_version": torch.backends.cudnn.version(),
-                           "device": torch.cuda.get_device_name(0),
-                           "capability": list(torch.cuda.get_device_capability(0)),
-                           "arch_list": torch.cuda.get_arch_list()}
-        modules_after_torch = smokelib.modules_matching(LIB_PREFIXES)
-
-        result["stage"] = "import_ct2"
-        import ctranslate2
-        import faster_whisper
-        from faster_whisper import WhisperModel
-
-        result["ct2"] = {"version": ctranslate2.__version__, "faster_whisper": faster_whisper.__version__,
-                         "cuda_device_count": ctranslate2.get_cuda_device_count(),
-                         "supported_compute_types_cuda": sorted(ctranslate2.get_supported_compute_types("cuda"))}
-        from kototoki.asr_whisper import features, generate
-
-        result["stage"] = "prepare_input"
-        import numpy as np
-
-        frozen = json.loads(FROZEN_RUN.read_text(encoding="utf-8"))
-        trace = frozen["asr_traces"][WINDOW_INDEX]
-        options = frozen["effective_parameters"]["asr"]["options"]
-        audio, pcm_sha = read_pcm(AUDIO)
-        result["pcm_sha256_matches_frozen_input"] = pcm_sha == frozen["input"]["pcm_sha256"]
-        if not result["pcm_sha256_matches_frozen_input"]:
-            failures.append("audio pcm_sha256 differs from the frozen run input")
-            raise RuntimeError("input identity mismatch")
-        mel_sha = hashlib.sha256(MEL_PATH.read_bytes()).hexdigest()
-        if mel_sha != MEL_SHA256:
-            failures.append("mel_filters.npz sha256 differs from the pinned W0 filterbank")
-            raise RuntimeError("mel asset mismatch")
-        with np.load(MEL_PATH, allow_pickle=False) as archive:
-            filters = torch.from_numpy(archive["mel_128"].copy())
-        window = audio[trace["start_sample"]:trace["end_sample"]]
-        mel = features(window, filters)
-        feature_sha = hashlib.sha256(mel.tobytes()).hexdigest()
-        result["feature"] = {"window_samples": int(len(window)), "mel_shape": list(mel.shape),
-                             "feature_sha256": feature_sha,
-                             "feature_sha256_equal_frozen": feature_sha == trace["feature_sha256"]}
-
-        result["stage"] = "load_model"
-        started_load = time.perf_counter()
-        model = WhisperModel(str(MODEL_PATH), device="cuda", device_index=0, compute_type="float16",
-                             local_files_only=True, cpu_threads=4)
-        if model.model.device != "cuda" or model.model.compute_type != "float16":
-            failures.append("model is not running CUDA float16")
-        result["model_load_s"] = round(time.perf_counter() - started_load, 3)
-
-        result["stage"] = "decode"
-        started_decode = time.perf_counter()
-        decoded = generate(model, mel, options)
-        result["decode_s"] = round(time.perf_counter() - started_decode, 3)
-        tokens = decoded.pop("tokens")
-        decoded.pop("text", None)  # 不保留任何转写文本
-        expected = trace["tokens"]
-        first_diff = next((i for i, (a, b) in enumerate(zip(tokens, expected)) if a != b), None)
-        if first_diff is None and len(tokens) != len(expected):
-            first_diff = min(len(tokens), len(expected))
-        result["decode"] = {"token_count": len(tokens), "frozen_token_count": len(expected),
-                            "tokens_equal_frozen": tokens == expected, "first_differing_index": first_diff,
-                            "tokens_sha256": hashlib.sha256(json.dumps(tokens).encode()).hexdigest(),
-                            "prompt_equal_frozen": decoded["prompt"] == trace["prompt"],
-                            "avg_logprob": decoded["avg_logprob"]}
-        if not tokens:
-            failures.append("decode produced no tokens")
-
-        result["stage"] = "inspect_modules"
-        nvidia_dir = os.path.realpath(Path(torch.__file__).parent.parent / "nvidia")
-        loaded = smokelib.modules_matching(LIB_PREFIXES)
-        outside = [path for path in loaded if not os.path.realpath(path).startswith(nvidia_dir + os.sep)]
-        names = [Path(path).name for path in loaded]
-        result["cuda_libs"] = {
-            "nvidia_dir": nvidia_dir,
-            "loaded": loaded,
-            "loaded_after_torch_only": [Path(path).name for path in modules_after_torch],
-            "new_after_ct2": sorted(set(names) - set(Path(p).name for p in modules_after_torch)),
-            "duplicate_names": sorted({name for name in names if names.count(name) > 1}),
-            "outside_nvidia_dir": outside,
-        }
-        if not loaded:
-            failures.append("no cudnn/cublas/cudart library loaded")
-        if outside:
-            failures.append(f"{len(outside)} CUDA librar(ies) loaded from outside site-packages/nvidia")
-        result["stage"] = "done"
-        result["ok"] = not failures
-    except Exception as error:  # noqa: BLE001 - 记录阶段与错误，父进程负责分类
-        failures.append(f"{type(error).__name__} at stage {result['stage']}: {error}")
-        result["error"] = {"type": type(error).__name__, "message": str(error)[:500], "stage": result["stage"]}
-    result["child_elapsed_s"] = round(time.perf_counter() - started, 3)
-    (out / f"{NAME}.child-{tag}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(CHILD_PREFIX + json.dumps(result, ensure_ascii=False), flush=True)
-    return 0 if result["ok"] else 1
-
-
-# ---------------------------------------------------------------- 父进程
-
-def run_child(tag: str, extra_env: dict[str, str], out: Path) -> dict[str, Any]:
-    env = dict(os.environ)
-    env.update(extra_env)
-    command = [sys.executable, "-X", "utf8", str(Path(__file__).resolve()), "--child", tag, "--out", str(out)]
-    started = time.perf_counter()
-    try:
-        completed = subprocess.run(command, cwd=smokelib.REPO, env=env, capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace", timeout=CHILD_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        return {"tag": tag, "ok": False, "failures": [f"child timed out after {CHILD_TIMEOUT_S}s"], "wall_s": CHILD_TIMEOUT_S}
-    lines = [line for line in completed.stdout.splitlines() if line.startswith(CHILD_PREFIX)]
-    wall = round(time.perf_counter() - started, 3)
-    if not lines:
-        tail = completed.stdout[-1500:]  # 子进程崩溃时保留尾部输出以便诊断（其中只有日志与异常）
-        return {"tag": tag, "ok": False, "exit_code": completed.returncode, "wall_s": wall,
-                "failures": [f"child produced no result line (exit {completed.returncode})"], "output_tail": tail}
-    child = json.loads(lines[-1][len(CHILD_PREFIX):])
-    child.update(exit_code=completed.returncode, wall_s=wall)
-    return child
-
-
-def classify_nojit(child: dict[str, Any]) -> str:
-    if child.get("ok"):
-        return "native_sm120_kernels"
-    error = child.get("error") or {}
-    if error.get("stage") in ("load_model", "decode") and NO_KERNEL_PATTERN.search(error.get("message", "")):
-        return "relies_on_ptx_jit"
-    return "inconclusive_failure"
-
-
-def package_lib_listing() -> dict[str, Any]:
-    """不导入 ctranslate2，直接列出其 wheel 附带的共享库名称。"""
-    spec = importlib.util.find_spec("ctranslate2")
-    if spec is None or not spec.submodule_search_locations:
-        return {"found": False}
-    package_dir = Path(list(spec.submodule_search_locations)[0])
-    roots = [package_dir, package_dir.parent / "ctranslate2.libs"]
-    listing = {str(root.name): sorted(item.name for item in root.glob("*.so*")) for root in roots if root.is_dir()}
-    shipped = sorted(name for names in listing.values() for name in names if name.startswith(LIB_PREFIXES))
-    return {"found": True, "package_dir": str(package_dir), "libs": listing, "ships_cuda_runtime_libs": shipped}
+MODELS = smokelib.REPO / ".local/models"
+SECONDS = 5
 
 
 def main() -> int:
-    args_list = sys.argv[1:]
-    child_tag = None
-    if "--child" in args_list:  # --child <tag> 由本脚本自行取走，其余交给 smokelib.parse_args
-        index = args_list.index("--child")
-        child_tag = args_list[index + 1]
-        del sys.argv[index + 1:index + 3]  # sys.argv[0] 是脚本名，故偏移 +1
     args = smokelib.parse_args("Smoke: torch first, then CTranslate2 / faster-whisper on CUDA.")
-    if child_tag is not None:
-        return child_main(child_tag, args.out)
-
     timer = smokelib.Timer()
     failures: list[str] = []
     result: dict[str, Any] = {"passed": False, "versions": smokelib.package_versions(
-        "torch", "ctranslate2", "faster-whisper", "transformers", "numpy", "torchaudio"), "device": "unavailable",
-        "failures": failures}
-    result["ctranslate2_wheel"] = package_lib_listing()
+        "torch", "ctranslate2", "faster-whisper", "numpy"), "failures": failures}
 
-    children: dict[str, dict[str, Any]] = {}
-    for tag, extra_env in CHILDREN:
-        children[tag] = run_child(tag, extra_env, args.out)
-    result["children"] = {tag: {key: value for key, value in child.items() if key != "cuda_libs"} for tag, child in children.items()}
-    cold, warm, nojit = children["cold"], children["warm"], children["nojit"]
-    for tag in ("cold", "warm"):
-        if not children[tag].get("ok"):
-            failures.append(f"child {tag} failed: " + "; ".join(children[tag].get("failures", [])))
-    for tag in ("cold", "warm"):
-        libs = children[tag].get("cuda_libs")
-        if libs:
-            result.setdefault("cuda_libs", {})[tag] = libs
-    first = cold if cold.get("torch") else warm
-    if first.get("torch"):
-        result["device"] = first["torch"]["device"]
-        result["torch_runtime"] = {key: first["torch"][key] for key in ("version", "cuda", "cudnn_version", "capability", "arch_list")}
-    if first.get("ct2"):
-        result["ct2_runtime"] = first["ct2"]
-    result["timings_s"] = {tag: {"model_load_s": child.get("model_load_s"), "decode_s": child.get("decode_s"),
-                                 "wall_s": child.get("wall_s")} for tag, child in children.items()}
-    result["ptx_jit"] = {"finding": classify_nojit(nojit), "nojit_child_ok": bool(nojit.get("ok")),
-                         "nojit_error": nojit.get("error")}
-    result["decode_matches_frozen"] = {tag: (child.get("decode") or {}).get("tokens_equal_frozen")
-                                       for tag, child in children.items()}
-    result["feature_sha_matches_frozen"] = {tag: (child.get("feature") or {}).get("feature_sha256_equal_frozen")
-                                            for tag, child in children.items()}
+    torch.zeros(1, device="cuda").add_(1).item()  # 初始化 CUDA，让 cudnn／cublas 先由 torch 加载
+    result["device"] = torch.cuda.get_device_name(0)
+    result["torch"] = {"cuda": torch.version.cuda, "cudnn_version": torch.backends.cudnn.version(),
+                       "capability": list(torch.cuda.get_device_capability(0))}
+    after_torch = {Path(path).name for path in smokelib.modules_matching(LIB_PREFIXES)}
+
+    import numpy as np
+    from kototoki.asr_whisper import WhisperAsr  # 模块内先 torch 后 ctranslate2
+
+    started = time.perf_counter()
+    asr = WhisperAsr(MODELS / "faster-whisper-large-v3", MODELS / "w0-assets")
+    result["model_load_s"] = round(time.perf_counter() - started, 3)
+    result["model"] = {key: asr.metadata[key] for key in ("device", "compute_type")}
+
+    t = np.arange(SECONDS * 16000, dtype=np.float32) / 16000
+    audio = (0.1 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    started = time.perf_counter()
+    window = {"start": 0.0, "end": float(SECONDS), "start_sample": 0, "end_sample": len(audio)}
+    _, traces, window_failures = asr.transcribe(audio, [window])
+    result["decode_s"] = round(time.perf_counter() - started, 3)
+    if window_failures:
+        failures.append(f"decode failed: {window_failures[0][1][:300]}")
+    else:
+        result["token_count"] = len(traces[0]["tokens"])
+
+    nvidia_dir = os.path.realpath(Path(torch.__file__).parent.parent / "nvidia")
+    loaded = smokelib.modules_matching(LIB_PREFIXES)
+    outside = [path for path in loaded if not os.path.realpath(path).startswith(nvidia_dir + os.sep)]
+    result["cuda_libs"] = {"loaded": [Path(path).name for path in loaded],
+                           "new_after_ct2": sorted({Path(path).name for path in loaded} - after_torch),
+                           "outside_nvidia_dir": outside}
+    if not loaded:
+        failures.append("no cudnn/cublas/cudart library loaded")
+    if outside:
+        failures.append(f"{len(outside)} CUDA librar(ies) loaded from outside site-packages/nvidia")
     result["elapsed_s"] = round(time.perf_counter() - timer.started, 3)
     result["passed"] = not failures
     return smokelib.finish(args.out, NAME, result)

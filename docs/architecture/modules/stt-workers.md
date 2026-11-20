@@ -116,10 +116,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
   - 产出能被 `cues.build_cues` 消费；offset 0 整链的 `align.json`、`ja-cues.json`、`ja.srt` 字节钉成 sha256（`CueChainBytesTest`）。
   - 壳导入不加载推理库；三壳 logger 名钉在 `kototoki.workers.<stage>`（`WorkerLoggerNameTest`）；日志不含窗口文字；已知无害告警的过滤只丢 TF32 那一条（`KnownWarningFilterTest`）。
   - ASR 与 `cross` 的用例见 [STT ASR](stt-asr.md#代码与验证入口)。
-- 冻结窗口门禁（真实模型验证，占 GPU，须用户批准，不属于任何测试层与 gate）：`just smoke stt_frozen_window`（`scripts/smoke/stt_frozen_window.py`）与 `just smoke x0_frozen_window`（`scripts/smoke/x0_frozen_window.py`，复用前者的 `child_env`、`run_stage`、`compare`）。
-  - 由 `scripts/smoke/run_all.py` 持锁启动，结果写 `.local/smoke/<UTC>/`；没有 `.local/gpu.lock` 时脚本拒绝运行。
-  - 在 300 s 冻结窗口上跑三阶段，与 W0／X0 demo 的对照逐窗比较边界、文字与 token、unit 范围与时间。
-  - `x0_frozen_window` 只放行一处已接受的环境差异（窗口 0 的单个 token），结果记 `accepted_difference`，其它差异仍不通过；规则写在脚本头部。
+- 真实模型路径由小批量 `just subtitles` 验证；对照研究期冻结窗口的门禁已随 ADR-0034 删除，不再与 W0／X0 demo 逐 token 比对。
 - 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 
 ## 变更与决策来源
