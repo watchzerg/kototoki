@@ -26,7 +26,7 @@
 - **W0／X0 demo 的 CLI 旧默认**：省略参数时仍落到旧 PyanNet／fixed30，须显式选择新 Pyannote（[0003](adr/0003-new-pyannote-baselines.md)）。
 - ~~产品与基线 Q3 不一致~~（2026-11-09 提出，同日由 [0029](adr/0029-translate-per-cue-resolution.md)「Strata session」 关闭：产品建表切到 Strata，规则与 Q3 逐字节一致；翻译仍是 `q2-degrade-v1`＝Q2 规则＋降级）。
 - **未裁定或未验证**：
-  - Q2 在产品里曾每包约 16 s（v12 F1 的 6 倍），原因是启动时整机内存不够放下专家区、引擎退到 mmap；专家锁进内存后整片重跑每包约 3.1 s（2026-11-08，[翻译子系统模块页](architecture/modules/translation-subsystem.md#代码与验证入口)）；产品已改为启动前等可用内存、ready 后确认专家全部锁进内存、退到 mmap 即拒绝（[0029](adr/0029-translate-per-cue-resolution.md)「Strata session」），因此需要约 52 GiB 可用内存；同 seed 跨 Strata 启动不可复现；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
+  - Q2 在产品里曾每包约 16 s（v12 F1 的 6 倍），原因是启动时整机内存不够放下专家区、引擎退到 mmap；专家锁进内存后整片重跑每包约 3.1 s（2026-11-08，[翻译子系统模块页](architecture/modules/translation-subsystem.md#代码与验证入口)）；产品已改为启动前等可用内存、ready 后确认专家全部锁进内存、退到 mmap 即拒绝（[0029](adr/0029-translate-per-cue-resolution.md)「Strata session」），因此需要约 50 GiB 可用内存（2026-11-20 按 Linux 实测重标）；同 seed 跨 Strata 启动不可复现；产品进程被强杀时 Strata 可能留在后台，须手动 `strata launch --stop`；
   - 给新 SRT 生成 Q1／Q2／Q3 翻译配方已有 `v13.write_q2`；用 Q3 规则建表的通用入口自 0022 起是产品的 names 阶段（研究侧 v13 仍只覆盖固定输入）；Q3 的产品结果只来自一次建表，同一部片两次建表写法 Jaccard 只有 0.56／0.48（[0021](adr/0021-q3-strata-names-baseline.md)）；
   - 同 seed 输出不确定的噪声底没有量化（[v11](../research/2026-10-q-line-v9-v11/README.md) §8 第 5 项；2026-11-11 裁定不做 A/A 重跑，同 seed 配对比较的结论继续带这层噪声读）；
   - `cross` 尚未在新素材上确认（[0003](adr/0003-new-pyannote-baselines.md)「产品 STT 引擎」）；
