@@ -145,7 +145,12 @@ Type: research
    - `test_media_ffmpeg` 的时间戳跳变夹具从 2.048 s 移到 2.112 s：ffmpeg 8.0 的 FLAC 编码器按 4608 样本打包，不在包边界的跳变会推迟到下一个包；
    - `test_job` 的 `test_same_kind_of_failure_gets_one_traceback` 原本依赖两个并发提取的完成顺序，偶发失败，改为与顺序无关；
    - `just gate-core`（780 个用例）与 `just test-full`（20 个用例）都通过；文档已同步。
-4. 进程：`procs.py` 的 starttime 和子进程随父退出、`job.py` 的中断路径、full 层测试。
+4. ~~进程~~：已完成（2026-11-20）。
+   - `procs.py` 删掉 ctypes／Job Object：`pid_alive` 用 `os.kill(pid, 0)`，`process_created` 读 `/proc/<pid>/stat` 的 starttime；
+   - 新增 `contained(command)`：子进程经 `setpriv --pdeathsig KILL` 启动（不用 `preexec_fn`，因为提取线程池在，多线程下不安全）；GPU worker 与 Strata CLI 另开进程组，ffmpeg 留在前台进程组，Ctrl+C 让它立即退出；ADR-0034 相应补了这两处细节；
+   - `media`、`job`、`strata` 的子进程都经它启动；`nvidia-smi` 去掉 `CREATE_NO_WINDOW`，`decode` 日志的命令行改用 `shlex.join`；
+   - 新增 core 用例（`/proc` 解析、pid 复用）与 full 用例 `test_procs_children`（强杀父进程后子进程结束、不在同一进程组）；
+   - 未验证：整批运行中强杀编排器后 GPU worker 释放显存（属拆票 8 验收）。
 5. Strata 适配：CLI 路径、XDG 日志目录、按 Linux 日志重写专家区核对、`/proc/meminfo`、版本只锁 0.2、重新标定内存阈值。
 6. smoke 脚本的 Linux 化（`smokelib`、`ct2_after_torch`）。
 7. 文档全面同步、`justfile`（删 pwsh 写法，`gate-full` 接 `with_lock.py`）、`workflow.md` 长任务改 `systemd-run --user`。

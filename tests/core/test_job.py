@@ -92,7 +92,6 @@ class JobCase(unittest.TestCase):
         self.empty_cues: set[str] = set()  # 相对路径：伪 cue 构建给出零条目 `ja.srt`
         self.enterContext(mock.patch("kototoki.job.cues.build_cues", side_effect=self._build_cues))
         self.enterContext(mock.patch("kototoki.job.gpu.verify_models", return_value=FAKE_MODELS))
-        self.enterContext(mock.patch("kototoki.job.contain_children"))  # 不把测试进程放进 Job Object
 
         # 假 Strata 共享 session（属性 patch `kototoki.strata.Session`）：构造不启动，第一次
         # `ensure_started` 才"启动"（记 session_enter、回调 pid），`stop`／退出上下文记 session_exit。
@@ -373,9 +372,9 @@ class ScanTests(JobCase):
         self.assertFalse(self.work_dir("b.mkv").exists())
         self.assertFalse((self.work_root / artifacts.LOCK).exists())
 
-    def test_job_object_failure_releases_the_work_lock(self) -> None:
+    def test_early_failure_releases_the_work_lock(self) -> None:
         self.make_inputs("a.mkv")
-        with mock.patch("kototoki.job.contain_children", side_effect=OSError(5, "CreateJobObjectW failed")), \
+        with mock.patch("kototoki.job.artifacts.record_input", side_effect=OSError(28, "No space left on device")), \
                 self.assertRaises(OSError):
             self.run_job()
         self.assertFalse((self.work_root / artifacts.LOCK).exists())

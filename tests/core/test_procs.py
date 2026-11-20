@@ -1,6 +1,7 @@
 """进程原语（`kototoki.procs`）离线测试：`ProcessLock` 的取锁、残留锁、破锁、并发、`update` 与 `release`。
 
-持有者是否存活经 `alive=` 注入，不启动真实进程；Job Object 与 Windows 进程身份只经 `tests/core/test_job.py` 的整批运行间接覆盖。
+持有者是否存活经 `alive=` 注入，不启动真实进程；进程身份只读本进程的 `/proc`。子进程随编排器退出的真实路径在
+`tests/full/test_procs_children.py`。
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from kototoki import procs
 from kototoki.procs import LockError, ProcessLock
 
 OTHER_PID = 424242
@@ -137,6 +139,29 @@ class ProcessLockTests(unittest.TestCase):
         lock.release()
         self.assertFalse(self.path.exists())
         self.assertFalse(lock.held)
+
+
+
+class ProcessIdentityTests(unittest.TestCase):
+    def test_start_time_identifies_this_process(self) -> None:
+        created = procs.process_created(os.getpid())
+        self.assertIsInstance(created, int)
+        self.assertTrue(procs.process_matches(os.getpid(), created))
+        self.assertFalse(procs.process_matches(os.getpid(), created + 1))  # 同 pid、不同启动时间：pid 被复用
+
+    def test_comm_with_spaces_and_parens_is_skipped(self) -> None:
+        stat = "4242 (a) b (c) S 1 4242 4242 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 777 0 0"
+        with mock.patch.object(procs.Path, "read_text", return_value=stat):
+            self.assertEqual(procs.process_created(4242), 777)
+
+    def test_missing_or_invalid_pid_has_no_identity(self) -> None:
+        for pid in (0, -1, "1", None):
+            self.assertIsNone(procs.process_created(pid))
+            self.assertFalse(procs.pid_alive(pid))
+
+    def test_contained_prefixes_setpriv(self) -> None:
+        self.assertEqual(procs.contained(["ffmpeg", "-version"]),
+                         ["setpriv", "--pdeathsig", "KILL", "--", "ffmpeg", "-version"])
 
 
 if __name__ == "__main__":

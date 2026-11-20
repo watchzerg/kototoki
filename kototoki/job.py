@@ -23,7 +23,7 @@
 
 工作根 `<work_dir>/<目标目录键>/`（`artifacts.work_root`，ADR-0007「工作目录」）。锁：启动即取工作根下的 `lock`；第一个需要 GPU 的阶段前取 `.local/gpu.lock`，持有到翻译结束，
 锁文件记录编排器、当前 worker 与 Strata 服务的 pid。破除死锁只认 `KOTOTOKI_BREAK_STALE_LOCK=1`。
-锁、Job Object 与进程身份是基础层 `kototoki/procs.py` 的进程原语（复制自 `experiments/translation_v3/procs.py`，不导入）。
+锁、进程身份与子进程随编排器退出（`contained`）是基础层 `kototoki/procs.py` 的进程原语。
 
 模块页：docs/architecture/modules/batch-orchestration.md。
 """
@@ -50,7 +50,7 @@ from kototoki.config import REPO_ROOT, Config
 from kototoki.logs import RunFormatter
 from kototoki.names import BuildResult
 from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
-from kototoki.procs import LockError, ProcessLock, contain_children
+from kototoki.procs import LockError, ProcessLock, contained
 from kototoki.translate import TranslatePlan
 from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, classify_launch, write_jobs
@@ -436,8 +436,9 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
     stderr_path = root / f"run-{ctx.stamp}-{stage}.stderr.log"
     with stderr_path.open("ab") as stderr:
         offset = stderr.tell()
-        process = subprocess.Popen(ctx.worker_command(stage, jobs_path), stdout=subprocess.PIPE, stderr=stderr,
-                                   stdin=subprocess.DEVNULL, env=child_env(config), cwd=REPO_ROOT)
+        process = subprocess.Popen(contained(ctx.worker_command(stage, jobs_path)), stdout=subprocess.PIPE,
+                                   stderr=stderr, stdin=subprocess.DEVNULL, env=child_env(config), cwd=REPO_ROOT,
+                                   start_new_session=True)
         try:
             ctx.gpu_lock.update(worker_pid=process.pid, worker_stage=stage)
             assert process.stdout is not None
@@ -712,7 +713,6 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
     except LockError as error:
         raise WorkLocked(str(error)) from error
     try:
-        contain_children()
         artifacts.record_input(root, input_dir)
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"input_dir": str(input_dir)})

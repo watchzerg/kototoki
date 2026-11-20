@@ -4,7 +4,7 @@
 
 ## 定位与阅读
 
-负责三块基础设施：产品运行日志的目的地、行格式、级别与内容规则（`kototoki/logs.py` 的格式，挂接在 `job._run_logging`）；进程原语——进程存活与身份、KILL_ON_JOB_CLOSE Job Object、O_EXCL 锁文件（`kototoki/procs.py`）；编排启动 GPU worker 子进程的命令、环境与崩溃判定（`job._launch`、`job.run_gpu_stage`、`workers/protocol.classify_launch`）。流程中何时取哪把锁、哪些文件进哪个阶段归[批次编排](batch-orchestration.md)；worker 内部归 [STT worker](stt-workers.md)；各模块具体写哪些日志行见各自模块页。模块边界只规定日志目的地与格式归编排（[责任边界](../module-boundaries.md#产品包的责任边界)），本页是这些规则的正文。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+负责三块基础设施：产品运行日志的目的地、行格式、级别与内容规则（`kototoki/logs.py` 的格式，挂接在 `job._run_logging`）；进程原语——进程存活与身份、子进程随编排器退出、O_EXCL 锁文件（`kototoki/procs.py`）；编排启动 GPU worker 子进程的命令、环境与崩溃判定（`job._launch`、`job.run_gpu_stage`、`workers/protocol.classify_launch`）。流程中何时取哪把锁、哪些文件进哪个阶段归[批次编排](batch-orchestration.md)；worker 内部归 [STT worker](stt-workers.md)；各模块具体写哪些日志行见各自模块页。模块边界只规定日志目的地与格式归编排（[责任边界](../module-boundaries.md#产品包的责任边界)），本页是这些规则的正文。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
@@ -30,7 +30,7 @@
   ```
 
   文件级失败的 ERROR 行带异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；不带 traceback 的 FAILED 行（同类失败已记过、Strata 不可用之后、worker 崩溃或启动失败）改为 `<类型>: <异常消息首行>`（截到 200 字符），例 `[publish] FAILED S1/ep02.mkv: OSError: [WinError 17] …`。失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`，没有 traceback 也没有消息。
-- **文件**：`<work root>/run-<UTC戳>.log` 与控制台逐行相同，是权威副本。控制台流的编码取决于调用方，产品不改（batch-run-fixes 06.5）：pwsh `*>` 重定向时按 `[Console]::OutputEncoding`（新开的 pwsh 默认 OEM 代码页）解码子进程输出，设了 `PYTHONUTF8=1` 非 ASCII 文件名也乱码；重定向前先设 `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`（2026-11-17 本机验证）。`<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后只读本次追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计：裸 traceback、tqdm 残行与 torch 的 `W1109 20:31:52…` 这类 glog 行都不计。Strata session 的证据（接入身份、资源峰值、停止核实）另在 `<work root>/strata-sessions/`（[翻译子系统](translation-subsystem.md)）。
+- **文件**：`<work root>/run-<UTC戳>.log` 与控制台逐行相同，是权威副本。控制台流的编码取决于调用方，产品不改（batch-run-fixes 06.5）。`<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后只读本次追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计：裸 traceback、tqdm 残行与 torch 的 `W1109 20:31:52…` 这类 glog 行都不计。Strata session 的证据（接入身份、资源峰值、停止核实）另在 `<work root>/strata-sessions/`（[翻译子系统](translation-subsystem.md)）。
 - **内容**：
   1. 转写、cue 与窗口文字、译文、专名表条目与 `work_guess`、提示词、grammar、模型响应正文不进任何日志；失败窗口只记序号与 reason。
   2. 带 traceback 的失败行只记异常类型，traceback 随后：源码行加末行的 `<类型>: <异常消息>`（消息可能含文件路径，不含转写；校验消息是固定文本，如 `Duplicate JSON key` 不带键名）；异常消息不做通用截断。把异常首行嵌进一行日志的地方都截到 200 字符：不带 traceback 的 FAILED 行（`job._Context.fail`）；翻译的批次尝试失败行、Strata 重启行、放弃行与 `Strata refused` 行（`kototoki/translate/generate.py`）；`[strata] start failed` 与 `unavailable` 行（`kototoki/strata.py`）；names 的尝试失败行（`kototoki/names/table.py`）与 `count_tokens` 不可用行（`kototoki/names/__init__.py`，`build.prompt_check` 仍记 300 字符）。翻译子系统的"意外异常"行不带 traceback，由编排的 FAILED 行带。
@@ -49,15 +49,15 @@
 
 ### 进程原语
 
-- **进程身份**：`pid_alive(pid)`（Windows 上 `OpenProcess` 被拒绝即视为存在；非整数或非正 pid 视为不存在）；`process_created(pid)` 取进程创建时间（Windows FILETIME，不可得时为 None）；`process_matches(pid, created)` 要求进程存活，且记录了创建时间时仍是同一进程（防 pid 复用）。
-- **Job Object**：`contain_children()` 把当前进程放进 KILL_ON_JOB_CLOSE Job Object，此后启动的子进程自动加入；句柄只由本进程持有、从不显式关闭，进程以任何方式退出时系统关闭句柄，子进程随之结束。每个进程只做一次；非 Windows 平台不做；建立失败抛 `OSError`。
+- **进程身份**：`pid_alive(pid)`（`os.kill(pid, 0)`；`PermissionError` 即别的用户的进程，视为存在；非整数或非正 pid 视为不存在）；`process_created(pid)` 取进程启动时间（`/proc/<pid>/stat` 第 22 个字段，开机以来的 clock tick；不可得时为 None）；`process_matches(pid, created)` 要求进程存活，且记录了启动时间时仍是同一进程（防 pid 复用）。
+- **子进程随编排器退出**（[ADR-0034](../../adr/0034-ubuntu-only-platform.md#子进程与长任务)）：`contained(command)` 在命令前加 `setpriv --pdeathsig KILL --`。创建子进程的线程一退出（含编排器被 SIGKILL），内核就向子进程发 SIGKILL；调用方因此在同一线程里等子进程结束。不用 `preexec_fn`（提取线程池在，多线程下不安全）。GPU worker 与 Strata CLI 另传 `start_new_session=True`，Ctrl+C 只到编排器、由它回收；ffmpeg 留在前台进程组，Ctrl+C 让它立即退出。Strata 服务是 CLI 再 fork 出的，不继承 PDEATHSIG，靠 `--stop` 收尾。
 - **锁文件**（`ProcessLock(path, kind, info)`）：
   - `acquire` 用 O_EXCL 创建锁文件，写入 `pid`、`pid_created`、调用方的 `info`、`owner: "kototoki"`、`created_at_utc` 与 `replaced_stale_lock`。
   - 已有锁文件时：持有者存活（`process_matches`）即抛 `LockError`，从不抢占存活的持有者；没有 `pid_created` 的外部锁只按 pid 判断。
   - 残留锁（死 pid，或空的／无法解析的／pid 不是整数的锁文件）默认抛 `LockError`，消息提示 `KOTOTOKI_BREAK_STALE_LOCK=1`；`acquire(break_stale=True)` 时删除残留锁再创建，旧内容记入 `replaced_stale_lock`。
   - 并发创建撞上即抛 `LockError`。
   - `update(**fields)` 只在持有且锁文件仍属本进程时原子改写；`release()` 只删 pid 与创建时间都与本进程相同的锁。
-  - 编排经 `update` 往 GPU 锁写附加字段：worker 运行期间 `worker_pid`／`worker_stage`（`Popen.pid`；用 venv 的 `python.exe` 启动时这是启动器进程，真正的 worker 是它的子进程）；Strata 运行期间 `server_pid`（由共享 `strata.Session` 的 `on_server_pid` 回调提供：ready 后写入、停止后清空；pid 取自 `strata launch --status`，缺失时不记）。
+  - 编排经 `update` 往 GPU 锁写附加字段：worker 运行期间 `worker_pid`／`worker_stage`（`Popen.pid`，`setpriv` exec 后即 worker 本身）；Strata 运行期间 `server_pid`（由共享 `strata.Session` 的 `on_server_pid` 回调提供：ready 后写入、停止后清空；pid 取自 `strata launch --status`，缺失时不记）。
 
 ### worker 子进程
 
@@ -83,20 +83,20 @@
 
 ## 接口与依赖
 
-`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库、`ctypes` 与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contain_children`）与 `kototoki.workers.gpu`（`RunFormatter`）。`procs` 复制自 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/procs.py`，不导入；`job` 从它导入，测试以 `mock.patch("kototoki.job.contain_children")` 替换。
+`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contained`）、`kototoki.media` 与 `kototoki.strata`（`contained`）、`kototoki.workers.gpu`（`RunFormatter`）。
 
 ## 代码与验证入口
 
-- 代码：`kototoki/logs.py`（`LOG_FORMAT`、`LOG_DATEFMT`、`RunFormatter`）、`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contain_children`、`ProcessLock`、`LockError`）；挂接与 worker 启动在 `kototoki/job.py`（`_run_logging`、`QUIET_ENV`、`child_env`、`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
+- 代码：`kototoki/logs.py`（`LOG_FORMAT`、`LOG_DATEFMT`、`RunFormatter`）、`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contained`、`ProcessLock`、`LockError`）；挂接与 worker 启动在 `kototoki/job.py`（`_run_logging`、`QUIET_ENV`、`child_env`、`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
 - 测试（core，`just test`）：
   - `tests/core/test_logs.py`：墙钟跳变时相对秒不跳、时间戳跟墙钟；第三方 logger 前缀。
   - `tests/core/test_protocol.py`：`classify_launch`（正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件）。
-  - `tests/core/test_procs.py`：锁内容、空锁文件与不可解析、无 `pid_created` 的外部锁、死 pid 与破锁、非整数 pid、并发创建、`update` 只改自己的锁、`release` 只删自己的锁。
-  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、cues 三件套（0 条为 WARNING）、翻译 done 行的耗时、`(resumed)` 与有未翻译时的 WARNING、`[plan]` 计数与 `(reused)`、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、同类失败（不同异常对象、同一抛出位置）只有一份 traceback 且其后行带消息、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志且运行后 `captureWarnings` 复原、告警与失败的级别、extract 三件套、媒体告警逐条 WARNING（含续跑跳过 extract）、补偿告警的阈值与续跑、失败行后的 traceback、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
-  - 同文件的 `LockTests`（锁冲突退出码、残留锁、空的／无法解析的锁、锁内 pid 记录）、`ScanTests`（Job Object 建立失败时释放工作根锁）、`IsolationTests`（崩溃文件隔离、按文件重启、`_launch` 异常时回收 worker）。
-- 测试（full，`just test-full`）：`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙断言 `job.compensation_warnings` 给出一行补入告警。
+  - `tests/core/test_procs.py`：锁内容、空锁文件与不可解析、无 `pid_created` 的外部锁、死 pid 与破锁、非整数 pid、并发创建、`update` 只改自己的锁、`release` 只删自己的锁；`/proc` 启动时间（含带空格与括号的 comm）与 pid 复用判定、`contained` 的命令前缀。
+  - `tests/core/test_job.py` 的 `RunLogTests`：文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、cues 三件套（0 条为 WARNING）、翻译 done 行的耗时、`(resumed)` 与有未翻译时的 WARNING、`[plan]` 计数与 `(reused)`、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、同类失败（不同异常对象、同一抛出位置）只有一份 traceback 且其后行带消息、首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志、告警与失败的级别、extract 三件套、媒体与补偿告警（含续跑）、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
+  - 同文件的 `LockTests`（锁冲突退出码、残留锁、空的／无法解析的锁、锁内 pid 记录）、`ScanTests`（早期失败时释放工作根锁）、`IsolationTests`（崩溃文件隔离、按文件重启、`_launch` 异常时回收 worker）。
+- 测试（full，`just test-full`）：`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙断言 `job.compensation_warnings` 给出一行补入告警；`tests/full/test_procs_children.py` 起真的父进程按产品方式启动子进程，强杀父进程后子进程随之结束，且子进程不在父进程的进程组里。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。
-- 真实路径：asr 阶段强杀编排器后 worker 随 Job Object 退出、残留锁默认拒绝，见[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)。
+- 未验证（Linux）：整批运行中强杀编排器后 GPU worker 释放显存的真实路径（Windows 时期的[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)只作历史）。
 
 ## 变更与决策来源
 

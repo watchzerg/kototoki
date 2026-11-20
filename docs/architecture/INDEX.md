@@ -13,7 +13,7 @@
 | 模块页 | 代码 | 职责 |
 | --- | --- | --- |
 | [批次编排](modules/batch-orchestration.md) | `kototoki/__main__.py`、`kototoki/job.py` | 唯一入口：扫描、阶段 × 整批调度、续跑、锁、发布到源文件旁 |
-| [运行日志、进程原语与 worker 子进程](modules/run-logging-and-processes.md) | `kototoki/logs.py`、`kototoki/procs.py` | 运行日志格式与规则、锁文件与 Job Object、GPU worker 启动与崩溃判定 |
+| [运行日志、进程原语与 worker 子进程](modules/run-logging-and-processes.md) | `kototoki/logs.py`、`kototoki/procs.py` | 运行日志格式与规则、锁文件与子进程随编排器退出、GPU worker 启动与崩溃判定 |
 | [阶段计划](modules/stage-plan.md) | `kototoki/plan.py` | 阶段链、各阶段产物与输入、模型清单、期望身份、下一个要跑的阶段 |
 | [产物契约](modules/artifact-contract.md) | `kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py` | 工作目录与产物身份、匹配跳过、原子替换、失败与发布记录、worker `--jobs` 协议 |
 | [配置、配方与媒体提取](modules/config-and-media.md) | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py` | 读配置、配方常量与 `recipe_hash`、选音轨与派生 WAV、内嵌字幕抽取与清洗 |

@@ -24,6 +24,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 from typing import IO, Any
 import wave
@@ -31,6 +32,7 @@ import wave
 from kototoki import recipes
 from kototoki.artifacts import AUDIO_16K, EXTRACT_LOG, replace_with_retry
 from kototoki.config import Config
+from kototoki.procs import contained
 
 # swr 在 -loglevel verbose 下报告的硬补偿（`async=1`）；样本数按输入采样率计。实测只报告一部分
 # （合成 2 s 间隙只报出约 0.63 s），因此另用 ffmpeg 结束统计的输入样本数算净补偿。
@@ -498,7 +500,7 @@ def ffmpeg_version(ffmpeg: Path) -> str:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
+    return subprocess.run(contained(command), stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
                           errors="replace", check=False)
 
 
@@ -507,9 +509,9 @@ def _run_decode(command: list[str], log_path: Path,
     """运行解码命令，stderr 流式经 `digest_decode_log` 写进 `log_path`（不整段读进内存）；返回退出码与
     `digest_decode_log` 的三项结果。"""
     with open(log_path, "w", encoding="utf-8", newline="\n") as log, \
-            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                             encoding="utf-8", errors="replace") as process:
-        log.write(f"$ {subprocess.list2cmdline(command)}\n")
+            subprocess.Popen(contained(command), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, encoding="utf-8", errors="replace") as process:
+        log.write(f"$ {shlex.join(command)}\n")
         assert process.stderr is not None
         try:
             kept, swr_samples, diagnostics = digest_decode_log(process.stderr, log, track)

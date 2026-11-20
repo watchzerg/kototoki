@@ -64,8 +64,8 @@
 ### 子进程与长任务
 
 1. **编排器以任何方式退出，ffmpeg 和 GPU worker 子进程都不能留下来占显存。**
-   - 子进程设 `PR_SET_PDEATHSIG`（SIGKILL），父进程一死就跟着结束；
-   - 子进程各自新开进程组，Ctrl+C 只由编排器处理，由它收尾；
+   - 子进程经 `setpriv --pdeathsig KILL` 启动（`PR_SET_PDEATHSIG`），父进程一死就跟着结束；不在 Python 里用 `preexec_fn`，因为编排器有提取线程池，`preexec_fn` 在多线程进程里不安全；
+   - GPU worker 与 Strata CLI 各自新开进程组，Ctrl+C 只由编排器处理，由它收尾；ffmpeg／ffprobe 留在前台进程组，Ctrl+C 让它们立即退出，提取线程池不必等整部影片解码完；
    - 锁文件防 pid 复用，改为比对 `/proc/<pid>/stat` 记下的进程启动时间（starttime）。
    - Strata 服务由 Strata 自己放在后台，仍靠 `strata launch --stop` 收尾，与以前相同。
 2. **长任务**（整批运行、smoke）推荐用 `systemd-run --user --unit=<名字>` 启动，日志进 journal，用 `systemctl --user status|stop` 查看与停止，停止时整组进程一并清理。

@@ -59,6 +59,7 @@ from kototoki import artifacts
 from kototoki.artifacts import atomic_write_json, utc_now
 from kototoki.config import Config
 from kototoki.local_client import InfraFailure, LlamaClient
+from kototoki.procs import contained
 
 __all__ = [
     "ARENA_LOCKED", "ENGINE_LOG_DIR", "HOST", "LAUNCH_ARGS", "LOG_DIR", "LOG_EVENTS", "MAX_START_FAILURES",
@@ -113,8 +114,7 @@ log = logging.getLogger(__name__)
 def nvidia_smi(query: str) -> int | None:
     try:
         result = subprocess.run(["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
-                                capture_output=True, text=True, timeout=10,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
     first = result.stdout.split()[0] if result.returncode == 0 and result.stdout.strip() else ""
@@ -157,8 +157,9 @@ def strata_cmd() -> str:
 
 
 def run_cli(*args: str, timeout: float = 120.0) -> str:
-    return subprocess.run([strata_cmd(), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          check=True, timeout=timeout, stdin=subprocess.DEVNULL).stdout
+    return subprocess.run(contained([strata_cmd(), *args]), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", check=True, timeout=timeout, stdin=subprocess.DEVNULL,
+                          start_new_session=True).stdout
 
 
 def http_get(url: str, timeout: float = 30.0) -> dict[str, Any]:
