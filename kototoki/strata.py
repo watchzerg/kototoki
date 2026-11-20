@@ -3,14 +3,14 @@
 中间层（与 `local_client` 同层，不属基础层）：起停 Strata 进程（`strata` CLI）、轮询空闲显存（`nvidia_smi`、
 `wait_for_free_vram`，ADR-0025 起从原 `llama_server.py` 并入本模块）、核对身份、持有整批共用的 session。
 `names` 与翻译子系统都单向依赖本模块；本模块不导入它们。Strata 的身份常量（模型名、版本、引擎 build、默认启动的
-解析值）也在这里，翻译配方与建表配方都从这里取值。
+解析值）也在这里，翻译配方与建表配方都从这里取值；版本只锁 0.2 线，实际版本只记录、不进配方身份（ADR-0034「Strata 版本」）。
 
 一次 `StrataServer` 即一个 session：
 
 - 进入：`strata launch --status` 必须没有任何正在服务的 launch（不抢占别人的 Strata，也不替别人停）；空闲显存
   达到 `MIN_FREE_MIB`（上一个 GPU worker 已退出、显存已释放）；可用内存达到 `MIN_AVAILABLE_RAM_GIB`（等满
   `RAM_WAIT_S` 仍不够只记 WARNING 照常启动）；执行 `strata launch --no-tui --model iq3_s`；轮询到唯一一个
-  ready 的 launch 后按 ADR-0021「Q3 服务与运行顺序」的接入检查核对身份（版本、端口 8080 本机、run config 的模型／`--max-context 131072`、
+  ready 的 launch 后按 ADR-0021「Q3 服务与运行顺序」的接入检查核对身份（版本属 0.2 线、端口 8080 本机、run config 的模型／`--max-context 131072`、
   本次启动在服务日志里写下的起草方式为 DFlash2、`/v1/models`、`/v1/status` 原生上下文 131072），不符即停掉并拒绝
   （`StrataRefused`）。
 
@@ -20,7 +20,8 @@
 
 专家区：Qwen3.8-Flash-Next IQ3_S 要把 46.84 GiB 专家常驻内存；内存不够时引擎退到 mmap、从 SSD 读专家，答案不变但
 读提示与生成都慢约 5 倍（2026-11-08 整片实测）。因此启动前先等可用内存，ready 后从本次启动写进
-`<name>.engine.log` 的新内容判断专家区：必须看到 `expert arena: locked`（全部专家锁进内存）且没有退到 mmap 的记录，
+`<name>.engine.log` 的新内容判断专家区：必须看到 `expert arena: cudaHostRegister … ok`（专家区登记为锁页内存，Linux 上
+的写法；Windows 时期是 `expert arena: locked`）且没有退到 mmap 的记录，
 否则停掉 Strata 并拒绝（`StrataRefused`，本批不再重试）；结果记进 `strata.json`。
 - 退出：只停自己启动的 launch：`strata launch --stop`，再核实 `--status` 为空、空闲显存回到 `MIN_FREE_MIB`；
   核实失败只记 ERROR 与 `strata-final.json`，不抛出（退出路径上不能盖住原异常）。
@@ -48,6 +49,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
 import time
@@ -62,19 +64,18 @@ from kototoki.local_client import InfraFailure, LlamaClient
 from kototoki.procs import contained
 
 __all__ = [
-    "ARENA_LOCKED", "ENGINE_LOG_DIR", "HOST", "LAUNCH_ARGS", "LOG_DIR", "LOG_EVENTS", "MAX_START_FAILURES",
+    "ARENA_IN_RAM", "ENGINE_LOG_DIR", "HOST", "LAUNCH_ARGS", "LOG_DIR", "LOG_EVENTS", "MAX_START_FAILURES",
     "MIN_AVAILABLE_RAM_GIB", "MIN_FREE_MIB", "MMAP_MARKERS", "MODEL", "POLL_S", "PORT", "RAM_WAIT_S",
-    "SESSIONS_DIR", "STATUS_ARGS", "STOP_ARGS", "STRATA_ENGINE_BUILD", "STRATA_LAUNCH", "STRATA_RESOLVED",
-    "STRATA_VERSION", "ResourceSampler", "Session", "StrataRefused", "StrataServer", "available_ram_gib",
+    "SESSIONS_DIR", "STATUS_ARGS", "STOP_ARGS", "STRATA_LAUNCH", "STRATA_RESOLVED",
+    "STRATA_SERIES", "ResourceSampler", "Session", "StrataRefused", "StrataServer", "available_ram_gib",
     "drafting_from_log", "expert_arena", "http_get", "log_events", "log_sizes", "nvidia_smi", "probe", "read_from",
-    "run_cli", "running", "strata_cmd", "wait_for_free_vram",
+    "run_cli", "running", "wait_for_free_vram",
 ]
 
 # Strata 服务身份（ADR-0021「Q3 服务与运行顺序」）：产品用 `strata launch --no-tui --model iq3_s` 启动，`probe` 逐项核对。
-# 翻译配方 `q3-translate-v1` 与建表配方 `q3-names-v3` 的运行时身份都取这里的值。
+# 翻译配方 `q3-translate-v1` 与建表配方 `q3-names-v3` 的运行时身份都取这里的值（不含 Strata 版本，ADR-0034「Strata 版本」）。
 MODEL = "qwen3.8-flash-next-iq3_s"
-STRATA_VERSION = "0.2.12"
-STRATA_ENGINE_BUILD = "0.1.58"
+STRATA_SERIES = "0.2"  # `strata --version` 须报 `strata 0.2.<…>`；实际版本与 build 记进 strata.json
 STRATA_LAUNCH = "default"
 STRATA_RESOLVED = {"command": "strata launch", "model": "iq3_s", "context": 131072, "vision": "cpu",
                    "parallel": "fit to the card", "drafting": "dflash2", "access": "local", "tune": "skip",
@@ -87,12 +88,13 @@ STOP_ARGS = ("launch", "--stop")
 STATUS_ARGS = ("launch", "--status", "--output", "json")
 # Strata 运行时几乎占满整卡（调优实测显存 15.6 GB）；上一个 GPU worker 退出后桌面只占 0.6–1.2 GB。
 MIN_FREE_MIB = 14000
-# 专家区 46.84 GiB＋分配专家区之前引擎已占的约 4.8 GiB（CPU 上的图片读取器等）＋余量。2026-11-08 实测：启动前可用
-# 50.4 GiB，到分配专家区时只剩 45.6 GiB，仍差 1.26 GiB 退到 mmap；2026-11-07 调优时可用 53.6 GiB 放得下。
+# 专家区 46.84 GiB＋分配专家区之前引擎已占的约 4.8 GiB（CPU 上的图片读取器等）＋余量。2026-11-08（Windows）实测：启动前
+# 可用 50.4 GiB，到分配专家区时只剩 45.6 GiB，仍差 1.26 GiB 退到 mmap；2026-11-07 调优时可用 53.6 GiB 放得下。
+# Linux 上待第一次产品运行的证据重新标定（ADR-0034「Strata 版本」第 4 点）。
 MIN_AVAILABLE_RAM_GIB = 52.0
 RAM_WAIT_S = 180.0
 MMAP_MARKERS = ("not enough RAM for the expert arena", "experts via mmap")
-ARENA_LOCKED = "expert arena: locked"
+ARENA_IN_RAM = re.compile(r"expert arena: cudaHostRegister \S+ ok")  # 2026-11-19 本机 iq3_s-128k.engine.log
 LAUNCH_TIMEOUT_S = 900.0   # 加载约 73 s（调优记录）；首次还可能编译／预热
 READY_TIMEOUT_S = 300.0
 STOP_TIMEOUT_S = 180.0
@@ -150,14 +152,8 @@ class StrataRefused(RuntimeError):
     """Strata 不能用于本批（已有别的 launch 在服务、身份与 ADR-0021「Q3 服务与运行顺序」不符、专家区未锁进内存、启动额度用尽）；重启无济于事，不重试。"""
 
 
-def strata_cmd() -> str:
-    """`strata` 在 PATH 上是 PowerShell 脚本，Python 子进程要用安装目录里的 `.cmd`。"""
-    path = Path(os.environ.get("LOCALAPPDATA", "")) / "Strata" / "terminal" / "current" / "bin" / "strata.cmd"
-    return str(path) if path.is_file() else "strata"
-
-
 def run_cli(*args: str, timeout: float = 120.0) -> str:
-    return subprocess.run(contained([strata_cmd(), *args]), capture_output=True, text=True, encoding="utf-8",
+    return subprocess.run(contained(["strata", *args]), capture_output=True, text=True, encoding="utf-8",
                           errors="replace", check=True, timeout=timeout, stdin=subprocess.DEVNULL,
                           start_new_session=True).stdout
 
@@ -169,7 +165,7 @@ def http_get(url: str, timeout: float = 30.0) -> dict[str, Any]:
 
 
 def running(cli: Callable[..., str]) -> list[dict[str, Any]]:
-    """`strata launch --status` 里正在服务的 launch（0.2.12 在 JSON 那一行之后还会打印一行给人看的文字）。"""
+    """`strata launch --status` 里正在服务的 launch（JSON 在第一行；0.2.12 之后还会打印一行给人看的文字）。"""
     return list(json.loads(cli(*STATUS_ARGS).strip().splitlines()[0]).get("running") or [])
 
 
@@ -195,9 +191,8 @@ def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str
     """
     want = STRATA_RESOLVED["context"]
     version = cli("--version").strip()
-    if f"strata {STRATA_VERSION} " not in version + " " or f"build {STRATA_ENGINE_BUILD}" not in version:
-        raise StrataRefused(f"Strata version differs from {STRATA_VERSION} / build {STRATA_ENGINE_BUILD}: "
-                            f"{version!r}")
+    if not version.startswith(f"strata {STRATA_SERIES}."):
+        raise StrataRefused(f"Strata must be on the {STRATA_SERIES} line: {version!r}")
     if launch.get("port") != PORT or launch.get("host") != HOST:
         raise StrataRefused(f"Strata launch must serve {HOST}:{PORT}, got {launch.get('host')!r}:{launch.get('port')!r}")
     config = json.loads(Path(launch["config"]).read_text(encoding="utf-8-sig")) if launch.get("config") else {}
@@ -222,8 +217,11 @@ def probe(launch: dict[str, Any], *, cli: Callable[..., str], get: Callable[[str
                                                   "vram", "machine")}}
 
 
-LOG_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Strata" / "runtime"
-ENGINE_LOG_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Strata" / "launch"
+# Strata 的状态目录 `$XDG_STATE_HOME/strata/`（默认 `~/.local/state/strata/`）：服务日志在 `runtime/`（Strata 认
+# `STRATA_RUNTIME_DIR` 覆盖），引擎日志在 `launch/`。
+_STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "strata"
+LOG_DIR = Path(os.environ.get("STRATA_RUNTIME_DIR") or _STATE_DIR / "runtime")
+ENGINE_LOG_DIR = _STATE_DIR / "launch"
 
 
 def log_sizes(log_dir: Path, pattern: str = "launch-*.server.log") -> dict[str, int]:
@@ -231,31 +229,22 @@ def log_sizes(log_dir: Path, pattern: str = "launch-*.server.log") -> dict[str, 
     return {p.name: p.stat().st_size for p in log_dir.glob(pattern)} if log_dir.is_dir() else {}
 
 
-def available_ram_gib() -> float | None:
-    """Windows 的可用物理内存（`GlobalMemoryStatusEx.ullAvailPhys`）；取不到为 None。"""
-    import ctypes
-
-    class Status(ctypes.Structure):
-        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
-                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
-    status = Status()
-    status.dwLength = ctypes.sizeof(Status)
+def available_ram_gib(meminfo: Path = Path("/proc/meminfo")) -> float | None:
+    """可用内存（`/proc/meminfo` 的 `MemAvailable`，含可回收的页缓存）；取不到为 None。"""
     try:
-        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-            return None
-    except (AttributeError, OSError):
+        text = meminfo.read_text(encoding="ascii")
+    except OSError:
         return None
-    return round(status.ullAvailPhys / 2**30, 1)
+    match = re.search(r"^MemAvailable:\s+(\d+) kB$", text, re.MULTILINE)
+    return round(int(match.group(1)) / 2**20, 1) if match else None
 
 
 def expert_arena(engine_text: str) -> str | None:
-    """本次启动的引擎日志 → 专家区所在："mmap"（退到从文件读）、"ram"（记有 `expert arena: locked`）、None（两者都没有）。"""
+    """本次启动的引擎日志 → 专家区所在："mmap"（退到从文件读）、"ram"（记有 `expert arena: cudaHostRegister … ok`）、
+    None（两者都没有）。"""
     if any(marker in engine_text for marker in MMAP_MARKERS):
         return "mmap"
-    return "ram" if ARENA_LOCKED in engine_text else None
+    return "ram" if ARENA_IN_RAM.search(engine_text) else None
 
 
 def _first_line(error: BaseException | str) -> str:

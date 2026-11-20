@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from kototoki.artifacts import object_hash, sha256_bytes
-from kototoki.strata import MODEL, STRATA_ENGINE_BUILD, STRATA_LAUNCH, STRATA_RESOLVED, STRATA_VERSION
+from kototoki.strata import MODEL, STRATA_LAUNCH, STRATA_RESOLVED
 
 RECIPE_NAME = "q3-translate-v1"
 N_PREDICT = 4096
@@ -67,8 +67,8 @@ NAMES_FILTER = "window"
 NAMES_ROWS = "confidence high; one row per forms[] {source: ja, translation: zh}; dedupe by ja; skip empty"
 REQUEST_SHAPE = "chat-completions+no-grammar+usage-prompt-tokens"
 
-# Strata 服务身份（ADR-0021「Q3 服务与运行顺序」）的常量在中间层 `kototoki.strata`（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、
-# `STRATA_RESOLVED`），建表配方取同一组值；产品用 `strata launch --no-tui --model iq3_s` 启动，`strata.probe` 逐项核对。
+# Strata 服务身份（ADR-0021「Q3 服务与运行顺序」）的常量在中间层 `kototoki.strata`（`MODEL`、`STRATA_LAUNCH`、
+# `STRATA_RESOLVED`；Strata 版本不进身份，ADR-0034「Strata 版本」），建表配方取同一组值；产品用 `strata launch --no-tui --model iq3_s` 启动，`strata.probe` 逐项核对。
 
 RECIPE: dict[str, Any] = {
     "schema": "kototoki-translate-recipe-v2",
@@ -81,8 +81,7 @@ RECIPE: dict[str, Any] = {
     "names": {"version": NAMES_VERSION, "header_sha256": sha256_bytes(NAMES_HEADER.encode()), "filter": NAMES_FILTER,
               "rows": NAMES_ROWS},
     "model": MODEL,
-    "runtime": {"strata": STRATA_VERSION, "engine_build": STRATA_ENGINE_BUILD, "launch": STRATA_LAUNCH,
-                "resolved": STRATA_RESOLVED},
+    "runtime": {"launch": STRATA_LAUNCH, "resolved": STRATA_RESOLVED},
     "request": {"shape": REQUEST_SHAPE, "sampling": SAMPLING, "max_tokens": N_PREDICT,
                 "chat_template_kwargs": {"enable_thinking": False}, "grammar": None, "stream": False},
     "attempts": {"max": MAX_ATTEMPTS, "seed_step": SEED_STEP},

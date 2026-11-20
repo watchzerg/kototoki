@@ -53,7 +53,8 @@
 
 | 身份 | 值 | 状态 |
 | --- | --- | --- |
-| `q3-names-v3` | `d57ed0c6715f63fcb32bb034db03decf02650215af62c13ba95ae7bcdbcf33d7` | 现行（2026-11-17 起） |
+| `q3-names-v3` | `bcb9bebc5274d88a5f3737559b4ab77afa7278afc6d6196c77aad07b12acd072` | 现行（2026-11-20 起 runtime 去掉 Strata 版本，[ADR-0034](0034-ubuntu-only-platform.md#身份)） |
+| `q3-names-v3`（Windows 时期） | `d57ed0c6715f63fcb32bb034db03decf02650215af62c13ba95ae7bcdbcf33d7` | 历史（2026-11-17 – 11-20） |
 | `q3-names-v2` | `2dbd324e5ee847d0a0171840d4a064cd6b45a3df4c2123b7075cfe1a38b379ba` | 历史（2026-11-12 – 11-17） |
 | `q3-names-v1` | `d3317926ee3b3096277faa9a5fbc0879d562336fb1fe89bf0ebd04c5b0be6b17` | 历史（2026-11-09 – 11-12；v15 C 臂用过） |
 | 27B＋llama-server 建表 `BUILD_RECIPE_HASH` | `5b8d1b76da757bb26aa3d3fb894c1963935a308b6ef4eb7c75edeaa2d44c9e50` | 历史（切到 Strata 之前的产品建表；Q2 的表由它建，见 ADR-0021） |

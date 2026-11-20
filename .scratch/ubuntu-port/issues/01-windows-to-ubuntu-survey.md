@@ -151,7 +151,11 @@ Type: research
    - `media`、`job`、`strata` 的子进程都经它启动；`nvidia-smi` 去掉 `CREATE_NO_WINDOW`，`decode` 日志的命令行改用 `shlex.join`；
    - 新增 core 用例（`/proc` 解析、pid 复用）与 full 用例 `test_procs_children`（强杀父进程后子进程结束、不在同一进程组）；
    - 未验证：整批运行中强杀编排器后 GPU worker 释放显存（属拆票 8 验收）。
-5. Strata 适配：CLI 路径、XDG 日志目录、按 Linux 日志重写专家区核对、`/proc/meminfo`、版本只锁 0.2、重新标定内存阈值。
+5. ~~Strata 适配~~：已完成（2026-11-20），只剩内存阈值的重新标定。
+   - `strata` 从 PATH 调用；日志目录改为 `$XDG_STATE_HOME/strata/{runtime,launch}`（`STRATA_RUNTIME_DIR` 可覆盖 runtime）；
+   - 专家区以 `expert arena: cudaHostRegister … ok` 判 `ram`，本机 2026-11-19 的引擎日志判为 `ram`；可用内存改读 `/proc/meminfo` 的 `MemAvailable`；
+   - `probe` 只要求 `strata 0.2.` 开头；翻译与建表配方的 runtime 去掉 `strata`／`engine_build`，新 hash 写进 ADR-0034「身份」与 CURRENT.md；
+   - 待办：`MIN_AVAILABLE_RAM_GIB`（52 GiB，Windows 时期标定）在第 8 项验收首次跑产品时按 Linux 实测重标。
 6. smoke 脚本的 Linux 化（`smokelib`、`ct2_after_torch`）。
 7. 文档全面同步、`justfile`（删 pwsh 写法，`gate-full` 接 `with_lock.py`）、`workflow.md` 长任务改 `systemd-run --user`。
 8. 验收（每一步都是重任务，逐项先问）：`just install` → `just fetch-models` → `gate-full` → `just smoke` → 小批量的 `just subtitles`。

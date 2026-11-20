@@ -62,7 +62,7 @@
 
 ## 身份
 
-- 当前配方 `q3-translate-v1`，`RECIPE_HASH` `865bcd1d06f0cc7af83a02f90d0ff2ae5c1fca012695d28e1dbbe4b4f0325964`，由 `tests/core/test_translate_recipes.py` 钉住（`kototoki/translate/recipes.py` 的 `RECIPE`；`rule`、`validation`、`overflow` 字段描述本文的按条收下规则）。
+- 当前配方 `q3-translate-v1`，`RECIPE_HASH` `865bcd1d06f0cc7af83a02f90d0ff2ae5c1fca012695d28e1dbbe4b4f0325964`（Windows 时期；2026-11-20 起 runtime 去掉 Strata 版本，现值见 [ADR-0034「身份」](0034-ubuntu-only-platform.md#身份)），由 `tests/core/test_translate_recipes.py` 钉住（`kototoki/translate/recipes.py` 的 `RECIPE`；`rule`、`validation`、`overflow` 字段描述本文的按条收下规则）。
 - 历史配方 `q2-degrade-v1`，hash `332649cf98662e42cccc31485792104c3ce6303e6cd634ef42ef85839ee9310d`：10→5→1 降级、单条仍失败保留日文、含空行按解析失败处理；已被 `q3-translate-v1` 取代，只作历史身份。其前任 `dp10-cut-degrade-v1` 见 ADR-0021。
 - 运行时身份：Strata 0.2.12、引擎 build 0.1.58、默认启动（IQ3_S、128K、DFlash2、本机 8080）、模型 `qwen3.8-flash-next-iq3_s`，与基线 Q3 同（ADR-0021）。
 

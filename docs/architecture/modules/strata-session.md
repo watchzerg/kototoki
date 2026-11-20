@@ -28,16 +28,16 @@
 
 1. `strata launch --status --output json` 必须没有正在服务的 launch，否则 `StrataRefused`（不抢占、不替别人停）。`--status` 本身执行失败是 `InfraFailure`。
 2. 轮询 `nvidia-smi` 空闲显存到 ≥ 14000 MiB（`MIN_FREE_MIB`，即上一个 GPU worker 已退出）；120 s 仍不够抛 `InfraFailure`，等超过 30 s 记一次 WARNING。
-3. 轮询可用内存（Windows `GlobalMemoryStatusEx`）到 ≥ 52 GiB（`MIN_AVAILABLE_RAM_GIB`：专家区 46.84 GiB 加引擎分配前自占的约 4.8 GiB 与余量）；等满 180 s 仍不够只记 WARNING 照常启动；取不到读数时不等。
+3. 轮询可用内存（`/proc/meminfo` 的 `MemAvailable`）到 ≥ 52 GiB（`MIN_AVAILABLE_RAM_GIB`：专家区 46.84 GiB 加引擎分配前自占的约 4.8 GiB 与余量；Windows 时期标定，Linux 上待首次产品运行重标）；等满 180 s 仍不够只记 WARNING 照常启动；取不到读数时不等。
 4. 执行 `strata launch --no-tui --model iq3_s`（子进程里不点名模型时 Strata 以退出码 2 拒绝；`--model iq3_s` 即默认启动，ADR-0029「Strata session」）。执行失败或非零退出是 `InfraFailure`（消息带 stderr 末尾 300 字符）。
 5. 轮询 `--status` 到唯一一个 `ready` 的 launch（300 s，超时 `InfraFailure`；出现多于一个 launch 即 `StrataRefused`）。
 6. 接入检查（`probe`，ADR-0021「Q3 服务与运行顺序」），任一项不符即 `StrataRefused`：
-   - `strata --version` 为 0.2.12／build 0.1.58；
+   - `strata --version` 属 0.2 版本线（以 `strata 0.2.` 开头）；实际版本与 build 只记进 `strata.json`，不进配方身份（ADR-0034「Strata 版本」）；
    - launch 服务于 `127.0.0.1:8080`；
    - run config 的 `model_name` 为 `qwen3.8-flash-next-iq3_s`、`--max-context 131072`；
-   - 起草方式为 DFlash2：取自本次启动写进 `%LOCALAPPDATA%\Strata\runtime\launch-<name>.server.log` 的最后一行 `[strata] drafting:`，不按 run config 的参数判断（Strata 总会传 `--mtp`）；
+   - 起草方式为 DFlash2：取自本次启动写进 `$XDG_STATE_HOME/strata/runtime/launch-<name>.server.log`（默认 `~/.local/state/strata/`，`STRATA_RUNTIME_DIR` 可覆盖 `runtime/`） 的最后一行 `[strata] drafting:`，不按 run config 的参数判断（Strata 总会传 `--mtp`）；
    - `/v1/models` 含该模型，`/v1/status` 的原生 context 为 131072。
-7. 专家区检查：读本次启动写进 `%LOCALAPPDATA%\Strata\launch\<name>.engine.log` 的新内容。日志有 `expert arena: locked` 且没有退到 mmap 的记录才算 `ram`；`mmap` 或无法确认即 `StrataRefused`（消息提示释放内存后重跑）。结果记进 `strata.json` 的 `expert_arena`。
+7. 专家区检查：读本次启动写进 `$XDG_STATE_HOME/strata/launch/<name>.engine.log` 的新内容。日志有 `expert arena: cudaHostRegister … ok`（专家区登记为锁页内存）且没有退到 mmap 的记录才算 `ram`；`mmap` 或无法确认即 `StrataRefused`（消息提示释放内存后重跑）。结果记进 `strata.json` 的 `expert_arena`。
 8. 启动资源采样，记一行 INFO，回调 pid。
 
 两类日志都只读启动前记下的长度之后新写的部分。进入过程中任何异常（含被中断）都先走退出路径再上抛。
@@ -70,9 +70,9 @@
 ## 实现设计
 
 - 只有 Strata 这一个后端实现，不抽后端协议。服务进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
-- `strata` 在 PATH 上是 PowerShell 脚本，子进程优先用 `%LOCALAPPDATA%\Strata\terminal\current\bin\strata.cmd`（`strata_cmd`）。
+- `strata` 从 PATH 调用（安装器放在 `~/.local/bin/strata`）。
 - `probe` 改编自研究侧 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数，起草方式改读服务日志。
-- Strata 身份常量（`MODEL`、`STRATA_VERSION`、`STRATA_ENGINE_BUILD`、`STRATA_LAUNCH`、`STRATA_RESOLVED`）只在这里定义，翻译配方 `q2-degrade-v1` 与建表配方 `q3-names-v3` 的运行时身份都取这些值。
+- Strata 身份常量（`MODEL`、`STRATA_SERIES`、`STRATA_LAUNCH`、`STRATA_RESOLVED`）只在这里定义，翻译配方 `q3-translate-v1` 与建表配方 `q3-names-v3` 的运行时身份取 `STRATA_LAUNCH` 与 `STRATA_RESOLVED`（版本线只在接入检查里用）。
 - `Session` 的状态（`server`、`ordinal`、`start_failures`、`unavailable`、`runtime_root`）归它自己；`runtime_root` 在构造时按 UTC 时间戳与 pid 定下。
 - `LlamaClient` 源自 `archive/2026-11-18-pre-research-restructure:experiments/translation_demo/client.py`（产品新增 `chat_completion`），`explicit_oom` 复制自 `translation_demo/run.py`；只复制不导入。llama-server 的进程生命周期不在产品里（ADR-0025）。
 

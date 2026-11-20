@@ -1,6 +1,6 @@
 # ADR-0034：只面向 Ubuntu，工具链与外部前置按 Linux 原生做法重定
 
-状态：已接受，2026-11-20（用户裁定），尚未实现。实现后在本页「身份」补上新的配方 hash，并删掉"尚未实现"字样。
+状态：已接受，2026-11-20（用户裁定），实现中：工具链、依赖、ffmpeg、子进程与 Strata 已实现，冒烟脚本、文档收尾与验收待做；全部完成后删掉"实现中"字样。
 替代关系：
 - 取代 [ADR-0033](0033-ffmpeg-branch-lock.md) 全文；
 - 取代 [ADR-0029](0029-translate-per-cue-resolution.md)「Strata session」第 4 点与第 8 点中有关版本的部分；
@@ -76,7 +76,10 @@
 - 平台：Ubuntu 26.04 LTS、x86_64、RTX 5080，裁定时驱动 595.99.02。
 - Strata：0.2 版本线，裁定时本机为 0.2.13.1／build 0.1.59.1。
 - ffmpeg：系统包，裁定时为 `8.0.1-3ubuntu2+esm5`。
-- 配方：`q3-translate-v1` 与 `q3-names-v3` 的 runtime 身份去掉 `strata`／`engine_build` 两个字段，`RECIPE_HASH` 与 `BUILD` hash 都会变。新值在实现时补在这里，并同步到 [CURRENT.md](CURRENT.md)。配方 id 不变，因为旧数据不迁移，不存在新旧产物混用的情况。
+- 配方：`q3-translate-v1` 与 `q3-names-v3` 的 runtime 身份去掉 `strata`／`engine_build` 两个字段（2026-11-20 实现）。配方 id 不变，因为旧数据不迁移，不存在新旧产物混用的情况。
+  - `q3-translate-v1` 的 `RECIPE_HASH` 为 `1372b37146babf6817ffeacf4d0019af5eec319dc19cf7d62a1d5f1f7fde577d`（Windows 时期 `865bcd1d…`）；
+  - `q3-names-v3` 的 hash 为 `bcb9bebc5274d88a5f3737559b4ab77afa7278afc6d6196c77aad07b12acd072`（Windows 时期 `d57ed0c6…`）；
+  - 基线 `names-strata-v4` 的 hash `38cb7bcd…` 不变，测试拼回 v4 形状时补回 0.2.12／0.1.58 两个字段。
 
 ## 依据
 

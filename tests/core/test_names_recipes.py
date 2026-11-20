@@ -21,9 +21,11 @@ from kototoki.translate import recipes as translate_recipes
 
 SYSTEM_PROMPT_SHA256 = "d8e16c0441b611129ba2bcab11a9a41ae7afe53bf1632d56ae9740b7f905dd78"
 RESPONSE_SCHEMA_SHA256 = "3004d26cef032d99f1088fcae1fc0e093b689b373490e633f6c6dcfad23117ff"
-BUILD_HASH = "d57ed0c6715f63fcb32bb034db03decf02650215af62c13ba95ae7bcdbcf33d7"  # q3-names-v2 为 2dbd324e…，v1 为 d3317926…
+BUILD_HASH = "bcb9bebc5274d88a5f3737559b4ab77afa7278afc6d6196c77aad07b12acd072"  # runtime 去掉 Strata 版本前（ADR-0034）为 d57ed0c6…；q3-names-v2 为 2dbd324e…，v1 为 d3317926…
 # `names-strata-v4` 的三项（ADR-0021）；产品自 ADR-0028「输出上限与提示预算」起为 16384、49152、32256。
 V4_LIMITS = {"max_tokens": 8192, "context": 24576, "prompt_budget": 15872}
+# `names-strata-v4` 的 runtime 还记着 Windows 时期的 Strata 版本；产品自 ADR-0034 起不记。
+V4_STRATA = {"strata": "0.2.12", "engine_build": "0.1.58"}
 # ADR-0028 起产品建表块独有、`names-strata-v4` 没有的键（v4 把空表当不合格重试）。
 PRODUCT_ONLY_KEYS = ("retry_on",)
 
@@ -63,7 +65,7 @@ class BuildRecipeTests(unittest.TestCase):
     def test_build_block_model_runtime_and_request_equal_names_strata_v4_except_limits(self):
         build = recipes.BUILD
         v4 = {"name": "names-strata-v4", "build": v4_build_block(build["build"]), "model": build["model"],
-              "runtime": build["runtime"], "request": build["request"],
+              "runtime": V4_STRATA | build["runtime"], "request": build["request"],
               "prompt_budget_check": V13_PROMPT_BUDGET_CHECK, "retries": V13_RETRIES}
         self.assertEqual(recipe_hash(v4), Q3_BUILD_HASH)
 
@@ -87,8 +89,8 @@ class BuildRecipeTests(unittest.TestCase):
         runtime = recipes.BUILD["runtime"]
         self.assertEqual({k: v for k, v in runtime.items() if k != "kv"}, translate_recipes.RECIPE["runtime"])
         self.assertEqual(runtime["kv"], "int8")
-        self.assertEqual((recipes.BUILD["model"], runtime["strata"], runtime["engine_build"], runtime["launch"]),
-                         (strata.MODEL, strata.STRATA_VERSION, strata.STRATA_ENGINE_BUILD, strata.STRATA_LAUNCH))
+        self.assertEqual((recipes.BUILD["model"], runtime["launch"]), (strata.MODEL, strata.STRATA_LAUNCH))
+        self.assertFalse({"strata", "engine_build"} & set(runtime))  # Strata 版本不进身份（ADR-0034）
         self.assertEqual(runtime["resolved"], strata.STRATA_RESOLVED)
         self.assertIsNot(runtime["resolved"], strata.STRATA_RESOLVED)
 

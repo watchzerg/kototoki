@@ -21,8 +21,8 @@ from kototoki.artifacts import read_json
 from kototoki.local_client import InfraFailure
 from kototoki.strata import Session, StrataRefused, StrataServer, wait_for_free_vram
 
-# 0.2.12 的默认启动真实写下的参数形状：总带 `--mtp <权重目录>`，DFlash2 不在 run config 里（2026-11-08 smoke）。
-DEFAULT_ARGS = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--mtp", "D:/mtp/rt", "--max-context", "131072",
+# Strata 默认启动真实写下的参数形状（0.2.12 Windows 与 0.2.13.1 Linux 相同）：总带 `--mtp <权重目录>`，DFlash2 不在 run config 里（2026-11-08 smoke）。
+DEFAULT_ARGS = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--mtp", "/data/strata/mtp/rt", "--max-context", "131072",
                 "--kv", "int8", "--kv-resident", "32768", "--vision"]
 DFLASH_LINE = "[strata] drafting: DFlash2 alone (--draft dflash2, --draft-conf 0.7)\n"
 
@@ -33,7 +33,7 @@ class FakeStrata:
     def __init__(self, root: Path):
         self.root = root
         self.commands: list[tuple[str, ...]] = []
-        self.version = "strata 0.2.12 (build 0.1.58)"
+        self.version = "strata 0.2.13.1 (build 0.1.59.1; python 3.12.15 at /opt/strata/python3.12)"
         self.args = list(DEFAULT_ARGS)
         self.drafting_line: str | None = DFLASH_LINE
         self.log = root / "logs" / "launch-k1.server.log"
@@ -52,7 +52,7 @@ class FakeStrata:
         self.extra_launch = False               # ready 时同时冒出第二个 launch
         self.free_before = 15000
         self.ram = [55.0]                       # 依次返回的可用内存（GiB），用完后保持最后一个值
-        self.engine_lines = "strata generate: expert arena: locked 1302 MiB via working-set minimum + VirtualLock\n"
+        self.engine_lines = "strata generate: expert arena: cudaHostRegister PORTABLE ok; MAP_HUGETLB unavailable\n"
         self.engine_log = root / "launch-logs" / "k1.engine.log"
         self.engine_log.parent.mkdir(exist_ok=True)
         self.engine_log.write_text("strata generate: experts via mmap (older launch)\n", encoding="utf-8")
@@ -179,9 +179,10 @@ class StrataServerTests(unittest.TestCase):
     def test_probe_mismatch_stops_the_launch_and_refuses(self) -> None:
         cases = [("drafting_line", "[strata] drafting: MTP alone (--spec 4)\n", "drafting 'mtp'"),
                  ("drafting_line", None, "drafting None"),  # 本次启动没写起草行：不拿上一次的行充数
-                 ("args", ["--mtp", "D:/mtp/rt", "--max-context", "65536"], "--max-context '65536'"),
+                 ("args", ["--mtp", "/data/strata/mtp/rt", "--max-context", "65536"], "--max-context '65536'"),
                  ("model_name", "qwen3.8-27b", "model 'qwen3.8-27b'"),
-                 ("version", "strata 0.2.13 (build 0.1.60)", "version differs"),
+                 ("version", "strata 0.3.0 (build 0.2.0)", "must be on the 0.2 line"),
+                 ("version", "strata 0.20.1 (build 0.1.59)", "must be on the 0.2 line"),
                  ("models", ["other"], "/v1/models"),
                  ("native", 65536, "native context")]
         for field, value, message in cases:
@@ -278,7 +279,7 @@ class StrataServerTests(unittest.TestCase):
         self.assertIn("launch --no-tui --model iq3_s", self.verbs())
 
     def test_mmap_fallback_or_unconfirmed_arena_stops_and_refuses(self) -> None:
-        cases = [("strata generate: expert arena: locked 1 MiB\n"
+        cases = [("strata generate: expert arena: cudaHostRegister PORTABLE ok; MAP_HUGETLB unavailable\n"
                   "strata generate: not enough RAM for the expert arena (2.21 GiB short)\n"
                   "strata generate: experts via mmap\n", "mmap", "fell back to mmap"),
                  ("strata generate: memory guard: ...\n", None, "not confirmed")]
@@ -297,9 +298,20 @@ class StrataServerTests(unittest.TestCase):
 
     def test_expert_arena_parsing(self) -> None:
         self.assertIsNone(S.expert_arena(""))
-        self.assertEqual(S.expert_arena("strata generate: expert arena: locked 3502 MiB\n"), "ram")
+        self.assertEqual(S.expert_arena("strata generate: expert arena: cudaHostRegister PORTABLE ok; MAP_HUGETLB unavailable\n"), "ram")
+        self.assertIsNone(S.expert_arena("strata generate: expert arena: cudaHostRegister PORTABLE failed\n"))
+        self.assertIsNone(S.expert_arena("strata generate: expert arena: locked 3502 MiB\n"))  # Windows 时期的写法
         self.assertIsNone(S.expert_arena("strata generate: expert arena read unbuffered\n"))
         self.assertEqual(S.expert_arena("strata generate: experts via mmap (not enough RAM)\n"), "mmap")
+
+    def test_available_ram_reads_mem_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            meminfo = Path(tmp) / "meminfo"
+            meminfo.write_text("MemTotal:       63000000 kB\nMemFree:  1 kB\nMemAvailable:   53477376 kB\n", encoding="ascii")
+            self.assertEqual(S.available_ram_gib(meminfo), 51.0)
+            meminfo.write_text("MemTotal: 1 kB\n", encoding="ascii")
+            self.assertIsNone(S.available_ram_gib(meminfo))
+            self.assertIsNone(S.available_ram_gib(Path(tmp) / "missing"))
 
     def test_status_parses_only_the_json_line(self) -> None:
         self.assertEqual(S.running(lambda *a: '{"running": []}\nNo launches running.\n'), [])

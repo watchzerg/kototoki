@@ -19,7 +19,7 @@ from kototoki.translate import recipes as R
 from kototoki.translate.batching import (Batch, Cue, Scene, build_batches, cue_positions, gap_pack_cuts, neighbours,
                                          scene_from_document, silence)
 
-Q3_TRANSLATE_V1_HASH = "865bcd1d06f0cc7af83a02f90d0ff2ae5c1fca012695d28e1dbbe4b4f0325964"
+Q3_TRANSLATE_V1_HASH = "1372b37146babf6817ffeacf4d0019af5eec319dc19cf7d62a1d5f1f7fde577d"  # runtime 去掉 Strata 版本前（ADR-0034）为 865bcd1d…
 SEED = 20261008
 
 
@@ -86,7 +86,7 @@ class RecipeIdentityTests(unittest.TestCase):
         self.assertEqual((recipe["prompt"]["version"], recipe["names"]["version"], recipe["names"]["filter"]),
                          ("qwen-joint-v1", "qwen-name-table-v1", "window"))
         self.assertEqual(recipe["runtime"]["resolved"]["drafting"], "dflash2")
-        self.assertEqual((recipe["runtime"]["strata"], recipe["runtime"]["engine_build"]), ("0.2.12", "0.1.58"))
+        self.assertEqual(set(recipe["runtime"]), {"launch", "resolved"})  # Strata 版本不进身份（ADR-0034）
         self.assertIsNone(recipe["request"]["grammar"])
         self.assertEqual(recipe["request"]["chat_template_kwargs"], {"enable_thinking": False})
         self.assertEqual(recipe["attempts"], {"max": 2, "seed_step": 1})

@@ -21,7 +21,7 @@ Q1 规则＋上述模型与启动，表由当时产品的 27B 建（`BUILD_RECIP
 
 ## 产品翻译
 
-配方 `q3-translate-v1`，`RECIPE_HASH` `865bcd1d06f0cc7af83a02f90d0ff2ae5c1fca012695d28e1dbbe4b4f0325964`（[0029](0029-translate-per-cue-resolution.md)）。
+配方 `q3-translate-v1`，`RECIPE_HASH` `1372b37146babf6817ffeacf4d0019af5eec319dc19cf7d62a1d5f1f7fde577d`（[0029](0029-translate-per-cue-resolution.md)；runtime 去掉 Strata 版本后的值，[0034「身份」](0034-ubuntu-only-platform.md#身份)）。
 
 - 请求规则即 Q3 翻译规则，正常包请求体与研究侧逐字节相同（[0029「请求规则」](0029-translate-per-cue-resolution.md#请求规则)）；只注入、不替换，建表必开（[「专名注入」](0029-translate-per-cue-resolution.md#专名注入)）。
 - 结构失败才换 seed，结构合法即按条收下；只追问未解决的 cue，单条仍失败该 cue 不出中文、只输出日文一行（[「按条收下」](0029-translate-per-cue-resolution.md#按条收下)、[「只追问没解决的 cue」](0029-translate-per-cue-resolution.md#只追问没解决的-cue)、[「不出中文的 cue」](0029-translate-per-cue-resolution.md#不出中文的-cue)）。
@@ -30,7 +30,7 @@ Q1 规则＋上述模型与启动，表由当时产品的 27B 建（`BUILD_RECIP
 
 ## 产品建表
 
-配方 `q3-names-v3`（`kototoki/names/recipes.py` 的 `BUILD`），hash `d57ed0c6715f63fcb32bb034db03decf02650215af62c13ba95ae7bcdbcf33d7`，由 `tests/core/test_names_recipes.py` 钉住（[0028「建表配方」](0028-names-accept-empty-table.md#建表配方)）。
+配方 `q3-names-v3`（`kototoki/names/recipes.py` 的 `BUILD`），hash `bcb9bebc5274d88a5f3737559b4ab77afa7278afc6d6196c77aad07b12acd072`（runtime 去掉 Strata 版本后的值，[0034「身份」](0034-ubuntu-only-platform.md#身份)），由 `tests/core/test_names_recipes.py` 钉住（[0028「建表配方」](0028-names-accept-empty-table.md#建表配方)）。
 
 - 请求体与 seed 序列同 `names-strata-v4`，只有 `max_tokens` 16384、提示预算 32256（context 按 49152 计）与 `retry_on: "malformed"` 不同（[「输出上限与提示预算」](0028-names-accept-empty-table.md#输出上限与提示预算)）。
 - 只有回复格式不合格才换 seed，最多 5 次；空表是合法结果；终态失败写空表、照常翻译不注入（[「重试与空表」](0028-names-accept-empty-table.md#重试与空表)）。
