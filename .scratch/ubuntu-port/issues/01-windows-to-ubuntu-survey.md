@@ -134,7 +134,10 @@ Type: research
    - `.python-version` 改为 `3.13`，`check_toolchain.py` 按前缀核对；
    - `environments` 改为只解析 linux，删掉旧 lock 重新解析：直接依赖版本不变，传递依赖取当日最新稳定版；
    - 已执行 `mise install` 和 `uv lock`（uv 下载了 CPython 3.13.18），`just check-toolchain` 通过。
-   - 未做：`uv sync`，即 `.venv` 还没建。
+   - `uv sync --locked` 已完成（`.venv` 约 7.3 GB）。torch 2.11.0+cu128（cuDNN 9.19）识别出 RTX 5080（sm_120）；ctranslate2 4.8.3 能看到 1 张 CUDA 卡，支持 float16、bfloat16、int8。还没加载模型解码。
+   - torchcodec 改用 `pytorch-cpu` 索引的 `0.17.0+cpu`，原因是 PyPI 的 Linux wheel 依赖 CUDA 13 的 `libnvrtc.so.13`。
+   - `just gate-core` 通过（794 个用例），只修了 `test_config` 里一处 Windows 绝对路径 `D:/abs/mms`。
+   - `just test-full` 的 13 个用例全部失败，原因都是 ffmpeg 默认路径 `.local/tools/ffmpeg/9.0/bin/ffmpeg.exe` 不存在，留给拆票 3 处理。
 3. 资产：删掉 ffmpeg 的下载和升级代码；`config.py` 默认从 PATH 查找；`assets.toml`、`assets.py`、`upgrade.py` 和相关测试一并改。
 4. 进程：`procs.py` 的 starttime 和子进程随父退出、`job.py` 的中断路径、full 层测试。
 5. Strata 适配：CLI 路径、XDG 日志目录、按 Linux 日志重写专家区核对、`/proc/meminfo`、版本只锁 0.2、重新标定内存阈值。

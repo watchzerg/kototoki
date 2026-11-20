@@ -64,11 +64,11 @@ class LoadTests(unittest.TestCase):
             self.assertEqual(getattr(cfg.paths, key), config.REPO_ROOT / config.DEFAULTS["paths"][key])
 
     def test_model_paths_are_relative_to_models_root(self) -> None:
-        cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "D:/abs/mms"\n'),
+        cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "/abs/mms"\n'),
                           environ={})
         self.assertEqual(cfg.models.w0, self.root / "m" / "w")
         self.assertEqual(cfg.models.w0_mel_assets, self.root / "m" / "w0-assets")
-        self.assertEqual(cfg.models.align, Path("D:/abs/mms").resolve())
+        self.assertEqual(cfg.models.align, Path("/abs/mms"))
         default = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(default.models.vad, config.REPO_ROOT / ".local/models/vad-comparison/"
                          "pyannote-segmentation-3.0/pytorch_model.bin")
