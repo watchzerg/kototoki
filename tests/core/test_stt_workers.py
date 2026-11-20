@@ -506,23 +506,23 @@ BYTE_SCENARIOS = {
 # 2026-11-11 架构整理票据 06 改动前（提交 c04f21d）的代码在这些夹具上写出的产物字节 sha256，
 # `time.perf_counter` 固定为 0.0（`stages`、`score_s` 是墙钟）。重构不得改变任何一个。
 PINNED_ASR_BYTES = {
-    "switch": {"asr.json": "0241a7740e07a9a2484e577ebc1b7adf39c9babc2c4eb27970457c503cd49637",
-               "asr-w0.json": "507a9d2aec04b28d3d43fa34f88778fcd31d69836c06310d88464e9f74b95637",
+    "switch": {"asr.json": "5619cd4dc6a017c604e1e4b946c5acba1944671dc25029f82448b3d944d632ed",
+               "asr-w0.json": "0f4193b888352782e882657adc10907d6e31f5b3bdb14f9198968bef998e6e5e",
                "asr-x0.json": "9d6440c199073ee87a5be7e9860d1159004e7bccb20c93a225aed4cfa2a0f691",
-               "asr-judge.json": "5acafb632daf8a8462d48914cd74b21fc74558ea72eccd96bc7e1a1184fbb8ff"},
-    "w0_failed": {"asr.json": "bddae7b2e0a129bed8fc794566a108fc86e29f3a4bb254f3410a462d0c70e20b",
-                  "asr-w0.json": "e2d3f5f96fbdb8f5639a63212e7193a65f1325d578d19da1e40566cfd92d1062",
+               "asr-judge.json": "7d61df0753d04be0ac094eec52dd013cd8d9f8468e6363f6cfcb2872d64d11c0"},
+    "w0_failed": {"asr.json": "5b2b8f713c07864f03648bdbe702c8854ec73cd1bcc5bb3a0a7e5ab3efa84d77",
+                  "asr-w0.json": "a5011aa3d33f1dccaa207954ee26af3956385fd04b1c9017082ceb82e9b0c802",
                   "asr-x0.json": "ea2aa241a794e3bd57ad2e469b596d64cf14bea24d4277462b9db94afa4f579a",
-                  "asr-judge.json": "640d24718d6b403492ed796918b7b95bb6f5ccd2fca6fc959f615bff2ff2a796"},
-    "guard": {"asr.json": "1f1fe568ab154d0334cbba05ba5636bca635bd2a0fafa29e476cab2821962d3b",
-              "asr-w0.json": "8aa669fbf7a0d227581d9464cffd324769331f5adfc1058c277287f61896f7db",
+                  "asr-judge.json": "f28c3cd744285b3537ff2da04c28541ed8014885cf72dcd17a7807ae87fc1a8f"},
+    "guard": {"asr.json": "9e047f427ebceeabc0683826798388ad0594f8570003468bcf83ae6ffd46cf78",
+              "asr-w0.json": "48526ef4022cec162f7afd0e38914b9807d8f94a66a7cf22e9dad0d620491c56",
               "asr-x0.json": "d9f45b6263b3115eeb54087de5bfec6b9ebfe93d273e0dc7ccc069fa5b9bc7ce",
-              "asr-judge.json": "3ce75502e9fdbd737eae80881d1d63a097228a8e8c3b5e9d6585b869e8818094"},
-    "score_error": {"asr.json": "5cecd9682e70e7ef8fa998e90e888436da562a213b8a28d546311b626b78d244",
-                    "asr-w0.json": "500c955d2b9bb36f5691e73004cf6f3faf6e1dc53bf32f826a47792f26b37bfb",
+              "asr-judge.json": "fd540668ec831c2f4ef595cc866aebadb33a61162a63a28dc0d5d7c5cfc5af07"},
+    "score_error": {"asr.json": "e198a645ddee38d781a75565df7376c37cb6895e0590a39ead35fd6a5113d94c",
+                    "asr-w0.json": "475617ca100896c490056e1874a1171d1bef57c6d6209ed851eae7c85cae28ec",
                     "asr-x0.json": "6bff8762369cd17250f8305ea0b310a3769f58c849eb347900d54cb91e21bcad",
-                    "asr-judge.json": "1fd15762f494ebbdaf6ba7e06e947835c6df83be44967d0945ac088c76e03cb9"},
-    "w0": "62650b8101cca6a3e6a7a0b36ac1f9ffe71e7afd042932eb189b35812f6f3291",
+                    "asr-judge.json": "2fb6ef36d0b3c8ba2ad9bea02cecad8294daae1c776eb2fce8347f7997f9a1b1"},
+    "w0": "ac6a9e4acbd230545fef788a78d3e50cabd94272aa538f6e0d16ad05228a2d2f",
     "x0": "9d8561a7ac2eaac4877319ebcbce42f362b16e97317717b8e1429821aba22ee4",
 }
 
@@ -567,7 +567,7 @@ class CrossStartupTest(unittest.TestCase):
             return type(name, (), {"__init__": init})
         whisper_module, qwen_module = types.ModuleType("kototoki.asr_whisper"), types.ModuleType("kototoki.asr_qwen")
         whisper_module.WhisperAsr, qwen_module.QwenAsr = adapter("w0"), adapter("x0")
-        models = {"w0": "w", "w0_mel_assets": "m", "x0": "x"}
+        models = {"w0": "w", "x0": "x"}
         jobs = Jobs("asr", plan.recipe_hash("asr", engine="cross"),
                     {"engine": "cross", "models": models, "model_cache": "cache"}, ())
         verified = {name: "e" * 64 for name in plan.model_files("asr", models, engine="cross")}
@@ -576,7 +576,7 @@ class CrossStartupTest(unittest.TestCase):
                 mock.patch.object(asr_worker, "compute_cross", wraps=asr_worker.compute_cross) as compute, \
                 self.assertLogs("kototoki.workers.asr", "INFO"):
             asr_worker.start(jobs)
-        self.assertEqual(order, [("w0", (Path("w"), Path("m"))), ("x0", (Path("x"),))])
+        self.assertEqual(order, [("w0", (Path("w"),)), ("x0", (Path("x"),))])
         _, _, model_sha256, w0_sha256, x0_sha256, loads = compute.call_args.args
         self.assertEqual(model_sha256, verified)
         self.assertEqual(set(w0_sha256), set(plan.model_files("asr", models, engine="w0")))
@@ -584,7 +584,7 @@ class CrossStartupTest(unittest.TestCase):
         self.assertEqual(set(loads), {"load_s", "load_w0_s", "load_x0_s"})
 
     def test_single_engine_loads_only_its_own_part(self):
-        for engine, models, expected in (("w0", {"w0": "w", "w0_mel_assets": "m"}, [("w0", (Path("w"), Path("m")))]),
+        for engine, models, expected in (("w0", {"w0": "w"}, [("w0", (Path("w"),))]),
                                          ("x0", {"x0": "x"}, [("x0", (Path("x"),))])):
             with self.subTest(engine=engine):
                 order = []
@@ -661,10 +661,10 @@ class AlignWorkerTest(WorkerTestCase):
 # 2026-11-11 架构整理票据 08 改动前（票据 06 提交之上、offset 仍由对齐加）的代码在 offset 0 的整链夹具上写出的字节
 # sha256：`align.json`、`ja-cues.json`（payload 以固定身份 {"fixed": 1} 写出）与 `ja.srt`；`time.perf_counter` 固定为 0.0。
 PINNED_CUE_CHAIN_BYTES = {
-    "w0": {"align.json": "f3acec80808004de6161860ef76ed3342a0024da90c4203f3751ff3c149e5e56",
+    "w0": {"align.json": "18e62d0285ac2bc89c05c90351f875e5a4be0912ba7ad94f02120cd61f348df3",
            "ja-cues.json": "f3736e25d8c364e29f9679b3874acae9938b941f66b151e42722927ba025131e",
            "ja.srt": "ea77acfaa498939d0c3d4fe1a42a22da36e21293aaeb738df053df626c17ca94"},
-    "cross": {"align.json": "11022594478655024309dbb9cff1075b19c13c107765e2c926837b4ebddd796b",
+    "cross": {"align.json": "161490389d52b876cb1bba3acc245427a9f08b5f533b9e39dba429c0996f840a",
               "ja-cues.json": "fc6469779d1131b0b5c8b3b814b177de6bff13bfbe66aba551ab80024e3e27b4",
               "ja.srt": "b75439e16c5e0172164e2561d7c0758f7921e8cfe4d7908757813bc7dad04615"},
 }
@@ -833,11 +833,11 @@ class GpuHelpersTest(unittest.TestCase):
             gpu.verify_models({"m": (model, "0" * 64)}, cache)
 
     def test_model_file_lists_cover_pinned_assets(self):
-        models = {"vad": "v/pytorch_model.bin", "w0": "w", "w0_mel_assets": "m", "x0": "x", "align": "a"}
+        models = {"vad": "v/pytorch_model.bin", "w0": "w", "x0": "x", "align": "a"}
         self.assertEqual(len(plan.model_files("vad", models)), 1)
         w0 = plan.model_files("asr", models, engine="w0")
         self.assertIn("faster-whisper-large-v3/model.bin", w0)
-        self.assertEqual(w0["w0-assets/mel_filters.npz"][1], recipes.W0["features"]["mel_sha256"])
+        self.assertEqual(len(w0), len(plan.W0_FILES))
         self.assertIn("qwen3-asr-1.7b-hf/model.safetensors", plan.model_files("asr", models, engine="x0"))
         self.assertIn("mms-1b-all/adapter.jpn.safetensors", plan.model_files("align", models))
 

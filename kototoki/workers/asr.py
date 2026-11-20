@@ -4,8 +4,8 @@
 都加载并常驻到进程退出（先 Whisper 后 Qwen），逐文件 ① Whisper 转写得 `asr-w0.json`、② Qwen 转写得 `asr-x0.json`、
 ③ 整文件裁判（`kototoki.judge.judge_file`，打分器为 `WhisperAsr.score`）得 `asr-judge.json` 与合并结果 `asr.json`，
 四个产物由 `gpu.file_processor` 依次写出、`asr.json` 最后。每一路都经同一个 `transcribe`（转写 → 计时 → 守卫 → 记失败 → 组文档）。
-三种引擎写出同一种 `asr.json`。jobs：`config` 需要 `engine`、`models`（w0 用 `w0`、`w0_mel_assets`，x0 用 `x0`，
-cross 三者都要）与 `model_cache`；`inputs` 需要 `wav` 与 `vad`（`vad.json`）。
+三种引擎写出同一种 `asr.json`。jobs：`config` 需要 `engine`、`models`（w0 用 `w0`，x0 用 `x0`，
+cross 两者都要）与 `model_cache`；`inputs` 需要 `wav` 与 `vad`（`vad.json`）。
 
 `asr.json`（坐标为 WAV 本地）：身份 = PCM SHA256＋`vad.json` SHA256＋引擎配方 hash＋模型文件 SHA256（取自 `kototoki.plan`）；
 payload 为 `schema_version`、`engine`、`offset_s`、`input`、`chunks`（照抄 `vad.json`）、
@@ -186,7 +186,7 @@ def load_adapter(part: str, models: Mapping[str, str]) -> Any:
     if part == "w0":
         from kototoki.asr_whisper import WhisperAsr  # 按 torch → ctranslate2 → faster_whisper 的顺序导入
 
-        return WhisperAsr(Path(models["w0"]), Path(models["w0_mel_assets"]))
+        return WhisperAsr(Path(models["w0"]))
     from kototoki.asr_qwen import QwenAsr
 
     return QwenAsr(Path(models["x0"]))

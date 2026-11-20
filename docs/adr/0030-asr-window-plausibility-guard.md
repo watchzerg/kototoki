@@ -1,6 +1,6 @@
 # ADR-0030：ASR 整窗守卫（复读、语速、已知幻听句，`guard-v3`）
 
-状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0023，原文见 git 历史（提交 807de3e 及之前）。
+状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0023，原文见 git 历史（提交 807de3e 及之前）。「身份」中的产品 W0 配方 id 与 hash 自 2026-11-20 起由 [ADR-0035](0035-cross-default-native-whisper-features.md) 替代（W0 特征改用 faster-whisper 自带计算），守卫规则不变。
 范围：产品包 `kototoki/` 的 w0 路径（含 `cross` 的 w0 一路），只做解码后的后处理（纯逻辑 `kototoki/guard.py`，接入 `kototoki/workers/asr.py`）。不改解码参数、VAD、MMS 对齐、cue 回填，也不改 x0 路径与研究侧 demo。[ADR-0003](0003-new-pyannote-baselines.md) 的 W0 基线身份（解码器、VAD、对齐）与 `cross` 规则不变。
 
 ## 决定

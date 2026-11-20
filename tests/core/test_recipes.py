@@ -63,16 +63,16 @@ class RecipeHashTests(unittest.TestCase):
         self.assertEqual(len({recipes.recipe_hash(r) for r in every}), 7)
 
     def test_pinned_asr_recipe_hashes(self) -> None:
-        # 钉住 hash：改动任一值即得到新 hash 并使已有产物失效。W0 自 ADR-0030 起带 guard 块（复读、语速与
-        # 幻听句规则，换 id）；CROSS 嵌套 W0 而随之改变；X0 不变。
-        self.assertEqual(recipes.W0["id"], "w0-faster-whisper-large-v3-guard-v3")
-        self.assertEqual(recipes.W0["baseline"], "w0-pyannote-current-mms-v1")  # 解码与特征仍是 W0 基线
+        # 钉住 hash：改动任一值即得到新 hash 并使已有产物失效。W0 带 guard 块（ADR-0030），ADR-0035 起特征改用
+        # faster-whisper 自带的 FeatureExtractor（换 id）；CROSS 嵌套 W0 而随之改变；X0 不变。
+        self.assertEqual(recipes.W0["id"], "w0-faster-whisper-large-v3-fwmel-guard-v3")
+        self.assertEqual(recipes.W0["baseline"], "w0-pyannote-current-mms-v1")  # 解码仍是 W0 基线
         self.assertEqual(recipes.recipe_hash(recipes.W0),
-                         "6a47318c7732534270f64d14bb5da9830a79fdcae9f6d84e01a309532d62403b")
+                         "9f2c8ea8dc8f6334b45f6f257e466363acc947d75ad94531aa13bc531c5d09b4")
         self.assertEqual(recipes.recipe_hash(recipes.X0),
                          "5d1bec25fbb4acae6d82a866620faf75e2c55498aa304c1dadd7dc401bfd057b")
         self.assertEqual(recipes.recipe_hash(recipes.CROSS),
-                         "bd5bc55527a539beab598e98f687f1bcbbcc6c23b3ba3a823fd3e9dfb46338e3")
+                         "4041dd2496f73aa3e46f17afc2a769c161a94e7d7894a3bc0f48f2d9decb2cf2")
 
     def test_pinned_media_vad_mms_cues_embedded_recipe_hashes(self) -> None:
         # 2026-11-11 架构整理（docs/plans/architecture-cleanup.md 票据 03）钉住：值取自 c639b22 的配方。

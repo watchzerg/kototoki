@@ -53,9 +53,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "use_embedded_subtitles": True,
     },
     "run": {"extract_workers": 4, "stable_check_s": 10.0},
-    "stt": {"engine": "w0"},
+    "stt": {"engine": "cross"},
     "vad": {"model": "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"},
-    "asr.w0": {"model": "faster-whisper-large-v3", "mel_assets": "w0-assets"},
+    "asr.w0": {"model": "faster-whisper-large-v3"},
     "asr.x0": {"model": "qwen3-asr-1.7b-hf"},
     "align": {"model": "mms-1b-all"},
     "cues": {
@@ -68,8 +68,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
 # 按配置文件目录（用户值）或仓库根（默认值）解析的键。
 PATH_KEYS = {("paths", key) for key in ("input_dir", "work_dir", "models_root", "ffmpeg", "ffprobe")}
 # 相对于 models_root 的模型键。
-MODEL_KEYS = {("vad", "model"), ("asr.w0", "model"), ("asr.w0", "mel_assets"), ("asr.x0", "model"),
-              ("align", "model")}
+MODEL_KEYS = {("vad", "model"), ("asr.w0", "model"), ("asr.x0", "model"), ("align", "model")}
 
 
 class ConfigError(ValueError):
@@ -102,7 +101,6 @@ class RunConfig:
 class Models:
     vad: Path
     w0: Path
-    w0_mel_assets: Path
     x0: Path
     align: Path
 
@@ -243,8 +241,7 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
                           use_embedded_subtitles=values["input", "use_embedded_subtitles"]),
         run=RunConfig(**{key: values["run", key] for key in DEFAULTS["run"]}),
         engine=engine,
-        models=Models(vad=values["vad", "model"], w0=values["asr.w0", "model"],
-                      w0_mel_assets=values["asr.w0", "mel_assets"], x0=values["asr.x0", "model"],
+        models=Models(vad=values["vad", "model"], w0=values["asr.w0", "model"], x0=values["asr.x0", "model"],
                       align=values["align", "model"]),
         cues=CueRules(**{key: values["cues", key] for key in DEFAULTS["cues"]}),
         translate=TranslateConfig(seed=values["translate", "seed"]),

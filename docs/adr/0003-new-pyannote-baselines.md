@@ -1,6 +1,6 @@
 # ADR-0003：STT 基线、设备与产品 STT 引擎
 
-状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0001、ADR-0002、ADR-0012，原文见 git 历史（提交 807de3e 及之前）。
+状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0001、ADR-0002、ADR-0012，原文见 git 历史（提交 807de3e 及之前）。「产品 STT 引擎」第 1 点的默认引擎与确认要求自 2026-11-20 起由 [ADR-0035](0035-cross-default-native-whisper-features.md) 替代（默认改为 `cross`）。
 范围：本地 GPU 日语转写的两条基线身份与组件、设备约束，以及产品包 `kototoki/` asr 阶段的可选引擎 `w0`｜`x0`｜`cross`。操作入口与逐项组件定义见[当前基线](../../research/2026-10-stt-demo-w0-x0/README.md)；阶段框架见 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md)；整窗守卫见 [ADR-0030](0030-asr-window-plausibility-guard.md)。行为描述见[STT worker](../architecture/modules/stt-workers.md)、[阶段计划](../architecture/modules/stage-plan.md)、[产物契约](../architecture/modules/artifact-contract.md)、[配置与媒体](../architecture/modules/config-and-media.md)。
 
 ## 决定

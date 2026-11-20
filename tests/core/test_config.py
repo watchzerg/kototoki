@@ -28,7 +28,7 @@ class LoadTests(unittest.TestCase):
 
     def test_defaults_fill_missing_keys(self) -> None:
         cfg = config.load(self.write(MINIMAL), environ={})
-        self.assertEqual(cfg.engine, "w0")
+        self.assertEqual(cfg.engine, "cross")  # ADR-0035「默认引擎」
         self.assertEqual(cfg.run.extract_workers, 4)
         self.assertEqual(cfg.run.stable_check_s, 10.0)
         self.assertEqual(cfg.input.audio_language, "jpn")
@@ -75,18 +75,17 @@ class LoadTests(unittest.TestCase):
         cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "/abs/mms"\n'),
                           environ={})
         self.assertEqual(cfg.models.w0, self.root / "m" / "w")
-        self.assertEqual(cfg.models.w0_mel_assets, self.root / "m" / "w0-assets")
         self.assertEqual(cfg.models.align, Path("/abs/mms"))
         default = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(default.models.vad, config.REPO_ROOT / ".local/models/vad-comparison/"
                          "pyannote-segmentation-3.0/pytorch_model.bin")
 
     def test_cross_engine_is_accepted_and_carries_both_asr_models(self) -> None:
-        cfg = config.load(self.write(MINIMAL + '[stt]\nengine = "cross"\n'), environ={})
-        self.assertEqual(cfg.engine, "cross")
+        cfg = config.load(self.write(MINIMAL + '[stt]\nengine = "w0"\n'), environ={})
+        self.assertEqual(cfg.engine, "w0")
+        cfg = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(config.ENGINES, ("w0", "x0", "cross"))
         self.assertEqual(cfg.models.w0, config.REPO_ROOT / ".local/models/faster-whisper-large-v3")
-        self.assertEqual(cfg.models.w0_mel_assets, config.REPO_ROOT / ".local/models/w0-assets")
         self.assertEqual(cfg.models.x0, config.REPO_ROOT / ".local/models/qwen3-asr-1.7b-hf")
 
     def test_unknown_engine_message_lists_all_engines(self) -> None:
@@ -156,7 +155,7 @@ class ExampleFileTests(unittest.TestCase):
         example = config.REPO_ROOT / "kototoki.toml.example"
         self.assertIn("# work_dir", example.read_text(encoding="utf-8"))  # 示例里 work_dir 只以注释出现
         cfg = config.load(example, environ={})
-        self.assertEqual(cfg.engine, "w0")
+        self.assertEqual(cfg.engine, "cross")
         with example.open("rb") as stream:
             document = tomllib.load(stream)
         written = {(section, key) for section, table in config._flatten(document).items() for key in table}

@@ -12,7 +12,7 @@
 
 | 主题 | 现行规则 | ADR |
 | --- | --- | --- |
-| STT 基线、设备与产品 STT 引擎 | W0 为 faster-whisper、X0 为 Qwen-ASR，共用新 Pyannote VAD 与 MMS 日语对齐；ASR 与对齐只跑 GPU；`[stt] engine` 可选 `w0`（默认）、`x0`、`cross` | [0003](0003-new-pyannote-baselines.md) |
+| STT 基线、设备与产品 STT 引擎 | W0 为 faster-whisper、X0 为 Qwen-ASR，共用新 Pyannote VAD 与 MMS 日语对齐；ASR 与对齐只跑 GPU；`[stt] engine` 可选 `cross`（默认）、`w0`、`x0`；产品 w0 特征用 faster-whisper 自带计算 | [0003](0003-new-pyannote-baselines.md)、[0035](0035-cross-default-native-whisper-features.md) |
 | ASR 整窗守卫 | 产品 w0 路径解码后依次过复读折叠、语速 > 20 字/秒、已知幻听句三条规则；W0 基线身份不变 | [0030](0030-asr-window-plausibility-guard.md) |
 | 产品架构、输入与发布 | 阶段 × 整批、每阶段一个子进程，配置驱动，按身份与配方 hash 续跑；音频也是输入；工作目录在 `work_dir`；只把 `ja-zh.srt` 发布到源文件旁，已存在即跳过 | [0007](0007-bilingual-subtitle-pipeline-architecture.md) |
 | 内嵌日文字幕 | 有可用日文文本字幕轨时跳过 STT，从 `names` 起走原链 | [0024](0024-embedded-japanese-subtitles.md) |
@@ -22,7 +22,7 @@
 | 方法禁区 | 不自动选用"翻译多次再挑选"类方法；可靠性重试、按条追问与拆分不算 | [0008](0008-no-multi-translation-selection.md) |
 | 产品包边界与失败级别 | GPU 锁冲突进程级结束整批；产品不为研究侧留代码；核心测试不导入研究代码 | [0025](0025-product-package-boundaries.md) |
 | 研究与文档布局 | 研究一轮一目录放 `research/`，记录精简，冻结靠 git 与归档 tag；产品不导入 `research/` | [0031](0031-research-layout-and-lightweight-records.md) |
-| 平台、工具链与外部前置 | 只面向 Ubuntu；mise 管 uv 与 just，uv 管 Python 与依赖；ffmpeg 用系统包；`assets.toml` 只列 STT 模型；Strata 只锁 0.2 版本线、实际版本不进配方身份（尚未实现） | [0034](0034-ubuntu-only-platform.md) |
+| 平台、工具链与外部前置 | 只面向 Ubuntu；mise 管 uv 与 just，uv 管 Python 与依赖；ffmpeg 用系统包；`assets.toml` 只列 STT 模型；Strata 只锁 0.2 版本线、实际版本不进配方身份（已实现，待真实模型验收） | [0034](0034-ubuntu-only-platform.md) |
 
 ### 未关闭项
 
@@ -32,7 +32,7 @@
 
 日期是采纳日；带链接的是现存 ADR，纯文本编号已并入括号里的 ADR。
 
-- **STT 基线**：0001（10-04，W0 旧 Pyannote、X0 fixed30）→ 0002（10-05，X0 `cut-merge`）→ 0003（10-05，两路统一新 Pyannote）→ 0007（10-13，进产品，VAD 固定 `cuda:0`）→ 0012（10-19，可选引擎 `cross`）。现行见 [0003](0003-new-pyannote-baselines.md)。
+- **STT 基线**：0001（10-04，W0 旧 Pyannote、X0 fixed30）→ 0002（10-05，X0 `cut-merge`）→ 0003（10-05，两路统一新 Pyannote）→ 0007（10-13，进产品，VAD 固定 `cuda:0`）→ 0012（10-19，可选引擎 `cross`）→ [0035](0035-cross-default-native-whisper-features.md)（11-20，默认 `cross`，W0 特征改用 faster-whisper 自带计算）。现行见 [0003](0003-new-pyannote-baselines.md)、[0035](0035-cross-default-native-whisper-features.md)。
 - **ASR 整窗守卫**：0023（11-10 采纳、11-11 实现，复读守卫，`guard-v2`）→ 0030（11-18，加语速与幻听句，`guard-v3`）。现行见 [0030](0030-asr-window-plausibility-guard.md)。
 - **翻译模型与流程（H0）**：0004（10-06，Q3_K_M greedy）→ 0005（10-07，APEX-I-Compact，`official30b-cached-v1`）→ 0006（10-11，`b10-joint`）→ 0009／0010（10-17，`dp6-grp` → `dp10-cut`）→ 0015（10-21，命名 H0）→ 0018（11-08，退出基线）→ 0019（11-08，退出产品）。历史身份见 [0021](0021-q3-strata-names-baseline.md)。
 - **Q 线基线**：0015（10-21，Q0 `qwen-wide`）→ 0016（11-08，Q1 只注入 high）→ 0017（11-08，Q2 Strata 默认启动）→ 0018（11-08，Q2 唯一基线）→ 0021（11-09，Q3 Strata 建表）。现行见 [0021](0021-q3-strata-names-baseline.md)。
@@ -47,7 +47,7 @@
 
 | 编号 | 主题 | 状态 |
 | --- | --- | --- |
-| [0003](0003-new-pyannote-baselines.md) | STT 基线、设备与产品 STT 引擎 | 有效（并入 0001、0002、0012） |
+| [0003](0003-new-pyannote-baselines.md) | STT 基线、设备与产品 STT 引擎 | 有效；默认引擎由 0035 替代（并入 0001、0002、0012） |
 | [0007](0007-bilingual-subtitle-pipeline-architecture.md) | 产品架构、输入与发布 | 有效（并入 0020、0027） |
 | [0008](0008-no-multi-translation-selection.md) | 不自动选用"翻译多次再挑选" | 有效 |
 | [0021](0021-q3-strata-names-baseline.md) | 翻译基线 Q3 与历史翻译身份 | 有效；Strata 版本条款由 0034 替代（并入 0004、0005、0006、0009、0010、0011、0015、0016、0017、0018） |
@@ -55,12 +55,13 @@
 | [0025](0025-product-package-boundaries.md) | 产品包边界与失败级别 | 有效；第 4 点中 `tests/equivalence/` 实时对照层由 0031 替代 |
 | [0028](0028-names-accept-empty-table.md) | 产品 names 阶段与专名一致性研究线 | 有效（并入 0013、0014、0022 除第 3–5 点、0026） |
 | [0029](0029-translate-per-cue-resolution.md) | 产品翻译（`q3-translate-v1`）与 Strata session | 有效；Strata 版本条款由 0034 替代（并入 0019、0022 第 3–5 点） |
-| [0030](0030-asr-window-plausibility-guard.md) | ASR 整窗守卫（`guard-v3`） | 有效（并入 0023） |
+| [0030](0030-asr-window-plausibility-guard.md) | ASR 整窗守卫（`guard-v3`） | 有效；产品 W0 配方身份由 0035 替代（并入 0023） |
 | [0031](0031-research-layout-and-lightweight-records.md) | 研究按轮次放进 `research/`，记录精简，冻结靠 git | 有效 |
 | [0033](0033-ffmpeg-branch-lock.md) | 资产清单与安装，ffmpeg 只锁维护分支 | 被 0034 替代（并入 0032） |
+| [0035](0035-cross-default-native-whisper-features.md) | 默认 STT 引擎 `cross`，W0 特征用 faster-whisper 自带计算 | 有效 |
 | [0034](0034-ubuntu-only-platform.md) | 只面向 Ubuntu，工具链与外部前置按 Linux 原生做法重定 | 有效，尚未实现；替代 0033 全文、0029 与 0021 的 Strata 版本条款 |
 
-新 ADR 编号从 0035 起。
+新 ADR 编号从 0036 起。
 
 ## 记录新决定
 
@@ -78,6 +79,7 @@
 
 "当前有效决定"表的改动日志，新的一行加在最前。
 
+- 2026-11-20（ubuntu-port）：ADR-0035 默认 STT 引擎改为 `cross`，W0 特征改用 faster-whisper 自带计算（`w0-faster-whisper-large-v3-fwmel-guard-v3`）。
 - 2026-11-20（ubuntu-port）：ADR-0034 只面向 Ubuntu，取代 ADR-0033；Strata 只锁 0.2 版本线、实际版本不进配方身份；"资产清单与安装"行改为"平台、工具链与外部前置"。
 - 2026-11-18（ADR 合并）：按主题合并为 11 篇，删除 22 篇被并掉的 ADR 与跳转页；表改为每主题一行一篇 ADR，CURRENT.md 改为速查页。
 - 2026-11-18：ADR-0032 资产清单去掉 llama.cpp 与 27B、`setup` 并入 `install`；ADR-0033 ffmpeg 改锁维护分支。

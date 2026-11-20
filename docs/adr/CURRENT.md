@@ -47,11 +47,11 @@ ASR 与强制对齐只跑 GPU，不回退 CPU；VAD 可用 CPU 或 GPU，产品�
 
 ### 产品 STT 引擎
 
-`[stt] engine` = `w0`（默认）｜`x0`｜`cross`；改默认须新 ADR 并在全新隔离材料上确认。`cross` 配方 `cross-w0-x0-whisper-judge-v1`：Whisper 教师强制打分，d > −1.0 取 x0（[0003「产品 STT 引擎」](0003-new-pyannote-baselines.md#产品-stt-引擎)）。
+`[stt] engine` = `cross`（默认，[0035「默认引擎」](0035-cross-default-native-whisper-features.md#默认引擎)）｜`w0`｜`x0`。`cross` 配方 `cross-w0-x0-whisper-judge-v1`：Whisper 教师强制打分，d > −1.0 取 x0（[0003「产品 STT 引擎」](0003-new-pyannote-baselines.md#产品-stt-引擎)）。产品 w0 的特征用 faster-whisper 自带的 `FeatureExtractor`，不再用 `mel_filters.npz`（[0035「W0 特征」](0035-cross-default-native-whisper-features.md#w0-特征)）。
 
 ## ASR 整窗守卫
 
-只在产品 w0 路径（含 `cross` 的 w0 一路），依次过复读 `repeat-strict`（折叠，仍命中则置空）、语速 > 20 字/秒置空、整窗是已知幻听句置空三条规则；只做后处理，W0 基线身份不变（[0030](0030-asr-window-plausibility-guard.md)）。产品 W0 配方 `w0-faster-whisper-large-v3-guard-v3`，W0 `6a47318c7732534270f64d14bb5da9830a79fdcae9f6d84e01a309532d62403b`、CROSS `bd5bc55527a539beab598e98f687f1bcbbcc6c23b3ba3a823fd3e9dfb46338e3`。
+只在产品 w0 路径（含 `cross` 的 w0 一路），依次过复读 `repeat-strict`（折叠，仍命中则置空）、语速 > 20 字/秒置空、整窗是已知幻听句置空三条规则；只做后处理，W0 基线身份不变（[0030](0030-asr-window-plausibility-guard.md)）。产品 W0 配方 `w0-faster-whisper-large-v3-fwmel-guard-v3`，W0 `9f2c8ea8dc8f6334b45f6f257e466363acc947d75ad94531aa13bc531c5d09b4`、CROSS `4041dd2496f73aa3e46f17afc2a769c161a94e7d7894a3bc0f48f2d9decb2cf2`（[0035「身份」](0035-cross-default-native-whisper-features.md#身份)）。
 
 ## 专名
 

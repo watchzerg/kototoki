@@ -29,14 +29,13 @@ extract_workers = 4                     # extract 线程池大小（ffmpeg 并�
 stable_check_s = 10.0                   # 两次采样文件大小不变才视为写入完成
 
 [stt]
-engine = "w0"                           # w0 | x0 | cross（cross 用 [asr.w0] 与 [asr.x0] 两路模型）
+engine = "cross"                        # cross（默认）| w0 | x0；cross 用 [asr.w0] 与 [asr.x0] 两路模型
 
 [vad]
 model = "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"   # 设备固定 cuda:0，没有配置键
 
 [asr.w0]
 model      = "faster-whisper-large-v3"
-mel_assets = "w0-assets"
 
 [asr.x0]
 model = "qwen3-asr-1.7b-hf"
@@ -77,7 +76,7 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 - 未知节、未知键报错（`ConfigError`，消息给出键名），不忽略；已删除的键（`[paths] output_dir`、`llama_server`，`[input] video_extensions`，`[run] force`，`[translate] model`／`port`，`[names] enabled`／`model`／`port`，`break_stale_lock`，`[vad] device`）同样按未知键报错。
 - 类型按默认值的类型校验：字符串键须为非空字符串；布尔键只收 `true`／`false`；整数键不收布尔与浮点；浮点键也收整数；`extensions` 须为非空字符串列表。
 - 取值校验：`stt.engine` 只收 `w0`／`x0`／`cross`；`run.extract_workers` ≥ 1；`[translate] seed` 与 `[names] seed` 须满足 0 < seed < 2**31（Strata 不接受 0）。TOML 语法错误与文件读不到都报 `ConfigError`。`[cues]` 的数值范围（`max_chars` ≥ 1、`max_duration_s` > 0、其余时长 ≥ 0）不在读取时检查，由 ja-cues 阶段的 `cues.build_cues` 检查，不合法时该阶段报 `ValueError`。
-- 路径：用户写出的相对路径按配置文件所在目录解析；省略的键用默认值，其中相对路径按仓库根解析（配置文件放仓库外时默认模型目录与 ffmpeg 仍可用）。`[vad]`、`[asr.w0]`（含 `mel_assets`）、`[asr.x0]`、`[align]` 的模型路径为相对路径时相对于 `paths.models_root`。
+- 路径：用户写出的相对路径按配置文件所在目录解析；省略的键用默认值，其中相对路径按仓库根解析（配置文件放仓库外时默认模型目录与 ffmpeg 仍可用）。`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]` 的模型路径为相对路径时相对于 `paths.models_root`。
 - 启动检查（`__main__`，失败即退出码 2）：`input_dir` 必须是已存在的目录，且不得位于仓库内（`.local/` 除外）；`work_dir` 不得位于仓库内（`.local/` 除外），也不得位于 `input_dir` 内（含二者相同）。
 - 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`；破除残留锁只认环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效（配置里的开关是粘性的，每次都会自动破锁，因此不放配置文件）。翻译与建表的模型由 Strata 管理、端口固定 8080，没有对应键。
 

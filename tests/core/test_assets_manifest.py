@@ -9,7 +9,7 @@ from __future__ import annotations
 import tomllib
 import unittest
 
-from kototoki import config, plan, recipes
+from kototoki import config, plan
 
 with (config.REPO_ROOT / "assets.toml").open("rb") as _stream:
     MANIFEST = tomllib.load(_stream)
@@ -24,7 +24,6 @@ class ModelConstantsTests(unittest.TestCase):
     def test_plan_tables_equal_manifest(self) -> None:
         self.assertEqual(shas("pyannote-segmentation-3.0"), {"pytorch_model.bin": plan.VAD_CHECKPOINT_SHA256})
         self.assertEqual(shas("faster-whisper-large-v3"), plan.W0_FILES)
-        self.assertEqual(shas("w0-assets"), {"mel_filters.npz": recipes.W0["features"]["mel_sha256"]})
         self.assertEqual(shas("qwen3-asr-1.7b-hf"), plan.X0_FILES)
         self.assertEqual(shas("mms-1b-all"), plan.MMS_FILES)
 
@@ -36,7 +35,6 @@ class ModelConstantsTests(unittest.TestCase):
         defaults = config.DEFAULTS
         self.assertEqual(defaults["vad"]["model"], f"{MODELS['pyannote-segmentation-3.0']['dir']}/pytorch_model.bin")
         self.assertEqual(defaults["asr.w0"]["model"], MODELS["faster-whisper-large-v3"]["dir"])
-        self.assertEqual(defaults["asr.w0"]["mel_assets"], MODELS["w0-assets"]["dir"])
         self.assertEqual(defaults["asr.x0"]["model"], MODELS["qwen3-asr-1.7b-hf"]["dir"])
         self.assertEqual(defaults["align"]["model"], MODELS["mms-1b-all"]["dir"])
         self.assertNotIn("model", defaults["names"])  # 建表模型由 Strata 管理（ADR-0029「Strata session」）

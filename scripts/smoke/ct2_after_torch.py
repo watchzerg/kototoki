@@ -45,7 +45,7 @@ def main() -> int:
     from kototoki.asr_whisper import WhisperAsr  # 模块内先 torch 后 ctranslate2
 
     started = time.perf_counter()
-    asr = WhisperAsr(MODELS / "faster-whisper-large-v3", MODELS / "w0-assets")
+    asr = WhisperAsr(MODELS / "faster-whisper-large-v3")
     result["model_load_s"] = round(time.perf_counter() - started, 3)
     result["model"] = {key: asr.metadata[key] for key in ("device", "compute_type")}
 

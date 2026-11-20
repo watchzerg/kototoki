@@ -167,6 +167,7 @@ Type: research
    - 文档：`windows-nvidia.md` 改写为 `ubuntu-nvidia.md`；`workflow.md` 长任务一节改为 `systemd-run --user`（本机试跑过空命令）；README、AGENTS、production-runs、artifact-contract、规格等同步；
    - 未改：`.claude/settings.json` 里的 `PowerShell(...)` 权限条目（改权限清单需用户本人操作）。
    - 2026-11-20 用户决定：删除依赖研究期本地数据（`.local/round2`、`.local/w0-demo`，迁机后已不存在）的五项 smoke（`stt_frozen_window`、`x0_frozen_window`、`forced_align`、`vad_pyannote`、`whisper_score`），`ct2_after_torch` 改为合成音频、单进程、只核对能解码与 CUDA 库来源。
+   - 2026-11-20 用户另定（ADR-0035）：默认 STT 引擎改为 `cross`；W0 特征改用 faster-whisper 自带计算，删除 `w0-assets/mel_filters.npz`。因此 `fetch-models` 需要下载全部四个模型（约 11 GB）。
 8. 验收（每一步都是重任务，逐项先问）：`just install` → `just fetch-models` → `gate-full` → `just smoke` → 小批量的 `just subtitles`。
 
 ## Comments

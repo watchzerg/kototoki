@@ -52,7 +52,7 @@ _Avoid_: S1（指基线时；S1 是 v13 的候选臂）、names-strata-v4（指�
 _Avoid_: 产品后端, 正式后端
 
 **STT 引擎（w0／x0／cross）**：
-配置键 `stt.engine` 的取值，`w0`／`x0` 分别按 W0／X0 的配方在产品统一 CUDA 12.8 环境中运行；环境升级即新身份，与基线成绩的回归本期未做，不直接继承 W0／X0 的分数。`cross`（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)，已接受 2026-10-19；两部合计 CER −0.95 pp，低于预设 1.0 pp 验收线，用户裁定仍采用）是可选取值，默认仍为 `w0`：同一 asr worker 内 w0 与 x0 各转写一遍，再由 Whisper 对两路分歧区间做交叉打分（阈值 −1.0）合并成同构的 `asr.json`，配方 `cross-w0-x0-whisper-judge-v1`，不是新的 W0／X0 基线。
+配置键 `stt.engine` 的取值，`w0`／`x0` 分别按 W0／X0 的配方在产品统一 CUDA 12.8 环境中运行（产品 w0 的特征改用 faster-whisper 自带计算，ADR-0035）；环境升级即新身份，与基线成绩的回归本期未做，不直接继承 W0／X0 的分数。`cross`（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)，已接受 2026-10-19；两部合计 CER −0.95 pp，低于预设 1.0 pp 验收线，用户裁定仍采用）是产品默认取值（[ADR-0035](docs/adr/0035-cross-default-native-whisper-features.md)，2026-11-20）：同一 asr worker 内 w0 与 x0 各转写一遍，再由 Whisper 对两路分歧区间做交叉打分（阈值 −1.0）合并成同构的 `asr.json`，配方 `cross-w0-x0-whisper-judge-v1`，不是新的 W0／X0 基线。
 
 **日文 cue**：
 翻译与字幕的最小单元：由 `align.json` 字符时间回填后按句末、软断点、字数与时长切出的一条日文字幕（`ja-cues.json`／`ja.srt`），中文译文与之一一对应。采用内嵌日文字幕的文件（ADR-0024）不经切分，`ja.srt` 里清洗后的每条字幕即一条日文 cue。

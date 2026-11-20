@@ -66,11 +66,34 @@ class ImportOrderTest(unittest.TestCase):
         self.assertEqual(order, ["torch", "ctranslate2", "faster_whisper", "faster_whisper.tokenizer"])
 
 
+class FeaturesTest(unittest.TestCase):
+    """faster-whisper 逐块路径：去掉最后一帧，再在 Mel 上补零或截断到 3000 帧（ADR-0035「W0 特征」）。"""
+
+    def setUp(self):
+        self.module, _ = import_with_fakes()
+
+    def test_short_window_is_trimmed_by_one_frame_then_zero_padded(self):
+        extractor = mock.Mock(return_value=np.ones((128, 101), dtype=np.float32))
+        mel = self.module.features(np.zeros(16000, dtype=np.float32), extractor)
+        self.assertEqual(mel.shape, (128, 3000))
+        self.assertEqual(float(mel[:, :100].min()), 1.0)
+        self.assertEqual(float(np.abs(mel[:, 100:]).max()), 0.0)
+
+    def test_full_window_is_trimmed_to_3000_frames(self):
+        extractor = mock.Mock(return_value=np.ones((128, 3002), dtype=np.float32))
+        self.assertEqual(self.module.features(np.zeros(480000, dtype=np.float32), extractor).shape, (128, 3000))
+
+    def test_empty_or_over_30s_window_is_rejected(self):
+        for samples in (0, 480001):
+            with self.subTest(samples=samples), self.assertRaises(ValueError):
+                self.module.features(np.zeros(samples, dtype=np.float32), mock.Mock())
+
+
 class TranscribeTest(unittest.TestCase):
     def setUp(self):
         self.module, _ = import_with_fakes()
         self.asr = object.__new__(self.module.WhisperAsr)
-        self.asr._model, self.asr._filters, self.asr.options = object(), object(), {}
+        self.asr._model, self.asr.options = mock.Mock(), {}
         self.audio = np.zeros(48000, dtype=np.float32)
         self.chunks = [
             {"start": 0.0, "end": 1.0, "start_sample": 0, "end_sample": 16000, "segments": [[0.0, 1.0]]},
@@ -151,7 +174,7 @@ class ScoreTest(unittest.TestCase):
             list(tokenizer.sot_sequence) + ([tokenizer.no_timestamps] if kwargs["without_timestamps"] else []))
         self.model.encode.return_value = "encoder-output"
         self.model.model.align.side_effect = self.align
-        self.asr._model, self.asr._filters = self.model, object()
+        self.asr._model = self.model
         self.asr.options = {}
         self.audio = np.zeros(48000, dtype=np.float32)
         self.chunk = {"start": 1.0, "end": 2.0, "start_sample": 16000, "end_sample": 32000}
@@ -186,7 +209,7 @@ class ScoreTest(unittest.TestCase):
         self.asr.score(self.audio, self.chunk, ["あ"])
         window = self.features.call_args.args[0]
         self.assertEqual(len(window), 16000)
-        self.assertEqual(self.features.call_args.args[1], self.asr._filters)
+        self.assertIs(self.features.call_args.args[1], self.model.feature_extractor)
         self.assertEqual(self.aligned[0][2], [100])  # ceil(16000 / 160)
 
     def test_encoder_runs_once_and_texts_are_aligned_in_batches_of_at_most_16(self):

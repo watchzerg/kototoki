@@ -31,7 +31,7 @@ class SubtitlesScriptCase(unittest.TestCase):
         cfg = config.load(path, environ={})
         self.assertEqual(cfg.paths.input_dir, self.input_dir.resolve())
         self.assertEqual(cfg.paths.work_dir, config.REPO_ROOT / ".local" / "work")
-        self.assertEqual(cfg.engine, "w0")
+        self.assertEqual(cfg.engine, "cross")
 
     def test_same_directory_reuses_one_file(self) -> None:
         first = subtitles.write_config(self.input_dir, self.config_dir)

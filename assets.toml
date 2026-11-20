@@ -26,14 +26,6 @@ revision = "edaa852ec7e145841d8ffdb056a99866b5f0a478"
 "tokenizer.json" = { sha256 = "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca", size = 2480617 }
 "vocabulary.json" = { sha256 = "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1", size = 1068114 }
 
-# W0 特征链的 Mel 滤波器：取自 whisperx 3.8.6 包内 assets，不是 HF 资产，fetch-models 不负责获取。
-[models.w0-assets]
-dir = "w0-assets"
-source = "whisperx 3.8.6 package assets (whisperx/assets/mel_filters.npz)"
-
-[models.w0-assets.files]
-"mel_filters.npz" = { sha256 = "7450ae70723a5ef9d341e3cee628c7cb0177f36ce42c44b7ed2bf3325f0f6d4c", size = 4271 }
-
 [models."qwen3-asr-1.7b-hf"]
 dir = "qwen3-asr-1.7b-hf"
 repo = "Qwen/Qwen3-ASR-1.7B-hf"

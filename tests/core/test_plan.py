@@ -76,7 +76,7 @@ class PlanCase(unittest.TestCase):
 
     def write_asr(self) -> None:
         vad_sha = artifacts.sha256_file(self.work / artifacts.VAD)
-        artifacts.write_artifact(self.work / artifacts.ASR, plan.asr_identity("w0", PCM, vad_sha, MODELS), {"offset_s": 0})
+        artifacts.write_artifact(self.work / artifacts.ASR, plan.asr_identity(self.config.engine, PCM, vad_sha, MODELS), {"offset_s": 0})
 
     def write_align(self) -> None:
         asr_sha = artifacts.sha256_file(self.work / artifacts.ASR)
@@ -438,15 +438,15 @@ class PurityTests(PlanCase):
 
 
 class AsrEngineTests(unittest.TestCase):
-    WORKER_MODELS = {"vad": "v", "w0": "w", "w0_mel_assets": "m", "x0": "x", "align": "a"}
+    WORKER_MODELS = {"vad": "v", "w0": "w", "x0": "x", "align": "a"}
 
     def test_cross_model_files_are_the_union_of_w0_and_x0(self) -> None:
         w0 = plan.model_files("asr", self.WORKER_MODELS, engine="w0")
         x0 = plan.model_files("asr", self.WORKER_MODELS, engine="x0")
         cross = plan.model_files("asr", self.WORKER_MODELS, engine="cross")
         self.assertEqual(cross, w0 | x0)
-        self.assertEqual(len(cross), len(plan.W0_FILES) + 1 + len(plan.X0_FILES))
-        self.assertEqual(cross["w0-assets/mel_filters.npz"][0], Path("m") / "mel_filters.npz")
+        self.assertEqual(len(cross), len(plan.W0_FILES) + len(plan.X0_FILES))
+        self.assertEqual(cross["faster-whisper-large-v3/model.bin"][0], Path("w") / "model.bin")
         self.assertEqual(cross["qwen3-asr-1.7b-hf/model.safetensors"][0], Path("x") / "model.safetensors")
         self.assertFalse(set(w0) & set(x0))
 
@@ -460,12 +460,12 @@ class AsrEngineTests(unittest.TestCase):
         other = {**shas, "qwen3-asr-1.7b-hf/model.safetensors": "f" * 64}  # 任一路模型 SHA 变化即不同身份
         self.assertNotEqual(identity, plan.asr_identity("cross", PCM, "e" * 64, other))
 
-    def test_single_engine_recipe_hashes_are_pinned(self) -> None:  # w0 自 ADR-0030 起带 guard（guard-v3）
+    def test_single_engine_recipe_hashes_are_pinned(self) -> None:  # w0：ADR-0035 起用 faster-whisper 自带特征
         self.assertEqual(plan.recipe_hash("asr", engine="w0"),
-                         "6a47318c7732534270f64d14bb5da9830a79fdcae9f6d84e01a309532d62403b")
+                         "9f2c8ea8dc8f6334b45f6f257e466363acc947d75ad94531aa13bc531c5d09b4")
         self.assertEqual(plan.recipe_hash("asr", engine="x0"),
                          "5d1bec25fbb4acae6d82a866620faf75e2c55498aa304c1dadd7dc401bfd057b")
-        self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="w0")), len(plan.W0_FILES) + 1)
+        self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="w0")), len(plan.W0_FILES))
         self.assertEqual(len(plan.model_files("asr", self.WORKER_MODELS, engine="x0")), len(plan.X0_FILES))
 
     def test_engine_parts_table(self) -> None:
@@ -488,7 +488,7 @@ class AsrEngineTests(unittest.TestCase):
             toml.write_text('[paths]\ninput_dir = "in"\nwork_dir = "out"\n[stt]\nengine = "cross"\n',
                             encoding="utf-8")
             worker_models = plan.worker_models(load(toml))
-        self.assertTrue({"w0", "w0_mel_assets", "x0"} <= set(worker_models))
+        self.assertTrue({"w0", "x0"} <= set(worker_models))
 
 
 class StageTableTests(unittest.TestCase):

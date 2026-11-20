@@ -59,12 +59,6 @@ class FetchModelTests(AssetsCase):
             self.fetch(model)
         self.assertEqual(list((self.models / "group" / "demo-model").iterdir()), [])
 
-    def test_model_without_repo_cannot_be_fetched(self) -> None:
-        model = self.model({"mel.npz": b"m"}, source="package assets")
-        del model["repo"]
-        with self.assertRaisesRegex(assets.AssetError, "no download source"):
-            self.fetch(model)
-
     def test_gated_model_requires_token(self) -> None:
         model = self.model({"w.bin": b"w"}, gated=True)
         self.publish("w.bin", b"w")

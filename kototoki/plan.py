@@ -98,7 +98,7 @@ MMS_FILES = {
 def worker_models(config: Config) -> dict[str, str]:
     """jobs `config.models`：worker 用到的模型路径（字符串）。"""
     m = config.models
-    return {"vad": str(m.vad), "w0": str(m.w0), "w0_mel_assets": str(m.w0_mel_assets), "x0": str(m.x0),
+    return {"vad": str(m.vad), "w0": str(m.w0), "x0": str(m.x0),
             "align": str(m.align)}
 
 
@@ -117,8 +117,6 @@ def model_files(stage: str, models: Mapping[str, str], *, engine: str | None = N
         if part == "w0":
             files |= {f"faster-whisper-large-v3/{name}": (Path(models["w0"]) / name, sha256)
                       for name, sha256 in W0_FILES.items()}
-            files["w0-assets/mel_filters.npz"] = (Path(models["w0_mel_assets"]) / "mel_filters.npz",
-                                                  recipes.W0["features"]["mel_sha256"])
         else:
             files |= {f"qwen3-asr-1.7b-hf/{name}": (Path(models["x0"]) / name, sha256)
                       for name, sha256 in X0_FILES.items()}

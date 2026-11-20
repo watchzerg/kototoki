@@ -10,7 +10,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 ## 当前行为规格
 
-**引擎与模型键**：`config.engine` 取 `w0`（默认）、`x0` 或 `cross`。加载哪些适配器、读哪些模型键按 `plan.ENGINE_PARTS`：w0 只读 `w0`／`w0_mel_assets`，x0 只读 `x0`，cross 三者都读；`recipe_hash` 分别为 `recipes.W0`、`X0`、`CROSS` 的 hash。`W0` 含 `guard` 块（ADR-0030），`CROSS` 嵌套 `W0` 与 `X0`。
+**引擎与模型键**：`config.engine` 取 `cross`（默认，ADR-0035）、`w0` 或 `x0`。加载哪些适配器、读哪些模型键按 `plan.ENGINE_PARTS`：w0 只读 `w0`，x0 只读 `x0`，cross 两者都读；`recipe_hash` 分别为 `recipes.W0`、`X0`、`CROSS` 的 hash。`W0` 含 `guard` 块（ADR-0030），`CROSS` 嵌套 `W0` 与 `X0`。
 
 **`asr.json`**（三种引擎同构）：`schema_version`、`engine`、`offset_s`、`input`、`chunks`（照抄 `vad.json`）、`original_segments`（与窗口一一对应：`text`、秒与整数样本、`avg_logprob`）、`asr_traces`、`failed_windows`、保留文本 `text`、`metadata`、`stages`。
 
@@ -21,7 +21,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 **ASR w0**（`asr_whisper.WhisperAsr`）：
 
 - 模块顶层先 `import torch` 再 `import ctranslate2`、`faster_whisper`：CT2 的 Linux wheel 不自带 CUDA 运行库，按 soname 加载 `libcublas.so.12`、`libcudnn.so.9`，复用 torch 已从 `site-packages/nvidia/` 加载的那一份；不设 `LD_LIBRARY_PATH`。smoke `ct2_after_torch` 核对这一点（Linux 上尚待首跑）。
-- 特征链与解码参数同 W0 契约，参数取自 `recipes.W0`；mel 资产 SHA256 不符、模型不在 CUDA float16 上即失败。
+- 解码参数同 W0 契约，取自 `recipes.W0`；特征用 faster-whisper 按模型 `preprocessor_config.json` 建的 `FeatureExtractor`（`features()`：`extractor(window)[..., :-1]`，Mel 补零／截断到 3000 帧，同 faster-whisper `BatchedInferencePipeline`，ADR-0035「W0 特征」）；模型不在 CUDA float16 上或不是 128 Mel 即失败。
 - 窗口输入要求整数样本（`schema.validate_windows`）。
 - 单窗解码抛 `RuntimeError` 时该窗文字为空、trace 为 `null` 并作为失败窗口返回，壳用 `protocol.fail_window` 记入 `failed_windows`，继续下一窗。
 
@@ -55,7 +55,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 `engine = "cross"`（[ADR-0003](../../adr/0003-new-pyannote-baselines.md)，可选）：同一 asr worker 进程内 w0 与 x0 各转写一遍，再由 Whisper 对两路的分歧区间做教师强制打分并合并，写出与 `w0`／`x0` 同构的 `asr.json`；阶段链不变，align 及之后只看到 `asr.json`。
 
-- **加载**：`models` 同时需要 `w0`、`w0_mel_assets`、`x0`，模型核对两路的全部文件。`start` 按 `ENGINE_PARTS` 次序先加载 `WhisperAsr`（CT2 fp16）再加载 `QwenAsr`（bf16），两者常驻到进程退出，分别记加载耗时；仍先 `import torch` 再导入 CT2。
+- **加载**：`models` 同时需要 `w0`、`x0`，模型核对两路的全部文件。`start` 按 `ENGINE_PARTS` 次序先加载 `WhisperAsr`（CT2 fp16）再加载 `QwenAsr`（bf16），两者常驻到进程退出，分别记加载耗时；仍先 `import torch` 再导入 CT2。
 - **共驻**：产品只有两模型同进程共驻这一种路径，运行时不看显存、不回退。
 - **逐文件三步**：① Whisper 转写全部窗口，过整窗守卫（同 w0 引擎），得 `asr-w0.json`；② Qwen 转写全部窗口，得 `asr-x0.json`；③ 裁判，得 `asr-judge.json` 与合并结果 `asr.json`。两路共用同一份 `vad.json`，窗口一一对应。
 - `compute_cross` 把四个产物作为 `(path, identity, payload)` 序列返回，`gpu.file_processor` 查一次 CUDA 后依次写出三个审计产物、最后写 `asr.json`；中途失败时没有新的 `asr.json`，阶段整段重算。
@@ -65,7 +65,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 1. 两路文本规范化（NFKC，去 Unicode 标点与空白）后做字符级编辑距离对齐，非匹配操作的极大连续段为一个**分歧区间**（相隔至少一个匹配字符才分开）。
 2. 每个区间构造两个假设：hyp_w 为 w0 窗口原文，hyp_x 只把该区间按偏移映射换成 x0 原文字符、其余（含 w0 标点）不动；映射失败时两假设一并退回规范化文本。
 3. 进入裁判前 x0 原文先经 `judge.clean_x0` 去掉与非 ASCII 字符相邻的空白（两侧都是 ASCII 时保留一个空格；只清 x0，w0 原文不动）。
-4. Whisper 教师强制打分：mel 右补零到 30 s，`encode` 只算一次，编码复制成批后调用 `Whisper.align`，`start_sequence` 取 `tokenizer.sot_sequence`，CT2 自动接 `<|notimestamps|>`；分数为 Σ log `text_token_probs`（不含结束符，空文本得 0）；一个窗口的 hyp_w 与全部 hyp_x 同批（hyp_w 只打一次），批上限 16。
+4. Whisper 教师强制打分：特征同 `transcribe`（Mel 补零到 3000 帧），`encode` 只算一次，编码复制成批后调用 `Whisper.align`，`start_sequence` 取 `tokenizer.sot_sequence`，CT2 自动接 `<|notimestamps|>`；分数为 Σ log `text_token_probs`（不含结束符，空文本得 0）；一个窗口的 hyp_w 与全部 hyp_x 同批（hyp_w 只打一次），批上限 16。
 5. 判定：d ＝ score(hyp_x) − score(hyp_w)，**d > −1.0 取 x0，否则保持 w0**；没有长度项，阈值是 `CROSS` 配方常量，不是配置项。多个区间各自独立判定，再把全部被接受的翻转一起应用。
 
 **裁判的逐窗规则**（按顺序）：

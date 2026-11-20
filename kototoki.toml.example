@@ -23,14 +23,13 @@ extract_workers = 4                     # ffmpeg 并发数
 stable_check_s = 10                     # 两次采样文件大小不变才视为写入完成
 
 [stt]
-engine = "w0"                           # w0 | x0 | cross
+engine = "cross"                        # cross（默认）| w0 | x0；cross 用 [asr.w0] 与 [asr.x0] 两路模型
 
 [vad]
 model = "vad-comparison/pyannote-segmentation-3.0/pytorch_model.bin"   # 设备固定 cuda:0
 
 [asr.w0]
-model      = "faster-whisper-large-v3"
-mel_assets = "w0-assets"
+model = "faster-whisper-large-v3"
 
 [asr.x0]
 model = "qwen3-asr-1.7b-hf"

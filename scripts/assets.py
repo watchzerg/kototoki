@@ -2,7 +2,7 @@
 
 用法（经 `just fetch-models`、`just verify-assets` 调用）：
 
-    python scripts/assets.py fetch-models    # 按清单下载缺失或不符的模型文件（联网，几十 GB）
+    python scripts/assets.py fetch-models    # 按清单下载缺失或不符的模型文件（联网，约 11 GB）
     python scripts/assets.py verify          # 离线核对全部 models，不下载
 
 清单只列模型，锁 revision 与逐文件 SHA256；ffmpeg 等外部前置由用户安装（ADR-0034）。只用标准库与仓库内同样只依赖标准库的 `kototoki.artifacts`。核对用 `verify_model` 的 size+mtime
@@ -101,9 +101,6 @@ def fetch_model(name: str, model: Mapping[str, Any], *, models_root: Path = MODE
     pending = [relative for relative, entry in model["files"].items() if check_files(base, {relative: entry}, cache)]
     if not pending:
         return "ok"
-    if "repo" not in model:
-        raise AssetError(f"models.{name}: {pending} missing or mismatched and assets.toml lists no download source "
-                         f"({model.get('source', 'unknown')}); provision it manually")
     headers = {}
     if model.get("gated"):
         token = environ.get("HF_TOKEN")

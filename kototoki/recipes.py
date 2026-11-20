@@ -100,11 +100,12 @@ VAD: dict[str, Any] = {
 }
 
 # --- ASR w0（来源 experiments/w0_demo/asr.py；W0 契约 w0-pyannote-current-mms-v1） -------------------------
-# 解码与特征同 W0 基线（`baseline` 不变）；`guard` 是产品在解码之后加的整窗守卫，实现在 kototoki/guard.py：
+# 解码同 W0 基线；特征改用 faster-whisper 自带的 FeatureExtractor（ADR-0035「W0 特征」，与基线的移植特征链不同）；
+# `guard` 是产品在解码之后加的整窗守卫，实现在 kototoki/guard.py：
 # 复读（ADR-0030「复读 repeat-strict」，来源 experiments/asr_robustness_v15/repeat.py 的 `repeat-strict`）、语速与已知幻听句（ADR-0030）。
 
 W0: dict[str, Any] = {
-    "id": "w0-faster-whisper-large-v3-guard-v3",
+    "id": "w0-faster-whisper-large-v3-fwmel-guard-v3",
     "baseline": "w0-pyannote-current-mms-v1",
     "model": "faster-whisper large-v3 (CTranslate2)",
     "device": "cuda:0",
@@ -114,11 +115,10 @@ W0: dict[str, Any] = {
     "batch_size": 1,
     "condition_on_previous_text": False,
     "features": {
-        "n_mels": 128, "mel_npz_key": "mel_128",
-        "mel_sha256": "7450ae70723a5ef9d341e3cee628c7cb0177f36ce42c44b7ed2bf3325f0f6d4c",
-        "crop_samples": MAX_WINDOW_SAMPLES, "pad": "right zero-pad waveform to crop_samples",
-        "stft": {"n_fft": 400, "hop": 160, "window": "hann(400)", "center": True},
-        "log_mel": "log10(clamp(filters @ |stft[..., :-1]|^2, 1e-10)); max(x, x.max() - 8); (x + 4) / 4",
+        "n_mels": 128, "crop_samples": MAX_WINDOW_SAMPLES, "frames": 3000,
+        "extractor": "faster_whisper.FeatureExtractor from the model's preprocessor_config (padding=160)",
+        "per_window": "extractor(window)[..., :-1], then zero-pad / trim the Mel to frames "
+                      "(as faster_whisper BatchedInferencePipeline + pad_or_trim)",
     },
     "decode_options": {
         "beam_size": 5, "patience": 1, "length_penalty": 1, "suppress_blank": True,
