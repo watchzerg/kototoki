@@ -90,8 +90,9 @@ STATUS_ARGS = ("launch", "--status", "--output", "json")
 MIN_FREE_MIB = 14000
 # 专家区 46.84 GiB＋分配专家区之前引擎已占的约 4.8 GiB（CPU 上的图片读取器等）＋余量。2026-11-08（Windows）实测：启动前
 # 可用 50.4 GiB，到分配专家区时只剩 45.6 GiB，仍差 1.26 GiB 退到 mmap；2026-11-07 调优时可用 53.6 GiB 放得下。
-# Linux 上待第一次产品运行的证据重新标定（ADR-0034「Strata 版本」第 4 点）。
-MIN_AVAILABLE_RAM_GIB = 52.0
+# Linux 重标（2026-11-20 smoke，用户定 50）：启动前可用 51.0 GiB 时专家区仍锁进内存（cudaHostRegister），
+# 加载后整机占用约 57 GiB；门槛取比实测成功值低 1 GiB。
+MIN_AVAILABLE_RAM_GIB = 50.0
 RAM_WAIT_S = 180.0
 MMAP_MARKERS = ("not enough RAM for the expert arena", "experts via mmap")
 ARENA_IN_RAM = re.compile(r"expert arena: cudaHostRegister \S+ ok")  # 2026-11-19 本机 iq3_s-128k.engine.log

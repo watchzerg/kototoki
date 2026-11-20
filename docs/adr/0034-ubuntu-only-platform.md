@@ -58,7 +58,7 @@
    - Strata 的状态目录在 `$XDG_STATE_HOME/strata/`（默认 `~/.local/state/strata/`），服务日志在其下的 `runtime/`，引擎日志在 `launch/`；
    - CLI 直接用 PATH 上的 `strata`；
    - 专家区的判据：日志里有 `expert arena: cudaHostRegister … ok`，且没有退到 mmap 的标记，才算 `ram`；
-   - 可用内存读 `/proc/meminfo` 的 `MemAvailable`。`MIN_AVAILABLE_RAM_GIB` 的数值等 Linux 上第一次产品运行的证据出来后重新标定。
+   - 可用内存读 `/proc/meminfo` 的 `MemAvailable`。`MIN_AVAILABLE_RAM_GIB` 按 Linux 实测重标为 50 GiB（2026-11-20 smoke：启动前可用 51.0 GiB 时专家区仍锁进内存）。
 5. **基线 Q3 的服务身份随之改为**"Strata 0.2 版本线、默认启动（IQ3_S、128K、DFlash2、本机 8080）"。Windows 时期的 Q3 证据来自 0.2.12／build 0.1.58，照原样保留为历史。
 
 ### 子进程与长任务
