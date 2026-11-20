@@ -11,7 +11,7 @@
 - 翻译规则＝Q1 规则（Q0 `qwen-wide`＋只注入 high 条目）＋Q2 两处改动（模型 `qwen3.8-flash-next-iq3_s`、`strata_launch: "default"`），是组配方的规则而非固定 hash（[0021「Q3 翻译规则」](0021-q3-strata-names-baseline.md#q3-翻译规则)）。Q0 recipe_hash `719237b92c45c4d0f19971ece6b0944157c23ad2e33bbfe0644db60aabfcaef7`。
 - 切包 `dp10-cut`（`gap-pack-v2`），Q3 与产品共用（[0021「dp10-cut 切包」](0021-q3-strata-names-baseline.md#dp10-cut-切包)）；H0 流程配方 `dp10-cut` `ee72ce6683c89e5a1f83fd7ba99f54f3683966deed0e526c193780ad8c500b70`。
 - 建表 `names-strata-v4`，hash `38cb7bcda96534db70fb5823c05330cd212057058c381e88cadf756f26d308d0`；失败后最多 5 次请求，取第一张合格的表（[0021「Q3 建表」](0021-q3-strata-names-baseline.md#q3-建表)、[「Q3 身份」](0021-q3-strata-names-baseline.md#q3-身份)）。
-- 服务：Strata 0.2.12、引擎 build 0.1.58，默认启动（IQ3_S、128K、DFlash2、本机 8080），`strata launch --no-tui --model iq3_s`（[0021「Q3 服务与运行顺序」](0021-q3-strata-names-baseline.md#q3-服务与运行顺序)）。
+- 服务：Strata 0.2 版本线（实际版本只记录、不进配方身份；Windows 时期证据来自 0.2.12／build 0.1.58），默认启动（IQ3_S、128K、DFlash2、本机 8080），`strata launch --no-tui --model iq3_s`（[0021「Q3 服务与运行顺序」](0021-q3-strata-names-baseline.md#q3-服务与运行顺序)、[0034「Strata 版本」](0034-ubuntu-only-platform.md#strata-版本)）。
 - 实例（配方名 `q2-names-s1`）：dev 15 部 `eeba5a711e83547a2969b3132dda7bbe04e46a35b74a810f578100671812fe57`，产品 HF II／III `29fd7a6633dd59843af98e4a15f9d02739201d52a2bf541a2b565b255d763eda`。
 - 已知并接受：dev 剧集 wrong-referent 显著变差、两次建表差别大。
 
@@ -79,9 +79,14 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 
 研究一轮一目录 `research/<YYYY-MM>-<slug>/`，在 [research/INDEX.md](../../research/INDEX.md) 登记；README 按 `research/TEMPLATE.md` 填必填项，不写哈希（git commit 除外）、本机绝对路径、逐条明细与执行台账；冻结靠 git 与归档 tag `archive/2026-11-18-pre-research-restructure`；产品不导入 `research/`，研究可以导入产品；`.scratch/<slug>/` 只放进行中的产品侧计划，完工后删除（[0031](0031-research-layout-and-lightweight-records.md)）。
 
-### 资产清单与安装
+### 平台、工具链与外部前置
 
-`assets.toml` 只列 ffmpeg 与产品用到的 STT 模型；`just install` 先 `uv sync --locked` 再安装清单里的工具，没有单独的 `setup`（[0033「资产清单与安装」](0033-ffmpeg-branch-lock.md#资产清单与安装)）。ffmpeg 只锁维护分支（当前 `9.0`），实际版本写进 `identity.json` 与运行日志首行，`just upgrade ffmpeg` 显式换分支（[0033「ffmpeg 分支锁」](0033-ffmpeg-branch-lock.md#ffmpeg-分支锁)）。
+尚未实现（实现前代码仍是 [0033](0033-ffmpeg-branch-lock.md) 的 Windows 做法）。
+
+- 平台：只面向 Ubuntu，不比对 Windows 时期结果，旧数据不迁移（[0034「平台」](0034-ubuntu-only-platform.md#平台)）。
+- 工具链：mise 钉 uv 与 just；uv 按 `.python-version`（`3.13`）管解释器、按 `uv.lock` 管依赖，默认布局（[0034「工具链分层」](0034-ubuntu-only-platform.md#工具链分层)）。
+- 外部前置：NVIDIA 驱动、apt 系统 ffmpeg（默认从 PATH 查找，实际版本记入运行日志首行）、Strata 0.2；`assets.toml` 只列 STT 模型，`just install` 只做 `uv sync --locked`（[0034「外部前置」](0034-ubuntu-only-platform.md#外部前置)、[「ffmpeg」](0034-ubuntu-only-platform.md#ffmpeg)）。
+- 子进程：`PR_SET_PDEATHSIG`＋独立进程组；长任务用 `systemd-run --user`（[0034「子进程与长任务」](0034-ubuntu-only-platform.md#子进程与长任务)）。
 
 ### 方法禁区
 

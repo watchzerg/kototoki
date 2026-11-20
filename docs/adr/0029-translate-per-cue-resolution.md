@@ -1,6 +1,6 @@
 # ADR-0029：产品翻译（配方 `q3-translate-v1`）
 
-状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0019、ADR-0022 第 3–5 点，原文见 git 历史（提交 807de3e 及之前）。
+状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0019、ADR-0022 第 3–5 点，原文见 git 历史（提交 807de3e 及之前）。 「Strata session」第 4、8 点中有关版本的部分自 2026-11-20 起由 [ADR-0034](0034-ubuntu-only-platform.md)「Strata 版本」替代。
 范围：产品包 `kototoki/translate/` 的请求规则、回复判定、失败路径与配方身份，`kototoki/merge.py` 对未翻译 cue 的输出，以及 `kototoki/strata.py` 的 Strata 生命周期与 names／translate 共用的 session。切包 `dp10-cut` 的规则见 [ADR-0021](0021-q3-strata-names-baseline.md)，专名表的建法见 [ADR-0028](0028-names-accept-empty-table.md)；本文不重复。
 
 ## 决定

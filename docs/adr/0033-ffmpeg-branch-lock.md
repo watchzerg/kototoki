@@ -1,6 +1,6 @@
 # ADR-0033：资产清单与安装，ffmpeg 只锁维护分支
 
-状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0032，原文见 git 历史（提交 807de3e 及之前）。
+状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0032，原文见 git 历史（提交 807de3e 及之前）。 全文自 2026-11-20 起由 [ADR-0034](0034-ubuntu-only-platform.md) 替代。
 范围：`assets.toml`、`scripts/assets.py`、`scripts/upgrade.py`、`justfile` 的安装入口、ffmpeg 默认路径、运行日志首行与相关测试、文档（见[依赖布局与资产清单](../development/dependencies.md)）。不改产品代码、媒体提取逻辑、配方与基线。
 
 ## 决定
