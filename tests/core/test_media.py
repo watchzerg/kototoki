@@ -317,7 +317,7 @@ class SubtitleSelectionTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
-    ffmpeg = Path("D:/tools dir/ffmpeg.exe")
+    ffmpeg = Path("/opt/tools dir/ffmpeg")
     video = Path("D:/影片 dir/第1話.mkv")
 
     def test_subtitle_command_converts_one_stream_to_srt_on_stdout(self) -> None:
@@ -351,7 +351,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[-5:-1], ["-fflags", "+bitexact", "-flags:a", "+bitexact"])
 
     def test_probe_command_shows_all_streams_and_format(self) -> None:
-        command = media.probe_command(Path("D:/tools dir/ffprobe.exe"), self.video)
+        command = media.probe_command(Path("/opt/tools dir/ffprobe"), self.video)
         self.assertEqual(command[-1], str(self.video))
         self.assertIn("-show_streams", command)
         self.assertIn("-show_format", command)
@@ -373,7 +373,7 @@ class FfmpegVersionTests(unittest.TestCase):
         self.assertIsNone(media.parse_ffmpeg_version("not ffmpeg"))
 
     def test_missing_binary_is_unavailable(self) -> None:
-        self.assertEqual(media.ffmpeg_version(Path(tempfile.gettempdir()) / "no-such-dir" / "ffmpeg.exe"), "unavailable")
+        self.assertEqual(media.ffmpeg_version(Path(tempfile.gettempdir()) / "no-such-dir" / "ffmpeg"), "unavailable")
 
 
 class DecodeLogTests(unittest.TestCase):

@@ -22,20 +22,19 @@ check:
 check-toolchain:
     uv run --no-project --no-python-downloads --offline python scripts/check_toolchain.py
 
-# 按 uv.lock 同步根环境，再按 assets.toml 安装 ffmpeg（改环境、可能联网，须先问；docs/development/dependencies.md）。
+# 按 uv.lock 同步根环境（改环境、可能联网，须先问；ffmpeg、Strata 等外部前置由用户安装，docs/development/dependencies.md）。
 install:
     uv sync --locked
-    uv run --locked --offline python -X utf8 scripts/assets.py install-tools
 
-# 按选版规则把 Python 依赖、ffmpeg 升到最新稳定版（联网、改环境与 assets.toml，须先问；
-# docs/development/dependencies.md#升级）；可只列组件（python、ffmpeg）。随后跑 core、full 测试与资产核对，smoke 另行批准。
+# 按选版规则把 Python 依赖升到最新稳定版（联网、改环境，须先问；docs/development/dependencies.md#升级）。
+# 随后跑 core、full 测试与资产核对，smoke 另行批准。
 upgrade *args:
     uv run --no-project --no-python-downloads --offline python -X utf8 scripts/upgrade.py {{args}}
     just test
     just test-full
     just verify-assets
 
-# 只报告可升级项，不改文件（联网查询 PyPI 与 GitHub）。
+# 只报告可升级项，不改文件（联网查询 PyPI）。
 upgrade-check *args:
     uv run --no-project --no-python-downloads --offline python -X utf8 scripts/upgrade.py --check {{args}}
 
@@ -43,7 +42,7 @@ upgrade-check *args:
 fetch-models:
     uv run --locked --offline python -X utf8 scripts/assets.py fetch-models
 
-# 离线核对已装的 tools 与 models 与 assets.toml 一致（size+mtime 缓存，不下载）。
+# 离线核对已下载的模型与 assets.toml 一致（size+mtime 缓存，不下载）。
 verify-assets:
     uv run --locked --offline python -X utf8 scripts/assets.py verify
 

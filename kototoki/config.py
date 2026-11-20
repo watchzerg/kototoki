@@ -3,7 +3,9 @@
 路径解析规则：
 
 - 用户写出的相对路径按**配置文件所在目录**解析；省略的键用默认值，默认值里的相对路径按**仓库根**解析
-  （配置文件放仓库外时默认模型目录与 ffmpeg 仍可用）。
+  （配置文件放仓库外时默认模型目录仍可用）。
+- `paths.ffmpeg`／`ffprobe` 写成不含 `/` 的命令名（默认 `ffmpeg`／`ffprobe`）时从 PATH 查找，找不到即报错；
+  写成路径时按上一条解析（ADR-0034「ffmpeg」）。
 - `[vad]`、`[asr.*]`、`[align]` 的模型路径为相对路径时相对于 `paths.models_root`。翻译与专名建表的模型由 Strata
   自己管理（ADR-0029「Strata session」），`[translate]` 与 `[names]` 都只有 `seed`（Strata 只接受正整数）；产品不起
   llama-server，没有 `[paths] llama_server`。
@@ -21,6 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shutil
 import tomllib
 from typing import Any
 
@@ -37,8 +40,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "input_dir": REQUIRED,
         "work_dir": ".local/work",
         "models_root": ".local/models",
-        "ffmpeg": ".local/tools/ffmpeg/9.0/bin/ffmpeg.exe",
-        "ffprobe": ".local/tools/ffmpeg/9.0/bin/ffprobe.exe",
+        # 命令名从 PATH 查找（系统包，ADR-0034「ffmpeg」）；写成路径时按路径解析。
+        "ffmpeg": "ffmpeg",
+        "ffprobe": "ffprobe",
     },
     "input": {
         # 视频与音频；是否有视频流由 ffprobe 判定，不看扩展名（ADR-0007「输入范围」）。
@@ -208,7 +212,13 @@ def load(path: Path, *, environ: Mapping[str, str] = os.environ) -> Config:
             else:
                 value = default
                 base = REPO_ROOT
-            if (section, key) in PATH_KEYS:
+            if section == "paths" and key in ("ffmpeg", "ffprobe") and "/" not in value:
+                found = shutil.which(value, path=environ.get("PATH"))
+                if found is None:
+                    raise ConfigError(f"[paths] {key}: {value!r} not found on PATH; install ffmpeg "
+                                      "(sudo apt install ffmpeg) or set a path")
+                value = Path(found)
+            elif (section, key) in PATH_KEYS:
                 value = (base / value).resolve()
             values[section, key] = value
 

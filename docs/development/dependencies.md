@@ -3,31 +3,24 @@
 状态：accepted（2026-10-18 评审并由用户裁定）
 范围：产品根环境与 `kototoki/` 的依赖放在哪里、版本由谁锁定、由哪个 recipe 安装或编译。不涉及研究期留在本机的隔离环境（`.local/envs/`）。
 
-产品运行所需的全部依赖都放进本项目、不进 Git。除 Python 包外，所有依赖的版本由一份提交进 Git 的**资产清单**（根目录 `assets.toml`）唯一确定；recipe 按清单下载、校验 SHA256 并放到固定位置。`.local/` 只放内容，不承载身份。Python 工具分工见 [Python 工具链](toolchain.md)，命令与门禁见[开发工作流](workflow.md)。
+产品运行所需的 Python 依赖与模型都放进本项目、不进 Git。模型的版本由一份提交进 Git 的**资产清单**（根目录 `assets.toml`）唯一确定，recipe 按清单下载、校验 SHA256 并放到固定位置。NVIDIA 驱动、ffmpeg、Strata 是**外部前置**，由用户安装，项目只在运行时核对（[ADR-0034「外部前置」](../adr/0034-ubuntu-only-platform.md#外部前置)）。`.local/` 只放内容，不承载身份。Python 工具分工见 [Python 工具链](toolchain.md)，命令与门禁见[开发工作流](workflow.md)。
 
-## 四层布局
+## 布局
 
 | 层 | 内容 | 位置 | 锁定 |
 | --- | --- | --- | --- |
 | 引导层 | mise、uv、just | 项目外（mise 自身安装工具） | `mise.toml`；唯一不在项目内的一层 |
 | Python 依赖 | 解释器、运行时与开发依赖 | 依赖在 `.venv/`；解释器与缓存在 uv 默认的共享目录（[ADR-0034](../adr/0034-ubuntu-only-platform.md)） | `pyproject.toml` + `uv.lock`；开发工具引入时放 `[dependency-groups] dev`，与运行时分开 |
-| 下载的二进制 | ffmpeg | 安装到 `.local/tools/<name>/<branch>/`；原始压缩包缓存在 `.local/downloads/<name>/` | 清单只锁维护分支（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）；安装时取该分支最新构建，实际版本、压缩包 SHA256（GitHub digest）与逐文件 SHA256 写进安装目录的 `identity.json` |
 | 模型 | 产品用到的权重 | `.local/models/<dir>/`，现有目录不改名、不迁移 | 清单写 HF repo、revision 与逐文件 SHA256（字段形状沿用研究期资产准备脚本的 `SPECS`） |
-| 编译产物 | 当前没有，只定规则 | 源码与构建树 `.local/build/<name>/<version>/`；产物安装到 `.local/tools/<name>/<version>/` | 清单锁源码 git commit 与构建参数；产物同样生成 `identity.json` |
+| 编译产物 | 当前没有，只定规则 | 源码与构建树 `.local/build/<name>/<version>/`；产物安装到 `.local/tools/<name>/<version>/` | 清单锁源码 git commit 与构建参数 |
 
 Python 依赖的变更：用 uv 增删、解析与同步，manifest 与 lock 一起提交；日常安装只消费已提交的解析结果，升级是单独、可识别的变更；新选型与有意升级按[推理选型原则](inference-selection.md)取最新稳定版，选定后保留可复现的锁定。包来源与平台相关的选择（如 `pytorch-cu128` 显式索引）随引入写进[技术选型](technology-stack.md#已选依赖)；不从别的项目照搬 CUDA 包版本、索引或依赖；只有选定的 GPU 后端需要时才引入后端专属的可选依赖组。
 
 ## 资产清单 `assets.toml`
 
-顶层两张表：`tools` 与 `models`，键名即资产名。
+顶层只有 `models` 一张表，键名即资产名。
 
 ```toml
-[tools.<name>]                       # 安装到 .local/tools/<name>/<branch>/
-branch = "9.0"                       # 只锁维护分支；install 取该分支最新的 BtbN 带日期 autobuild
-repo = "BtbN/FFmpeg-Builds"          # GitHub repo；压缩包 SHA256 取 asset digest，缺失即拒绝
-note = "…"
-files = ["bin/ffmpeg.exe", "…"]      # 只解压并安装这些文件；实际 SHA256 记在 identity.json
-
 [models.<name>]
 dir = "…"                            # 相对于 .local/models
 repo = "…"                           # HF repo；缺省表示没有可下载来源（source 说明来处）
@@ -39,41 +32,37 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 要点：
 
-- 代码里的模型 SHA 常量保留，用于运行时自校验（`kototoki/plan.py` 的逐文件表）；core 测试断言"代码常量 == 清单"，并核对 `kototoki/config.py` 默认路径里的 ffmpeg 版本号，防止三处漂移。专名建表与翻译的模型由 Strata 管理，不在清单里（[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）。
-- 清单是模型与二进制身份的唯一权威；其他文档链接清单，不再重列 SHA 表。
+- 代码里的模型 SHA 常量保留，用于运行时自校验（`kototoki/plan.py` 的逐文件表）；core 测试断言"代码常量 == 清单"，并核对 `kototoki/config.py` 的默认模型路径，防止漂移。专名建表与翻译的模型由 Strata 管理，不在清单里（[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）。
+- 清单是模型身份的唯一权威；其他文档链接清单，不再重列 SHA 表。
 - 执行逻辑放 `scripts/assets.py`（只用标准库），recipe 保持薄。
 
 ## recipe 职责
 
 | recipe | 做什么 | 备注 |
 | --- | --- | --- |
-| `just install` | `uv sync --locked`，再按清单安装 `tools`（ffmpeg） | 联网、改环境，按 AGENTS 规定先问 |
+| `just install` | 只做 `uv sync --locked` | 联网、改环境，按 AGENTS 规定先问 |
 | `just fetch-models` | 只下载模型 | 几十 GB，不并入 install；先问 |
-| `just verify-assets` | 离线核对已装内容与清单一致 | 用 `artifacts.verify_model` 的 size+mtime 缓存，快 |
-| `just upgrade` | 按下文[升级](#升级)规则把 Python 依赖升到最新稳定版、ffmpeg 换到最高维护分支，再跑 core、full 测试与 `verify-assets` | 联网、改环境与清单，先问；`just upgrade-check` 只报告 |
+| `just verify-assets` | 离线核对已下载的模型与清单一致 | 用 `artifacts.verify_model` 的 size+mtime 缓存，快 |
+| `just upgrade` | 按下文[升级](#升级)规则把 Python 依赖升到最新稳定版，再跑 core、full 测试与 `verify-assets` | 联网、改环境，先问；`just upgrade-check` 只报告 |
 | `just build-<name>` | 需要编译时再按依赖单独建 | **不放进 `just install`**，也不建通用的 `just compile` |
 
-编译不进 install：编译需要 MSVC／CUDA Toolkit，耗时长，失败模式与下载完全不同；install 应可重复、快速、只消费锁定结果。按"第二个使用者出现再抽象"，现在不建通用编译入口。产品当前没有需要编译的依赖。
+编译不进 install：编译需要编译器／CUDA Toolkit，耗时长，失败模式与下载完全不同；install 应可重复、快速、只消费锁定结果。按"第二个使用者出现再抽象"，现在不建通用编译入口。产品当前没有需要编译的依赖。
 
 ## 升级
 
-`just upgrade [python] [ffmpeg]`（省略即全部；`scripts/upgrade.py`）按选版规则把可升级的组件升到最新稳定版，`just upgrade-check` 只报告。规则与 2026-10-19 那次手动升级相同：
+`just upgrade`（`scripts/upgrade.py`）按选版规则把 Python 依赖升到最新稳定版，`just upgrade-check` 只报告。规则与 2026-10-19 那次手动升级相同：
 
 - **Python**：CUDA 12 锚点 torch、torchaudio、torchcodec、ctranslate2 保持原钉版，升级须人工决定；其余 `==` 钉住的直接依赖先去钉、由 uv 解析出最新稳定版后重新钉版；传递依赖一起升，但跳过主版本升级（首个数字段变化，0.x 看次版本，日历版本号除外），被跳过的列在报告里。上游约束（如 sympy 对 mpmath、torch 对 setuptools 的上限）由 uv 自然遵守。之后 `uv sync --locked`；任何一步失败都还原 `pyproject.toml` 与 `uv.lock`。
-- **ffmpeg**：分支内的新构建由 `just install` 跟进；`upgrade` 把锁定的分支换到 BtbN 最新带日期 autobuild 里最高的维护分支（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)），装好新分支、改清单与默认路径。旧分支仍装着时，用产品 extract 代码在 `--films` 目录（默认 `.local/bilingual-fullfilm-08/input/`）的每部 `.mkv` 上对照两个分支派生的 WAV（样本数、PCM SHA256、补偿与告警），结果只写进报告，不阻止切换。
-- 脚本不写文档：结束时提示同步[技术选型](technology-stack.md#已选依赖)、本页当前实现，ffmpeg 换分支后看报告的 `wav_check` 补验收记录，并按报告的 `pending` 申请 smoke。
+- ffmpeg 是系统包，随 apt 升级，不归 `just upgrade`。
+- 脚本不写文档：结束时提示同步[技术选型](technology-stack.md#已选依赖)与本页当前实现，并按报告的 `pending` 申请 smoke。
 
 ## ffmpeg
 
-- 当前锁定 BtbN win64 gpl 的 9.0 维护分支（2026-11-18 起，[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)），安装在 `.local/tools/ffmpeg/9.0/bin/`，`kototoki/config.py` 与 `kototoki.toml.example` 的默认路径指向这里；实际构建看该目录的 `identity.json` 或运行日志首行的 `ffmpeg=`。
-- 2026-10-19 至 2026-11-18 钉住的是构建 `n9.0.2-28-g669f5ab083`（tag `autobuild-2026-10-18-13-01`），两部影片的派生 WAV 与旧构建、与基线语料逐字节一致（[验收记录](../../research/acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)）；该 release 已被 BtbN 删除，无法重装。
-- 此前的第一条记录是本机既有的 gyan.dev full build `2026-10-01-git-0b01ed76aa`（原样复制、原始压缩包未保留，不能经 `install-tools` 重装）；它的安装目录仍留在 `.local/tools/ffmpeg/`，[swr 回归验收](../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)等既往证据绑定在它上面。
-- 研究期语料脚本曾写死项目外的 ffmpeg 路径（已随研究代码删除，见归档 tag）；那份项目外安装产品不依赖。
-
-ffmpeg 的两种变化：
-
-1. 分支内新构建：`just install` 自动换上，不做核对；结果有变化时先对照运行日志首行的 `ffmpeg=`。
-2. 换维护分支：`just upgrade ffmpeg`（或 `upgrade-check` 先看）。报告的 `wav_check` 不全相同时，判断差异是否可接受并补验收记录，方法同 2026-10-16 swr 回归验收。
+- 用 apt 装的系统包（`sudo apt install ffmpeg`；2026-11-20 起，[ADR-0034「ffmpeg」](../adr/0034-ubuntu-only-platform.md#ffmpeg)），裁定时本机为 `8.0.1-3ubuntu2+esm5`。
+- 配置 `[paths] ffmpeg`／`ffprobe` 默认是命令名，`config.load` 用 `shutil.which` 在 PATH 上查找，找不到即配置错误；写成路径时按路径使用。
+- 实际版本只记在运行日志首行的 `ffmpeg=`；结果有变化时先对照它。下游产物按 `audio-16k.wav` 的内容 hash 判断是否过期，ffmpeg 变了只触发重算。
+- 只用默认 swr 重采样，不要求 libsoxr。
+- Windows 时期的 BtbN／gyan.dev 构建、`identity.json` 与相关验收记录只作历史（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。
 
 ## CUDA 版本说明
 
@@ -82,13 +71,12 @@ ffmpeg 的两种变化：
 ## 当前实现
 
 - `assets.toml` 登记：
-  - `tools.ffmpeg`（分支 `9.0`，只装 `bin/ffmpeg.exe`、`bin/ffprobe.exe`）。
   - 产品用到的五个模型目录：`pyannote-segmentation-3.0`（门控）、`faster-whisper-large-v3`、`w0-assets`（只含 `mel_filters.npz`，来自 whisperx 3.8.6 包内 assets，没有 HF 来源，`fetch-models` 不负责）、`qwen3-asr-1.7b-hf`、`mms-1b-all`。
   - `hy-mt2-30b-a3b-apex-i-compact` 的条目已于 2026-11-08 删除（产品翻译不再用它，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）；研究侧 H0 仍用 `.local/models/translation/` 下已有的文件，路径由各 demo 自己管理，不在清单里。
 - llama.cpp 工具与 `qwen3.8-27b-ud-iq3_s` 模型条目已于 2026-11-18 删除（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。
-- `scripts/assets.py`：`install-tools`、`fetch-models`、`verify` 三个子命令；`install-tools` 查 GitHub releases 解析锁定分支的最新构建，压缩包只支持 zip，下载先写 `.partial` 并边下边算 SHA256，一致才改名；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
-- 测试（core）：`tests/core/test_assets_manifest.py` 钉住代码常量与默认路径分支号 == 清单；`tests/core/test_assets_script.py` 用本地 `file://` URL 与临时 zip 覆盖 BtbN release 解析、缺分支与缺 digest 拒绝、下载、`strip`、只解清单文件、`identity.json`、分支内新构建替换、压缩包缓存复用、非 zip 拒绝、SHA 不符清理、门控令牌、无来源模型与离线核对。
+- `scripts/assets.py`：`fetch-models`、`verify` 两个子命令；下载先写 `.partial` 并边下边算 SHA256，一致才改名；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
+- 测试（core）：`tests/core/test_assets_manifest.py` 钉住代码常量与默认模型路径 == 清单、清单只有 `models`；`tests/core/test_assets_script.py` 用本地 `file://` URL 覆盖模型下载、SHA 不符清理、门控令牌、无来源模型与离线核对。
 - **外部前置：Strata**（产品翻译，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）：Strata 0.2.12／engine build 0.1.58 安装在 `%LOCALAPPDATA%\Strata`（`terminal\current\bin\strata.cmd`），翻译模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录；两者都**不在 `assets.toml` 里**，`install`／`fetch-models`／`verify-assets` 不管它们，由用户安装与维护。产品启动翻译时按 ADR-0021「Q3 服务与运行顺序」核对版本、端口 8080、run config 与上下文，不符即拒绝运行；升级 Strata 或换模型等于换翻译身份，须新决定。运行前须没有别的 Strata launch 在服务，且空闲显存 ≥14000 MiB。
 - 真实模型验证（Q2 首用 smoke）`just smoke translate_product`（`scripts/smoke/translate_product.py`）走 Strata 在产品翻译代码上跑合成句，是翻译的分钟级入口。2026-11-08 首用 smoke（`.local/smoke/20261108T104209Z/`）**通过**：合成 12 条、2 包，首次尝试全部接受（格式失败 0、交付失败 0、回退 0），`reasoning_content` 全空，推理自救／非有限 logits／重复截停 0，high 条目注入 1 行生效；Strata 加载 89 s，探测核对 0.2.12／build 0.1.58、DFlash2、kv int8、spec 4；整机显存峰值 16.1 GB、内存峰值 42.9 GiB；`--stop` 后 status 为空、空闲显存 14884 MiB。**每包约 25–31 s（均值 27.8 s，输出约 130 token）**，远慢于 v12 F1（MTP、32k）的约 3.2 s；冷启动后只有 2 包，原因未查明。此前两次失败已修：子进程里 `strata launch --no-tui` 不点名模型以退出码 2 拒绝（改为 `--model iq3_s`）；研究侧 probe 按参数判断起草方式，把默认启动误认成 MTP（改读服务日志）。
-- `scripts/upgrade.py`（`just upgrade`／`upgrade-check`）：规则见上文[升级](#升级)。测试（core）`tests/core/test_upgrade_script.py` 覆盖主版本判定、去钉／锚点、uv 输出解析、清单块重写往返、默认路径切换与无影片时的 WAV 对照，不碰网络与 uv。2026-10-19 `just upgrade-check` 实测三项均为最新（跳过 pillow 12→13）；实际升级路径（非 `--check`）尚未端到端运行过，其步骤与同日的手动升级一致。
-- 2026-10-19 `just verify-assets` 在本机全部通过。2026-10-19 升级时压缩包是手动 curl 到 `.local/downloads/<name>/` 的，`install-tools` 只走了缓存复用与解压，`scripts/assets.py` 自身的真实下载路径（GitHub、HF）仍未运行过，只由本地伪 URL 覆盖。
+- `scripts/upgrade.py`（`just upgrade`／`upgrade-check`）：规则见上文[升级](#升级)。测试（core）`tests/core/test_upgrade_script.py` 覆盖主版本判定、去钉／锚点与 uv 输出解析，不碰网络与 uv。2026-10-19 `just upgrade-check` 实测三项均为最新（跳过 pillow 12→13）；实际升级路径（非 `--check`）尚未端到端运行过，其步骤与同日的手动升级一致。
+- `scripts/assets.py` 的真实下载路径（HF）仍未运行过，只由本地伪 URL 覆盖；Ubuntu 上第一次 `just fetch-models` 时验证。

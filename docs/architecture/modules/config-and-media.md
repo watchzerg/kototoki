@@ -79,7 +79,7 @@
 
 ## 接口与依赖
 
-`embedded` 是基础层之上的纯函数模块（与 `cues` 同级），只依赖 `srt`，由编排直接调用。`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与 ffmpeg／ffprobe 可执行文件（默认是项目内 `.local/tools/ffmpeg/<version>/bin/`，版本由 `assets.toml` 锁定，见[依赖布局与资产清单](../../development/dependencies.md)），不依赖 torch 与网络，编排器在线程池里直接调用。
+`embedded` 是基础层之上的纯函数模块（与 `cues` 同级），只依赖 `srt`，由编排直接调用。`config`、`recipes` 属基础层，只依赖标准库与 `artifacts`；`media` 依赖二者与 ffmpeg／ffprobe 可执行文件（apt 系统包，默认从 PATH 查找，见[依赖布局与资产清单](../../development/dependencies.md#ffmpeg)），不依赖 torch 与网络，编排器在线程池里直接调用。
 
 媒体模块只写 ffmpeg 自身的输出文件（`audio-16k.wav`、`extract.log`；临时文件 `.<名>.<pid>.partial<ext>` 正常结束时自行删除，被强杀留下的残留由编排在下次提取前清理），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败；`Probe.warnings`／`Extract.warnings` 只作数据返回，本模块不发日志，由编排逐条写进运行日志（[批次编排：运行日志](batch-orchestration.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
 

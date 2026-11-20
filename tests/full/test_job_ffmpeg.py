@@ -22,13 +22,6 @@ SINE = f"aevalsrc='0.5*sin(2*PI*440*t)|0.5*sin(2*PI*660*t)':c=stereo:s=48000:d={
 class EndToEndTests(JobCase):
     FAKE_MEDIA = False
 
-    def setUp(self) -> None:
-        super().setUp()
-        for binary in (self.config.paths.ffmpeg, self.config.paths.ffprobe):
-            if not binary.is_file():
-                self.fail(f"{binary} not found: run `just install` (ffmpeg is listed in assets.toml) "
-                          "or set [paths] ffmpeg/ffprobe")
-
     def ffmpeg(self, rel: str, *args: str) -> None:
         path = self.input / rel
         path.parent.mkdir(parents=True, exist_ok=True)

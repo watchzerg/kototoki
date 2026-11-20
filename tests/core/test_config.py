@@ -49,19 +49,27 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(set(rules), cues.RULE_KEYS)
 
     def test_user_relative_paths_resolve_against_config_dir(self) -> None:
-        cfg = config.load(self.write(MINIMAL + 'work_dir = "w"\nmodels_root = "models"\nffmpeg = "bin/ffmpeg.exe"\n'), environ={})
+        cfg = config.load(self.write(MINIMAL + 'work_dir = "w"\nmodels_root = "models"\nffmpeg = "bin/ffmpeg"\n'), environ={})
         self.assertEqual(cfg.paths.input_dir, self.root / "in")
         self.assertEqual(cfg.paths.work_dir, self.root / "w")
         self.assertEqual(cfg.paths.models_root, self.root / "models")
-        self.assertEqual(cfg.paths.ffmpeg, self.root / "bin" / "ffmpeg.exe")
+        self.assertEqual(cfg.paths.ffmpeg, self.root / "bin" / "ffmpeg")
 
     def test_default_relative_paths_resolve_against_repo_root(self) -> None:
         cfg = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(cfg.paths.models_root, config.REPO_ROOT / ".local" / "models")
         self.assertEqual(cfg.paths.work_dir, config.REPO_ROOT / ".local" / "work")
-        # 默认路径里的版本号由 test_assets_manifest 钉住与 assets.toml 一致；这里只核对相对仓库根解析。
-        for key in ("ffmpeg", "ffprobe"):
-            self.assertEqual(getattr(cfg.paths, key), config.REPO_ROOT / config.DEFAULTS["paths"][key])
+
+    def test_bare_ffmpeg_names_are_looked_up_on_path(self) -> None:
+        bindir = self.root / "bin"
+        bindir.mkdir()
+        for name in ("ffmpeg", "ffprobe"):
+            (bindir / name).write_text("#!/bin/sh\n", encoding="utf-8")
+            (bindir / name).chmod(0o755)
+        cfg = config.load(self.write(MINIMAL), environ={"PATH": str(bindir)})
+        self.assertEqual((cfg.paths.ffmpeg, cfg.paths.ffprobe), (bindir / "ffmpeg", bindir / "ffprobe"))
+        with self.assertRaisesRegex(config.ConfigError, r"\[paths\] ffmpeg: 'ffmpeg' not found on PATH"):
+            config.load(self.write(MINIMAL), environ={"PATH": str(self.root / "empty")})
 
     def test_model_paths_are_relative_to_models_root(self) -> None:
         cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "/abs/mms"\n'),

@@ -89,16 +89,8 @@ class MediaFfmpegCase(unittest.TestCase):
         cls._cfg_tmp = tempfile.TemporaryDirectory()
         cfg_dir = Path(cls._cfg_tmp.name)
         (cfg_dir / "config.toml").write_text('[paths]\ninput_dir = "."\n', encoding="utf-8")
-        cls.cfg = config.load(cfg_dir / "config.toml")
-        for binary in (cls.cfg.paths.ffmpeg, cls.cfg.paths.ffprobe):
-            if not binary.is_file():
-                cls._cfg_tmp.cleanup()
-                raise AssertionError(f"{binary} not found: run `just install` (ffmpeg is listed in assets.toml) "
-                                     "or set [paths] ffmpeg/ffprobe")
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls._cfg_tmp.cleanup()
+        cls.addClassCleanup(cls._cfg_tmp.cleanup)
+        cls.cfg = config.load(cfg_dir / "config.toml")  # PATH 上没有 ffmpeg 时 ConfigError
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -160,10 +152,11 @@ class TimelineTests(MediaFfmpegCase):
         self.assertTime(onset / RATE + extract.offset_s, 0.5)
 
     def test_mid_stream_gap_is_filled_with_silence(self) -> None:
-        # 音频时间戳在 2.048 s（= 96 个 1024 样本帧，落在帧边界）向后跳 2 s：
-        # 本地 2.048 s 的音在视频 4.048 s 才出现
-        src = tone_src(dur=4.0, bursts=[(0.5, 0.7), (2.048, 2.248)])
-        gap = Audio(src, af="asetpts='if(gte(T,2.048),PTS+2/TB,PTS)'")
+        # 音频时间戳在 2.112 s 向后跳 2 s：本地 2.112 s 的音在视频 4.112 s 才出现。2.112 s = 101376 样本，
+        # 既是 aevalsrc 1024 样本帧的边界，也是 FLAC 编码器 4608 样本包的边界；不在包边界时跳变会被
+        # 推迟到下一个包（ffmpeg 8.0 实测）
+        src = tone_src(dur=4.0, bursts=[(0.5, 0.7), (2.112, 2.312)])
+        gap = Audio(src, af="asetpts='if(gte(T,2.112),PTS+2/TB,PTS)'")
         path = self.make_clip("gap.mkv", 6.0, [gap])
         probe, extract = self.extract_clip(path)
         _, _, samples = read_wav(extract.wav)
@@ -171,7 +164,7 @@ class TimelineTests(MediaFfmpegCase):
         self.assertLess(abs(first - RATE // 2), FRAME)
         self.assertLessEqual(peak(samples[int(1.0 * RATE):int(3.9 * RATE)]), 1)  # 间隙内无声
         resumed = first_onset(samples, start=int(1.0 * RATE))
-        self.assertTime(resumed / RATE + extract.offset_s, 4.048)
+        self.assertTime(resumed / RATE + extract.offset_s, 4.112)
         self.assertAlmostEqual(extract.decoded_duration_s, 6.0, delta=0.1)
         self.assertAlmostEqual(extract.compensation["net_padding_s"], 2.0, delta=0.05)
         # 编排据此在运行日志记 WARNING（审计 A-3）：2 s 净补入远超 0.1 s 阈值

@@ -3,15 +3,14 @@
 # 省略键的默认相对路径按仓库根解析。模型路径为相对路径时相对于 models_root。
 # GPU 锁固定为仓库内 .local/gpu.lock；破除死锁用环境变量 KOTOTOKI_BREAK_STALE_LOCK=1（只对本次运行生效）。
 # 解码、采样、提示等影响模型行为的常量不在这里，见 kototoki/recipes.py 与 kototoki/translate/recipes.py。
-# 专名建表与翻译共用的 Strata（0.2.12／build 0.1.58）与模型需自行安装，不在 assets.toml 里；运行前不得有别的 Strata launch 在服务。
-# 产品不启动 llama-server（ADR-0029「Strata session」）；llama.cpp 与 27B 已不在 assets.toml（ADR-0033「资产清单与安装」）。
+# ffmpeg（apt 系统包）与 Strata（0.2 版本线）及其模型需自行安装，不在 assets.toml 里（ADR-0034）；运行前不得有别的 Strata launch 在服务。
 
 [paths]
-input_dir    = "D:/movie/inbox"         # 必填：递归扫描视频与音频；双语字幕 <主名>.ja-zh.srt 写在源文件旁
-# work_dir   = "D:/kototoki-work"       # 中间产物；省略时为仓库内 .local/work；其下按目标目录分子目录 <末段名>-<sha12>/；不得在 input_dir 内
+input_dir    = "/srv/movie/inbox"       # 必填：递归扫描视频与音频；双语字幕 <主名>.ja-zh.srt 写在源文件旁
+# work_dir   = "/srv/kototoki-work"    # 中间产物；省略时为仓库内 .local/work；其下按目标目录分子目录 <末段名>-<sha12>/；不得在 input_dir 内
 models_root  = ".local/models"
-ffmpeg       = ".local/tools/ffmpeg/9.0/bin/ffmpeg.exe"
-ffprobe      = ".local/tools/ffmpeg/9.0/bin/ffprobe.exe"
+ffmpeg       = "ffmpeg"                # 不含 / 的命令名从 PATH 查找；也可写路径
+ffprobe      = "ffprobe"
 
 [input]
 extensions = [".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi",           # 视频还是音频由 ffprobe 判定

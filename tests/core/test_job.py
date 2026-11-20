@@ -1677,8 +1677,11 @@ class RunLogTests(JobCase):
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
         self.extract_errors.update({"a.mkv", "b.mkv"})
         _, file = self.run_logged()
-        self.assertEqual(self.entries_at(file, "ERROR"), ["[extract] FAILED a.mkv: MediaError",
-                                                          "[extract] FAILED b.mkv: MediaError: fake extract failure: b.mkv"])
+        # extract_workers = 2：a、b 并发提取，哪个先失败（带 traceback 的那条）不固定。
+        first, second = sorted(self.entries_at(file, "ERROR"), key=len)
+        self.assertRegex(first, r"^\[extract\] FAILED ([ab])\.mkv: MediaError$")
+        other = "b" if first.startswith("[extract] FAILED a") else "a"
+        self.assertEqual(second, f"[extract] FAILED {other}.mkv: MediaError: fake extract failure: {other}.mkv")
         self.assertEqual("\n".join(file).count("Traceback (most recent call last):"), 1)
 
     def test_cues_log_start_done_end_with_counts(self) -> None:

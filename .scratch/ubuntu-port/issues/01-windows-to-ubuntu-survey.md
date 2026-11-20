@@ -137,8 +137,14 @@ Type: research
    - `uv sync --locked` 已完成（`.venv` 约 7.3 GB）。torch 2.11.0+cu128（cuDNN 9.19）识别出 RTX 5080（sm_120）；ctranslate2 4.8.3 能看到 1 张 CUDA 卡，支持 float16、bfloat16、int8。还没加载模型解码。
    - torchcodec 改用 `pytorch-cpu` 索引的 `0.17.0+cpu`，原因是 PyPI 的 Linux wheel 依赖 CUDA 13 的 `libnvrtc.so.13`。
    - `just gate-core` 通过（794 个用例），只修了 `test_config` 里一处 Windows 绝对路径 `D:/abs/mms`。
-   - `just test-full` 的 13 个用例全部失败，原因都是 ffmpeg 默认路径 `.local/tools/ffmpeg/9.0/bin/ffmpeg.exe` 不存在，留给拆票 3 处理。
-3. 资产：删掉 ffmpeg 的下载和升级代码；`config.py` 默认从 PATH 查找；`assets.toml`、`assets.py`、`upgrade.py` 和相关测试一并改。
+   - `just test-full` 当时 13 个用例因 ffmpeg 默认路径失败，已在拆票 3 解决。
+3. ~~资产~~：已完成（2026-11-20）。
+   - `config.py` 的 `[paths] ffmpeg`／`ffprobe` 默认是命令名，`shutil.which` 从 PATH 查找，找不到即 `ConfigError`；
+   - `assets.toml` 删掉 `[tools]`，`assets.py` 只剩 `fetch-models`、`verify`，`upgrade.py` 只升 Python，`just install` 只做 `uv sync --locked`；
+   - 测试随之删减，新增 PATH 查找用例；`test_media`、`test_config`、`kototoki.toml.example` 里的 Windows 路径一并换掉；
+   - `test_media_ffmpeg` 的时间戳跳变夹具从 2.048 s 移到 2.112 s：ffmpeg 8.0 的 FLAC 编码器按 4608 样本打包，不在包边界的跳变会推迟到下一个包；
+   - `test_job` 的 `test_same_kind_of_failure_gets_one_traceback` 原本依赖两个并发提取的完成顺序，偶发失败，改为与顺序无关；
+   - `just gate-core`（780 个用例）与 `just test-full`（20 个用例）都通过；文档已同步。
 4. 进程：`procs.py` 的 starttime 和子进程随父退出、`job.py` 的中断路径、full 层测试。
 5. Strata 适配：CLI 路径、XDG 日志目录、按 Linux 日志重写专家区核对、`/proc/meminfo`、版本只锁 0.2、重新标定内存阈值。
 6. smoke 脚本的 Linux 化（`smokelib`、`ct2_after_torch`）。
