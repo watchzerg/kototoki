@@ -6,8 +6,8 @@ Scope: Python tooling, dependencies, and development command ownership.
 
 ## Baseline and ownership
 
-The user has installed mise, uv, and just on the Windows development machine.
-Installed tools do not imply that project configuration or recipes exist.
+The user installs mise once; `mise install` then provides the pinned uv and just
+(ADR-0034). uv provides the Python interpreter from `.python-version`.
 The repository has the product root environment (`pyproject.toml` + `uv.lock`,
 CUDA 12.8 inference stack), `mise.toml`, and a `justfile`. Research-era backend
 environments under `.local/envs/` are not managed by the repository; their

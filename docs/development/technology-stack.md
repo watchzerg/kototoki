@@ -4,9 +4,9 @@
 
 ## 运行时与工具链
 
-- Python 3.13（`.python-version` 固定 3.13.16，`pyproject.toml` 要求 `>=3.13,<3.14`）；根项目即产品项目 `kototoki`，`[tool.uv] package = false` 不打包，`environments` 只解析 `sys_platform == 'win32'`。
-- mise 固定 uv 与 just 的版本（`mise.toml`），并设置 `UV_CACHE_DIR`、`UV_PYTHON_INSTALL_DIR` 指向 `.local/`、`UV_PYTHON_PREFERENCE=managed`、`PYTHONUTF8=1`。
-- uv 管理解释器、根环境与 `uv.lock`；just 是任务入口，Windows 下用 pwsh 执行 recipe。
+- Python 3.13（`.python-version` 写 `3.13`，补丁版本由 uv 决定；`pyproject.toml` 要求 `>=3.13,<3.14`）；根项目即产品项目 `kototoki`，`[tool.uv] package = false` 不打包，`environments` 只解析 `sys_platform == 'linux'`（[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。
+- mise 只固定 uv 与 just 的版本（`mise.toml`，没有 `[env]`）；一次性准备：`mise trust && mise install`，shell 里激活 mise（[ADR-0034「工具链分层」](../adr/0034-ubuntu-only-platform.md#工具链分层)）。
+- uv 管理解释器、根环境与 `uv.lock`，用默认布局：解释器在 uv 共享目录，依赖在 `.venv/`；just 是任务入口。
 - 产品推理在根环境（统一 CUDA 12.8）中运行；产品翻译（2026-11-08 起，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）与专名建表（2026-11-09 起，[ADR-0028](../adr/0028-names-accept-empty-table.md)）都用独立安装的 Strata 0.2.12／build 0.1.58（`%LOCALAPPDATA%\Strata`，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录），由产品用 `strata launch --no-tui --model iq3_s`／`--stop` 自动启停、整批一个 session；它是外部前置，不在 `assets.toml` 里，由用户维护（见[依赖布局](dependencies.md)）。产品不起 llama-server，清单里也不再有 llama.cpp（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。选型依据见 [ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md) 与下文[选版规则](#选版规则)。
 - 产品媒体提取调用 ffmpeg／ffprobe 子进程（路径在 `kototoki.toml` 的 `[paths]`，默认 `.local/tools/ffmpeg/9.0/bin/`），派生 WAV 用默认 swr 重采样（2026-10-15 由 soxr 改回，票据 10），不要求 libsoxr；构建为 BtbN win64 gpl 9.0 维护分支（2026-10-19 由 gyan.dev `2026-10-01-git-0b01ed76aa` 升级，派生 WAV 逐字节核对见[验收记录](../../research/acceptance/2026-10-19-ffmpeg-9.0-upgrade.md)；2026-11-18 起只锁分支，[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)），实际版本记在安装目录的 `identity.json` 与运行日志首行，升级步骤见[依赖布局与资产清单](dependencies.md#ffmpeg)。
 - 产品翻译配方为 `q3-translate-v1`（`kototoki/translate/recipes.py`，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）：Q2 规则（[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）加回复按条收下、只追问未解决的 cue；切包同 `dp10-cut`，见 [GLOSSARY](../../GLOSSARY.md)。H0（Hy-MT2＋`dp10-cut`）只留在研究侧。
@@ -28,7 +28,7 @@
 
 ## 已选依赖
 
-- 根项目运行时依赖（`uv lock` 于 2026-10-14 解析、2026-10-19 小范围升级，按[选版规则](#选版规则)：CUDA 12 与 Python 3.13 为锚点，其余取最新稳定版）：
+- 根项目运行时依赖（迁到 Ubuntu 后 2026-11-20 删掉旧 lock 重新解析，只解析 Linux；直接依赖版本不变，传递依赖取当日最新稳定版；按[选版规则](#选版规则)：CUDA 12 与 Python 3.13 为锚点）：
 
   | 包 | 版本 | 来源 |
   | --- | --- | --- |
@@ -36,10 +36,10 @@
   | torchcodec | 0.17.0 | PyPI（cu128 索引没有 0.17.0；与本机 `vad-pyannote-gpu-v1` 相同） |
   | transformers | 5.20.1 | PyPI（2026-10-19 由 5.19.0 升级；真实模型验证待跑） |
   | pyannote.audio | 4.0.7 | PyPI |
-  | faster-whisper／ctranslate2 | 1.2.1／4.8.3 | PyPI；ASR 进程须先 `import torch`。实测（票据 01 smoke #3）：cuBLAS／cudart 与 cuDNN 子库来自 torch（cuDNN 9.19），但 CT2 wheel 自带并显式加载 `cudnn64_9.dll`（9.10 调度器），同进程两份调度器并存；W0 冻结窗口 token 与特征逐一一致 |
-  | numpy | 2.5.4 | PyPI |
+  | faster-whisper／ctranslate2 | 1.2.1／4.8.3 | PyPI；ASR 进程须先 `import torch`。Linux 上 torch 经 `nvidia-*-cu12` wheel 带来 cuBLAS／cuDNN 9.19 等运行库；CT2 能否加载它们尚未验证（ADR-0034「未验证与已知限制」）。Windows 时期 smoke 的 DLL 结论只作历史 |
+  | numpy | 2.5.5 | PyPI |
 
-  传递依赖以 `uv.lock` 为准；2026-10-19 用 `uv lock --upgrade-package` 只升了 pyannote-core 6.1.0、pyannote-metrics 4.2.0、pyannote-pipeline 4.1.0 与 certifi、filelock、fonttools、httpx2／httpcore2、sqlalchemy，其余保持原解析（mpmath 受 sympy `<1.4`、setuptools 受 torch `<82` 约束）。测试只用标准库 `unittest`，没有开发依赖组。
+  传递依赖以 `uv.lock` 为准（mpmath 受 sympy `<1.4`、setuptools 受 torch `<82` 约束）。改 `environments` 后不能只 `uv lock`：uv 会沿用旧 lock 里按旧平台记下的依赖元数据，torch 的 `nvidia-*` 依赖就这样被漏掉（2026-11-20 实测），须删 lock 重新解析或对相关包 `--upgrade-package`。测试只用标准库 `unittest`，没有开发依赖组。
 - 评分、编排与翻译客户端仍只用标准库。
 - 推理组件按 [推理选型原则](inference-selection.md) 选择，当前采纳：faster-whisper（W0）、Qwen-ASR（X0）、新 Pyannote segmentation-3.0（VAD）、MMS-1b-all CTC 对齐，见 [ADR-0003](../adr/0003-new-pyannote-baselines.md)；翻译按基线 Q3 规则（Strata 上的 Qwen3.8-Flash-Next IQ3_S，切包 `dp10-cut`），基线与历史身份（含此前的 Hy-MT2 30B-A3B APEX-I-Compact）见 [ADR-0021](../adr/0021-q3-strata-names-baseline.md)、产品见 [ADR-0029](../adr/0029-translate-per-cue-resolution.md)。
 - 隔离环境的实际版本清单见 [环境清单](../../research/2026-10-stt-landscape/README.md)。

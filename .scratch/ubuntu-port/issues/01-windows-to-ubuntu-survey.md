@@ -129,7 +129,12 @@ Type: research
 ## 建议拆票
 
 1. ~~平台决定写成 ADR~~：已完成，见 [ADR-0034](../../../docs/adr/0034-ubuntu-only-platform.md)（2026-11-20）。它取代了 ADR-0033，并修订了 ADR-0029、ADR-0021 中的 Strata 版本条款；INDEX、CURRENT、GLOSSARY 已同步。
-2. 依赖与锁：`pyproject.toml` 的 environments、重新锁定、`mise.toml`。需要批准后联网。
+2. ~~依赖与锁~~：已完成（2026-11-20）。
+   - `mise.toml` 只钉 uv 0.13.9 和 just 1.59.0，删掉了 `[env]`；
+   - `.python-version` 改为 `3.13`，`check_toolchain.py` 按前缀核对；
+   - `environments` 改为只解析 linux，删掉旧 lock 重新解析：直接依赖版本不变，传递依赖取当日最新稳定版；
+   - 已执行 `mise install` 和 `uv lock`（uv 下载了 CPython 3.13.18），`just check-toolchain` 通过。
+   - 未做：`uv sync`，即 `.venv` 还没建。
 3. 资产：删掉 ffmpeg 的下载和升级代码；`config.py` 默认从 PATH 查找；`assets.toml`、`assets.py`、`upgrade.py` 和相关测试一并改。
 4. 进程：`procs.py` 的 starttime 和子进程随父退出、`job.py` 的中断路径、full 层测试。
 5. Strata 适配：CLI 路径、XDG 日志目录、按 Linux 日志重写专家区核对、`/proc/meminfo`、版本只锁 0.2、重新标定内存阈值。

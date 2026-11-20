@@ -10,7 +10,7 @@
 | 层 | 内容 | 位置 | 锁定 |
 | --- | --- | --- | --- |
 | 引导层 | mise、uv、just | 项目外（mise 自身安装工具） | `mise.toml`；唯一不在项目内的一层 |
-| Python 依赖 | 运行时与开发依赖 | `.venv/`，缓存 `.local/cache/root-uv`，解释器 `.local/tools/python`（`mise.toml` 的 `[env]`） | `pyproject.toml` + `uv.lock`；开发工具引入时放 `[dependency-groups] dev`，与运行时分开 |
+| Python 依赖 | 解释器、运行时与开发依赖 | 依赖在 `.venv/`；解释器与缓存在 uv 默认的共享目录（[ADR-0034](../adr/0034-ubuntu-only-platform.md)） | `pyproject.toml` + `uv.lock`；开发工具引入时放 `[dependency-groups] dev`，与运行时分开 |
 | 下载的二进制 | ffmpeg | 安装到 `.local/tools/<name>/<branch>/`；原始压缩包缓存在 `.local/downloads/<name>/` | 清单只锁维护分支（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）；安装时取该分支最新构建，实际版本、压缩包 SHA256（GitHub digest）与逐文件 SHA256 写进安装目录的 `identity.json` |
 | 模型 | 产品用到的权重 | `.local/models/<dir>/`，现有目录不改名、不迁移 | 清单写 HF repo、revision 与逐文件 SHA256（字段形状沿用研究期资产准备脚本的 `SPECS`） |
 | 编译产物 | 当前没有，只定规则 | 源码与构建树 `.local/build/<name>/<version>/`；产物安装到 `.local/tools/<name>/<version>/` | 清单锁源码 git commit 与构建参数；产物同样生成 `identity.json` |

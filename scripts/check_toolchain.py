@@ -30,7 +30,8 @@ def main() -> int:
             errors.append(f"{tool}: mise.toml pins {expected}, found {actual or 'not on PATH'}")
     expected_python = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
     actual_python = ".".join(map(str, sys.version_info[:3]))
-    if actual_python != expected_python:
+    # `.python-version` 写到次版本（如 3.13），补丁版本由 uv 决定。
+    if not f"{actual_python}.".startswith(f"{expected_python}."):
         errors.append(f"python: .python-version pins {expected_python}, found {actual_python}")
     for error in errors:
         print(error, file=sys.stderr)

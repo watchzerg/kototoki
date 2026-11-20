@@ -16,7 +16,7 @@ dependencies = [
 
 [tool.uv]
 package = false
-environments = ["sys_platform == 'win32'"]
+environments = ["sys_platform == 'linux'"]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
