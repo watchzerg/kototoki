@@ -26,7 +26,8 @@ def main() -> int:
     pins = tomllib.loads((ROOT / "mise.toml").read_text(encoding="utf-8"))["tools"]
     for tool, expected in pins.items():
         actual = tool_version(tool)
-        if actual != str(expected):
+        # mise.toml 可只写到次版本（如 0.13），按版本段前缀匹配。
+        if actual is None or not f"{actual}.".startswith(f"{expected}."):
             errors.append(f"{tool}: mise.toml pins {expected}, found {actual or 'not on PATH'}")
     expected_python = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
     actual_python = ".".join(map(str, sys.version_info[:3]))

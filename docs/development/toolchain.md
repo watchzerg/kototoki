@@ -15,8 +15,10 @@ environments under `.local/envs/` are not managed by the repository; their
 versions are recorded in the [STT landscape round](../research/2026-10-stt-landscape.md).
 
 - Pin in the project `mise.toml` only tools whose exact version matters to the
-  project (currently uv, which shapes `uv.lock` and `--locked` behavior). Keep
-  tool versions in mise configuration rather than repeating them in prose.
+  project (currently uv, which shapes `uv.lock` and `--locked` behavior), and
+  only to the precision that matters (uv is pinned to a minor version, `0.13`;
+  `just check-toolchain` matches by version prefix). Keep tool versions in mise
+  configuration rather than repeating them in prose.
 - Use uv to manage the project Python interpreter, virtual environment,
   dependencies, and dependency lock. Keep the interpreter selection in
   `.python-version`, supported Python range and dependencies in `pyproject.toml`,
