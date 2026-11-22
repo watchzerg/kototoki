@@ -77,7 +77,7 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 
 ### 研究与文档布局
 
-研究一轮一篇 `docs/research/<YYYY-MM>-<slug>.md`，在 [docs/research/INDEX.md](../research/INDEX.md) 登记，按 `docs/research/TEMPLATE.md` 填必填项；验收记录在 `docs/research/acceptance/`，跑次记录在 `docs/research/runs/`，行为规格在 `docs/behaviors/`，不写哈希（git commit 除外）、本机绝对路径、逐条明细与执行台账；冻结靠 git 与归档 tag `archive/2026-11-18-pre-research-restructure`；产品不导入研究代码，研究可以导入产品；（[0031](0031-research-layout-and-lightweight-records.md)、[0038](0038-setup-project-doc-layout.md)）。产品侧计划与票据放 Beads（`bd`），完工后关闭（[0037](0037-beads-issue-tracker.md)）。
+研究一轮一篇 `docs/research/<YYYY-MM>-<slug>.md`，在 [docs/research/INDEX.md](../research/INDEX.md) 登记，按 `docs/research/TEMPLATE.md` 填必填项；验收记录在 `docs/research/acceptance/`，跑次记录在 `docs/research/runs/`，行为规格在 `docs/behaviors/`，不写哈希（git commit 除外）、本机绝对路径、逐条明细与执行台账；冻结靠 git 与归档 tag `archive/2026-11-18-pre-research-restructure`；进行中的研究代码放仓库根 `research/<YYYY-MM>-<slug>/`，结题时删除并在记录写删除前的 commit SHA；产品不导入研究代码，研究可以导入产品（[0031](0031-research-layout-and-lightweight-records.md)、[0038](0038-setup-project-doc-layout.md)）。产品侧计划与票据放 Beads（`bd`），完工后关闭（[0037](0037-beads-issue-tracker.md)）。
 
 ### 平台、工具链与外部前置
 

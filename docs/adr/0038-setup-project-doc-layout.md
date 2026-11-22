@@ -13,7 +13,12 @@
 2. **验收记录**：`docs/research/acceptance/<主题>-<YYYY-MM-DD>.md`（原 `research/acceptance/<YYYY-MM-DD>-<主题>.md`）。
 3. **跑次记录**：`docs/research/runs/<YYYY-MM-DD>-<slug>.md`，索引与骨架为同目录的 `INDEX.md`、`TEMPLATE.md`（原根目录 `runs/`），并从 `docs/research/INDEX.md` 链接。
 4. **行为规格**：`docs/behaviors/`（原 `docs/specs/`）。
-5. **研究代码**：现有轮次都没有代码；`docs/` 下不放代码，第一个需要代码的轮次立项时再定位置。产品与 `tests/core` 不导入研究代码（Python 包 `research`）的规则不变。
+5. **研究代码**（2026-11-22 用户裁定）：
+   - 进行中的研究代码放在仓库根 `research/<YYYY-MM>-<slug>/`，与记录 `docs/research/<YYYY-MM>-<slug>.md` 同名、一一对应，记录的"原始材料"一节链接代码目录；`docs/` 下不放代码。
+   - 结题时删除代码目录，在记录里写下删除前的 commit SHA，需要时从 git 取回（沿用 ADR-0031 的"冻结靠 git"）。
+   - 产品与 `tests/core` 不导入研究代码（Python 包 `research`）的规则与 `tests/core/test_boundaries.py` 不变。
+   - 某段代码出现第二个使用者、需要长期复用时，按产品代码或 `scripts/` 的规则进 main，不再算研究代码。
+   - 不放在不合并的分支上：进行中的一轮会把代码与结论拆在两条分支，main 上的 agent 看不到代码，分支也容易越走越偏。
 6. 2026-11-22 一次迁完：31 个文件经 `git mv` 移动，全部相对链接改指新路径；`scripts/check_docs.py` 与 `tests/core/test_check_docs.py` 随路径更新。
 
 ## 依据

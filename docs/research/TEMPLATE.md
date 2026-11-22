@@ -35,7 +35,7 @@ active／concluded／stopped，一句话说明（结题或中止的原因）。
 下一轮应当带走的先验。
 
 ## 原始材料（可选）
-归档 tag 路径，如 `archive/2026-11-18-pre-research-restructure:docs/research/<文件>`。
+代码目录 `research/<YYYY-MM>-<slug>/`（进行中）或删除前的 commit SHA（结题后）；归档 tag 路径，如 `archive/2026-11-18-pre-research-restructure:docs/research/<文件>`。
 ```
 
 ## 验收记录模板
