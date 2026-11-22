@@ -38,7 +38,7 @@
 | diff 评审的判断类标准 | `CODING_STANDARDS.md` | 初始化，随 retro 追加 | 测试专项规则留在 `agents/testing.md`，互链 |
 | 冷启动路径、各入口回答什么 | `docs/INDEX.md` | 初始化 | 不含触发表与维护规则 |
 | tracker、标签、领域文档约定 | `docs/agents/` 中 Matt setup 产出的三个文件 | Matt setup | 由 `AGENTS.md` 触发表指向，不另建 Agent skills 块 |
-| 测试归属、收录、分阶段验证 | `docs/agents/testing.md` | 初始化 | 命令与资源合同在 `development/workflow.md` |
+| 测试归属、收录、分阶段验证 | `docs/agents/testing.md` | 初始化 | 命令在 `development/workflow.md`，分层与资源合同在 `development/test-layers.md` |
 | 系统全貌、模块地图、依赖、不变量 | `docs/architecture/INDEX.md` | 初始化 | README 与文档索引只路由 |
 | 职责归属、依赖方向、状态所有者 | `docs/architecture/module-boundaries.md` | 初始化 | 模块页说明如何遵守，偏差就地注明 |
 | 某模块的行为规格、实现设计、代码与验证入口 | `docs/architecture/modules/<module>.md` | 该职责首次有可描述的行为和测试时 | 总览只摘要 |

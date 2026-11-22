@@ -28,6 +28,7 @@
 | [开发工作流](development/workflow.md)、[技术选型](development/technology-stack.md) | 怎么开发、构建和验证 |
 | [依赖布局与资产清单](development/dependencies.md) | 依赖放在哪、版本由谁锁定、哪个 recipe 安装或编译 |
 | [测试设计与验收](agents/testing.md) | 测试怎么写、归哪类、怎么验收 |
+| [测试分层合同](development/test-layers.md)、[本地验收环境](development/local-acceptance.md) | 测试各层的目录、入口与资源边界；真实环境验收的环境契约（`/prune-tests`、`/acceptance` 按路径读写，不改名不移动） |
 | [文档维护规则](agents/documentation.md) | 文档放哪、怎么同步 |
 | [翻译评估方法](agents/translation-evaluation.md) | 新的翻译对比用什么裁判、统计口径与对照规则 |
 | [批量运行与跑次记录](agents/production-runs.md)、[跑次索引](../runs/INDEX.md) | 替用户跑产品批量时怎么跑、跑完记什么、问题怎么转票据；历次运行的记录 |

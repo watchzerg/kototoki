@@ -14,7 +14,7 @@
 
 真实模型调用不称为测试，称为**真实模型验证**：入口 `just smoke`，持有 `.local/gpu.lock`，每次运行须用户批准，不属于任何 gate。
 
-目录、recipe 与资源细节见[开发工作流](../development/workflow.md#测试分层与资源边界)。
+目录、recipe 与资源细节见[测试分层合同](../development/test-layers.md#分层与资源边界)。
 
 ## 编写与变更
 

@@ -66,6 +66,10 @@ smoke *args:
 docs-check:
     uv run --locked --offline python scripts/check_docs.py
 
+# 契约 recipe：列出改动命中却未修改的文档页。本项目的 check_docs.py 没有 --affected，模块页也没有 covers 页首，尚未接入。
+docs-affected base="HEAD":
+    @echo "docs-affected: scripts/check_docs.py has no --affected mode and module pages declare no covers; not wired up (base={{base}})" && exit 1
+
 # lint、typecheck 未选定工具，不在门禁内；以编译检查 check 代替（docs/development/workflow.md#命令与门禁）。
 gate-core: check-toolchain docs-check check test
 
