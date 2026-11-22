@@ -1,6 +1,6 @@
 # 当前架构总览
 
-仓库有一个产品包 `kototoki/`（双语字幕批量流水线，入口 `python -m kototoki`）；研究按轮次记录在 `research/`（[研究索引](../../research/INDEX.md)），产品不导入它。
+仓库有一个产品包 `kototoki/`（双语字幕批量流水线，入口 `python -m kototoki`）；研究按轮次记录在 `docs/research/`（[研究索引](../research/INDEX.md)），产品不导入研究代码。
 本页是理解当前系统的入口："当前"指同一仓库版本已实现的结构，不代表全部环境已验收。现行决定与基线身份看 [CURRENT.md](../adr/CURRENT.md)，本页不复述。
 阅读顺序：本页 → [模块边界](module-boundaries.md) → 受影响的模块页 → 源码与测试。
 
@@ -17,7 +17,7 @@
 | [阶段计划](modules/stage-plan.md) | `kototoki/plan.py` | 阶段链、各阶段产物与输入、模型清单、期望身份、下一个要跑的阶段 |
 | [产物契约](modules/artifact-contract.md) | `kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py` | 工作目录与产物身份、匹配跳过、原子替换、失败与发布记录、worker `--jobs` 协议 |
 | [配置、配方与媒体提取](modules/config-and-media.md) | `kototoki/config.py`、`kototoki/recipes.py`、`kototoki/media.py`、`kototoki/embedded.py` | 读配置、配方常量与 `recipe_hash`、选音轨与派生 WAV、内嵌字幕抽取与清洗 |
-| [配置参考](modules/config-reference.md) | `kototoki/config.py`、`kototoki.toml.example` | `kototoki.toml` 的全部键、默认值、校验，哪些键进产物身份 |
+| [配置参考](modules/config-and-media/reference.md) | `kototoki/config.py`、`kototoki.toml.example` | `kototoki.toml` 的全部键、默认值、校验，哪些键进产物身份 |
 | [STT worker](modules/stt-workers.md) | `kototoki/workers/`、`kototoki/vad.py`、`kototoki/align.py`、`kototoki/schema.py` | GPU worker 壳的共用规则（jobs、模型核对、身份、失败分级）、VAD 与对齐 |
 | [STT ASR](modules/stt-asr.md) | `kototoki/asr_whisper.py`、`kototoki/asr_qwen.py`、`kototoki/judge.py`、`kototoki/guard.py` | w0／x0 逐窗转写、cross 交叉打分裁判、w0 整窗守卫（复读、语速、已知幻听句） |
 | [日文 cue](modules/japanese-cues.md) | `kototoki/cues.py` | 字符时间回填并切成日文 cue；时间轴上唯一加 `offset_s` 的地方 |
@@ -29,7 +29,7 @@
 
 | 任务 | 从这里继续 |
 | --- | --- |
-| 改配置键、默认值或校验 | [配置参考](modules/config-reference.md) → [配置、配方与媒体提取](modules/config-and-media.md) |
+| 改配置键、默认值或校验 | [配置参考](modules/config-and-media/reference.md) → [配置、配方与媒体提取](modules/config-and-media.md) |
 | 改音轨选择、WAV 派生或内嵌字幕路径 | [配置、配方与媒体提取](modules/config-and-media.md) |
 | 改 VAD 分窗、对齐或 worker 的 jobs 约定 | [STT worker](modules/stt-workers.md) → [产物契约](modules/artifact-contract.md) |
 | 改 w0／x0 转写、cross 裁判或整窗守卫 | [STT ASR](modules/stt-asr.md) |
@@ -40,7 +40,7 @@
 | 加阶段、改产物身份或跳过判定 | [阶段计划](modules/stage-plan.md) → [产物契约](modules/artifact-contract.md) |
 | 改调度、续跑、锁或发布 | [批次编排](modules/batch-orchestration.md) |
 | 改日志、进程锁或 worker 启动 | [运行日志、进程原语与 worker 子进程](modules/run-logging-and-processes.md) |
-| 跨模块改动、移动或改名产品符号 | [模块边界](module-boundaries.md) → [技术设计](../specs/bilingual-subtitle-pipeline.md) |
+| 跨模块改动、移动或改名产品符号 | [模块边界](module-boundaries.md) → [跨模块流程](collaborations.md) |
 
 ## 依赖与装配
 
@@ -74,7 +74,7 @@ flowchart TB
   BASE["基础层：config · recipes · artifacts · srt · workers/protocol · schema · logs · procs · judge · guard"]
 ```
 
-依赖只允许向下。硬规则、责任边界与接缝在[模块边界](module-boundaries.md#依赖方向)：产品代码不导入 `research/`，研究可以导入产品符号。
+依赖只允许向下。硬规则、责任边界与接缝在[模块边界](module-boundaries.md#依赖方向)：产品代码不导入研究代码，研究可以导入产品符号。
 
 装配入口（全部从仓库根目录启动，加载模型的都是 GPU 重任务）：
 
@@ -96,4 +96,4 @@ flowchart TB
 - 同一时刻只有一个持 `.local/gpu.lock` 的 GPU 作业；不抢占、不删除活跃锁。见[模块边界：并发与生命周期](module-boundaries.md#并发与生命周期)。
 - 运行身份（recipe、recipe_hash、模型 SHA256）随结果记录；改变行为须另建身份，不复用旧分数。
 
-重要取舍见[决定索引](../adr/INDEX.md)，证据见[研究索引](../../research/INDEX.md)；两者不覆盖当前正文。
+重要取舍见[决定索引](../adr/INDEX.md)，证据见[研究索引](../research/INDEX.md)；两者不覆盖当前正文。

@@ -33,12 +33,12 @@
 - 现行决定的完整定义在 [CURRENT.md](docs/adr/CURRENT.md)，沿革在[决定索引](docs/adr/INDEX.md)。翻译只有**一条基线 Q3**，直到用户另行决定：新测试以 Q3 为对照，引用 Q2、Q1、Q0、F1、H0 时写明。
 - 翻译代码中的 `reasoning_effort:no_think` 是 Hy-MT2 chat-template token，不是 agent 设置；`reasoning_effort` 不做批量替换。
 - **不自动选用"翻译多次再挑选"的方法**（多样本／多 seed＋MBR 或 reranking、best-of-N、多次全量翻译投票及其更省变体）：不提议、不列候选、不在无人值守时执行，除非用户明确要求；边界情况先问（[ADR-0008](docs/adr/0008-no-multi-translation-selection.md)）。
-- 已结题的研究线不重开，重开只由用户明确要求；确认集与已停止轮次的约束见[研究索引·研究方法约束](research/INDEX.md#研究方法约束)。
-- 研究一轮一目录放 `research/`，记录精简、冻结靠 git 与归档 tag，不靠字节锁（[ADR-0031](docs/adr/0031-research-layout-and-lightweight-records.md)）。
+- 已结题的研究线不重开，重开只由用户明确要求；确认集与已停止轮次的约束见[研究索引·研究方法约束](docs/research/INDEX.md#研究方法约束)。
+- 研究一轮一篇放 `docs/research/`，记录精简、冻结靠 git 与归档 tag，不靠字节锁（[ADR-0031](docs/adr/0031-research-layout-and-lightweight-records.md)、[ADR-0038](docs/adr/0038-setup-project-doc-layout.md)）。
 
 ### 重任务与环境
 
-- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，以及 `research/` 下任何加载模型的入口。用户只要求调查或清理时，不启动 demo 或重任务。用户批准的计划里写明的重任务视为已授权，一口气跑完再汇报；超出计划的重任务或破坏性操作再问。长任务用 `systemd-run --user` 启动，写法与 worktree 的坑见[开发工作流](docs/development/workflow.md#长任务与-worktree)。
+- **重任务先问**（占 GPU、加载模型、可能跑数小时）：`just smoke`（真实模型验证，加载全部模型）、产品入口 `python -m kototoki`、`just subtitles` 与 `kototoki.workers.*`，以及任何加载模型的研究入口。用户只要求调查或清理时，不启动 demo 或重任务。用户批准的计划里写明的重任务视为已授权，一口气跑完再汇报；超出计划的重任务或破坏性操作再问。长任务用 `systemd-run --user` 启动，写法与 worktree 的坑见[开发工作流](docs/development/workflow.md#长任务与-worktree)。
 - `.local/gpu.lock` 标记正在运行的 GPU 作业：不抢占、不杀其他进程；用 `ps -p <pid>`／`pgrep` 核实真实进程，而不是信任文档声称在跑的内容。
 - `just install`、`just upgrade`／`uv sync|add|lock` 会改环境且可能联网：先问。
 - 大目录（`.local/`、`.venv/`）会拖慢 Grep／Glob，搜索时限定子路径。
@@ -56,7 +56,7 @@
 
 | 触发条件 | 必读入口 |
 | --- | --- |
-| 设计、修改、实现或 review 代码 | [架构总览](docs/architecture/INDEX.md) → 受影响的模块页。产品包 `kototoki/` 另读[模块边界](docs/architecture/module-boundaries.md)，接口形状要变时先改模块页与模块边界再动手；跨模块契约查[技术设计](docs/specs/bilingual-subtitle-pipeline.md)；review 质量按 [CODING_STANDARDS.md](CODING_STANDARDS.md) |
+| 设计、修改、实现或 review 代码 | [架构总览](docs/architecture/INDEX.md) → 受影响的模块页。产品包 `kototoki/` 另读[模块边界](docs/architecture/module-boundaries.md)，接口形状要变时先改模块页与模块边界再动手；跨模块契约查[跨模块流程](docs/architecture/collaborations.md)，用户可见行为查[行为规格](docs/behaviors/bilingual-subtitle-pipeline.md)；review 质量按 [CODING_STANDARDS.md](CODING_STANDARDS.md) |
 | 编写、修改、移动或 review 测试，测试计划、验收证据，执行 `implement-spec` | [测试设计与验收](docs/agents/testing.md) |
 | 运行命令、选择门禁，调整依赖、工具版本或平台／GPU 配置 | [开发工作流](docs/development/workflow.md)，再按需读 `docs/development/` 的对应页 |
 | 新增、移动、删除文档，或讨论形成明确结论 | [文档维护规则](docs/agents/documentation.md) |
@@ -64,7 +64,7 @@
 | 读取、创建、更新或分类票据（Beads `bd`） | [tracker 约定](docs/agents/issue-tracker.md)、[标签映射](docs/agents/triage-labels.md) |
 | 查现行决定与基线身份（翻译 Q3、产品翻译与建表、W0／X0）；用户采纳或变更决定 | [CURRENT.md](docs/adr/CURRENT.md)；[记录新决定](docs/adr/INDEX.md#记录新决定) |
 | 新的翻译对比、裁判与统计口径 | [翻译评估方法](docs/agents/translation-evaluation.md)（旧 Codex 流程只作历史） |
-| 调研、实验、复用已有结论，查研究轮次或验收记录 | [研究索引](research/INDEX.md)；新轮次按 `research/TEMPLATE.md` 建目录并登记 |
-| 跑产品批量、写跑次记录、据跑次开票 | [批量运行与跑次记录](docs/agents/production-runs.md)；记录在 [runs/](runs/INDEX.md) |
+| 调研、实验、复用已有结论，查研究轮次或验收记录 | [研究索引](docs/research/INDEX.md)；新轮次按 `docs/research/TEMPLATE.md` 建记录并登记 |
+| 跑产品批量、写跑次记录、据跑次开票 | [批量运行与跑次记录](docs/agents/production-runs.md)；记录在 [docs/research/runs/](docs/research/runs/INDEX.md) |
 | 选择或对比 STT 引擎、模型、对齐器 | [推理选型原则](docs/development/inference-selection.md) |
 | 接续旧任务 | `bd list --status=in_progress`、`bd ready` 与相关 bead，**先对照仓库核实状态**；已结题的工作看 ADR、模块页或 git 历史 |

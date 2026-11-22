@@ -24,12 +24,12 @@ Beads `status` 表示生命周期，`type` 表示工作类型，triage label 表
 - Spec 用 `epic`：描述写范围、票据、门禁与未决问题；长篇附件（如审计报告原文）放 `--notes`。票据用 `--parent <epic-id>` 挂在 spec 下。
 - 类型：实现类用 `task`／`bug`／`feature`，调研类用 `spike`。
 - 执行提示词与验收脚本写进 bead 的描述、`--design` 或评论，不另建目录。
-- 正文里的仓库链接从仓库根目录写（`docs/...`、`research/...`）。
+- 正文里的仓库链接从仓库根目录写（`docs/...`）。
 - 面向人的 spec、票据和评论用简体中文。
 - 完工时把持久结论写进模块页或 ADR，再关闭 bead；后续工作开新 bead。当前正文可以引用 bead ID。
-- 研究轮次不用 Beads：计划、代码与结论放 `research/<YYYY-MM>-<slug>/`（见 `research/INDEX.md`）。
+- 研究轮次不用 Beads：计划与结论放 `docs/research/<YYYY-MM>-<slug>.md`（见 `docs/research/INDEX.md`）。
 - 隐私规则与仓库其他部分相同：不写密钥、录音、转写或字幕原文（简短示例除外）。
-- `docs/specs/` 中已接受的规格对其范围仍有权威；spec 链接过去，不复制需求。
+- `docs/behaviors/` 中已接受的规格对其范围仍有权威；spec 链接过去，不复制需求。
 
 ## Skill operations
 

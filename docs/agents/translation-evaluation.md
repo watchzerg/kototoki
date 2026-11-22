@@ -2,7 +2,7 @@
 
 状态：current
 
-本页说明新的翻译对比用什么方法评估：v3 起的研究轮次（截至 v15）实际使用的 Claude 裁判、统计口径和对照规则。口径的来历见 [Strata v12–v13 轮次](../../research/2026-11-strata-v12-v13/README.md#测试)与 [flow v1–v4 轮次](../../research/2026-10-translation-flow-v1-v4/README.md)；早期 Codex 裁判（`gpt-6.1-sol`、`sol-high-auto-v1`）只作历史，见[翻译模型选择轮次](../../research/2026-10-translation-model-selection/README.md#测试)。
+本页说明新的翻译对比用什么方法评估：v3 起的研究轮次（截至 v15）实际使用的 Claude 裁判、统计口径和对照规则。口径的来历见 [Strata v12–v13 轮次](../research/2026-11-strata-v12-v13.md#测试)与 [flow v1–v4 轮次](../research/2026-10-translation-flow-v1-v4.md)；早期 Codex 裁判（`gpt-6.1-sol`、`sol-high-auto-v1`）只作历史，见[翻译模型选择轮次](../research/2026-10-translation-model-selection.md#测试)。
 
 所有分数都只能叫"自动裁判结果"，没有经过人工核验。
 
@@ -70,5 +70,5 @@
 
 ## 来源
 
-- 轮次：[flow v1–v4](../../research/2026-10-translation-flow-v1-v4/README.md)、[quality v5](../../research/2026-10-quality-v5/README.md)、[Q 线 v9–v11](../../research/2026-10-q-line-v9-v11/README.md)、[Strata v12–v13](../../research/2026-11-strata-v12-v13/README.md)、[ASR 稳健性 v14–v15](../../research/2026-11-asr-robustness-v14-v15/README.md)
+- 轮次：[flow v1–v4](../research/2026-10-translation-flow-v1-v4.md)、[quality v5](../research/2026-10-quality-v5.md)、[Q 线 v9–v11](../research/2026-10-q-line-v9-v11.md)、[Strata v12–v13](../research/2026-11-strata-v12-v13.md)、[ASR 稳健性 v14–v15](../research/2026-11-asr-robustness-v14-v15.md)
 - [ADR-0008](../adr/0008-no-multi-translation-selection.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)

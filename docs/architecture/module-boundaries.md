@@ -1,6 +1,12 @@
 # 模块边界
 
-状态：current；权威决定：[ADR-0003](../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../adr/0028-names-accept-empty-table.md)、[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)、[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)；现行配方见 [CURRENT](../adr/CURRENT.md)
+状态：current；
+
+权威决定：[ADR-0003](../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../adr/0028-names-accept-empty-table.md)、[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0007](../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0030](../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../adr/0024-embedded-japanese-subtitles.md)、
+
+[ADR-0025](../adr/0025-product-package-boundaries.md)、[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)；
+
+现行配方见 [CURRENT](../adr/CURRENT.md)
 
 本文只规定依赖方向、唯一归属、接缝、状态与并发规则。各模块做什么见[架构总览](INDEX.md)的模块表与各模块页；模块页说明自己如何遵守，实际偏差在模块页就地注明，不在此改写规则。
 
@@ -26,7 +32,7 @@
 
 研究与产品（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) R5、R6）：
 
-- 产品永不导入 `research/`；研究可以导入产品符号，直接调用产品实现，不保留研究侧副本。
+- 产品永不导入研究代码（Python 包 `research`）；研究可以导入产品符号，直接调用产品实现，不保留研究侧副本。
 - 研究数据经仓库根 `data.toml` 与环境变量 `KOTOTOKI_DATA` 定位，代码与文档不写本机绝对路径。
 - 产品符号移动或改名时，产品不为研究侧保留再导出模块；研究代码随之改导入行。
 

@@ -34,7 +34,7 @@
 
 ## 沿革
 
-- 2026-10-19：产品默认 ffmpeg 换为 BtbN win64 gpl 9.0.2 维护分支构建 `n9.0.2-28-g669f5ab083`（验收记录见 research/acceptance）。
+- 2026-10-19：产品默认 ffmpeg 换为 BtbN win64 gpl 9.0.2 维护分支构建 `n9.0.2-28-g669f5ab083`（验收记录见 docs/research/acceptance）。
 - 2026-11-18 ADR-0032：资产清单去掉 llama.cpp 与 27B，`upgrade.py` 去掉 llama.cpp 组件，`setup` 并入 `install`。
 - 2026-11-18 ADR-0033：钉住的构建被上游删除，ffmpeg 改为只锁维护分支，实际版本记入 `identity.json` 与运行日志。
 - 2026-11-18：按主题合并为本页。

@@ -1,6 +1,6 @@
 # 批量运行与跑次记录
 
-本文规定 agent 替用户跑产品批量（`python -m kototoki`、`just subtitles`）时怎么跑、原始产物在哪、跑完写什么记录、发现的问题怎么转成票据。运行日志的格式归[运行日志与进程原语](../architecture/modules/run-logging-and-processes.md#运行日志)，工作目录布局归[批量编排](../architecture/modules/batch-orchestration.md)，本文不重复。
+本文规定 agent 替用户跑产品批量（`python -m kototoki`、`just subtitles`）时怎么跑、原始产物在哪、跑完写什么记录、发现的问题怎么转成票据。运行日志的格式归[运行日志与进程原语](../architecture/modules/run-logging-and-processes/run-log.md#运行日志)，工作目录布局归[批量编排](../architecture/modules/batch-orchestration.md)，本文不重复。
 
 ## 跑之前
 
@@ -22,9 +22,9 @@
 
 ## 跑次记录：一跑一篇，进 Git
 
-每次批量运行结束（含中断与整批失败）后写一篇，复制 [runs/TEMPLATE.md](../../runs/TEMPLATE.md) 的骨架到 `runs/<YYYY-MM-DD>-<slug>.md`，并在 [runs/INDEX.md](../../runs/INDEX.md) 登记一行。同一天多次运行在 slug 上区分（如 `batch-2`）。
+每次批量运行结束（含中断与整批失败）后写一篇，复制 [docs/research/runs/TEMPLATE.md](../research/runs/TEMPLATE.md) 的骨架到 `docs/research/runs/<YYYY-MM-DD>-<slug>.md`，并在 [docs/research/runs/INDEX.md](../research/runs/INDEX.md) 登记一行。同一天多次运行在 slug 上区分（如 `batch-2`）。
 
-匿名规则（`scripts/check_docs.py` 拦截一部分，其余靠遵守）：
+匿名规则（没有机械检查，靠遵守与评审）：
 
 - **不写影片文件名、输入目录名、工作根目录名**，也不写含它们的路径与日志原文。
 - 输入集用工作根目录名末尾的 `sha12` 指代，单个文件用工作 id（`index.json` 的键，12 位）指代；对照只在本机的 `index.json` 里。
@@ -38,7 +38,7 @@
 
 记录的"问题"一节每条都要有去向，三选一：
 
-- **票据**：在 Beads 建 bead 并加 label `run-finding`（[tracker 约定](issue-tracker.md)），描述里写来源跑次（`runs/` 下的文件名）与涉及的工作 id；先用 `bd list --all --label run-finding` 查重，同一问题已有 bead 时追加评论，不重复开票。
+- **票据**：在 Beads 建 bead 并加 label `run-finding`（[tracker 约定](issue-tracker.md)），描述里写来源跑次（`docs/research/runs/` 下的文件名）与涉及的工作 id；先用 `bd list --all --label run-finding` 查重，同一问题已有 bead 时追加评论，不重复开票。
 - **不处理**：写明理由（预期行为、输入本身的问题、已知限制）。
 - **待观察**：写明再出现几次或在什么条件下转票据。
 

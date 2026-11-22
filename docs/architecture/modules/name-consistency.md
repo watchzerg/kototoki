@@ -1,3 +1,9 @@
+---
+covers:
+  - kototoki/names/__init__.py
+  - kototoki/names/table.py
+  - kototoki/names/recipes.py
+---
 # 专名一致性（建表；译法经翻译注入使用）
 
 状态：current；权威决定：[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)（部分被取代）、[ADR-0025](../../adr/0025-product-package-boundaries.md)
@@ -34,12 +40,12 @@
 
 **表可人工校对，也是译法的唯一入口**：
 
-- 翻译按 Q2 规则注入表里 `confidence: high` 的实体，每个 `forms[]` 一行（[翻译子系统](translation-subsystem.md#当前行为规格)）。
+- 翻译按 Q2 规则注入表里 `confidence: high` 的实体，每个 `forms[]` 一行（[翻译子系统](translation-subsystem/requests-and-resolution.md)）。
 - `name-table.json` 的跳过只比 `identity` 块（`ja_srt_sha256`、`BUILD` 配方 hash、`[names] seed`）；用户改 `entries`（改错名、删条目、调 `confidence`）不触发重建。
 - 改到会被注入的条目（`high` 的实体或其写法）会改变注入行的哈希 `names_sha256`，翻译身份随之变化；删掉该片源文件旁的 `*.ja-zh.srt` 后再运行即重译并重新发布（ADR-0007「发布」：字幕已存在的文件一律跳过）。只改 medium／low 条目不触发重译。
 - `ja.srt`、建表配方或 seed 变化会重建并覆盖手改，不做保护。
 
-**日志**（经编排写进运行日志，[批次编排：运行日志](batch-orchestration.md#运行日志)）：
+**日志**（经编排写进运行日志，[批次编排：运行日志](batch-orchestration/runtime-rules.md#运行日志)）：
 
 - `[names] start: N file(s)`；`[names] end: N done, M failed, T.Ts`。
 - Strata 的启动、等显存与内存、接入检查、停止来自 `kototoki.strata`，前缀 `[strata]`。
@@ -77,7 +83,7 @@
 - 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：`just smoke names_product`（`scripts/smoke/names_product.py`）在产品自动启停的 Strata 上走 `plan.names_identity` → 共享 `Session` → `build_document` → `write_artifact`（默认 seed）。
   - 输入是脚本内置的 12 条合成日语短句（同一人名的正确写法与一处 ASR 式误写、一个职阶名、其余中性）。
   - 通过条件：`expert_arena` 为 `ram`、`build.status == ok`、表至少一条 person、全程没有 llama-server 进程、停止后 status 为空且显存释放、无异常；结果只记计数、哈希、耗时与资源峰值。
-  - 运行记录：Strata 路径见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7；27B 时期见 [2026-10-20 验收记录](../../../research/acceptance/2026-10-20-name-consistency-product.md)。
+  - 运行记录：Strata 路径见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7；27B 时期见 [2026-10-20 验收记录](../../research/acceptance/name-consistency-product-2026-10-20.md)。
 - 未验证：产品写出的表尚未人工抽看；注入后的译文质量只有研究侧 Q2／Q3 证据；x0 输出、其他作品与剧集、`too_long`／`failed`、`count_tokens` 退路与 Strata 起不来等失败路径的真实运行；同一 seed 下建表的可重复性（见 [ADR-0028](../../adr/0028-names-accept-empty-table.md)「未验证与已知限制」）。
 
 ## 变更与决策来源
@@ -85,4 +91,4 @@
 - [ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 - 归档 tag 中的 .scratch/name-consistency-product/（01–09）、.scratch/names-on-strata-v13/、.scratch/q3-product-switch/、.scratch/architecture-cleanup/、.scratch/runtime-logging-gaps/
 - `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
-- [2026-10-20 专名一致性进产品验收记录](../../../research/acceptance/2026-10-20-name-consistency-product.md)
+- [2026-10-20 专名一致性进产品验收记录](../../research/acceptance/name-consistency-product-2026-10-20.md)

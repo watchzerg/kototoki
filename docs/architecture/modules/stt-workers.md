@@ -1,16 +1,26 @@
+---
+covers:
+  - kototoki/vad.py
+  - kototoki/align.py
+  - kototoki/schema.py
+  - kototoki/workers/vad.py
+  - kototoki/workers/asr.py
+  - kototoki/workers/align.py
+  - kototoki/workers/gpu.py
+---
 # STT worker：worker 壳、VAD 与对齐
 
 状态：current；权威决定：[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
-负责双语字幕流水线（[技术设计](../../specs/bilingual-subtitle-pipeline.md)）的三个 GPU 阶段的 worker 壳与共用规则：从 `audio-16k.wav` 求 VAD 窗口（`vad.json`）、逐窗转写（`asr.json`）、字符级强制对齐（`align.json`）。本页写三壳共用的入口、jobs 约定、模型核对、身份、产物与失败分级，以及 VAD 与对齐两个推理模块。
+负责双语字幕流水线（[行为规格](../../behaviors/bilingual-subtitle-pipeline.md)）的三个 GPU 阶段的 worker 壳与共用规则：从 `audio-16k.wav` 求 VAD 窗口（`vad.json`）、逐窗转写（`asr.json`）、字符级强制对齐（`align.json`）。本页写三壳共用的入口、jobs 约定、模型核对、身份、产物与失败分级，以及 VAD 与对齐两个推理模块。
 
 ASR 的两个引擎（w0、x0）、可选的 `cross` 引擎、裁判与 w0 整窗守卫见 [STT ASR](stt-asr.md)。
 
 不负责：决定哪些文件要跑或跳过、锁、子进程环境与按文件重启（[批次编排](batch-orchestration.md)）；身份的组成与期望值（[阶段计划](stage-plan.md)）；cue 切分与时间回填（[日文 cue](japanese-cues.md)）。
 
-推理逻辑移植自研究期的 W0／X0 demo（研究代码与其模块页已删除，经过见[STT demo 与 W0／X0 轮次](../../../research/2026-10-stt-demo-w0-x0/README.md)），产品实现是唯一权威。移植时保留、至今仍成立的行为：
+推理逻辑移植自研究期的 W0／X0 demo（研究代码与其模块页已删除，经过见[STT demo 与 W0／X0 轮次](../../research/2026-10-stt-demo-w0-x0.md)），产品实现是唯一权威。移植时保留、至今仍成立的行为：
 
 - **分窗**（`recipes` 的 `source-span-merge-v1`）：VAD 区间起点向下、终点向上取整为样本并裁到源范围、排序取并集；超过 480000 样本的区间每 480000 样本硬切，再按源跨度贪心合并，合并后跨度不超过 30 秒；不加 padding，窗内静音保留，不拼接波形；空检测是合法结果。
 - **w0 解码**：逐窗独立、不以前文 conditioning、不出时间戳 token（`condition_on_previous_text=False`、`without_timestamps=True`）。
@@ -102,7 +112,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - 壳记模型核对与加载耗时、每文件窗口数／失败数／推理秒数；每个失败窗口一行 WARNING（只记序号与 reason，不记文字）。
 - `protocol` 对单文件失败、`FatalWorkerError` 与启动失败记 ERROR（异常类型＋traceback）；启动失败行为 `[<stage>] startup failed: <类型>`，读 jobs 失败、还不知道阶段时为 `[worker] startup failed: <类型>`。
 - stderr 侧文件里的相对秒自 worker 进程启动起算，不是自本次 `run` 起。
-- 推理模块不发日志；stdout 只留协议 JSON 行，`done` 行的数值字段由编排抄进运行日志。stderr 的存放与告警计数见[运行日志](run-logging-and-processes.md#运行日志)。
+- 推理模块不发日志；stdout 只留协议 JSON 行，`done` 行的数值字段由编排抄进运行日志。stderr 的存放与告警计数见[运行日志](run-logging-and-processes/run-log.md#运行日志)。
 
 ## 代码与验证入口
 
@@ -115,7 +125,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
   - 退出码 0／1／2 与 CUDA 守卫；`gpu.file_processor` 查一次 CUDA 后按序写出多个产物、CUDA 坏时一个都不写；启动校验（配方不符、引擎不可用）。
   - 产出能被 `cues.build_cues` 消费；offset 0 整链的 `align.json`、`ja-cues.json`、`ja.srt` 字节钉成 sha256（`CueChainBytesTest`）。
   - 壳导入不加载推理库；三壳 logger 名钉在 `kototoki.workers.<stage>`（`WorkerLoggerNameTest`）；日志不含窗口文字；已知无害告警的过滤只丢 TF32 那一条（`KnownWarningFilterTest`）。
-  - ASR 与 `cross` 的用例见 [STT ASR](stt-asr.md#代码与验证入口)。
+  - ASR 与 `cross` 的用例见 [STT ASR](stt-asr/cross-judge.md#代码与验证入口)。
 - 真实模型路径由小批量 `just subtitles` 验证；对照研究期冻结窗口的门禁已随 ADR-0034 删除，不再与 W0／X0 demo 逐 token 比对。
 - 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 
@@ -124,6 +134,6 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`、`issues/14-stage-plan-module.md`）、.scratch/cross-asr-judge/、.scratch/runtime-logging-gaps/
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/asr-repeat-guard.md`
-- 验收：[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[最终验收](../../../research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)、[swr 回归](../../../research/acceptance/2026-10-16-bilingual-pipeline-swr-regression.md)
+- 验收：[两部整片验收](../../research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)、[最终验收](../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)、[swr 回归](../../research/acceptance/bilingual-pipeline-swr-regression-2026-10-16.md)
 - 历史记录：模块页拆出的历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md`）、技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）
 - 来源代码：`archive/2026-11-18-pre-research-restructure:experiments/w0_demo/vad_candidates.py`、`archive/2026-11-18-pre-research-restructure:experiments/w0_demo/alignment.py`、`archive/2026-11-18-pre-research-restructure:experiments/w0_demo/pipeline.py`（units 不变量）、`archive/2026-11-18-pre-research-restructure:kototoki_eval/schema.py`

@@ -1,10 +1,14 @@
+---
+covers:
+  - kototoki/plan.py
+---
 # 阶段计划
 
 状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
-负责双语字幕流水线中"一个文件接下来该跑哪个阶段"的唯一判据：阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段的期望身份，以及从产物身份推出的"下一个要跑的阶段"与发布记录用的 `sources`。阶段分解与产物总表见[技术设计](../../specs/bilingual-subtitle-pipeline.md) §2、§4。
+负责双语字幕流水线中"一个文件接下来该跑哪个阶段"的唯一判据：阶段链、各阶段的产物与输入名、模型文件清单与固定 SHA256、各阶段的期望身份，以及从产物身份推出的"下一个要跑的阶段"与发布记录用的 `sources`。阶段分解与产物总表见[阶段分解](../collaborations/stage-chain-and-scheduling.md#阶段分解)、[产物交接](../collaborations/artifact-handoff.md)。
 
 编排（[批次编排](batch-orchestration.md)）与三个 worker 壳（[STT worker](stt-workers.md)）都从这里取身份：壳把它写进产物，编排用它核对产物是否当前。
 
@@ -48,8 +52,6 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 - `name-table.json` 的模型名与 Strata 身份在建表配方里，不进身份；表不当前即需要建表。
 - 表中会被注入的条目一改，`names_sha256` 变、翻译身份变、重新翻译；`names` 阶段自己的身份不变（表仍当前，不重建）。计划把整个 `TranslatePlan` 带在 `Plan.translate` 上。
 
-**引擎组成**：`ENGINE_PARTS`（`w0 → ("w0",)`、`x0 → ("x0",)`、`cross → ("w0", "x0")`）是"一个 ASR 引擎由哪些模型组成"的唯一出处：`model_files`、worker 壳 `workers/asr.start`（加载哪些适配器）与复读守卫的判定（这一路是不是 w0）都读它。它与 `ASR_RECIPES`、`config.ENGINES` 同键（`config` 在基础层，不反向导入 `plan`，靠测试保持一致）。
-
 **cross 的 asr 身份**（[ADR-0003](../../adr/0003-new-pyannote-baselines.md)）：
 
 - `ASR_RECIPES` 有 `w0`、`x0`、`cross`（→ `recipes.CROSS`）三项，其它值抛错。
@@ -62,7 +64,6 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 - `worker_models(config)` 给出 jobs `config.models` 的路径表（`Config.models` 的同名键：`vad`、`w0`、`x0`、`align`）。
 - `model_files(stage, models, engine=…)` 给出 GPU 阶段加载前要核对的 `{名称: (路径, 期望 SHA256)}`：segmentation-3.0 `pytorch_model.bin`；faster-whisper-large-v3 的 `config.json`／`model.bin`／`preprocessor_config.json`／`tokenizer.json`／`vocabulary.json`；qwen3-asr-1.7b-hf 的 `model.safetensors` 与全部 `.json`／`.jinja`（共 7 个，`README.md` 与下载残留不参与）；mms-1b-all 的 adapter、`model.safetensors` 与 5 个配置／词表文件。
 - 期望值取自 W0／X0 基线运行记录，核对结果即身份的 `models` 字段。
-- 模型文件的 SHA256 本模块不算，由调用方经 `ModelSha` 回调（阶段名 → `{模型文件名: SHA256}`）提供：编排用 `workers/gpu.verify_models` 加 size+mtime 缓存，每次运行每阶段最多一次。
 
 **计划**：`Target(work_dir, probe, pcm_sha256, embedded=None)` 是一个文件在 CPU 阶段之后已知的常量。`Plan` 是不可变值：
 
@@ -76,6 +77,16 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 - `next_stage(target, config, models)`：从 vad 起逐阶段调用 `artifacts.is_current`，第一个不当前的阶段即结果；`vad.json` 的 `chunks` 为空即无语音，结果为 `publish`；全部当前时结果为 `translate`（翻译阶段总要经过，run 已完成时只读回译文）。不读 `published.json`。每文件每次运行调用一次。
 - `advance(previous, …)`：`previous.stage` 跑完之后从该阶段继续同一核对，不从头重算、不改写入参；其产物不当前时返回的 `stage` 不变（调用方据此记失败）；对已到终态的计划报错。对同一目录连续调用结果相同。
 - 核对途中出错（如读不了上游产物）抛 `PlanError`，带正在核对的阶段，编排记为该阶段失败；损坏的产物不是错误，只是"不当前"。
+
+## 实现设计
+
+### 引擎组成
+
+`ENGINE_PARTS`（`w0 → ("w0",)`、`x0 → ("x0",)`、`cross → ("w0", "x0")`）是"一个 ASR 引擎由哪些模型组成"的唯一出处：`model_files`、worker 壳 `workers/asr.start`（加载哪些适配器）与复读守卫的判定（这一路是不是 w0）都读它。它与 `ASR_RECIPES`、`config.ENGINES` 同键（`config` 在基础层，不反向导入 `plan`，靠测试保持一致）。
+
+### 模型文件 SHA256
+
+模型文件的 SHA256 本模块不算，由调用方经 `ModelSha` 回调（阶段名 → `{模型文件名: SHA256}`）提供：编排用 `workers/gpu.verify_models` 加 size+mtime 缓存，每次运行每阶段最多一次。
 
 ## 接口与依赖
 
@@ -104,8 +115,15 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 ## 变更与决策来源
 
-- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
+- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)
+- [ADR-0003](../../adr/0003-new-pyannote-baselines.md)
+- [ADR-0028](../../adr/0028-names-accept-empty-table.md)
+- [ADR-0029](../../adr/0029-translate-per-cue-resolution.md)
+- [ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)
+- [ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)
+- [ADR-0025](../../adr/0025-product-package-boundaries.md)
+- [现行决定](../../adr/CURRENT.md)
 - 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/14-stage-plan-module.md`、`issues/15-translate-run-key.md`）、.scratch/cross-asr-judge/、.scratch/name-consistency-product/（`issues/05-config-assets-plan.md`）
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md`
-- 验收：[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)
+- 验收：[cross 产品路径验收](../../research/acceptance/cross-asr-acceptance-2026-10-19.md)
 - 历史：技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）

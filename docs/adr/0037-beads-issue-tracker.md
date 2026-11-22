@@ -11,7 +11,7 @@
 1. 产品侧的 spec 与票据存进 Beads（`bd` CLI，issue 前缀 `kototoki`）：spec 是 `epic`，票据是它的子 issue；规则见 [tracker 约定](../agents/issue-tracker.md)。
 2. 删除 `.scratch/`；docs-check 不再扫描它。
 3. 已有票据全部迁入（2026-11-22）：`.scratch/architecture-review/` 成为 `kototoki-e8t`（spec 为描述、2026-10-19 审计报告原文在 notes、21 张票为子 issue），`next-directions` 两张票为 `kototoki-11g`、`kototoki-671`，`ubuntu-port` 探查票为 `kototoki-mf4`。原 `resolved` 的票迁入后关闭，其余保留原 triage 状态作 label。
-4. 研究轮次仍按 [ADR-0031](0031-research-layout-and-lightweight-records.md) 放 `research/`，不建 bead；完工的持久结论仍写进模块页或 ADR，再关闭 bead。
+4. 研究轮次仍按 [ADR-0031](0031-research-layout-and-lightweight-records.md) 放 `research/`（路径自 2026-11-22 起由 [ADR-0038](0038-setup-project-doc-layout.md) 改为 `docs/research/`），不建 bead；完工的持久结论仍写进模块页或 ADR，再关闭 bead。
 
 ## 依据
 

@@ -4,16 +4,30 @@
 
 ## 双语字幕流水线
 
-从一批日语视频或音频批量生产中日双语 SRT（写在源文件旁），全部在本机 GPU 上运行（[技术设计](docs/specs/bilingual-subtitle-pipeline.md)、[ADR-0007](docs/adr/0007-bilingual-subtitle-pipeline-architecture.md)）。
+从一批日语视频或音频批量生产中日双语 SRT（写在源文件旁），全部在本机 GPU 上运行（[行为规格](docs/behaviors/bilingual-subtitle-pipeline.md)、[ADR-0007](docs/adr/0007-bilingual-subtitle-pipeline-architecture.md)）。
 
-1. 环境：`just install`（`uv sync --locked` 建根环境即产品环境，统一 CUDA 12.8；ffmpeg 用 apt 装的系统包（`sudo apt install ffmpeg`），产品从 PATH 调用）；STT 模型放在 `.local/models/`，缺失时 `just fetch-models` 按清单下载（几十 GB）；专名建表与翻译共用的 Strata（0.2 版本线，`strata` 在 PATH 上，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录）不在清单里，由你自己安装与维护，产品启动它时会核对版本线与启动配置，不符即拒绝；`just verify-assets` 离线核对。两者都联网、改环境，先问再跑。ffmpeg 只用默认 swr 重采样，不要求 libsoxr，路径可在配置里改。模型的来源、revision 与 SHA256 以 [`assets.toml`](assets.toml) 为准，布局与升级步骤见[依赖布局与资产清单](docs/development/dependencies.md)。
-2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`（递归扫描视频与音频，扩展名见 `[input] extensions`；不得位于仓库内，`.local/` 除外，因为字幕写在源文件旁）；中间产物在 `paths.work_dir`（默认仓库内 `.local/work/`；不得位于输入目录内，也不得位于仓库内 `.local/` 以外）；`stt.engine` 默认 `w0`，可选 `x0`。全部键与默认值见[配置、配方与媒体提取](docs/architecture/modules/config-and-media.md)。`[names]` 只有 `seed`：翻译前在 Strata 上用 Qwen3.8-Flash-Next 给每部影片建一张专名表（规则与基线 Q3 相同），翻译时把表里高置信的译法注入提示；建表必开，没有开关。`[translate]` 只有 `seed`（正整数）。模型与端口都由 Strata 管理。
+1. 环境：`just install`（`uv sync --locked` 建根环境即产品环境，统一 CUDA 12.8；ffmpeg 用 apt 装的系统包（`sudo apt install ffmpeg`），产品从 PATH 调用）；STT 模型放在 `.local/models/`，缺失时 `just fetch-models` 按清单下载（几十 GB）；专名建表与翻译共用的 Strata（0.2 版本线，`strata` 在 PATH 上，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录）不在清单里，由你自己安装与维护，产品启动它时会核对版本线与启动配置，不符即拒绝；`just verify-assets` 离线核对。两者都联网、改环境，先问再跑。
+
+   ffmpeg 只用默认 swr 重采样，不要求 libsoxr，路径可在配置里改。模型的来源、revision 与 SHA256 以 [`assets.toml`](assets.toml) 为准，布局与升级步骤见[依赖布局与资产清单](docs/development/dependencies.md)。
+2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`（递归扫描视频与音频，扩展名见 `[input] extensions`；不得位于仓库内，`.local/` 除外，因为字幕写在源文件旁）；中间产物在 `paths.work_dir`（默认仓库内 `.local/work/`；不得位于输入目录内，也不得位于仓库内 `.local/` 以外）；`stt.engine` 默认 `w0`，可选 `x0`。全部键与默认值见[配置、配方与媒体提取](docs/architecture/modules/config-and-media.md)。
+
+   `[names]` 只有 `seed`：翻译前在 Strata 上用 Qwen3.8-Flash-Next 给每部影片建一张专名表（规则与基线 Q3 相同），翻译时把表里高置信的译法注入提示；建表必开，没有开关。`[translate]` 只有 `seed`（正整数）。模型与端口都由 Strata 管理。
 3. 运行：`uv run python -m kototoki kototoki.toml`（省略参数时读当前目录的 `kototoki.toml`）。这是加载全部模型的 GPU 重任务，运行期间持有 `.local/gpu.lock`。只想用默认配置处理一个目录时可跳过第 2 步，直接 `just subtitles <目录>`（相对路径按当前目录解析）：它把只含 `input_dir` 的配置写到 `.local/run-configs/` 再调用同一入口，退出码相同。
-4. 输出：每个输入在源文件所在目录得到 `<stem>.ja-zh.srt`（双语每条中文在上、日文在下；少数没有合格译文的 cue 只有日文一行），不再单独发布日文或中文 SRT；`ja.srt`、中间产物、日志与续跑状态在 `<work_dir>/<输入目录末段名>-<sha12>/`（模型缓存共用 `<work_dir>/cache/`）；运行日志 `run-<UTC 时间戳>.log` 在该目录下（UTF-8），与控制台内容相同，分 INFO／WARNING／ERROR 三级，监控与排查以它为准；可能跑数小时的批量用 `systemd-run --user` 启动（见[开发工作流](docs/development/workflow.md#长任务与-worktree)）；GPU worker 的 stderr 另存 `run-<时间戳>-<stage>.stderr.log`（相对秒自 worker 启动起算），运行日志里 `see run-…-<stage>.stderr.log` 的行（告警计数或异常退出码）指向该文件，去那里看原因。源文件旁已有 `<stem>.ja-zh.srt`（不论来源）即跳过该文件；要重做就删掉这份字幕，中间产物按身份续跑，只重做受影响的阶段。中断或失败后重跑同一命令，从各文件的最后一个有效产物继续。同目录主名相同的两个输入（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕，后一个报错。退出码 0 全部成功、1 有文件失败、2 配置错误、3 同一输入目录已有进程在运行、4 GPU 锁冲突。
-5. 内嵌日文字幕：文件里有标为日语的文本字幕轨（SRT／ASS／mov_text／WebVTT，非 forced；标志或标题里写了 forced 都算 forced）时，默认不做语音识别，直接清洗并翻译该字幕轨（[ADR-0024](docs/adr/0024-embedded-japanese-subtitles.md)）；位图字幕（PGS 等）与同目录外挂字幕不读。字幕轨时间轴或质量不可用时，在 `[input]` 里设 `use_embedded_subtitles = false` 强制走语音识别。
-6. 专名表：每部影片的表在 `<work_dir>/<输入目录末段名>-<sha12>/<id>/name-table.json`（条目只在工作目录，日志只记计数）。翻译只注入 `confidence: high` 的实体（每个写法一行 `日文 → 中文`），没有发布时替换。表可人工校对：改 `name-table.json` 的 `entries` 后，**改到会被注入的条目（`high` 的实体或其写法）会改变该片的翻译身份，但已发布的字幕不会自动重做，须先删掉该片的 `.ja-zh.srt`，再重跑才重译（需要 Strata，约数分钟）；只改 medium／low 条目不触发任何重做**；改 `ja.srt`、`[names] seed` 或建表配方会重建表并覆盖手改。建表失败（提示超预算，或依次换 seed 的 5 次回复都不合格）写空表、翻译照常进行（不注入）并记 WARNING。
+4. 输出：每个输入在源文件所在目录得到 `<stem>.ja-zh.srt`（双语每条中文在上、日文在下；少数没有合格译文的 cue 只有日文一行），不再单独发布日文或中文 SRT；`ja.srt`、中间产物、日志与续跑状态在 `<work_dir>/<输入目录末段名>-<sha12>/`（模型缓存共用 `<work_dir>/cache/`）；运行日志 `run-<UTC 时间戳>.log` 在该目录下（UTF-8），与控制台内容相同，分 INFO／WARNING／ERROR 三级，监控与排查以它为准；可能跑数小时的批量用 `systemd-run --user` 启动（见[开发工作流](docs/development/workflow.md#长任务与-worktree)）；
 
-建表与翻译（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)）共用一个由产品自动启停的 Strata session：第一次需要模型时启动，整批建完、翻完或出错、被中断时停止；产品不再启动 llama-server；启动前 `strata launch --status` 必须为空（别人的 launch 在服务则拒绝，不替别人停），产品被强杀后若 Strata 残留，须手动 `strata launch --stop`。翻译失败按 10→5→1 拆批降级，单条仍失败保留日文并计入回退数（`translate/report.json`，发布日志与汇总也给出回退数）。行为与模块说明从[架构总览](docs/architecture/INDEX.md)进入（入口是[批次编排](docs/architecture/modules/batch-orchestration.md)）；验收见[两部整片验收](research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)与[最终验收](research/acceptance/2026-10-15-bilingual-pipeline-final-acceptance.md)（工程行为通过，早期 Hy-MT2 翻译；Q2 翻译与 Strata 自动启停已于 2026-11-08 做过真实运行，共用 session 的建表路径的真实运行见 [ADR-0029](docs/adr/0029-translate-per-cue-resolution.md) 所指计划的 §7；产品 STT 与 2026-10-05 基线的质量回归在重采样改回 swr 后尚未重测）。
+   GPU worker 的 stderr 另存 `run-<时间戳>-<stage>.stderr.log`（相对秒自 worker 启动起算），运行日志里 `see run-…-<stage>.stderr.log` 的行（告警计数或异常退出码）指向该文件，去那里看原因。
+
+   源文件旁已有 `<stem>.ja-zh.srt`（不论来源）即跳过该文件；要重做就删掉这份字幕，中间产物按身份续跑，只重做受影响的阶段。中断或失败后重跑同一命令，从各文件的最后一个有效产物继续。同目录主名相同的两个输入（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕，后一个报错。退出码 0 全部成功、1 有文件失败、2 配置错误、3 同一输入目录已有进程在运行、4 GPU 锁冲突。
+5. 内嵌日文字幕：文件里有标为日语的文本字幕轨（SRT／ASS／mov_text／WebVTT，非 forced；标志或标题里写了 forced 都算 forced）时，默认不做语音识别，直接清洗并翻译该字幕轨（[ADR-0024](docs/adr/0024-embedded-japanese-subtitles.md)）；位图字幕（PGS 等）与同目录外挂字幕不读。字幕轨时间轴或质量不可用时，在 `[input]` 里设 `use_embedded_subtitles = false` 强制走语音识别。
+6. 专名表：每部影片的表在 `<work_dir>/<输入目录末段名>-<sha12>/<id>/name-table.json`（条目只在工作目录，日志只记计数）。翻译只注入 `confidence: high` 的实体（每个写法一行 `日文 → 中文`），没有发布时替换。表可人工校对：改 `name-table.json` 的 `entries` 后，**改到会被注入的条目（`high` 的实体或其写法）会改变该片的翻译身份，但已发布的字幕不会自动重做，须先删掉该片的 `.ja-zh.srt`，再重跑才重译（需要 Strata，约数分钟）；只改 medium／low 条目不触发任何重做**；改 `ja.srt`、`[names] seed` 或建表配方会重建表并覆盖手改。
+
+   建表失败（提示超预算，或依次换 seed 的 5 次回复都不合格）写空表、翻译照常进行（不注入）并记 WARNING。
+
+建表与翻译（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)）共用一个由产品自动启停的 Strata session：第一次需要模型时启动，整批建完、翻完或出错、被中断时停止；产品不再启动 llama-server；启动前 `strata launch --status` 必须为空（别人的 launch 在服务则拒绝，不替别人停），产品被强杀后若 Strata 残留，须手动 `strata launch --stop`。翻译失败按 10→5→1 拆批降级，单条仍失败保留日文并计入回退数（`translate/report.json`，发布日志与汇总也给出回退数）。
+
+行为与模块说明从[架构总览](docs/architecture/INDEX.md)进入（入口是[批次编排](docs/architecture/modules/batch-orchestration.md)）；
+
+验收见[两部整片验收](docs/research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)与[最终验收](docs/research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)（工程行为通过，早期 Hy-MT2 翻译；Q2 翻译与 Strata 自动启停已于 2026-11-08 做过真实运行，共用 session 的建表路径的真实运行见 [ADR-0029](docs/adr/0029-translate-per-cue-resolution.md) 所指计划的 §7；产品 STT 与 2026-10-05 基线的质量回归在重采样改回 swr 后尚未重测）。
 
 ## 开发
 
@@ -25,11 +39,17 @@
 
 产品直接使用已采纳的基线，不做多种可选配置。基线身份与采纳依据：
 
-- **STT**：W0（faster-whisper＋新 Pyannote VAD＋MMS 日语 CTC）与 X0（Qwen-ASR＋新 Pyannote＋同一 MMS），均无降噪、无人声分离；采纳见 [ADR-0003](docs/adr/0003-new-pyannote-baselines.md)，完整定义见[现行决定](docs/adr/CURRENT.md#stt-基线与产品-stt)，研究经过见 [STT demo 与 W0／X0 轮次](research/2026-10-stt-demo-w0-x0/README.md)。产品 `kototoki/` 的 w0／x0 引擎实现这两条基线；研究期 demo 已删除，只在归档 tag 里。
-- **字幕翻译**：基线为 Q3（[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)，2026-11-09）：Q2 的翻译规则（Strata 上的 Qwen3.8-Flash-Next IQ3_S、不加参数 `strata launch`（DFlash2）、`qwen-wide` 配方规则＋只注入 `confidence: high` 的专名表，[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)）＋在同一 Strata 实例上用 Flash-Next 建表（`names-strata-v4`，最多 5 次请求）。产品自 2026-11-09 起按同一规则建表（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)），2026-11-12 起输出上限放宽到 16384、提示预算到 32256（`q3-names-v2`，[ADR-0028](docs/adr/0028-names-accept-empty-table.md)），2026-11-17 起回复为空表不再重试（`q3-names-v3`，[ADR-0028](docs/adr/0028-names-accept-empty-table.md)），翻译配方 `q3-translate-v1`（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)，Q2 的翻译规则，回复按条收下、只追问未解决的 cue；此前 `q2-degrade-v1`，[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)）。H0（Hy-MT2 30B-A3B APEX-I-Compact＋`dp10-cut`，[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)）不再是基线，只作历史对照身份，产品已不再使用（[翻译模型选择轮次](research/2026-10-translation-model-selection/README.md)）。
-- **评估素材**：Heaven's Feel II／III 原版日文字幕为精确主参考，I 与 Black Panther 只作补充，素材规则见 [STT demo 轮次](research/2026-10-stt-demo-w0-x0/README.md#测试)。
+- **STT**：W0（faster-whisper＋新 Pyannote VAD＋MMS 日语 CTC）与 X0（Qwen-ASR＋新 Pyannote＋同一 MMS），均无降噪、无人声分离；采纳见 [ADR-0003](docs/adr/0003-new-pyannote-baselines.md)，完整定义见[现行决定](docs/adr/CURRENT.md#stt-基线与产品-stt)，研究经过见 [STT demo 与 W0／X0 轮次](docs/research/2026-10-stt-demo-w0-x0.md)。产品 `kototoki/` 的 w0／x0 引擎实现这两条基线；研究期 demo 已删除，只在归档 tag 里。
+- **字幕翻译**：基线为 Q3（[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)，2026-11-09）：Q2 的翻译规则（Strata 上的 Qwen3.8-Flash-Next IQ3_S、不加参数 `strata launch`（DFlash2）、`qwen-wide` 配方规则＋只注入 `confidence: high` 的专名表，[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)）＋在同一 Strata 实例上用 Flash-Next 建表（`names-strata-v4`，最多 5 次请求）。
 
-模型比较、流程探索、验收与各轮结论登记在[研究索引](research/INDEX.md)；历史报告中的 W0／W1／X0 指当时身份，分数不直接归给当前基线。
+  产品自 2026-11-09 起按同一规则建表（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)），2026-11-12 起输出上限放宽到 16384、提示预算到 32256（`q3-names-v2`，[ADR-0028](docs/adr/0028-names-accept-empty-table.md)），2026-11-17 起回复为空表不再重试（`q3-names-v3`，[ADR-0028](docs/adr/0028-names-accept-empty-table.md)），
+
+  翻译配方 `q3-translate-v1`（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)，Q2 的翻译规则，回复按条收下、只追问未解决的 cue；此前 `q2-degrade-v1`，[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)）。
+
+  H0（Hy-MT2 30B-A3B APEX-I-Compact＋`dp10-cut`，[ADR-0021](docs/adr/0021-q3-strata-names-baseline.md)）不再是基线，只作历史对照身份，产品已不再使用（[翻译模型选择轮次](docs/research/2026-10-translation-model-selection.md)）。
+- **评估素材**：Heaven's Feel II／III 原版日文字幕为精确主参考，I 与 Black Panther 只作补充，素材规则见 [STT demo 轮次](docs/research/2026-10-stt-demo-w0-x0.md#测试)。
+
+模型比较、流程探索、验收与各轮结论登记在[研究索引](docs/research/INDEX.md)；历史报告中的 W0／W1／X0 指当时身份，分数不直接归给当前基线。
 
 ## 第三方许可
 

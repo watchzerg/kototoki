@@ -11,7 +11,7 @@ The user installs mise once; `mise install` then provides the pinned uv and just
 The repository has the product root environment (`pyproject.toml` + `uv.lock`,
 CUDA 12.8 inference stack), `mise.toml`, and a `justfile`. Research-era backend
 environments under `.local/envs/` are not managed by the repository; their
-versions are recorded in the [STT landscape round](../../research/2026-10-stt-landscape/README.md).
+versions are recorded in the [STT landscape round](../research/2026-10-stt-landscape.md).
 
 - Use mise to select project development tools, including uv and just, once
   project pins are configured. Keep tool versions in mise configuration rather
@@ -37,12 +37,12 @@ neighboring repository's selections are references, not existing installations.
 
 独立 Pyannote GPU 补测使用 `.local/envs/vad-pyannote-gpu-v1/`，与 CPU VAD 环境保持同版本依赖，
 仅 Torch／TorchAudio 2.11.0 的构建由 `+cpu` 换为 `+cu128`；未升级 ASR／MMS 环境。
-清单与实测边界见[GPU 补测报告](../../research/2026-10-vad-comparison/README.md)。
+清单与实测边界见[GPU 补测报告](../research/2026-10-vad-comparison.md)。
 
 `just test`、`just test-full` 分别发现 `tests/core/`、`tests/full/` 下的产品测试（分层见[测试分层合同](test-layers.md#分层与资源边界)）；
 根环境自票据 01 起是产品环境（Python 3.14，统一 CUDA 12.8：torch／torchaudio 2.11.0+cu128 走显式 `pytorch-cu128` 索引，其余来自 PyPI，版本见[技术选型](technology-stack.md#已选依赖)）；`just smoke` 在其中运行 `scripts/smoke/` 的真实模型验证。
 `just check` 执行 Python 编译检查，不等同 lint 或类型检查。
-研究期隔离环境的实际版本、锁文件范围与离线恢复入口见[环境清单](../../research/2026-10-stt-landscape/README.md)。
+研究期隔离环境的实际版本、锁文件范围与离线恢复入口见[环境清单](../research/2026-10-stt-landscape.md)。
 
 When implementing the task runner, expose setup, tests, formatting, and static
 checks as clear recipes and document implemented commands in the README. Use

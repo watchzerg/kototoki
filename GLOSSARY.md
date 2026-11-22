@@ -52,7 +52,9 @@ _Avoid_: S1（指基线时；S1 是 v13 的候选臂）、names-strata-v4（指�
 _Avoid_: 产品后端, 正式后端
 
 **STT 引擎（w0／x0／cross）**：
-配置键 `stt.engine` 的取值，`w0`／`x0` 分别按 W0／X0 的配方在产品统一 CUDA 12.8 环境中运行（产品 w0 的特征改用 faster-whisper 自带计算，ADR-0035）；环境升级即新身份，与基线成绩的回归本期未做，不直接继承 W0／X0 的分数。`cross`（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)，已接受 2026-10-19；两部合计 CER −0.95 pp，低于预设 1.0 pp 验收线，用户裁定仍采用）是产品默认取值（[ADR-0035](docs/adr/0035-cross-default-native-whisper-features.md)，2026-11-20）：同一 asr worker 内 w0 与 x0 各转写一遍，再由 Whisper 对两路分歧区间做交叉打分（阈值 −1.0）合并成同构的 `asr.json`，配方 `cross-w0-x0-whisper-judge-v1`，不是新的 W0／X0 基线。
+配置键 `stt.engine` 的取值，`w0`／`x0` 分别按 W0／X0 的配方在产品统一 CUDA 12.8 环境中运行（产品 w0 的特征改用 faster-whisper 自带计算，ADR-0035）；环境升级即新身份，与基线成绩的回归本期未做，不直接继承 W0／X0 的分数。
+
+`cross`（[ADR-0003](docs/adr/0003-new-pyannote-baselines.md)，已接受 2026-10-19；两部合计 CER −0.95 pp，低于预设 1.0 pp 验收线，用户裁定仍采用）是产品默认取值（[ADR-0035](docs/adr/0035-cross-default-native-whisper-features.md)，2026-11-20）：同一 asr worker 内 w0 与 x0 各转写一遍，再由 Whisper 对两路分歧区间做交叉打分（阈值 −1.0）合并成同构的 `asr.json`，配方 `cross-w0-x0-whisper-judge-v1`，不是新的 W0／X0 基线。
 
 **日文 cue**：
 翻译与字幕的最小单元：由 `align.json` 字符时间回填后按句末、软断点、字数与时长切出的一条日文字幕（`ja-cues.json`／`ja.srt`），中文译文与之一一对应。采用内嵌日文字幕的文件（ADR-0024）不经切分，`ja.srt` 里清洗后的每条字幕即一条日文 cue。
@@ -79,7 +81,9 @@ _Avoid_: 计划器, 调度计划
 双语字幕 `<stem>.ja-zh.srt` 先写入工作目录暂存、记入 `published.json`（审计记录）再原子移到源文件旁。源文件旁已有同名字幕（不论来源）即跳过该文件，没有覆盖开关，要重做须先删掉它。
 
 **专名表（name table）**：
-`names` 阶段为每部影片的 `ja.srt` 建的专名清单（`name-table.json`，schema `name-table-v2`）：若干实体，各带种类（person／class／org／place／other）、规范中文译名、写法、`zh_variants` 与 evidence；`build.status` 为 `ok`／`failed`／`too_long`，后两者是空表。表在工作目录里，可人工校对；产品只把其中 `confidence: high` 的写法作为**注入行**交给翻译（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)），改到注入行后删掉该片的 `*.ja-zh.srt` 再运行即重译该片。条目是转写内容，不进日志（`kototoki/names/table.py`，[ADR-0028](docs/adr/0028-names-accept-empty-table.md)）。
+`names` 阶段为每部影片的 `ja.srt` 建的专名清单（`name-table.json`，schema `name-table-v2`）：若干实体，各带种类（person／class／org／place／other）、规范中文译名、写法、`zh_variants` 与 evidence；`build.status` 为 `ok`／`failed`／`too_long`，后两者是空表。表在工作目录里，可人工校对；产品只把其中 `confidence: high` 的写法作为**注入行**交给翻译（[ADR-0029](docs/adr/0029-translate-per-cue-resolution.md)），改到注入行后删掉该片的 `*.ja-zh.srt` 再运行即重译该片。
+
+条目是转写内容，不进日志（`kototoki/names/table.py`，[ADR-0028](docs/adr/0028-names-accept-empty-table.md)）。
 _Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是历史命名）
 
 **实体（entity）**：
@@ -92,7 +96,7 @@ _Avoid_: 术语表, glossary（`terms` 配方与 `glossary-v1` 模型目录是�
 专名表里 `confidence: high` 实体的每个写法展开成的一行 `{ja → zh}`（按 `ja` 去重，跳过空写法）；某个包只注入日文写法出现在该包可见台词里的行，表头 `qwen-name-table-v1`（Q1／Q2 规则，`kototoki/translate/recipes.py::name_rows`）。注入行的 SHA256 是产品翻译身份的一部分。
 
 **锚定 cue**：
-（研究线与 2026-11-08 前的产品替换，ADR-0028「表的使用与校对」起产品不再替换）替换时，日文里出现某个实体最长 `form.ja` 的 cue 就由该写法锚定（短写法不再重复处理同一 cue），该 cue 的译文以这个写法的 `zh` 为替换目标；替换只发生在锚定 cue 内（研究实现见 [专名一致性轮次](research/2026-10-name-consistency/README.md)）。
+（研究线与 2026-11-08 前的产品替换，ADR-0028「表的使用与校对」起产品不再替换）替换时，日文里出现某个实体最长 `form.ja` 的 cue 就由该写法锚定（短写法不再重复处理同一 cue），该 cue 的译文以这个写法的 `zh` 为替换目标；替换只发生在锚定 cue 内（研究实现见 [专名一致性轮次](docs/research/2026-10-name-consistency.md)）。
 
 **落点**：
 在锚定 cue 的译文里找到的、应被换成目标中文的那一段：先找同实体其他写法的中文与过特异性检验的 `zh_variants`（变体层），找不到再用跨 cue 统计（统计层）；统计层落点按规则一扩展到整个名字。落点重叠、紧邻复合名连接符或不在词边界上时不替换，记为 `unresolved`。

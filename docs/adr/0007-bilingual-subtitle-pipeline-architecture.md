@@ -1,7 +1,7 @@
 # ADR-0007：中日双语字幕流水线的产品架构、输入与发布
 
 状态：已接受，已实现。2026-11-18 按主题合并（用户授权）：并入 ADR-0020、ADR-0027，原文见 git 历史（提交 807de3e 及之前）。「环境」与选版规则中的 Python 版本自 2026-11-20 起由 ADR-0036 替代。  
-范围：产品包 `kototoki/` 的工程架构：阶段链、环境、配置、输入范围、工作目录、产物与续跑、时间轴、锁与进程、发布。模型与配方身份不在此决定：STT 见 [ADR-0003](0003-new-pyannote-baselines.md)，翻译见 [ADR-0029](0029-translate-per-cue-resolution.md)，建表见 [ADR-0028](0028-names-accept-empty-table.md)，内嵌日文字幕见 [ADR-0024](0024-embedded-japanese-subtitles.md)，模块边界与失败级别见 [ADR-0025](0025-product-package-boundaries.md)，研究与产品的代码边界见 [ADR-0031](0031-research-layout-and-lightweight-records.md)。完整设计见[技术设计](../specs/bilingual-subtitle-pipeline.md)与[架构总览](../architecture/INDEX.md)。
+范围：产品包 `kototoki/` 的工程架构：阶段链、环境、配置、输入范围、工作目录、产物与续跑、时间轴、锁与进程、发布。模型与配方身份不在此决定：STT 见 [ADR-0003](0003-new-pyannote-baselines.md)，翻译见 [ADR-0029](0029-translate-per-cue-resolution.md)，建表见 [ADR-0028](0028-names-accept-empty-table.md)，内嵌日文字幕见 [ADR-0024](0024-embedded-japanese-subtitles.md)，模块边界与失败级别见 [ADR-0025](0025-product-package-boundaries.md)，研究与产品的代码边界见 [ADR-0031](0031-research-layout-and-lightweight-records.md)。完整设计见[行为规格](../behaviors/bilingual-subtitle-pipeline.md)与[架构总览](../architecture/INDEX.md)。
 
 ## 决定
 

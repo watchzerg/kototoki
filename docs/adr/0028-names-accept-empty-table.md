@@ -62,10 +62,10 @@
 
 ## 依据
 
-- 研究线结题（[name-consistency](../../research/2026-10-name-consistency/README.md)）：六轮把规则层改动都试过，剩余误差在规则层之外（次要角色的表内错名、一次性音译覆盖不到）；冻结配置在 HF II／III 上 good 89%、有害 2.5%。没有 MQM 与整片人工评估，用户知悉后接受。
-- 切到 Strata（2026-11-09）：基线 Q3 的表由 Strata 建、产品仍由 27B 建，两者不一致；切换后产品只剩 Strata 一种推理服务，也去掉了"停 llama-server → 启 Strata"的交接（11-08 专家区退到 mmap 的起因之一）。v13 已在一个 session 里先建表再翻译，内存峰值 60.4–62.4 GiB（[strata-v12-v13](../../research/2026-11-strata-v12-v13/README.md)）。
-- 放宽上限与预算（2026-11-12，[产品全流程验收](../../research/acceptance/2026-11-12-product-fullflow-acceptance.md)）：两部 HF 提示占旧预算 83%、92%，约 1340 条 cue 以上会 `too_long`；HF III 在 8192 处截断两次。验证：Black Panther（1655 条）提示 20059 token，新预算下建成；HF III 第 4 次 11047 token 成功。收益有限、失败成本翻倍，用户看过结果后保留 16384。
-- 空表合法（2026-11-17）：结构合法的回复就是有效回答，对它换 seed 等于抽到非空为止、按内容挑结果，与 ADR-0008 冲突；"非空"要求只是从动画素材的研究脚本原样移植。首次大批量运行（[跑次记录](../../runs/2026-11-12-first-full-batch.md)）不合格尝试 59 次中空列表 45 次，6 个文件 5 次全失败。
+- 研究线结题（[name-consistency](../research/2026-10-name-consistency.md)）：六轮把规则层改动都试过，剩余误差在规则层之外（次要角色的表内错名、一次性音译覆盖不到）；冻结配置在 HF II／III 上 good 89%、有害 2.5%。没有 MQM 与整片人工评估，用户知悉后接受。
+- 切到 Strata（2026-11-09）：基线 Q3 的表由 Strata 建、产品仍由 27B 建，两者不一致；切换后产品只剩 Strata 一种推理服务，也去掉了"停 llama-server → 启 Strata"的交接（11-08 专家区退到 mmap 的起因之一）。v13 已在一个 session 里先建表再翻译，内存峰值 60.4–62.4 GiB（[strata-v12-v13](../research/2026-11-strata-v12-v13.md)）。
+- 放宽上限与预算（2026-11-12，[产品全流程验收](../research/acceptance/product-fullflow-acceptance-2026-11-12.md)）：两部 HF 提示占旧预算 83%、92%，约 1340 条 cue 以上会 `too_long`；HF III 在 8192 处截断两次。验证：Black Panther（1655 条）提示 20059 token，新预算下建成；HF III 第 4 次 11047 token 成功。收益有限、失败成本翻倍，用户看过结果后保留 16384。
+- 空表合法（2026-11-17）：结构合法的回复就是有效回答，对它换 seed 等于抽到非空为止、按内容挑结果，与 ADR-0008 冲突；"非空"要求只是从动画素材的研究脚本原样移植。首次大批量运行（[跑次记录](../research/runs/2026-11-12-first-full-batch.md)）不合格尝试 59 次中空列表 45 次，6 个文件 5 次全失败。
 
 ## 未验证与已知限制
 

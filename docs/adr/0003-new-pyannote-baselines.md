@@ -1,7 +1,7 @@
 # ADR-0003：STT 基线、设备与产品 STT 引擎
 
 状态：已接受。2026-11-18 按主题合并（用户授权）：并入 ADR-0001、ADR-0002、ADR-0012，原文见 git 历史（提交 807de3e 及之前）。「产品 STT 引擎」第 1 点的默认引擎与确认要求自 2026-11-20 起由 [ADR-0035](0035-cross-default-native-whisper-features.md) 替代（默认改为 `cross`）。
-范围：本地 GPU 日语转写的两条基线身份与组件、设备约束，以及产品包 `kototoki/` asr 阶段的可选引擎 `w0`｜`x0`｜`cross`。操作入口与逐项组件定义见[当前基线](../../research/2026-10-stt-demo-w0-x0/README.md)；阶段框架见 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md)；整窗守卫见 [ADR-0030](0030-asr-window-plausibility-guard.md)。行为描述见[STT worker](../architecture/modules/stt-workers.md)、[阶段计划](../architecture/modules/stage-plan.md)、[产物契约](../architecture/modules/artifact-contract.md)、[配置与媒体](../architecture/modules/config-and-media.md)。
+范围：本地 GPU 日语转写的两条基线身份与组件、设备约束，以及产品包 `kototoki/` asr 阶段的可选引擎 `w0`｜`x0`｜`cross`。操作入口与逐项组件定义见[当前基线](../research/2026-10-stt-demo-w0-x0.md)；阶段框架见 [ADR-0007](0007-bilingual-subtitle-pipeline-architecture.md)；整窗守卫见 [ADR-0030](0030-asr-window-plausibility-guard.md)。行为描述见[STT worker](../architecture/modules/stt-workers.md)、[阶段计划](../architecture/modules/stage-plan.md)、[产物契约](../architecture/modules/artifact-contract.md)、[配置与媒体](../architecture/modules/config-and-media.md)。
 
 ## 决定
 
@@ -13,7 +13,7 @@
 4. **分段**：两路均先检测语音，再按原音频源跨度组织最多 30 秒的识别窗口，保留整数采样坐标、块内间隙与完整识别文字，MMS 对应同源窗口对齐。MMS 使用已核验的日语 `jpn` adapter，复用 W0 实现并带可选整数样本窗契约（秒坐标路径行为不变），ASR 与 MMS 消费同一音频片段，不另建第二套对齐器。
 5. **保留语言与本地**：保留日语原文，本地 GPU 推理，不上传音频。
 6. **历史身份**：旧 PyanNet W0、X0 无 VAD fixed30、X0 `cut-merge`（低能量切点＋按源跨度有界合并，方法适配，不声称与 WhisperX 神经 VAD 后处理等价）只作历史／对照身份；省略策略参数的旧命令不得称为最新基线。历史 manifest、route 值、目录和分数不改写，新运行另建身份并固定完整配置，不得跨身份归分（例如不得把旧 W0 的单模型成绩或旧 X0 的 Jonatas 对齐成绩归给新基线）。
-7. **复用入口**：W0 持续迭代入口为 `archive/2026-11-18-pre-research-restructure:experiments/w0_demo/`，X0 为 `archive/2026-11-18-pre-research-restructure:experiments/x0_demo/`；分段、模型或解码变化须更新 recipe 与验证记录。基线测试从[标准基线测试指南](../../research/2026-10-stt-demo-w0-x0/README.md)开始，契约见 [W0](../../research/2026-10-stt-demo-w0-x0/README.md)、[X0](../../research/2026-10-stt-demo-w0-x0/README.md)。
+7. **复用入口**：W0 持续迭代入口为 `archive/2026-11-18-pre-research-restructure:experiments/w0_demo/`，X0 为 `archive/2026-11-18-pre-research-restructure:experiments/x0_demo/`；分段、模型或解码变化须更新 recipe 与验证记录。基线测试从[标准基线测试指南](../research/2026-10-stt-demo-w0-x0.md)开始，契约见 [W0](../research/2026-10-stt-demo-w0-x0.md)、[X0](../research/2026-10-stt-demo-w0-x0.md)。
 
 ### 设备
 
@@ -39,12 +39,12 @@
 
 ## 依据
 
-- 用户在两部完整电影对照后明确采纳新 Pyannote。[两片整片对照](../../research/2026-10-vad-comparison/README.md)：W0 新 Pyannote 的文字与时间指标优于 cut-merge；X0 配对排除失败后文字几乎持平，选择新 Pyannote 主要由零 ASR 触顶及运行成本支持。
-- [Whisper 框架研究](../../research/2026-10-stt-demo-w0-x0/README.md)支持在 faster-whisper 上以明确适配层保留关键行为；[MMS 补充实测](../../research/2026-10-components-and-ctc/README.md)支持其作为对齐方向。
-- [X0 流程研究](../../research/2026-10-x0-whisperx-flow/README.md)与 [demo 契约](../../research/2026-10-stt-demo-w0-x0/README.md)定义样本守恒、30 秒边界、完整文字、实际 GPU 与错误记账验收项；对特定质量或性能提升的宣称须有可复现证据。
-- `cross`：合并理论上限两部合计 CER 16.16% → 11.90%（oracle，[上限](../../research/2026-10-cross-asr-judge/README.md)）；Whisper 当裁判到 14.31%，拿到上限增益的 43%，替换区间 AUC 0.774（[交叉打分](../../research/2026-10-cross-asr-judge/README.md)）；MMS 当裁判只到 15.40%、AUC 0.49，叠加 Qwen 或 MMS 反而稀释。
-- `cross` 产品路径验收（[T6](../../research/acceptance/2026-10-19-cross-asr-acceptance.md)，HF II／III 官方整片口径）：CER 15.25% → 14.30%（−0.95 pp），两部都低于 w0；低于预设 1.0 pp 线，用户 2026-10-19 知悉后仍裁定采用，默认保持 `w0`。
-- 显存：[T0 探针](../../research/acceptance/2026-10-19-cross-coresidency-probe.md)整卡峰值 10688 MiB，产品验收 10030 MiB。成本：asr 阶段墙钟 1211.6 s，为 w0（323.4 s）的 3.75 倍，整批 1754.8 s 对 890.3 s；用户已接受。
+- 用户在两部完整电影对照后明确采纳新 Pyannote。[两片整片对照](../research/2026-10-vad-comparison.md)：W0 新 Pyannote 的文字与时间指标优于 cut-merge；X0 配对排除失败后文字几乎持平，选择新 Pyannote 主要由零 ASR 触顶及运行成本支持。
+- [Whisper 框架研究](../research/2026-10-stt-demo-w0-x0.md)支持在 faster-whisper 上以明确适配层保留关键行为；[MMS 补充实测](../research/2026-10-components-and-ctc.md)支持其作为对齐方向。
+- [X0 流程研究](../research/2026-10-x0-whisperx-flow.md)与 [demo 契约](../research/2026-10-stt-demo-w0-x0.md)定义样本守恒、30 秒边界、完整文字、实际 GPU 与错误记账验收项；对特定质量或性能提升的宣称须有可复现证据。
+- `cross`：合并理论上限两部合计 CER 16.16% → 11.90%（oracle，[上限](../research/2026-10-cross-asr-judge.md)）；Whisper 当裁判到 14.31%，拿到上限增益的 43%，替换区间 AUC 0.774（[交叉打分](../research/2026-10-cross-asr-judge.md)）；MMS 当裁判只到 15.40%、AUC 0.49，叠加 Qwen 或 MMS 反而稀释。
+- `cross` 产品路径验收（[T6](../research/acceptance/cross-asr-acceptance-2026-10-19.md)，HF II／III 官方整片口径）：CER 15.25% → 14.30%（−0.95 pp），两部都低于 w0；低于预设 1.0 pp 线，用户 2026-10-19 知悉后仍裁定采用，默认保持 `w0`。
+- 显存：[T0 探针](../research/acceptance/cross-coresidency-probe-2026-10-19.md)整卡峰值 10688 MiB，产品验收 10030 MiB。成本：asr 阶段墙钟 1211.6 s，为 w0（323.4 s）的 3.75 倍，整批 1754.8 s 对 890.3 s；用户已接受。
 
 ## 未验证与已知限制
 

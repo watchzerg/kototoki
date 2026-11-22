@@ -1,6 +1,6 @@
 # ADR-0031：研究按轮次放进 `research/`，记录精简，冻结靠 git
 
-状态：已接受（2026-11-18，用户批准计划 `archive/2026-11-18-pre-research-restructure:.scratch/research-restructure/spec.md`）。替代 [ADR-0025](0025-product-package-boundaries.md) 第 4 点中"实时对照搬到 `tests/equivalence/`、由 `just test-equivalence` 运行并入 `gate-full`"的部分（`tests/core` 不导入研究代码、核心测试钉字面量的部分仍有效）；取代此前 `AGENTS.md` 与[文档维护规则](../agents/documentation.md)中"冻结的历史证据只读、字节不可改、代码对文档做 sha256 自检"的规则。R7 中 `.scratch/` 存放产品侧计划与票据的部分自 2026-11-22 起由 ADR-0037 替代。
+状态：已接受（2026-11-18，用户批准计划 `archive/2026-11-18-pre-research-restructure:.scratch/research-restructure/spec.md`）。替代 [ADR-0025](0025-product-package-boundaries.md) 第 4 点中"实时对照搬到 `tests/equivalence/`、由 `just test-equivalence` 运行并入 `gate-full`"的部分（`tests/core` 不导入研究代码、核心测试钉字面量的部分仍有效）；取代此前 `AGENTS.md` 与[文档维护规则](../agents/documentation.md)中"冻结的历史证据只读、字节不可改、代码对文档做 sha256 自检"的规则。R7 中 `.scratch/` 存放产品侧计划与票据的部分自 2026-11-22 起由 ADR-0037 替代。R1 及 R2、R8 中的路径（`research/`、`research/acceptance/`）自 2026-11-22 起由 [ADR-0038](0038-setup-project-doc-layout.md) 替代，改为 `docs/research/`。R8 中由 `scripts/check_docs.py` 承担的检查自 2026-11-22 起由 [ADR-0039](0039-setup-project-docs-check.md) 替代（不再有机械检查）。
 范围：研究、计划、验收记录的存放位置与写法，旧研究代码与评估包的去留，文档检查规则。不改任何产品代码、配方、基线与产品行为。
 
 ## 背景
@@ -31,7 +31,7 @@
 ## 后果
 
 - 旧材料只能从归档 tag 追溯；现行文档里指向旧路径的链接改为新轮次目录或 tag 路径。
-- `kototoki/` 中有注释写"复制自 `experiments/…`"，本次不改产品代码，这些路径指归档 tag，下次因其他原因改到这些文件时顺手更新（见 [research/INDEX.md](../../research/INDEX.md)）。
+- `kototoki/` 中有注释写"复制自 `experiments/…`"，本次不改产品代码，这些路径指归档 tag，下次因其他原因改到这些文件时顺手更新（见 [research/INDEX.md](../research/INDEX.md)）。
 - 已结题的 `.scratch/<slug>/` 在确认结论已进 ADR、模块页或轮次记录后删除；进行中的保留。
 
 ## 未验证

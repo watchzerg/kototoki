@@ -21,7 +21,7 @@
 | 产品建表与专名 | 研究线已结题；`names` 阶段按 `q3-names-v3` 在 Strata 上建表，空表合法，表只经翻译注入 | [0028](0028-names-accept-empty-table.md) |
 | 方法禁区 | 不自动选用"翻译多次再挑选"类方法；可靠性重试、按条追问与拆分不算 | [0008](0008-no-multi-translation-selection.md) |
 | 产品包边界与失败级别 | GPU 锁冲突进程级结束整批；产品不为研究侧留代码；核心测试不导入研究代码 | [0025](0025-product-package-boundaries.md) |
-| 研究与文档布局 | 研究一轮一目录放 `research/`，记录精简，冻结靠 git 与归档 tag；产品不导入 `research/`；产品侧计划与票据放 Beads | [0031](0031-research-layout-and-lightweight-records.md)、[0037](0037-beads-issue-tracker.md) |
+| 研究与文档布局 | 研究一轮一篇放 `docs/research/`（验收、跑次在其子目录），行为规格放 `docs/behaviors/`，记录精简，冻结靠 git 与归档 tag；产品不导入研究代码；产品侧计划与票据放 Beads | [0031](0031-research-layout-and-lightweight-records.md)、[0037](0037-beads-issue-tracker.md)、[0038](0038-setup-project-doc-layout.md)、[0039](0039-setup-project-docs-check.md) |
 | 平台、工具链与外部前置 | 只面向 Ubuntu；mise 管 uv 与 just，uv 管 Python 与依赖；ffmpeg 用系统包；`assets.toml` 只列 STT 模型；Strata 只锁 0.2 版本线、实际版本不进配方身份（已实现，待真实模型验收）；Python 3.14 | [0034](0034-ubuntu-only-platform.md)、[0036](0036-python-3-14.md) |
 
 ### 未关闭项
@@ -39,7 +39,7 @@
 - **产品翻译配方**：0007（10-13，`b10-joint-degrade-v1`）→ 0011（10-18，`dp10-cut-degrade-v1`）→ 0019（11-08，`q2-degrade-v1`，Strata 由产品启停）→ 0022（11-09，与建表共用 session）→ 0029（11-17，`q3-translate-v1`，按条收下）。现行见 [0029](0029-translate-per-cue-resolution.md)。
 - **专名与产品建表**：0013（10-19，研究线结题）→ 0014（10-19，进产品 `names` 阶段，27B 建表）→ 0019（11-08，只注入不替换）→ 0022（11-09，切到 Strata，`q3-names-v1`）→ 0026（11-12，放宽输出上限与预算，`q3-names-v2`）→ 0028（11-17，空表合法，`q3-names-v3`）。现行见 [0028](0028-names-accept-empty-table.md)。
 - **产品输入、工作目录与发布**：0007（10-13，只扫视频、镜像发布到 `output_dir`）→ 0020（11-08，音频输入、`work_dir`、发布到源文件旁）→ 0024（11-11，内嵌日文字幕跳过 STT）→ 0027（11-17，不再流复制原始音轨）。现行见 [0007](0007-bilingual-subtitle-pipeline-architecture.md)、[0024](0024-embedded-japanese-subtitles.md)。
-- **产品包与研究代码的边界**：0007（10-13，产品不导入 `experiments.*`）→ 0014（10-19，共享 `llama_server.py`）→ 0022（11-09，产品不再起 llama-server）→ 0025（11-11，产品不为研究侧留代码，GPU 锁冲突进程级）→ 0031（11-18，删除研究代码，研究改放 `research/`）。现行见 [0025](0025-product-package-boundaries.md)、[0031](0031-research-layout-and-lightweight-records.md)。
+- **产品包与研究代码的边界**：0007（10-13，产品不导入 `experiments.*`）→ 0014（10-19，共享 `llama_server.py`）→ 0022（11-09，产品不再起 llama-server）→ 0025（11-11，产品不为研究侧留代码，GPU 锁冲突进程级）→ 0031（11-18，删除研究代码，研究改放 `research/`）→ 0038（11-22，研究、跑次与行为规格按 setup-project 规范移入 `docs/`）→ 0039（11-22，文档检查改用 setup-project 自带脚本）。现行见 [0025](0025-product-package-boundaries.md)、[0031](0031-research-layout-and-lightweight-records.md)、[0038](0038-setup-project-doc-layout.md)。
 - **资产清单与平台**：0032（11-18，去掉 llama.cpp 与 27B，`setup` 并入 `install`）→ [0033](0033-ffmpeg-branch-lock.md)（11-18，ffmpeg 只锁维护分支）→ 0034（11-20，迁到 Ubuntu，ffmpeg 用系统包，Strata 只锁 0.2）→ [0036](0036-python-3-14.md)（11-20，Python 3.13 → 3.14）。现行见 [0034](0034-ubuntu-only-platform.md)、[0036](0036-python-3-14.md)。
 - **产品侧计划与票据**：0031（11-18，`.scratch/<slug>/`，完工后删除目录）→ [0037](0037-beads-issue-tracker.md)（11-22，改用 Beads）。现行见 [0037](0037-beads-issue-tracker.md)。
 - **方法禁区**：[0008](0008-no-multi-translation-selection.md)（10-16），放弃 v4 `mbr8c` 与 v5 `mbr8s`。
@@ -57,14 +57,16 @@
 | [0028](0028-names-accept-empty-table.md) | 产品 names 阶段与专名一致性研究线 | 有效（并入 0013、0014、0022 除第 3–5 点、0026） |
 | [0029](0029-translate-per-cue-resolution.md) | 产品翻译（`q3-translate-v1`）与 Strata session | 有效；Strata 版本条款由 0034 替代（并入 0019、0022 第 3–5 点） |
 | [0030](0030-asr-window-plausibility-guard.md) | ASR 整窗守卫（`guard-v3`） | 有效；产品 W0 配方身份由 0035 替代（并入 0023） |
-| [0031](0031-research-layout-and-lightweight-records.md) | 研究按轮次放进 `research/`，记录精简，冻结靠 git | 有效；R7 的 `.scratch/` 票据部分由 0037 替代 |
+| [0031](0031-research-layout-and-lightweight-records.md) | 研究按轮次放进 `research/`，记录精简，冻结靠 git | 有效；R7 的 `.scratch/` 票据部分由 0037 替代，R1 等处的路径由 0038 替代，R8 的脚本检查由 0039 替代 |
 | [0033](0033-ffmpeg-branch-lock.md) | 资产清单与安装，ffmpeg 只锁维护分支 | 被 0034 替代（并入 0032） |
 | [0035](0035-cross-default-native-whisper-features.md) | 默认 STT 引擎 `cross`，W0 特征用 faster-whisper 自带计算 | 有效 |
 | [0034](0034-ubuntu-only-platform.md) | 只面向 Ubuntu，工具链与外部前置按 Linux 原生做法重定 | 有效，尚未实现；替代 0033 全文、0029 与 0021 的 Strata 版本条款；Python 版本由 0036 替代 |
 | [0036](0036-python-3-14.md) | Python 锚点由 3.13 改为 3.14 | 有效 |
-| [0037](0037-beads-issue-tracker.md) | 产品侧计划与票据改用 Beads | 有效 |
+| [0037](0037-beads-issue-tracker.md) | 产品侧计划与票据改用 Beads | 有效；第 4 点的研究路径由 0038 替代 |
+| [0038](0038-setup-project-doc-layout.md) | 研究、跑次与行为规格按 setup-project 目录规范放进 `docs/` | 有效 |
+| [0039](0039-setup-project-docs-check.md) | 文档检查改用 setup-project 自带的 `check_docs.py` | 有效 |
 
-新 ADR 编号从 0038 起。
+新 ADR 编号从 0040 起。
 
 ## 记录新决定
 
@@ -74,9 +76,9 @@
 2. **处理旧 ADR**：默认只在被替代的 ADR 状态行末尾追加"「某小节」自某日起由 ADR-NNNN 替代"，正文不动。只有用户授权合并精简时，才把新决定并入该主题的 ADR 并删除被并掉的文件。
 3. **改本页**：在"当前有效决定"里改对应行，在"演进链"的对应链末尾追加一环，在"全部 ADR"里加一行并更新被替代那篇的状态，在页尾"更新记录"加一行；新发现的不一致或未关闭项写进[待用户裁定事项](../pending-decisions.md)，裁定了其中某项时从那一页删行。
 4. **改 [CURRENT.md](CURRENT.md)**：把对应小节改成新的关键身份与链接；其中每个 hash 与配方 id 都要能在某篇 ADR 正文里逐字找到。
-5. **同步摘要入口**：基线变化时，改 [AGENTS.md](../../AGENTS.md)"现行决定与研究约束"中的基线句（只写基线名）；术语有变化时，改 [GLOSSARY.md](../../GLOSSARY.md)；来自研究轮次的决定，在[研究索引](../../research/INDEX.md#轮次登记)改该轮状态，并在该轮 README 的"结论与去向"注明裁定结果；涉及代码时，按[随交付同步](../agents/documentation.md#随交付同步)更新模块页与 README。
+5. **同步摘要入口**：基线变化时，改 [AGENTS.md](../../AGENTS.md)"现行决定与研究约束"中的基线句（只写基线名）；术语有变化时，改 [GLOSSARY.md](../../GLOSSARY.md)；来自研究轮次的决定，在[研究索引](../research/INDEX.md#轮次登记)改该轮状态，并在该轮记录的"结论与去向"注明裁定结果；涉及代码时，按[随交付同步](../agents/documentation.md#随交付同步)更新模块页与 README。
 
-不在本页记录的：研究过程、实验数据、未采纳的候选。这些放在 `research/`。
+不在本页记录的：研究过程、实验数据、未采纳的候选。这些放在 `docs/research/`。
 
 ## 更新记录
 

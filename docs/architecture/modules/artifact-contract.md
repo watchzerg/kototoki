@@ -1,10 +1,16 @@
+---
+covers:
+  - kototoki/artifacts.py
+  - kototoki/workers/protocol.py
+  - kototoki/srt.py
+---
 # 产物契约
 
 状态：current；权威决定：[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 
 ## 定位与阅读
 
-负责双语字幕流水线（[技术设计](../../specs/bilingual-subtitle-pipeline.md)）各阶段共用的三件事：工作目录布局与最终字幕路径、产物身份与跳过／替换、原子写；编排器与 GPU worker 之间的 `--jobs` 协议；SRT 读写。
+负责双语字幕流水线（[行为规格](../../behaviors/bilingual-subtitle-pipeline.md)）各阶段共用的三件事：工作目录布局与最终字幕路径、产物身份与跳过／替换、原子写；编排器与 GPU worker 之间的 `--jobs` 协议；SRT 读写。
 
 不负责：各阶段的推理与 payload 字段（[STT worker](stt-workers.md)、[STT ASR](stt-asr.md)、[日文 cue](japanese-cues.md)、[专名一致性](name-consistency.md)）；每阶段期望身份的组成（[阶段计划](stage-plan.md)）；批次编排与锁（[批次编排](batch-orchestration.md)）；翻译 run 目录内部格式（[翻译子系统](translation-subsystem.md)）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
@@ -35,8 +41,6 @@
 - `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在双语字幕写到源文件旁**之后**写 `published.json`：最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录（`translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。它只是审计记录，不参与任何判定。
 - 是否需要发布只看源文件旁的 `<主名>.ja-zh.srt` 是否存在（只看文件名，编排在扫描阶段判定，ADR-0007「发布」）；要重做就删掉该字幕。
 
-**原子写**：`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
-
 **worker 协议**（`kototoki/workers/protocol.py`）：
 
 - `--jobs <path>` 指向 `{"stage", "recipe_hash", "config", "files": [{"id", "work_dir", "inputs": {name: path}}]}`，键集合严格、id 唯一（`parse_jobs`／`read_jobs`／`write_jobs`）。
@@ -44,24 +48,21 @@
 - 每个文件结束在 stdout 打一行 UTF-8 JSON（`done`／`failed`／`fatal`／`startup_failed`），只含 id、事件、异常类型与计数，不含窗口文字。
 - 退出码：0 全部完成；1 有文件失败（该文件写 `failure.json`，继续下一文件）；2 启动失败（`startup_failed`，不重启）或 `FatalWorkerError`（`fatal`：CUDA 粘性错误等，当前文件写 `failure.json` 后立即退出，编排器从下一文件重启）。
 
-**协议读侧**（同一模块，编排使用）：纯函数 `classify_launch(ids, exit_code, events) -> LaunchOutcome` 用本模块自己的退出码常量与事件名解释一次 worker 启动。`LaunchOutcome`（冻结 dataclass）含：已报 `failed` 的 id（`failed`）、崩溃文件（`crashed`）、崩溃文件是否报了 `fatal`（`fatal`）、启动失败的 `error_type`（`startup_failed`）与剩余待跑 id（`remaining`）。规则：
-
-- 退出码 0／1 只有在每个待跑 id 都有事件时才算正常结束（退出码 1 也是 Python 未捕获异常的退出码）。
-- 否则有 `startup_failed` 即启动失败，剩余全部失败、不重启。
-- 否则有 `fatal` 即该 id 为崩溃文件，从其后重启；再否则最后一个有事件的 id 之后的那个 id 是崩溃文件，从其后重启。
-- 编排的 `run_gpu_stage` 只循环与记失败，不用字面量解释协议。
-
 **失败窗口**（w0／x0／cross 共用）：
 
 - `fail_window(asr, chunk_index, reason)` 把 `original_segments[i].text` 移入 `failed_windows`（`chunk_index`、`reason`、`text`）并置空；`retained_text` 是保留文本，后续对齐、cue 与翻译只用它。
 - `validate_failed_windows` 要求列表存在、索引唯一有效且对应窗口已置空。
 - `reason` 的现有取值：解码／生成抛错的 `RuntimeError: …`、x0 触顶的 `token_limit_reached: generated <n> tokens`、w0 整窗守卫置空的 `guard:repeat-strict`、`guard:speech-rate`、`guard:hallucination-phrase`（[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)；此时 `text` 是该窗被置空前的完整原文）。
 
-**整窗守卫记录**（w0 与 cross 的 `asr.json`、cross 的 `asr-w0.json`）：被守卫改动的窗口在 `asr_traces[i]` 里多一个键 `guard`，内容是生效规则的记录：复读 `{rule, action, period, copies, removed_raw_chars}`，语速 `{rule, action, chars, duration_s}`，幻听句 `{rule, action, phrase_index}`；`action` 为 `collapse`（只有复读，`original_segments[i].text` 已是折叠后的文字）或 `blank`（该窗同时出现在 `failed_windows`）；没有被改动的窗口没有这个键。记录只有规则名与计数，不含文字。字段含义见 [STT ASR](stt-asr.md#w0-整窗守卫)。
+**整窗守卫记录**（w0 与 cross 的 `asr.json`、cross 的 `asr-w0.json`）：
+
+- 被守卫改动的窗口在 `asr_traces[i]` 里多一个键 `guard`，内容是生效规则的记录：复读 `{rule, action, period, copies, removed_raw_chars}`，语速 `{rule, action, chars, duration_s}`，幻听句 `{rule, action, phrase_index}`。
+- `action` 为 `collapse`（只有复读，`original_segments[i].text` 已是折叠后的文字）或 `blank`（该窗同时出现在 `failed_windows`）；没有被改动的窗口没有这个键。
+- 记录只有规则名与计数，不含文字。字段含义见 [STT ASR](stt-asr/window-guard.md#w0-整窗守卫)。
 
 **cross 审计产物**（[ADR-0003](../../adr/0003-new-pyannote-baselines.md)）：
 
-- `engine = "cross"` 时 asr 阶段在 `<work root>/<id>/` 额外写三个审计文件，名称是模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，身份按单引擎计算）与 `asr-judge.json`（逐窗裁判记录与汇总，身份同 cross 的 `asr.json`；字段见 [STT ASR](stt-asr.md#cross-引擎)）。
+- `engine = "cross"` 时 asr 阶段在 `<work root>/<id>/` 额外写三个审计文件，名称是模块常量 `ASR_W0`、`ASR_X0`、`ASR_JUDGE`：`asr-w0.json`、`asr-x0.json`（各自完整的 `asr.json` 结构，身份按单引擎计算）与 `asr-judge.json`（逐窗裁判记录与汇总，身份同 cross 的 `asr.json`；字段见 [STT ASR](stt-asr/cross-judge.md#cross-引擎)）。
 - 三者都带 `offset_s`（照抄 `vad.json`），经 `write_artifact` 原子写出。
 - 它们**不是阶段产物**：不在 `STAGE_ARTIFACTS` 与 `STAGE_OUTPUT`，不参与 `is_current`，没有它们或它们过期都不影响 `asr.json` 是否当前，也不影响下游。保留它们是为了零 GPU 复算与离线评分。
 
@@ -84,6 +85,21 @@
 - 时间行四段到整数毫秒是 `time_parts_ms`，解析与内嵌字幕清洗共用；毫秒格式化只有 `srt` 一处实现。
 - `write_srt` 原子写出、拒绝覆盖源文件。
 
+## 实现设计
+
+### 原子写
+
+`atomic_write_text`／`atomic_write_json` 写同目录临时文件、fsync 后 `os.replace`（临时文件名带 pid 与线程 id）；失败时删除临时文件，目标保持原样。文本一律 UTF-8 无 BOM、LF。
+
+### 协议读侧
+
+同一模块，编排使用。纯函数 `classify_launch(ids, exit_code, events) -> LaunchOutcome` 用本模块自己的退出码常量与事件名解释一次 worker 启动。`LaunchOutcome`（冻结 dataclass）含：已报 `failed` 的 id（`failed`）、崩溃文件（`crashed`）、崩溃文件是否报了 `fatal`（`fatal`）、启动失败的 `error_type`（`startup_failed`）与剩余待跑 id（`remaining`）。规则：
+
+- 退出码 0／1 只有在每个待跑 id 都有事件时才算正常结束（退出码 1 也是 Python 未捕获异常的退出码）。
+- 否则有 `startup_failed` 即启动失败，剩余全部失败、不重启。
+- 否则有 `fatal` 即该 id 为崩溃文件，从其后重启；再否则最后一个有事件的 id 之后的那个 id 是崩溃文件，从其后重启。
+- 编排的 `run_gpu_stage` 只循环与记失败，不用字面量解释协议。
+
 ## 接口与依赖
 
 只依赖标准库；不导入研究代码、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)，worker 壳与编排都向它取。CUDA 粘性错误的识别与包装为 `FatalWorkerError` 归 worker 壳（[STT worker](stt-workers.md)）。`<work root>/lock`、GPU 锁与 worker 子进程重启归编排器。
@@ -94,13 +110,15 @@
 - `tests/core/test_artifacts.py`：短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、工作根键与最终字幕路径、`published.json` 审计记录、原子写重试与临时文件清理。
 - `tests/core/test_protocol.py`：jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`；`classify_launch` 的正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件。
 - `tests/core/test_srt.py`：空 SRT、取整边界、严格解析、UTF-8 无 BOM。
-- worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)中使用。
+- worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)中使用。
 
 ## 变更与决策来源
 
-- [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
+- ADR：
+  - [ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0028](../../adr/0028-names-accept-empty-table.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)；
+  - [ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
 - 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/00-foundation.md`）、.scratch/cross-asr-judge/、.scratch/name-consistency-product/；Beads `kototoki-e8t`（2026-10-19 审计 B-1、B-13）
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`
-- 验收：[两部整片验收](../../../research/acceptance/2026-10-14-bilingual-pipeline-fullfilm.md)、[cross 产品路径验收](../../../research/acceptance/2026-10-19-cross-asr-acceptance.md)
+- 验收：[两部整片验收](../../research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)、[cross 产品路径验收](../../research/acceptance/cross-asr-acceptance-2026-10-19.md)
 - 历史：技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）
 - 来源代码：`archive/2026-11-18-pre-research-restructure:experiments/translation_flow/srt.py`、`archive/2026-11-18-pre-research-restructure:experiments/translation_v3/common.py`（原子写）、`archive/2026-11-18-pre-research-restructure:experiments/translation_v3/server.py`（`verify_model`）

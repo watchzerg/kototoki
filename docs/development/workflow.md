@@ -43,8 +43,8 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 | `test` | `unittest discover -s tests/core -t . -v [参数 ...]`：core 层；可追加 unittest 参数（如 `-k 名称片段`）定向运行 |
 | `test-full` | `unittest discover -s tests/full -t . -v [参数 ...]`：full 层离线集成测试，不加载模型、不占 GPU、不持锁 |
 | `smoke` | 真实模型验证，不属于任何 gate：`scripts/smoke/run_all.py [名称 ...]` 在独立子进程中逐项运行，加载模型、独占 GPU，每次须先经用户批准；细节见表下 |
-| `docs-check` | `scripts/check_docs.py`：链接与锚点（根文档、`docs/`、`research/`、`runs/`）、模块页可达性；登记（`docs/` 每篇被某个 `INDEX.md` 链接、`research/` 每个轮次 README 与验收记录在 `research/INDEX.md`、`kototoki/` 每个模块在某篇模块页的"代码与验证入口"、ADR 文件与决定索引一致）；预算（`AGENTS.md`、各 `INDEX.md`、活正文的字符数与行长）；活文档里反引号包住的仓库路径存在；研究记录（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) R8）：轮次 README 与验收记录的必填标题、`research/` 无 64 位十六进制串、`research/`／`docs/`／`tests/` 无盘符绝对路径（测试虚构路径在 `ALLOWED_ABSOLUTE_PATHS` 登记）。状态行含 3 个以上日期只告警。指向仓库之外的相对链接只计数。超标的既有文件记在脚本的 `BUDGET_WHITELIST`，只许降不许升；检查本身的单元测试在 `tests/core/test_check_docs.py` |
-| `docs-affected [base]` | 尚未接入：`scripts/check_docs.py` 没有 `--affected` 模式，模块页也没有 `covers` 页首；按契约非零退出并说明原因，不在任何 gate 内 |
+| `docs-check` | `scripts/check_docs.py`（setup-project 自带脚本，[ADR-0039](../adr/0039-setup-project-docs-check.md)）：本地链接与锚点、全部文档可从 `AGENTS.md` 到达、`docs/adr/` 与 `docs/research/` 逐个登记索引、体量预算、模块页与行为规格页的标题骨架、页首 `covers` 有匹配；规则正文在[文档维护规则·自动检查](../agents/documentation.md#自动检查) |
+| `docs-affected [base]` | `scripts/check_docs.py --affected`：列出相对 `base`（默认 `HEAD`）的改动与未跟踪文件命中页首 `covers` 的文档页，标出本次未修改的；只提示，总是成功，不在任何 gate 内 |
 | `gate-core` | `check-toolchain` → `docs-check` → `check` → `test`，首错停止 |
 | `gate-full` | `gate-core` 后运行 `test-full`；不加载模型 |
 
@@ -54,9 +54,9 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 - 共三项。`ct2_after_torch`：合成音频上用产品的特征与解码函数跑一次 faster-whisper，核对 CT2 复用的 CUDA 库全部来自 `site-packages/nvidia/`。VAD、ASR、对齐的其余真实路径由小批量 `just subtitles` 覆盖；对照研究期冻结窗口的门禁（`stt_frozen_window` 等五项）随 ADR-0034「不比对 Windows 结果」于 2026-11-20 删除。
 - Q2 首用 smoke `translate_product`：产品 `kototoki.translate` 的 plan → Session → `translate_document`，经 Strata 自动启停与外部前置的 Strata（当时 0.2.12／build 0.1.58，Windows），产品配方 `q3-translate-v1`；只记计数、哈希与耗时，见[翻译子系统](../architecture/modules/translation-subsystem.md)；运行前须没有别的 Strata launch 在服务。
 - 产品专名 smoke `names_product`：产品 `kototoki.names` 的 `names_identity` → 共享 `strata.Session` → `build_document` → `write_artifact`，在产品自动启停的 Strata 上按 Q3 规则建表（配方 `q3-names-v3`，ADR-0028「建表配方」），输入为脚本内置的 12 条合成日语短句；通过条件含专家区锁进内存、`build.status == ok`、至少一条 person、全程无 llama-server、`--stop` 后显存释放；只记计数、哈希、耗时与资源峰值，见[专名一致性](../architecture/modules/name-consistency.md)。
-- 各项实测耗时记在对应的验收记录里（[研究索引·验收记录](../../research/INDEX.md#验收记录)），不写在本页。
+- 各项实测耗时记在对应的验收记录里（[研究索引·验收记录](../research/INDEX.md#验收记录)），不写在本页。
 
-门禁边界：`lint`、`typecheck` 在选定工具前不进门禁，由 `check`（`compileall` 覆盖 `kototoki`、`scripts`、`tests`）代替；`docs-check` 不把指向相邻仓库的链接计为错误；`test` 与 `test-full` 的目录若变空，unittest 报 NO TESTS RAN 并非零退出。
+门禁边界：`lint`、`typecheck` 在选定工具前不进门禁，由 `check`（`compileall` 覆盖 `kototoki`、`scripts`、`tests`）代替；`docs-check` 把指向仓库之外的链接计为错误；`test` 与 `test-full` 的目录若变空，unittest 报 NO TESTS RAN 并非零退出。
 
 ## 测试分层与资源边界
 

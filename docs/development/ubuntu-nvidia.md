@@ -8,7 +8,7 @@
 
 只面向 Ubuntu（x86_64、NVIDIA GPU，本机为 RTX 5080），不支持 Windows 与 macOS。2026-11 从原生 Windows 迁来，Windows 时期的验收与跑次只作历史，不作对照（ADR-0034「平台」）。
 
-正式部署的最低显存、驱动与运行库要求尚未确定。遵循[推理选型原则](inference-selection.md)：ASR／强制对齐要求 GPU，VAD 可用 CPU 或 GPU；研究期 Pyannote CUDA 实测不证明 CPU VAD 已通过。研究期 W0 demo 的两窗证据见 [STT demo 轮次](../../research/2026-10-stt-demo-w0-x0/README.md)。
+正式部署的最低显存、驱动与运行库要求尚未确定。遵循[推理选型原则](inference-selection.md)：ASR／强制对齐要求 GPU，VAD 可用 CPU 或 GPU；研究期 Pyannote CUDA 实测不证明 CPU VAD 已通过。研究期 W0 demo 的两窗证据见 [STT demo 轮次](../research/2026-10-stt-demo-w0-x0.md)。
 
 ## 进程与路径
 
@@ -16,7 +16,7 @@
 - 子进程用参数列表，文本显式指定 UTF-8。路径是字节序列：测试覆盖空格与非 ASCII 名，`:`、`\` 等都是合法文件名字符，不按 Windows 规则拒绝或改写。
 - Python 子进程用运行中的解释器（`sys.executable`），留在同一项目环境。
 - 子进程收尾用 PDEATHSIG 与进程组（[运行日志与进程](../architecture/modules/run-logging-and-processes.md)）；长任务用 `systemd-run --user`（[开发工作流](workflow.md#长任务与-worktree)）。
-- 不写死用户目录或数据盘路径；`scripts/check_docs.py` 拦截文档与测试里的 `/home`、`/data`、`/mnt`、`/media` 路径。
+- 不写死用户目录或数据盘路径，文档与测试里也不写 `/home`、`/data`、`/mnt`、`/media` 下的本机路径（没有机械检查）。
 
 ## GPU 就绪与失败
 
