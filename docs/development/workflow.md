@@ -4,7 +4,7 @@
 
 ## 环境
 
-只面向 Ubuntu（x86_64、RTX 5080，[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。mise、uv、just 由用户安装，版本固定在 `mise.toml`，解释器固定在 `.python-version`；工具分工与依赖变更规则的权威正文是 [Python 工具链](toolchain.md)，平台要求见 [Ubuntu 与 NVIDIA](ubuntu-nvidia.md)。
+只面向 Ubuntu（x86_64、RTX 5080，[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。用户只装 mise，uv、just 由 mise 提供：项目 `mise.toml` 只钉 uv，just 用全局 mise 配置；解释器由 uv 按 `.python-version` 提供；工具分工与依赖变更规则的权威正文是 [Python 工具链](toolchain.md)，平台要求见 [Ubuntu 与 NVIDIA](ubuntu-nvidia.md)。
 
 - 根环境即产品环境：Python 3.14 + 统一 CUDA 12.8 推理栈（torch 2.11.0+cu128 等，版本见[技术选型](technology-stack.md#已选依赖)）。`just install`（`uv sync --locked`）与 `just fetch-models` 会改环境且可能联网，须先问用户。
 - 行尾统一为 LF：`.gitattributes` 的 `* text=auto eol=lf` 让仓库存 LF、任何平台检出也是 LF（优先于 `core.autocrlf`），`.editorconfig` 让编辑器新建 LF 文件；改文件不必再做字节级保护。
@@ -33,7 +33,7 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 
 | recipe | 当前实现 |
 | --- | --- |
-| `check-toolchain` | `scripts/check_toolchain.py`：核对 uv、just 与 `mise.toml`、Python 与 `.python-version` 一致；用 `uv run --no-project --no-python-downloads --offline`，不同步环境 |
+| `check-toolchain` | `scripts/check_toolchain.py`：核对 `mise.toml` 钉住的工具（uv）与 Python 和 `.python-version` 一致；用 `uv run --no-project --no-python-downloads --offline`，不同步环境 |
 | `install` | `uv sync --locked`。ffmpeg、Strata 等外部前置由用户安装，不归它。联网、改环境，须先问 |
 | `fetch-models` | `scripts/assets.py fetch-models`：按清单从 HF 固定 revision 下载缺失或不符的模型文件，门控模型取 `HF_TOKEN`；几十 GB、联网，须先问 |
 | `verify-assets` | `scripts/assets.py verify`：离线核对模型（大小、SHA256 经 size+mtime 缓存 `.local/cache/assets-verify.json`） |

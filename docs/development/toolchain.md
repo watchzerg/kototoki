@@ -1,26 +1,27 @@
 # Python Toolchain
 
 状态：current；产品根环境统一 CUDA 12.8，研究期隔离后端环境与研究代码已随 ADR-0031 退出仓库
-最后更新：2026-10-14
+最后更新：2026-11-22
 Scope: Python tooling, dependencies, and development command ownership.
 
 ## Baseline and ownership
 
-The user installs mise once; `mise install` then provides the pinned uv and just
-(ADR-0034). uv provides the Python interpreter from `.python-version`.
+The user installs mise once; mise provides uv and just. The project
+`mise.toml` pins only uv; just comes from the user's global mise config
+(ADR-0034, ADR-0040). uv provides the Python interpreter from `.python-version`.
 The repository has the product root environment (`pyproject.toml` + `uv.lock`,
 CUDA 12.8 inference stack), `mise.toml`, and a `justfile`. Research-era backend
 environments under `.local/envs/` are not managed by the repository; their
 versions are recorded in the [STT landscape round](../research/2026-10-stt-landscape.md).
 
-- Use mise to select project development tools, including uv and just, once
-  project pins are configured. Keep tool versions in mise configuration rather
-  than repeating them in prose.
+- Pin in the project `mise.toml` only tools whose exact version matters to the
+  project (currently uv, which shapes `uv.lock` and `--locked` behavior). Keep
+  tool versions in mise configuration rather than repeating them in prose.
 - Use uv to manage the project Python interpreter, virtual environment,
   dependencies, and dependency lock. Keep the interpreter selection in
   `.python-version`, supported Python range and dependencies in `pyproject.toml`,
-  and resolved dependencies in `uv.lock` once bootstrapped.
-- Use just as the common task entry point once a root `justfile` exists. Keep
+  and resolved dependencies in `uv.lock`.
+- Use just as the common task entry point (root `justfile`). Keep
   recipes thin; delegate nontrivial portable automation to Python.
 - Python applications, tests, and repository scripts should use the uv project
   environment. Avoid depending on system Python or manual venv activation.

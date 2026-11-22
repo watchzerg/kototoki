@@ -5,7 +5,7 @@
 ## 运行时与工具链
 
 - Python 3.14（`.python-version` 写 `3.14`，补丁版本由 uv 决定；`pyproject.toml` 要求 `>=3.14,<3.15`；2026-11-20 由 3.13 升级，[ADR-0036](../adr/0036-python-3-14.md)）；根项目即产品项目 `kototoki`，`[tool.uv] package = false` 不打包，`environments` 只解析 `sys_platform == 'linux'`（[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。
-- mise 只固定 uv 与 just 的版本（`mise.toml`，没有 `[env]`）；一次性准备：`mise trust && mise install`，shell 里激活 mise（[ADR-0034「工具链分层」](../adr/0034-ubuntu-only-platform.md#工具链分层)）。
+- 项目 `mise.toml` 只固定 uv 的版本（没有 `[env]`），just 等通用工具由全局 mise 配置提供；一次性准备：`mise trust && mise install`，shell 里激活 mise（[ADR-0034「工具链分层」](../adr/0034-ubuntu-only-platform.md#工具链分层)、[ADR-0040](../adr/0040-project-mise-pins-uv-only.md)）。
 - uv 管理解释器、根环境与 `uv.lock`，用默认布局：解释器在 uv 共享目录，依赖在 `.venv/`；just 是任务入口。
 - 产品推理在根环境（统一 CUDA 12.8）中运行；产品翻译（2026-11-08 起，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）与专名建表（2026-11-09 起，[ADR-0028](../adr/0028-names-accept-empty-table.md)）都用独立安装的 Strata 0.2 版本线（本机 0.2.13.1／build 0.1.59.1，`strata` 在 PATH 上，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录），由产品用 `strata launch --no-tui --model iq3_s`／`--stop` 自动启停、整批一个 session；
 

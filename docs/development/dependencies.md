@@ -9,7 +9,7 @@
 
 | 层 | 内容 | 位置 | 锁定 |
 | --- | --- | --- | --- |
-| 引导层 | mise、uv、just | 项目外（mise 自身安装工具） | `mise.toml`；唯一不在项目内的一层 |
+| 引导层 | mise、uv、just | 项目外（mise 自身安装工具） | 项目 `mise.toml` 只钉 uv，just 用全局 mise 配置；唯一不在项目内的一层 |
 | Python 依赖 | 解释器、运行时与开发依赖 | 依赖在 `.venv/`；解释器与缓存在 uv 默认的共享目录（[ADR-0034](../adr/0034-ubuntu-only-platform.md)） | `pyproject.toml` + `uv.lock`；开发工具引入时放 `[dependency-groups] dev`，与运行时分开 |
 | 模型 | 产品用到的权重 | `.local/models/<dir>/`，现有目录不改名、不迁移 | 清单写 HF repo、revision 与逐文件 SHA256（字段形状沿用研究期资产准备脚本的 `SPECS`） |
 | 编译产物 | 当前没有，只定规则 | 源码与构建树 `.local/build/<name>/<version>/`；产物安装到 `.local/tools/<name>/<version>/` | 清单锁源码 git commit 与构建参数 |

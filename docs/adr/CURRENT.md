@@ -84,7 +84,7 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 代码已按此实现，Linux 上的真实模型验收（fetch-models、smoke、小批量）待做。
 
 - 平台：只面向 Ubuntu，不比对 Windows 时期结果，旧数据不迁移（[0034「平台」](0034-ubuntu-only-platform.md#平台)）。
-- 工具链：mise 钉 uv 与 just；uv 按 `.python-version`（`3.14`）管解释器、按 `uv.lock` 管依赖，默认布局（[0034「工具链分层」](0034-ubuntu-only-platform.md#工具链分层)、[0036](0036-python-3-14.md)）。
+- 工具链：项目 `mise.toml` 只钉 uv，just 由全局 mise 提供（[0040](0040-project-mise-pins-uv-only.md)）；uv 按 `.python-version`（`3.14`）管解释器、按 `uv.lock` 管依赖，默认布局（[0034「工具链分层」](0034-ubuntu-only-platform.md#工具链分层)、[0036](0036-python-3-14.md)）。
 - 外部前置：NVIDIA 驱动、apt 系统 ffmpeg（默认从 PATH 查找，实际版本记入运行日志首行）、Strata 0.2；`assets.toml` 只列 STT 模型，`just install` 只做 `uv sync --locked`（[0034「外部前置」](0034-ubuntu-only-platform.md#外部前置)、[「ffmpeg」](0034-ubuntu-only-platform.md#ffmpeg)）。
 - 子进程：`PR_SET_PDEATHSIG`＋独立进程组；长任务用 `systemd-run --user`（[0034「子进程与长任务」](0034-ubuntu-only-platform.md#子进程与长任务)）。
 

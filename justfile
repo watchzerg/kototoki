@@ -16,7 +16,7 @@ check:
 
 # --- Contract recipes (docs/development/workflow.md#命令与门禁) ---
 
-# Verify uv/just versions (mise.toml) and Python (.python-version); never syncs or downloads.
+# Verify tools pinned in mise.toml (uv) and Python (.python-version); never syncs or downloads.
 check-toolchain:
     uv run --no-project --no-python-downloads --offline python scripts/check_toolchain.py
 
