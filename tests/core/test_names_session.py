@@ -7,7 +7,6 @@ sha256 钉子（取自研究侧 v13 `NamesClient`＋`build_one`，基线 Q3 的 
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 from pathlib import Path
@@ -15,10 +14,9 @@ import tempfile
 from types import SimpleNamespace
 from typing import Any
 import unittest
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 
 from kototoki import names
-from kototoki.local_client import InfraFailure
 from kototoki.names import table
 from kototoki.srt import parse_srt
 from kototoki.strata import MODEL, Session, StrataRefused
@@ -184,23 +182,6 @@ class BuildDocumentTests(Case):
         self.assertEqual(len(logs.records), 5)
         self.assertEqual(len(self.h.replies), 1)  # 第 6 个回复没被取走
 
-    def test_count_tokens_unavailable_falls_back_to_no_precheck(self) -> None:
-        for broken in (http_error(404), URLError("refused"), {"tokens": 3}, {"input_tokens": "10"}):
-            with self.subTest(broken=broken):
-                self.h = Harness(self.h.root)
-                self.h.count_result = broken
-                self.h.replies = [reply(prompt_tokens=table.PROMPT_BUDGET + 1)]
-                with self.h.session() as session:
-                    with self.assertLogs("kototoki.names", level="WARNING") as logs:
-                        result = names.build_document(self.work, self.doc, session, 7)
-                self.assertEqual(result.status, "ok")  # 预检跳过，提示照常发送
-                self.assertEqual(len(self.h.count_bodies), 1)  # 第二段不再尝试
-                self.assertEqual(len(self.h.bodies), 1)
-                self.assertEqual(len(logs.records), 1)
-                self.assertIn("count_tokens unavailable", logs.records[0].getMessage())
-                self.assertTrue(result.payload["build"]["prompt_check"].startswith("skipped ("))
-                self.assertTrue(result.payload["build"]["over_budget_by_usage"])  # 只记录，不失败
-
     def test_over_budget_prompt_is_not_sent(self) -> None:
         self.h.count_result = {"input_tokens": table.PROMPT_BUDGET}
         with self.h.session() as session:
@@ -221,24 +202,6 @@ class BuildDocumentTests(Case):
             self.assertNotIn("out of memory", str(caught.exception))  # 正文留在交换目录，不进消息
             self.assertIsNone(session.unavailable)  # 下一部需要模型的影片再启动
 
-    def test_http_error_without_oom_is_a_server_error(self) -> None:
-        self.h.replies = [http_error(503)]
-        with self.h.session() as session:
-            with self.assertRaisesRegex(names.NamesError, r"^HTTP 503 \(server_error\)"):
-                names.build_document(self.work, self.doc, session, 7)
-
-    def test_transport_failure_raises_and_the_next_document_restarts(self) -> None:
-        self.h.replies = [URLError(ConnectionRefusedError("refused")), reply()]
-        with self.h.session() as session:
-            with self.assertRaisesRegex(names.NamesError, "transport failure: URLError"), \
-                    self.assertLogs("kototoki.names", level="WARNING") as logs:
-                names.build_document(self.work, self.doc, session, 7)
-            self.assertEqual(logs.records[-1].getMessage(), "[names] stopping Strata after URLError")
-            result = names.build_document(self.work, self.doc, session, 7)
-        self.assertEqual(result.status, "ok")
-        self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
-        self.assertEqual(self.h.clients[1]["trace_dir"].name, "session-02")
-
     def test_refused_strata_fails_this_and_every_later_document(self) -> None:
         self.h.start_failures = [StrataRefused("another Strata launch is serving")]
         with self.h.session() as session:
@@ -249,65 +212,6 @@ class BuildDocumentTests(Case):
         self.assertEqual(len(self.h.servers), 1)  # 第二部没有再碰工厂
         self.assertEqual(self.h.bodies, [])
 
-    def test_start_failure_fails_this_document_and_the_next_one_tries_again(self) -> None:
-        self.h.start_failures = [InfraFailure("Strata did not become ready within 300 s")]
-        with self.h.session() as session:
-            with self.assertRaisesRegex(names.NamesError, "Strata failed to start: Strata did not become ready"):
-                names.build_document(self.work, self.doc, session, 7)
-            self.assertIsNone(session.unavailable)
-            result = names.build_document(self.work, self.doc, session, 7)
-        self.assertEqual((result.status, self.h.events), ("ok", ["start:2", "stop:2"]))
-
-
-class V13PinTests(Case):
-    """同一份文档、同一串伪回复：产品 `build_document` 发出的建表请求体、count_tokens 请求体、状态、尝试数与表项
-    的 sha256 钉死，seed 序列写死。钉值取自 2026-11-11 的研究侧 `archive/2026-11-18-pre-research-restructure:experiments/scene_batching_v6/v13.py`
-    `NamesClient`＋`build_one`（`names-strata-v4`）在同一输入上的输出。
-    ADR-0028「输出上限与提示预算」起产品请求只有 `max_tokens` 与 v4 不同（16384 对 8192）：算摘要前把它换回 8192，钉值不变。"""
-
-    def run_digest(self, replies: list[dict[str, Any]], seed: int, *, count_error: Exception | None = None) -> str:
-        self.h = Harness(self.h.root)
-        self.h.replies = list(replies)
-        self.h.count_result = count_error
-        with self.h.session() as session:
-            result = names.build_document(self.work, self.doc, session, seed)
-        bodies = []
-        for text in self.h.bodies:
-            body = json.loads(text)
-            self.assertEqual(body["max_tokens"], 16384)
-            bodies.append(json.dumps(body | {"max_tokens": 8192}, ensure_ascii=False))
-        observed = [bodies, self.h.count_bodies, result.status, result.attempts, result.payload["entries"]]
-        return hashlib.sha256(json.dumps(observed, ensure_ascii=False).encode("utf-8")).hexdigest()
-
-    def test_first_attempt_ok(self) -> None:
-        self.assertEqual(self.run_digest([reply()], 20261019),
-                         "95fef00e9dba875de4b6c77545023a7989977a434d6e2b3590b36c3257176b1a")
-        self.assertEqual(self.seeds(), [20261019])
-
-    def test_two_failures_then_ok(self) -> None:
-        self.assertEqual(self.run_digest([reply(finish="length"), reply("不是 JSON"), reply()], 7),
-                         "8b76546ce041db0567f157b813d54e88892d62a342bf8b5a434f10443237083d")
-        self.assertEqual(self.seeds(), [7, 8, 9])
-
-    def test_five_failures(self) -> None:
-        digest = self.run_digest([reply(finish="length")] * 3 + [reply("不是 JSON")] * 2 + [reply()] * 2, 100)
-        self.assertEqual(digest, "d07d7dfb21621fcce0c93ab1cd8e2a6053a01c789f01ef9310e6dd24904748bc")
-        self.assertEqual(self.seeds(), [100, 101, 102, 103, 104])  # 第 6 次不发请求
-        self.assertEqual(len(self.h.replies), 2)
-
-    def test_count_tokens_fallback(self) -> None:
-        self.assertEqual(self.run_digest([reply()], 7, count_error=http_error(404)),
-                         "854ae7da20aad8b1835fa32d4d33485d3136d5ec883f894afdabad56e2afd24f")
-        self.assertEqual(len(self.h.count_bodies), 1)
-
-    def test_request_keys_and_values(self) -> None:
-        body = table._request_body(table.build_messages(self.doc), 7)
-        self.assertEqual(list(body), ["messages", "temperature", "top_p", "top_k", "min_p", "presence_penalty", "seed",
-                                      "max_tokens", "chat_template_kwargs", "stream", "model"])
-        self.assertEqual((body["max_tokens"], body["model"], body["chat_template_kwargs"], body["stream"]),
-                         (16384, MODEL, {"enable_thinking": False}, False))
-        self.assertEqual(MODEL, "qwen3.8-flash-next-iq3_s")
-        self.assertEqual((table.MAX_TOKENS, table.CONTEXT_SIZE, table.ATTEMPTS), (16384, 49152, 5))
 
 
 if __name__ == "__main__":

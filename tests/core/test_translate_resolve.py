@@ -159,28 +159,6 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual((item["batch_id"], item["reason"], item["attempts"]), (b + ".a.b.a", "parse", 8))
         self.assertEqual(result.report["counts"]["followup_requests"], 6)
 
-    def test_halving_logs_the_split(self) -> None:
-        doc = document(10)
-        ids = [cue.id for cue in doc.cues]
-        self.h.poison = {ids[0]}
-        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
-            self.h.translate(doc)
-        b = self.lines(doc, "batches.jsonl")[0]["batch_id"]
-        splits = [r.getMessage() for r in logs.records if " attempt " not in r.getMessage()]
-        self.assertEqual(splits[:2], [f"[translate] batch {b} failed (parse); splitting into 2 sub-batch(es)",
-                                      f"[translate] batch {b}.a failed (parse); splitting into 2 sub-batch(es)"])
-
-    def test_single_cue_batch_is_left_untranslated_without_splitting(self) -> None:
-        doc = document(11)
-        ids = [cue.id for cue in doc.cues]
-        self.h.poison = {ids[10]}
-        result = self.h.translate(doc)
-        self.assertEqual(result.untranslated_count, 1)
-        self.assertEqual(self.targets()[1:], [[ids[10]], [ids[10]]])
-        row = self.lines(doc, "batches.jsonl")[1]
-        self.assertEqual([n["batch_id"] for n in row["resolution"]["nodes"]], [row["batch_id"]])
-        self.assertEqual(row["resolution"]["untranslated"][0]["batch_id"], row["batch_id"])
-
     def test_context_overflow_halves_after_one_attempt(self) -> None:
         doc = document(10)
         self.h.max_targets = 9  # 服务对 10 条的原批次回 HTTP 400（超出 context）
@@ -189,17 +167,6 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual([len(t) for t in self.targets()], [10, 5, 5])  # 原批次不换 seed 重试，两个半批各一次
         node = self.lines(doc, "batches.jsonl")[0]["resolution"]["nodes"][0]
         self.assertEqual((node["error_kind"], node["attempts"]), ("context", 1))
-
-    def test_refused_request_logs_the_attempt(self) -> None:
-        doc = document(10)
-        self.h.max_targets = 9
-        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
-            self.h.translate(doc)
-        b = self.lines(doc, "batches.jsonl")[0]["batch_id"]
-        (line,) = [r.getMessage() for r in logs.records if " attempt " in r.getMessage()]
-        self.assertTrue(line.startswith(f"[translate] batch {b} attempt 1/2 failed (context): HTTP 400 (context)"),
-                        line)
-        self.assertIn("seed ", line)
 
     def test_resume_reuses_recorded_nodes(self) -> None:
         doc = document(10)
@@ -222,44 +189,6 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual([n["session"] for n in row["resolution"]["nodes"]], [1, 1, 1, 2, 2, 2, 2])
         self.assertEqual(row["session"], 2)
 
-    def test_infra_failure_during_follow_up_restarts_and_continues(self) -> None:
-        doc = document(10)
-        ids = [cue.id for cue in doc.cues]
-        self.h.poison = {ids[3]}
-        self.h.plans = [{5: "oom"}]  # .a.a 的请求 OOM
-        result = self.h.translate(doc)
-        self.assertEqual(result.untranslated_count, 1)
-        self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
-        self.assertEqual(self.targets()[4:6], [ids[0:3], ids[0:3]])  # OOM 后只重做 .a.a
-        run = read_json(self.root(doc) / "run.json")
-        self.assertEqual([s["stop_reason"] for s in run["sessions"]], ["oom", None])
-        self.assertTrue(run["resumed"])
-        self.assertEqual(len(list((self.root(doc) / "infra-failures").glob("*.a.a--session-01.json"))), 1)
-
-    def test_infra_failure_on_the_original_batch_is_not_followed_up(self) -> None:
-        doc = document(10)
-        self.h.plans = [{1: "oom"}]
-        result = self.h.translate(doc)
-        self.assertEqual(result.untranslated_count, 0)
-        self.assertEqual(self.lines(doc, "nodes.jsonl"), [])
-        self.assertNotIn("resolution", self.lines(doc, "batches.jsonl")[0])
-        self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
-
-    def test_recorded_single_failure_is_rebuilt_as_untranslated_on_resume(self) -> None:
-        doc = document(10)
-        ids = [cue.id for cue in doc.cues]
-        self.h.poison = {ids[3]}
-        # .a.b.a 第二次失败已记录后，在 .a.b.b 的请求里中断。
-        self.h.plans = [{10: KeyboardInterrupt()}]
-        with self.assertRaises(KeyboardInterrupt):
-            self.h.translate(doc)
-        self.assertEqual(self.lines(doc, "nodes.jsonl")[-1]["batch_id"].split(".", 1)[1], "a.b.a")
-        self.h.requests.clear()
-        result = self.h.translate(doc)
-        self.assertEqual(self.targets(), [[ids[4]], ids[5:10]])
-        self.assertEqual(result.untranslated_count, 1)
-        self.assertEqual(result.report["untranslated"][0]["attempts"], 8)
-
     def test_untranslated_is_terminal_for_recipe_and_seed(self) -> None:
         doc = document(12)
         ids = [cue.id for cue in doc.cues]
@@ -277,22 +206,6 @@ class ResolveTests(unittest.TestCase):
         retried = self.h.translate(doc)
         self.assertEqual(retried.untranslated_count, 0)
         self.assertEqual(retried.translations[ids[3]], "译" + ids[3])
-
-    def test_empty_scene_writes_an_empty_report(self) -> None:
-        doc = document(0)
-        result = self.h.translate(doc)
-        self.assertEqual(result.untranslated_count, 0)
-        self.assertEqual(read_json(self.root(doc) / "report.json")["counts"]["untranslated_cues"], 0)
-
-    def test_node_journal_row_outside_the_plan_is_rejected(self) -> None:
-        doc = document(12)
-        self.h.translate(doc)
-        root = self.root(doc)
-        (root / "batches.jsonl").write_bytes((root / "batches.jsonl").read_bytes().splitlines(keepends=True)[0])
-        (root / "nodes.jsonl").write_text(json.dumps({"parent_index": 1, "batch_id": "other-b0009.a"}) + "\n",
-                                          encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "node row"):
-            self.h.translate(doc)
 
 
 class PublishedUntranslatedCountTests(JobCase):

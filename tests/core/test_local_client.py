@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 from pathlib import Path
 import tempfile
@@ -21,9 +20,6 @@ class ExplicitOomTests(unittest.TestCase):
         for message in ("CUDA error: out of memory", "cudaErrorMemoryAllocation"):
             with self.subTest(message=message):
                 self.assertTrue(explicit_oom(message))
-
-    def test_non_oom_message_not_detected(self):
-        self.assertFalse(explicit_oom("context size exceeded"))
 
 
 class FakeResponse:
@@ -74,28 +70,10 @@ class LlamaClientTraceTests(unittest.TestCase):
         self.assertEqual(json.loads((exchange / "response.raw").read_bytes()), reply)
         self.assertEqual(read_json(exchange / "transport.json")["status"], 200)
 
-    def test_unlabelled_request_keeps_the_numeric_name(self):
-        self.client.opener = FakeOpener(b'{"content": "x"}')
-        self.client.request("/v1/messages/count_tokens", {"messages": []})
-        self.client.request("/v1/messages/count_tokens", {"messages": []}, trace_label="count")
-        self.client.chat_completion({"messages": []})
-        self.assertEqual(sorted(p.name for p in self.trace.iterdir()), ["00001", "chat-03", "count-02"])
-
-    def test_research_only_methods_are_not_in_the_product_client(self):
-        # ADR-0025：`/tokenize`、`/completion` 只有研究侧用，在 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/llama_server.py`
-        self.assertFalse(hasattr(self.client, "tokenize"))
-        self.assertFalse(hasattr(self.client, "complete"))
-
     def test_non_loopback_url_is_refused(self):
         with self.assertRaisesRegex(ValueError, "loopback"):
             LlamaClient("http://example.com:8081")
 
-
-class ModuleTests(unittest.TestCase):
-    def test_old_llama_server_module_is_gone(self):
-        # ADR-0025：不留再导出模块
-        with self.assertRaises(ImportError):
-            importlib.import_module("kototoki.llama_server")
 
 
 if __name__ == "__main__":

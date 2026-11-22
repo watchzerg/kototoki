@@ -45,6 +45,9 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/translate/recipes.py`、`batching.py`、`resolve.py`（`generate.py` 的 `run_step` 见[运行目录子页](run-directory.md#代码与验证入口)）。
-  - `tests/core/test_translate_recipes.py`：`RECIPE_HASH` 钉子；提示、注入与请求体与研究侧输出逐字节相同的结果钉成字面量或 sha256；gap-pack-v2 规则；`confidence: high` 的注入规则对真实 `translate.plan` 断言。
-  - `tests/core/test_translate_resolve.py`：子节点的邻文、按段追问、单条不出中文、结构失败对半拆、超出 context、续跑复用节点、未翻译终态、`published.json` 计数与只有日文一行的发布字幕。
+  - `tests/core/test_translate_recipes.py`：`RECIPE_HASH` 与名称；随机场景上的批次、窗口与请求体（含 seed＋1）合成一条 sha256 钉子；注入行规则（只收 `confidence: high`、形式去重）；逐条判定的解析；宽上下文只数 cue、不计停顿；gap-pack-v2 的 DP 与暴力一致、硬间隔必切、均匀场景偏好均匀批次。
+  - `tests/core/test_translate_resolve.py`：子节点的邻文规则、未翻译 cue 按段追问、仍为空的 cue 留作未翻译、结构失败对半拆到单条、超出 context 一次后对半拆、续跑复用已记节点、未翻译对该配方与 seed 为终态、`published.json` 的未翻译计数。
+  - 测试精简（2026-11-22）后不再有测试覆盖：
+    - 配方与请求：提示文本与请求体形状的字面量钉子；注入行的窗口过滤、`names_sha256` 只随条目、空表被拒、结构严格校验；场景 id、cue id 与时间随 ja.srt、可见上限先丢后侧；无注入时为朴素 Q2 system message；停顿处切点移向更长停顿。
+    - 追问与解析：单条批不拆而留作未翻译、记录的单条失败续跑时重建为未翻译、节点日志行落在计划之外被拒、空场景写空报告；对半拆、被拒请求与追问中基础设施失败的日志与重启。
 - `tests/core/test_translate.py` 的重启、第二次尝试与失败分类用例见[运行目录子页](run-directory.md#代码与验证入口)。

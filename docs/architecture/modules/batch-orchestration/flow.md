@@ -56,8 +56,14 @@ covers:
   - `kototoki/job.py`（`run`、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`speech_gate`、`advance_or_fail`、`build_ja_cues`、`cues_batch`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。
   - `kototoki/logs.py`、`kototoki/procs.py`、`kototoki/workers/protocol.py` 与 worker 启动见[运行日志与进程原语](../run-logging-and-processes.md)。
 - 测试（core，`just test`）：
-  - `tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`（经 `plan` 取身份）、属性 patch 的专名、翻译与 Strata 函数（`merge` 用真的）、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖：
-    - 扫描与跳过、字幕路径碰撞、`register_work_dir` 异常、大小采样稳定性、发布期不覆盖同名字幕、跨卷发布、发布失败不写审计记录、残留 `failure.json`、阶段顺序、extract 期间中断、临时文件清理、续跑、两把锁的冲突退出码、收尾不变量、无语音与近乎无声、子进程环境、禁止导入清单、输入与工作目录检查、按需取锁、共享 Strata session 的启动次数与 stop、`StrataRefused`、`next_stage`／`advance` 调用次数。
-  - 同文件的 `NamesTests`（见[专名一致性](../name-consistency.md#代码与验证入口)）、`EmbeddedSubtitleTests`（采用后不提取音频、不起 worker、`sources` 与日志行、字幕文字不进日志、GPU 锁到 names 才取、开关关掉走 STT、抽取失败与零条目回退、续跑跳过与 `ja.srt` 被改写后重抽、两条路径来回切换）；`RunLogTests`、`IsolationTests` 的 worker 部分见[运行日志与进程原语](../run-logging-and-processes.md#代码与验证入口)。
-- 测试（full，`just test-full`）：`tests/full/test_job_ffmpeg.py` 沿用 `JobCase` 的接缝（`FAKE_MEDIA = False`），媒体阶段用 ffmpeg 合成的短视频走真实 `media.probe`／`extract`，GPU 阶段、cue、专名与翻译仍是假实现：检查派生 WAV 规格、三个 GPU 阶段各启动一次、共享 Strata session 在 names 阶段启动、`name-table.json` 落盘、双语字幕与 `published.json`（`sources` 含 `names`）；音轨标 `eng` 的视频照常发布、恰有一行选轨 WARNING；三个内嵌字幕用例（SubRip／ASS／mov_text）。不经 `python -m kototoki`、不起 Strata（打桩）。
-- 未验证：被中断时 Strata 停止与显存核实的真实路径；names 阶段 x0 输出、其他作品与失败路径的真实运行；路径碰撞、中断取消提取、临时文件清理、空锁破除、补偿告警只经离线测试；内嵌字幕路径只用伪媒体与合成片段测过。
+  - `tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`（经 `plan` 取身份）、属性 patch 的专名、翻译与 Strata 函数（`merge` 用真的）、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖主路径：
+    - `ScanTests`：扫描过滤与排序、字幕发布在源文件旁、同目录同名主干的后一文件失败、大小采样决定稳定性、源文件旁已有字幕则跳过。
+    - `StageTests`／`IsolationTests`／`ResumeTests`：整批按阶段顺序再翻译、发布；崩溃文件隔离且 worker 为后续文件重启；无语音发布空字幕并跳过后续阶段；中断后续跑只补缺失阶段；字幕被删后不取 GPU 锁而重新发布。
+    - `LockTests`：GPU 锁冲突时保留 CPU 阶段产物。`InvariantTests`：转写、译文与专名文字不进日志与 stderr 文件；禁止导入清单；输入与工作目录检查。
+  - 同文件的 `NamesTests`（换表身份后在同一 session 上重译）、`EmbeddedSubtitleTests`（开关关掉走 STT、不可用字幕轨带 WARNING 回退）；它们的细节分别见[专名一致性](../name-consistency.md#代码与验证入口)与[内嵌字幕](../config-and-media/embedded-subtitles.md#代码与验证入口)。
+  - 测试精简（2026-11-22）后不再有测试覆盖：
+    - 扫描与发布：`register_work_dir` 异常与早失败释放工作根锁、`stable_files` 单元、续跑后全部跳过、发布期出现字幕不覆盖、发布不跨目录移动、发布失败不写审计记录、`published.json` 内容、工作根按输入目录键控。
+    - 阶段与失败：子进程环境、`fatal`／启动失败／退出码 1 缺事件的重启规则、读 worker 输出时中断回收 worker、无人处理的文件在发布失败、模型核对按阶段缓存、extract 失败与期间中断、临时文件清理、翻译失败隔离、`next_stage`／`advance` 调用次数、`media` hash 变而 PCM 不变时下游仍当前。
+    - 锁：工作根锁冲突、names／translate 阶段 GPU 锁冲突为进程级、残留锁与空锁的破除、锁内 pid 记录、用法与配置错误退出码 2。
+    - Strata 与翻译：共享 session 只启动一次并在翻译后停止、`StrataRefused`、中断时停止并释放锁、零 cue 文档不取锁与 session、建表失败与坏表的处理；内嵌字幕：跳过 extract 与 GPU 阶段、纯内嵌批次只为 Strata 取锁、续跑复用、两条路径互不复用 `ja.srt`；`RunLogTests` 全部删除（见[运行日志与进程原语](../run-logging-and-processes.md#代码与验证入口)）。
+- 未验证：被中断时 Strata 停止与显存核实的真实路径；names 阶段 x0 输出、其他作品与失败路径的真实运行；路径碰撞只经离线测试；中断取消提取、临时文件清理、空锁破除、补偿告警现无自动测试；内嵌字幕路径只用合成片段测过 SubRip 一种。

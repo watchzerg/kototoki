@@ -46,10 +46,10 @@
 
 四条硬规则：
 
-- **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动 worker，通信只经 jobs 文件、产物与退出码。编排不导入 worker 壳；期望身份来自 `plan`，模型核对只用 `workers/gpu.verify_models`（导入时不加载推理库）。`tests/core/test_job.py` 的禁止导入测试守门（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、`experiments.*`）。
+- **编排层不导入任何推理模块。** `job` 只以 `sys.executable -m kototoki.workers.<stage> --jobs <path>` 启动 worker，通信只经 jobs 文件、产物与退出码。编排不导入 worker 壳；期望身份来自 `plan`，模型核对只用 `workers/gpu.verify_models`（导入时不加载推理库）。`tests/core/test_job.py` 的 `InvariantTests.test_job_and_main_import_no_inference_stack` 守门（`torch`、`ctranslate2`、`faster_whisper`、`transformers`、`pyannote`、`torchaudio`、`torchcodec`、`research`）。
 - **推理模块互不导入。** 各自在独立进程加载模型，阶段之间只经产物文件交接。`workers/gpu.py` 只被 worker 壳与编排导入，不属基础层。
 - **基础层不依赖 torch、ffmpeg、网络与上层。** 编排可直接导入。`judge`、`guard` 不导入 torch、推理模块与研究代码；`judge.normalize`、`schema.validate_transcript` 与 `guard` 的算法当初复制自已删除的研究代码（归档 tag，见 [ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)），现在产品实现是唯一权威；`guard` 只导入 `recipes` 与 `judge.normalize`。
-- **产品包不导入 `research`**。`tests/core/test_boundaries.py` 以 AST 扫描 `kototoki/` 全部模块守门，并要求 `tests/core` 自身不导入 `research`。
+- **产品包不导入 `research`**。`tests/core/test_boundaries.py` 以 AST 扫描 `kototoki/` 全部模块、并要求 `tests/core` 自身不导入 `research`。
 
 中间层规则：
 
@@ -57,7 +57,7 @@
 - `strata` 只依赖基础层与 `local_client`；不导入 `names`、翻译子系统、torch。`names` 与翻译子系统单向依赖它，研究代码也可以直接导入它。
 - `names` 只依赖 `artifacts`、`srt`、`recipes`、`strata`、`local_client`；不导入 `config`、翻译子系统、torch。
 - 翻译子系统不导入 `names`，只读 `name-table.json` 的内容（经 `plan` 传入）。
-- 编排以普通导入使用 `strata`、`names`、`translate`、`merge`：四者不导入 `plan` 与 `job`、不加载 torch，`test_job.py` 照常守门。
+- 编排以普通导入使用 `strata`、`names`、`translate`、`merge`：四者不导入 `plan` 与 `job`、不加载 torch，由同一条禁止导入测试守门（含 `names`、`translate`）。
 - `plan` 只在核对翻译阶段时延迟导入 `translate`，只在核对 names 阶段时延迟导入 `names.recipes`（只取 `BUILD_RECIPE_HASH`）；worker 壳导入 `plan`，但不会触发这两条边。
 
 ## 状态与契约
@@ -128,5 +128,5 @@
 
 - `cues`、`merge`、`srt`、`artifacts`、`protocol`（含 `classify_launch`）、`procs`、`judge`、`config` 直接按接口离线测。
 - 需要钉住的研究来源取值在 core 里钉字面量，注释写来源（ADR 或归档 tag 路径）；没有实时对照层（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)）。
-- 媒体测命令行构造与合成媒体；推理模块用冻结窗口门禁（重任务）；翻译子系统用伪客户端走完整流程；编排用伪 worker 脚本。
+- 媒体测选轨、时长与采样率纠正等判定，真实 ffmpeg 行为用合成媒体（full）；推理模块用冻结窗口门禁（重任务）；翻译子系统用伪客户端走完整流程；编排用伪 worker 脚本。
 - 需要越过接口去戳实现时，先怀疑模块形状。编排是最深的模块；worker 壳的 `__main__` 只做入口，流程知识在协议模块。

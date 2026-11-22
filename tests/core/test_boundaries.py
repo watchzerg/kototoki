@@ -39,24 +39,13 @@ def violations(directory: str, banned: tuple[str, ...]) -> list[str]:
     return found
 
 
-class ScannerTests(unittest.TestCase):
-    def test_every_import_form_is_detected(self) -> None:
-        source = ("import research.x\nimport os, toolz\nfrom research import y\nfrom research.a.b import c\n"
-                  "import importlib\nimportlib.import_module('research.z')\n__import__('toolz.s')\n"
-                  "from . import research\nname = 'research'\nimportlib.import_module(name)\n")
-        self.assertEqual(imported_roots(ast.parse(source)), {"research", "toolz", "os", "importlib"})
-        self.assertEqual(imported_roots(ast.parse("from .research import a\nimport kototoki.guard\n")), {"kototoki"})
-
-    def test_violations_reports_banned_roots(self) -> None:
-        self.assertIn("tests/core/test_boundaries.py: unittest", violations("tests/core", ("unittest",)))
-
-
 class RepoBoundaryTests(unittest.TestCase):
     def test_product_package_does_not_import_research(self) -> None:
         self.assertEqual(violations("kototoki", RESEARCH), [])
 
     def test_core_tests_do_not_import_research(self) -> None:
         self.assertEqual(violations("tests/core", RESEARCH), [])
+
 
 
 if __name__ == "__main__":

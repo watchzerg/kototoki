@@ -57,9 +57,9 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/logs.py`（`LOG_FORMAT`、`LOG_DATEFMT`、`RunFormatter`）；挂接在 `kototoki/job.py`（`_run_logging`、`QUIET_ENV`、`child_env`）。
-- 测试（core，`just test`）：
-  - `tests/core/test_logs.py`：墙钟跳变时相对秒不跳、时间戳跟墙钟；第三方 logger 前缀。
-  - `tests/core/test_job.py` 的 `RunLogTests`：
-    - 文件与控制台逐行相同且符合格式、worker `done` 行带数值字段、cues 三件套（0 条为 WARNING）、翻译 done 行的耗时、`(resumed)` 与有未翻译时的 WARNING、`[plan]` 计数与 `(reused)`、worker 报告的失败只有一行带类型的 ERROR、非 0／1 退出码的指针行、启动失败与同一缓存异常只有一份 traceback、同类失败（不同异常对象、同一抛出位置）只有一份 traceback 且其后行带消息、
-    - 首行 `[run] start` 与 `[lock] GPU acquired`、意外异常与 `KeyboardInterrupt` 的 ABORTED 行（后者无 traceback）与 `[summary]` 收尾、extract 之后撞 GPU 锁的收尾、破残留锁的 WARNING（含无 pid 的锁）、`warnings.warn` 进日志、告警与失败的级别、extract 三件套、媒体与补偿告警（含续跑）、handler 与级别复原、第三方前缀与级别过滤、worker stderr 的告警计数。
-- 测试（full，`just test-full`）：`tests/full/test_media_ffmpeg.py` 的合成 2 s 间隙断言 `job.compensation_warnings` 给出一行补入告警。
+- 测试（core，`just test`）：`tests/core/test_job.py` 的 `InvariantTests` 断言转写、译文与专名文字不进运行日志与 worker stderr 日志。
+- 测试精简（2026-11-22）后不再有测试覆盖运行日志本身：
+  - 日志格式的单元测试与 `RunLogTests` 全部删除：行格式与墙钟跳变下的相对秒、文件与控制台逐行相同、`[run]`／`[lock]`／`[plan]`／`[summary]` 各行、ABORTED 收尾（含 `KeyboardInterrupt` 无 traceback）、extract 与 cues 三件套及计数。
+  - 级别与 traceback 规则：告警与失败的级别、worker 报告的失败一行 ERROR、同一缓存异常或同类失败只有一份 traceback、Strata 不可用后的失败不带 traceback、非 0／1 退出码的 stderr 指针行、破残留锁与 `warnings.warn` 进日志、第三方 logger 前缀、worker stderr 告警计数、handler 复原。
+  - 各阶段 done 行的字段：worker `done` 的数值字段、翻译耗时与 `(resumed)`、names 的重试次数、媒体与补偿告警（含续跑跳过 extract）。
+- 测试（full，`just test-full`）：没有覆盖运行日志的用例（`tests/full/test_media_ffmpeg.py` 不再断言补入告警）。

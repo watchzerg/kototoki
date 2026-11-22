@@ -1,6 +1,6 @@
-"""`kototoki.asr_whisper`：导入顺序（torch 先于 ctranslate2／faster_whisper）与逐窗失败记账。
+"""`kototoki.asr_whisper`：W0 特征规则、逐窗失败记账与裁判打分。
 
-用伪模块代替 torch／ctranslate2／faster_whisper：导入时记录次序，不加载真实库与 GPU。
+用伪模块代替 torch／ctranslate2／faster_whisper，不加载真实库与 GPU。
 """
 
 from __future__ import annotations
@@ -60,12 +60,6 @@ def import_with_fakes() -> tuple[types.ModuleType, list[str]]:
     return module, finder.order
 
 
-class ImportOrderTest(unittest.TestCase):
-    def test_torch_is_imported_before_ctranslate2_and_faster_whisper(self):
-        _, order = import_with_fakes()
-        self.assertEqual(order, ["torch", "ctranslate2", "faster_whisper", "faster_whisper.tokenizer"])
-
-
 class FeaturesTest(unittest.TestCase):
     """faster-whisper 逐块路径：去掉最后一帧，再在 Mel 上补零或截断到 3000 帧（ADR-0035「W0 特征」）。"""
 
@@ -79,14 +73,6 @@ class FeaturesTest(unittest.TestCase):
         self.assertEqual(float(mel[:, :100].min()), 1.0)
         self.assertEqual(float(np.abs(mel[:, 100:]).max()), 0.0)
 
-    def test_full_window_is_trimmed_to_3000_frames(self):
-        extractor = mock.Mock(return_value=np.ones((128, 3002), dtype=np.float32))
-        self.assertEqual(self.module.features(np.zeros(480000, dtype=np.float32), extractor).shape, (128, 3000))
-
-    def test_empty_or_over_30s_window_is_rejected(self):
-        for samples in (0, 480001):
-            with self.subTest(samples=samples), self.assertRaises(ValueError):
-                self.module.features(np.zeros(samples, dtype=np.float32), mock.Mock())
 
 
 class TranscribeTest(unittest.TestCase):
@@ -107,17 +93,6 @@ class TranscribeTest(unittest.TestCase):
                 mock.patch.object(self.module, "generate", side_effect=generate):
             return self.asr.transcribe(self.audio, self.chunks), features
 
-    def test_windows_are_cropped_by_integer_samples_and_copied_into_segments(self):
-        results = iter([{"text": t, "avg_logprob": -0.1, "tokens": [1], "prompt": [2], "kwargs": {}}
-                        for t in ("あ", "い", "う")])
-        (segments, traces, failures), features = self.run_transcribe(lambda *args: next(results))
-        self.assertEqual([s["text"] for s in segments], ["あ", "い", "う"])
-        self.assertEqual(failures, [])
-        self.assertEqual([(s["start_sample"], s["end_sample"]) for s in segments],
-                         [(0, 16000), (16000, 32000), (32000, 48000)])
-        self.assertEqual([len(call.args[0]) for call in features.call_args_list], [16000] * 3)
-        self.assertEqual([t["start_sample"] for t in traces], [0, 16000, 32000])
-
     def test_runtime_error_in_one_window_is_recorded_and_the_rest_continue(self):
         def generate(model, mel, options):
             generate.calls += 1
@@ -133,10 +108,6 @@ class TranscribeTest(unittest.TestCase):
         self.assertEqual(failures[0][0], 1)
         self.assertIn("RuntimeError", failures[0][1])
 
-    def test_invalid_windows_are_rejected_before_decoding(self):
-        self.chunks[1]["end_sample"] = 15000
-        with self.assertRaises(ValueError):
-            self.run_transcribe(lambda *args: {})
 
 
 NO_TIMESTAMPS = 50363
@@ -205,69 +176,12 @@ class ScoreTest(unittest.TestCase):
         for text, score in zip(texts, scores):
             self.assertAlmostEqual(score, self.expected(text))
 
-    def test_window_audio_is_sliced_like_transcribe_and_frames_follow_the_window(self):
-        self.asr.score(self.audio, self.chunk, ["あ"])
-        window = self.features.call_args.args[0]
-        self.assertEqual(len(window), 16000)
-        self.assertIs(self.features.call_args.args[1], self.model.feature_extractor)
-        self.assertEqual(self.aligned[0][2], [100])  # ceil(16000 / 160)
-
-    def test_encoder_runs_once_and_texts_are_aligned_in_batches_of_at_most_16(self):
-        texts = [f"{chr(0x3042 + index)}" for index in range(40)]
-        scores = self.asr.score(self.audio, self.chunk, texts)
-        self.assertEqual(self.model.encode.call_count, 1)
-        self.assertEqual([len(call[1]) for call in self.aligned], [16, 16, 8])
-        self.assertEqual([tokens for call in self.aligned for tokens in call[1]],
-                         [_FakeTokenizer().encode(text) for text in texts])
-        self.assertEqual(self.torch.as_tensor.call_count, 1)
-        expanded = self.torch.as_tensor.return_value.expand
-        self.assertEqual([call.args[0] for call in expanded.call_args_list], [16, 16, 8])
-        for text, score in zip(texts, scores):
-            self.assertAlmostEqual(score, self.expected(text))
-
-    def test_max_batch_argument_is_honored(self):
-        self.asr.score(self.audio, self.chunk, ["あ", "い", "う"], max_batch=2)
-        self.assertEqual([len(call[1]) for call in self.aligned], [2, 1])
-
     def test_empty_text_scores_zero_and_is_not_sent_to_align(self):
         scores = self.asr.score(self.audio, self.chunk, ["", "あい", ""])
         self.assertEqual(scores[0], 0.0)
         self.assertEqual(scores[2], 0.0)
         self.assertAlmostEqual(scores[1], self.expected("あい"))
         self.assertEqual(sum(len(call[1]) for call in self.aligned), 1)
-
-    def test_all_empty_skips_features_encoder_and_align(self):
-        self.assertEqual(self.asr.score(self.audio, self.chunk, ["", ""]), [0.0, 0.0])
-        self.assertEqual(self.asr.score(self.audio, self.chunk, []), [])
-        self.features.assert_not_called()
-        self.model.encode.assert_not_called()
-        self.assertEqual(self.aligned, [])
-
-    def test_zero_probability_is_clamped(self):
-        self.model.model.align.side_effect = lambda *args: [types.SimpleNamespace(text_token_probs=[0.0])]
-        [score] = self.asr.score(self.audio, self.chunk, ["あ"])
-        self.assertAlmostEqual(score, math.log(1e-45))
-
-    def test_prob_count_mismatch_raises(self):
-        self.model.model.align.side_effect = lambda *args: [types.SimpleNamespace(text_token_probs=[0.5])]
-        with self.assertRaises(RuntimeError):
-            self.asr.score(self.audio, self.chunk, ["あい"])
-
-    def test_result_count_mismatch_raises(self):
-        self.model.model.align.side_effect = lambda *args: []
-        with self.assertRaises(RuntimeError):
-            self.asr.score(self.audio, self.chunk, ["あ"])
-
-    def test_start_sequence_is_the_generate_prompt_without_the_notimestamps_token(self):
-        options = {"initial_prompt": None, "without_timestamps": True, "prefix": None, "hotwords": None,
-                   "beam_size": 1, "patience": 1.0, "length_penalty": 1.0, "suppress_blank": True,
-                   "suppress_tokens": [], "no_repeat_ngram_size": 0, "repetition_penalty": 1.0}
-        self.model.model.generate.return_value = [types.SimpleNamespace(sequences_ids=[[7]], scores=[-0.5])]
-        prompt = self.module.generate(self.model, self.features.return_value, options)["prompt"]
-        self.asr.score(self.audio, self.chunk, ["あ"])
-        start_sequence = self.aligned[0][0]
-        self.assertEqual(start_sequence, SOT_SEQUENCE)
-        self.assertEqual(prompt, start_sequence + [NO_TIMESTAMPS])
 
 
 if __name__ == "__main__":

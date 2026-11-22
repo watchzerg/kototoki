@@ -41,7 +41,7 @@ covers:
   - `untranslated_count`：不出中文的 cue 数，编排器写进 `published.json` 的 `translate_untranslated_cues`、发布日志行与控制台汇总（汇总在翻译完成时计，发布失败的文件也算）；
   - `report`：即 `report.json` 的内容。
   - 基础设施失败用尽重启、Strata 被拒绝或已不可用时抛 `TranslateError`（编排器记为该文件翻译失败）。
-- `RECIPE_HASH`：配方 `q3-translate-v1` 的 hash，进翻译身份，由 `tests/core/test_translate_recipes.py` 钉住。注入行的内容不进配方 hash，进身份的 `names_sha256`。
+- `RECIPE_HASH`：配方 `q3-translate-v1` 的 hash，进翻译身份，由 `tests/core/test_translate_recipes.py` 的 hash 常量钉住。注入行的内容不进配方 hash，进身份的 `names_sha256`。
 
 各规则的细节见上表子页。
 
@@ -51,7 +51,7 @@ covers:
 
 移植来源与取舍（研究代码已删除，产品实现是唯一权威）：
 
-- `recipes.py`：来自 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables` 与 v9 `wide-context-v1`。Q2 规则写成常量（提示、注入、请求体、校验、配方 hash），与研究侧逐字节对照由测试钉住。产品自有的按条判定与追问使它另算 hash（`q3-translate-v1`）。Strata 身份常量从 `kototoki.strata` 取。
+- `recipes.py`：来自 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/{qwen,strata}.py`、`names11.product_tables` 与 v9 `wide-context-v1`。Q2 规则写成常量（提示、注入、请求体、校验、配方 hash），与研究侧的逐字节对照只剩批次、窗口与请求体的一条 sha256 钉子（`tests/core/test_translate_recipes.py`），提示文本等其余部分不再有测试钉住。产品自有的按条判定与追问使它另算 hash（`q3-translate-v1`）。Strata 身份常量从 `kototoki.strata` 取。
 - `batching.py`：来自 `translation_v3/batching.py` 与 `data.py`。gap-pack-v2 切包只留 `group_gap=None` 分支；`Scene`／`Cue`（带秒）由 `ja.srt` 构造；`source_key` 是 `srt-<sha12>` 的唯一出处。
 - `resolve.py`：产品自有。节点规则、按条解决与 `report.json`；不导入 `generate`，由其传入请求与日志写入函数。
 - `generate.py`：来自 `translation_v3/strata.py::run_step` 与 `generate.py`。`run_step` 去掉思考分支、改为按条判定（零收下计 `unresolved`）；共享 `Session` 取代研究侧"执行者先启动服务"；按批次追加落盘；同调用内重启 Strata；按 session 记 `cache_state`。
@@ -66,7 +66,8 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/translate/__init__.py`（`plan`、`translate_document` 与导出）、`kototoki/merge.py`；其余模块见[请求子页](translation-subsystem/requests-and-resolution.md#代码与验证入口)与[运行目录子页](translation-subsystem/run-directory.md#代码与验证入口)。Strata 与客户端见 [Strata 服务与共享 session](strata-session.md#代码与验证入口)。
-- 测试（core，`just test`）：`tests/core/test_merge.py`：中上日下、换行替换为空格、`None` 只输出日文一行、零条目得空串、缺失／多余／空串抛错。其余测试见子页。
+- 测试（core，`just test`）：`tests/core/test_merge.py`：中上日下且保留头部、多行译文以空格连接、`None` 只输出日文一行、零条目得空串、缺失译文抛错。其余测试见子页。
+- 测试精简（2026-11-22）后不再有测试覆盖：`merge` 的译文与日文相同时两行照留、合并结果回解析条数、多出的译文与空串译文抛错、`None` 仍须其余 id 齐全且 id 已知。
 - 真实模型验证（占 GPU，须用户批准）：`just smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
 - 未验证：追问与拆分只经伪客户端，追问窗口下的译文质量无裁判证据；Strata 的请求不复现（同 seed 跨启动约半数 cue 不同，ADR-0021「未验证与已知限制」），重跑不保证同一译文；产品配方在产品里的质量没有独立裁判证据（沿用 ADR-0021「依据」的 v12 F1 证据）。
 

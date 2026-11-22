@@ -26,6 +26,9 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/asr_whisper.py`、`kototoki/asr_qwen.py`；壳 `kototoki/workers/asr.py` 见[枢纽页](../stt-asr.md#代码与验证入口)。
-- `tests/core/test_asr_whisper.py`：导入顺序（伪模块）、逐窗失败。
-- `tests/core/test_asr_qwen.py`（伪 processor／模型）：配方生成参数、只取 prompt 之后的 token、触顶窗口保留截断文字并返回失败、`RuntimeError` 窗口、模型不在 CUDA 即失败；经壳串到对齐与 `build_cues`：触顶窗口置空、截断文字进 `failed_windows`、不进 cue；x0 模型文件清单与配方 hash。
+- `tests/core/test_asr_whisper.py`：短窗裁一帧再补零；单窗 `RuntimeError` 记为失败窗口，其余窗口继续。
+- `tests/core/test_asr_qwen.py`（伪 processor／模型）：触顶窗口保留截断文字并返回失败；经壳串到对齐与 `build_cues`：触顶窗口置空、截断文字进 `failed_windows`、不进 cue。
+- 测试精简（2026-11-22）后不再有测试覆盖：
+  - w0：torch 先于 ctranslate2 的导入顺序、满窗裁到 3000 帧、空窗或超 30 s 窗口被拒、按整数样本裁剪、非法窗口解码前被拒。
+  - x0：配方生成参数与逐窗独立转写、只取 prompt 之后的 token、`RuntimeError` 窗口、模型不在 CUDA 即失败、非法窗口被拒、x0 壳的配方 hash 与模型文件清单随引擎变化。
 - 真实模型验证：`just smoke ct2_after_torch`（CT2 的 CUDA 库来源）。

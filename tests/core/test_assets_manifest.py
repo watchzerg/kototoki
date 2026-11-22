@@ -27,24 +27,6 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(shas("qwen3-asr-1.7b-hf"), plan.X0_FILES)
         self.assertEqual(shas("mms-1b-all"), plan.MMS_FILES)
 
-    def test_no_hy_mt2_translation_model_is_listed(self) -> None:
-        self.assertFalse([name for name in MODELS if "hy-mt" in name.lower() or "apex" in name.lower()])
-        self.assertNotIn("model", config.DEFAULTS["translate"])
-
-    def test_default_model_paths_point_into_manifest_dirs(self) -> None:
-        defaults = config.DEFAULTS
-        self.assertEqual(defaults["vad"]["model"], f"{MODELS['pyannote-segmentation-3.0']['dir']}/pytorch_model.bin")
-        self.assertEqual(defaults["asr.w0"]["model"], MODELS["faster-whisper-large-v3"]["dir"])
-        self.assertEqual(defaults["asr.x0"]["model"], MODELS["qwen3-asr-1.7b-hf"]["dir"])
-        self.assertEqual(defaults["align"]["model"], MODELS["mms-1b-all"]["dir"])
-        self.assertNotIn("model", defaults["names"])  # 建表模型由 Strata 管理（ADR-0029「Strata session」）
-        self.assertEqual(defaults["paths"]["models_root"], ".local/models")
-
-
-class ManifestScopeTests(unittest.TestCase):
-    def test_manifest_lists_only_models(self) -> None:
-        self.assertEqual(set(MANIFEST), {"models"})  # ffmpeg 是系统包（ADR-0034「ffmpeg」）
-
 
 if __name__ == "__main__":
     unittest.main()

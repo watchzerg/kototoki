@@ -107,9 +107,12 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
-- `tests/core/test_artifacts.py`：短 id 与碰撞、身份匹配／失效与原地替换、`offset_s` 强制、模型哈希缓存命中／失效、工作根键与最终字幕路径、`published.json` 审计记录、原子写重试与临时文件清理。
-- `tests/core/test_protocol.py`：jobs 解析、退出码 0／1／2、失败隔离、`failed_windows`；`classify_launch` 的正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件。
-- `tests/core/test_srt.py`：空 SRT、取整边界、严格解析、UTF-8 无 BOM。
+- `tests/core/test_artifacts.py`：`work_id` 为含扩展名相对路径的 SHA12、最终字幕路径在源文件旁并镜像子目录、不同输入目录得到不同工作根；视频身份忽略位置而随大小、mtime 与 probe 变化；`is_current` 匹配与失效；失败记录列出已有阶段产物；模型哈希缓存命中则不重算；原子写失败时目标不变且无临时文件。
+- `tests/core/test_protocol.py`：`run_worker` 单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败、`fatal`、无事件崩溃；`failed_windows` 清空窗口文字并记录。
+- `tests/core/test_srt.py`：毫秒取整为四舍五入而非银行家舍入、编号与时间行格式、畸形输入被严格解析拒绝、渲染保留编号与时间行与多行文字、译文不完整时抛出带报告的错误。
+- 测试精简（2026-11-22）后不再有测试覆盖：
+  - 产物：`register` 写索引与幂等、越界路径与短 id 碰撞的拒绝、`input_key` 的构成、`record_input`、`derived_identity` 要求摘要、原地替换、损坏或外来产物不当前、`offset_s` 强制、交叉审计产物在阶段链外、内嵌与 names 产物在失败记录里、模型哈希的 size／mtime 重算与期望值核对、`published.json` 仅审计内容与摘要必填、UTF-8 无 BOM 与 LF。
+  - 协议与 SRT：jobs 解析、畸形 jobs 与不一致记录的 `validate`、`startup_failed` 与退出码 1 缺事件、空 SRT、`srt_time` 拒绝负数、非正取整时长、空行文字、CRLF 归一、SHA 校验与 BOM 容忍、`write_srt` 拒绝覆盖源文件。
 - worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)中使用。
 
 ## 变更与决策来源

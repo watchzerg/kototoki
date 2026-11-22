@@ -117,15 +117,20 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 ## 代码与验证入口
 
 - 代码：`kototoki/vad.py`、`kototoki/align.py`、`kototoki/schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py`（`kototoki/workers/protocol.py` 归[产物契约](artifact-contract.md)；ASR 推理模块、`kototoki/guard.py` 与 `kototoki/judge.py` 归 [STT ASR](stt-asr.md)）。
-- `tests/core/test_vad.py`：`chunk_intervals` 取整、裁剪、并集、硬切、贪心合并、秒坐标回整。
-- `tests/core/test_align.py`：版本判定、字典过滤 `|`、`character_targets`、`map_records` 输出 WAV 本地秒且不收 offset、`MmsAligner.align` 的逐窗循环只用整数样本边界（没有样本的旧窗口使文件失败）、`normalize_window` 伪提取器、数值作用域恢复。
-- `tests/core/test_schema.py`：窗口、transcript 与 units 校验。
-- `tests/core/test_stt_workers.py`（伪推理对象串起三阶段）：
-  - 壳写出的身份与 `plan` 的期望身份逐字段相等，壳不自有 `identity`／`model_files`／`recipe_hash`；坐标、`failed_windows`、上游身份不符。
-  - 退出码 0／1／2 与 CUDA 守卫；`gpu.file_processor` 查一次 CUDA 后按序写出多个产物、CUDA 坏时一个都不写；启动校验（配方不符、引擎不可用）。
-  - 产出能被 `cues.build_cues` 消费；offset 0 整链的 `align.json`、`ja-cues.json`、`ja.srt` 字节钉成 sha256（`CueChainBytesTest`）。
-  - 壳导入不加载推理库；三壳 logger 名钉在 `kototoki.workers.<stage>`（`WorkerLoggerNameTest`）；日志不含窗口文字；已知无害告警的过滤只丢 TF32 那一条（`KnownWarningFilterTest`）。
+- `tests/core/test_vad.py`：`chunk_intervals` 的并集（重叠与乱序）、超长硬切、贪心合并不超上限。
+- `tests/core/test_align.py`：`character_targets` 重复字保位置、未知字用通配；`map_records` 每个字恰好一个 unit、失败或无效记录退为只有文字；`MmsAligner.align` 逐窗循环按样本边界出记录且 units 为 WAV 本地秒；`normalize_window` 短窗右补零到最小长度。
+- `tests/core/test_schema.py`：`validate_transcript` 拒绝错误 schema 版本或缺文字；`validate_windows` 接受精确窗口与空列表、拒绝重叠乱序与超 480000 样本；`validate_units` 的精确覆盖、只有文字的 unit、缺漏、重复覆盖与时间越界。
+- `tests/core/test_stt_workers.py`（伪推理对象）：
+  - vad 壳写出的身份等于 `plan.vad_identity`，坐标与 `stages` 如实；asr 壳身份链到 vad 且逐窗文字、`failed_windows` 正确；失败窗口置空并记录；复读窗口被折叠并写 trace 与 WARNING（日志不含文字）；vad 对应另一份音频则整文件失败。
+  - align 壳的链产出能被 `cues.build_cues` 消费；对齐改文字则整文件失败。
+  - CUDA 守卫：坏 CUDA 下出错或成功都退出码 2 且不写产物（`CudaGuardTest`）；`gpu.verify_models` 核对并缓存文件 sha256。
+  - 壳导入不加载推理库。
   - ASR 与 `cross` 的用例见 [STT ASR](stt-asr/cross-judge.md#代码与验证入口)。
+- 测试精简（2026-11-22）后不再有测试覆盖：
+  - vad：`chunk_intervals` 的取整、越界裁剪与计数、窗口外区间丢弃、内部静音记账、非法区间与样本数、输出过窗口 schema；`validate_audio` 的形状与 dtype。
+  - align：torchaudio 最小版本、模型字典过滤（含 transformers 5 的分隔符）、小写展开报错、数值作用域的设置与恢复、`sample_window` 的各种拒绝；`map_records` 的 `offset` 与缺记录保留文字。
+  - schema：多数拒绝分支、1 ms 容差、采样率常量只在 recipes 定义。
+  - 壳：身份不自有、非法窗口使文件失败、配方与引擎启动校验、`main` 读 jobs、日志去向与启动失败的 traceback、`read_wav`、模型文件清单、`gpu.file_processor` 的一次 CUDA 检查、logger 名、TF32 告警过滤；整链 `align.json`、`ja-cues.json`、`ja.srt` 的字节 sha256 钉子已删除。
 - 真实模型路径由小批量 `just subtitles` 验证；对照研究期冻结窗口的门禁已随 ADR-0034 删除，不再与 W0／X0 demo 逐 token 比对。
 - 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 

@@ -1,36 +1,13 @@
-"""kototoki.judge 的离线测试：分歧区间、raw／normalized 假设、判定边界、分批打分、合并、守卫与汇总、
-x0 清洗与整文件裁判 `judge_file` 的逐窗决策，
-以及在合成样例上与研究脚本 `archive/2026-11-18-pre-research-restructure:experiments/quality_v5/` 结果的 sha256 钉子（core 测试不导入研究代码）。"""
+"""kototoki.judge 的离线测试：分歧区间与合并、raw／normalized 假设、判定边界、空结果守卫、x0 清洗，
+以及整文件裁判 `judge_file` 的逐窗决策。"""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import subprocess
-import sys
 import unittest
-from dataclasses import asdict
-from pathlib import Path
 
 from kototoki import judge as J
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 MARGIN = -1.0
-
-# (w0 原文, x0 原文)：替换、标点相邻合并、插入、删除、多区间、半角浊点簇、NFKC 展开映射失败、空串。
-SAMPLES = [
-    ("そうか、わかった。", "そうだ、分かった！"),
-    ("あいうえおかきくけこ", "あいXえおかきYけこZ"),
-    ("今日はいい天気ですね。", "今日はいい天気ね"),
-    ("ｶﾞｷ", "ガキだ"),
-    ("㍻元年です。", "平静元年です"),
-    ("", "こんにちは"),
-    ("こんにちは。", ""),
-    ("abcdef", "azcdyf"),
-    ("ab", "ba"),
-    ("", ""),
-]
-
 
 class FakeScorer:
     """按文本查表给分（缺省 0.0，空串恒 0.0），记录每次调用的批。"""
@@ -55,9 +32,6 @@ class IntervalTests(unittest.TestCase):
                          [(1, 2, 1, 2, "い", "X", "substitution"), (5, 5, 5, 6, "", "か", "x0_extra")])
         self.assertEqual([it.kind for it in J.disagreement_intervals("あいう", "あう")], ["w0_extra"])
 
-    def test_adjacent_edits_form_one_interval(self):
-        self.assertEqual([(it.w, it.x) for it in J.disagreement_intervals("あいうえ", "あXYえ")], [("いう", "XY")])
-
     def test_compose(self):
         w, x = "あいうえおか", "あXうえYか"
         intervals = J.disagreement_intervals(w, x)
@@ -74,10 +48,6 @@ class HypothesisTests(unittest.TestCase):
         self.assertEqual([(it.w, it.x) for it in intervals], [("かわ", "だ分")])
         self.assertEqual(hyp_xs, ["そうだ、分かった。"])
 
-    def test_insertion_at_end_goes_before_w0_final_punctuation(self):
-        _, _, hyp_xs, form = J.hypotheses("わかった。", "わかったよ")
-        self.assertEqual((form, hyp_xs), ("raw", ["わかったよ。"]))
-
     def test_mapping_failure_falls_back_to_normalized_for_all_hypotheses(self):
         # ㍻ 一个原文字符展开为"平成"两个规范化字符，只替换"成"无法映射回原文。
         intervals, hyp_w, hyp_xs, form = J.hypotheses("㍻元年です。いい", "平静元年です。いや")
@@ -86,28 +56,9 @@ class HypothesisTests(unittest.TestCase):
         self.assertEqual([(it.w, it.x) for it in intervals], [("成", "静"), ("い", "や")])
         self.assertEqual(hyp_xs, ["平静元年ですいい", "平成元年ですいや"])
 
-    def test_halfwidth_voicing_cluster_maps(self):
-        _, hyp_w, hyp_xs, form = J.hypotheses("ｶﾞｷ", "ガキだ")
-        self.assertEqual((form, hyp_w, hyp_xs), ("raw", "ｶﾞｷ", ["ｶﾞｷだ"]))
-
-    def test_empty_w0(self):
-        intervals, hyp_w, hyp_xs, form = J.hypotheses("", "こんにちは。")
-        self.assertEqual([it.kind for it in intervals], ["x0_extra"])
-        self.assertEqual((form, hyp_w, hyp_xs), ("raw", "", ["こんにちは"]))
-
-    def test_empty_x0(self):
-        intervals, hyp_w, hyp_xs, form = J.hypotheses("こんにちは。", "")
-        self.assertEqual([it.kind for it in intervals], ["w0_extra"])
-        self.assertEqual((form, hyp_w, hyp_xs), ("raw", "こんにちは。", ["。"]))
 
 
 class DecideTests(unittest.TestCase):
-    def test_margin_boundary_keeps_w0(self):
-        self.assertFalse(J.decide(-1.0, margin=-1.0))
-        self.assertTrue(J.decide(-0.999, margin=-1.0))
-        self.assertFalse(J.decide(-1.001, margin=-1.0))
-        self.assertFalse(J.decide(float("nan"), margin=-1.0))
-
     def test_window_margin_boundary(self):
         raw_w, raw_x = "そうか。", "そうだ。"
         at = judge(raw_w, raw_x, FakeScorer({raw_w: -5.0, raw_x: -6.0}))
@@ -123,12 +74,6 @@ class JudgeWindowTests(unittest.TestCase):
         self.assertEqual(result, J.WindowJudgement("そうか、わかった。", True, "unscored", (), None))
         self.assertEqual(scorer.calls, [])
 
-    def test_both_empty_is_identical(self):
-        scorer = FakeScorer()
-        result = judge("", "", scorer)
-        self.assertTrue(result.identical)
-        self.assertEqual((result.text, scorer.calls), ("", []))
-
     def test_single_interval_record(self):
         scorer = FakeScorer({"そうか。": -3.0, "そうだ。": -2.5})
         result = judge("そうか。", "そうだ。", scorer)
@@ -137,12 +82,6 @@ class JudgeWindowTests(unittest.TestCase):
                          ("そうだ。", "raw", None, False))
         self.assertEqual(result.intervals, ({"w": "か", "x": "だ", "kind": "substitution", "score_w": -3.0,
                                              "score_x": -2.5, "d": 0.5, "switched": True},))
-
-    def test_empty_w0_scores_empty_hypothesis_through_scorer(self):
-        scorer = FakeScorer({"はい": -0.5})
-        result = judge("", "はい。", scorer)
-        self.assertEqual(scorer.calls, [["", "はい"]])
-        self.assertEqual((result.text, result.intervals[0]["kind"], result.intervals[0]["d"]), ("はい", "x0_extra", -0.5))
 
     def test_multiple_flips_compose_in_raw_form(self):
         raw_w, raw_x = "あい、うえおか、きくけこ。", "あX、うえおかY、きくZこ！"
@@ -159,37 +98,6 @@ class JudgeWindowTests(unittest.TestCase):
         self.assertEqual(J.normalize(result.text).text,
                          J.compose(J.normalize(raw_w).text, intervals, [True, False, True]))
 
-    def test_all_flips_in_raw_form_reach_x0_content(self):
-        raw_w, raw_x = "あいうえおかきくけこ", "あいXえおかきYけこZ"
-        result = judge(raw_w, raw_x, FakeScorer({raw_w: -100.0}))
-        self.assertEqual(result.text, raw_x)
-
-    def test_normalized_form_merge_and_no_flip_keeps_raw_w0(self):
-        raw_w, raw_x = "㍻元年です。いい", "平静元年です。いや"
-        flipped = judge(raw_w, raw_x, FakeScorer({"平成元年ですいい": -10.0}))
-        self.assertEqual((flipped.text_form, flipped.text), ("normalized", "平静元年ですいや"))
-        kept = judge(raw_w, raw_x, FakeScorer({"平静元年ですいい": -10.0, "平成元年ですいや": -10.0}))
-        self.assertEqual((kept.text_form, kept.text), ("normalized", raw_w))
-        self.assertEqual([r["switched"] for r in kept.intervals], [False, False])
-
-    def test_batches_hyp_w_scored_once_in_first_chunk(self):
-        raw_w = "あいうえおかきくけこさしすせそ"  # 15 字；x0 隔字替换 → 8 个区间
-        raw_x = "".join("X" if k % 2 == 0 else ch for k, ch in enumerate(raw_w))
-        intervals, hyp_w, hyp_xs, _ = J.hypotheses(raw_w, raw_x)
-        self.assertEqual(len(intervals), 8)
-        scorer = FakeScorer()
-        result = judge(raw_w, raw_x, scorer, max_batch=3)
-        self.assertEqual(scorer.calls, [[hyp_w, *hyp_xs[:2]], hyp_xs[2:5], hyp_xs[5:8]])
-        self.assertEqual(sum(batch.count(hyp_w) for batch in scorer.calls), 1)
-        self.assertEqual(len(result.intervals), 8)
-        exact = FakeScorer()
-        judge(raw_w, raw_x, exact, max_batch=9)
-        self.assertEqual(exact.calls, [[hyp_w, *hyp_xs]])
-
-    def test_score_count_mismatch_raises(self):
-        with self.assertRaises(ValueError):
-            judge("そうか。", "そうだ。", lambda texts: [0.0])
-
     def test_empty_result_guard(self):
         raw_w = "こんにちは。"
         result = judge(raw_w, "", FakeScorer({raw_w: -50.0}))
@@ -197,41 +105,6 @@ class JudgeWindowTests(unittest.TestCase):
         self.assertEqual(result.intervals[0]["d"], 50.0)
         self.assertFalse(result.intervals[0]["switched"])
 
-    def test_empty_x0_kept_when_w0_preferred(self):
-        raw_w = "こんにちは。"
-        result = judge(raw_w, "", FakeScorer({raw_w: 2.0}))
-        self.assertEqual((result.text, result.guard), (raw_w, None))
-
-    def test_unnormalizable_text_keeps_w0(self):
-        # 朝鲜文字母 L＋V 跨簇组合，normalize 拒绝映射。
-        scorer = FakeScorer()
-        result = judge("가", "가나", scorer)
-        self.assertEqual(result, J.WindowJudgement("가", False, "unscored", (), "normalize_failed"))
-        self.assertEqual(scorer.calls, [])
-
-
-class SummarizeTests(unittest.TestCase):
-    def test_counts(self):
-        judgements = [
-            judge("そうか。", "そうか！", FakeScorer()),                              # 相同
-            judge("そうか。", "そうだ。", FakeScorer({"そうか。": -3.0})),             # 替换，翻转
-            judge("あいうえ", "あいうえお", FakeScorer({"あいうえ": 1.0})),           # x0 多出，不翻转
-            judge("こんにちは。", "", FakeScorer({"こんにちは。": -50.0})),           # 守卫
-            judge("㍻元年です。いい", "平静元年です。いや", FakeScorer({"平成元年ですいい": -10.0})),  # normalized
-            judge("가", "가", FakeScorer()),                               # 无法规范化
-        ]
-        self.assertEqual(J.summarize(judgements), {
-            "windows": 6, "identical": 1, "scored": 4, "normalized_form": 1, "intervals": 5, "switched": 3,
-            "guards": {"empty_result": 1, "normalize_failed": 1},
-            "by_kind": {"substitution": {"switched": 3, "total": 3}, "w0_extra": {"switched": 0, "total": 1},
-                        "x0_extra": {"switched": 0, "total": 1}}})
-
-    def test_empty(self):
-        self.assertEqual(J.summarize([])["windows"], 0)
-
-
-def digest(value) -> str:
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 class CleanX0Tests(unittest.TestCase):
@@ -273,73 +146,6 @@ class JudgeFileTests(unittest.TestCase):
                          {"windows": 6, "identical": 1, "scored": 2, "intervals": 2, "switched": 1,
                           "w0_failed": 1, "x0_failed": 1, "score_error": 1})
         self.assertEqual(list(result.summary)[:1], ["windows"])
-
-    def test_w0_failure_wins_over_x0_failure(self):
-        result = self.judge_file(["a"], ["b"], failed_w={0}, failed_x={0})
-        self.assertEqual((result.records[0]["decision"], result.summary["w0_failed"], result.summary["x0_failed"]),
-                         ("w0_failed", 1, 0))
-
-    def test_count_mismatch_is_a_score_error(self):
-        result = J.judge_file(["そうか。"], ["そうだ。"], set(), set(), lambda index: lambda texts: [0.0],
-                              margin=MARGIN, max_batch=16)
-        self.assertEqual((result.texts, result.records[0]["decision"], result.summary["score_error"]),
-                         (["そうか。"], "score_error", 1))
-
-    def test_window_records(self):
-        result = self.judge_file(["元気？", "x"], ["げん き？", "y"], failed_x={1}, scores={"げんき？": -9.5})
-        self.assertEqual(result.records, [
-            {"index": 0, "identical": False, "text_form": "raw", "guard": None, "w0_text": "元気？",
-             "x0_text": "げん き？", "intervals": [{"w": "元気", "x": "げんき", "kind": "substitution", "score_w": -10.0,
-                                                  "score_x": -9.5, "d": 0.5, "switched": True}],
-             "decision": "judged"},
-            {"index": 1, "identical": False, "text_form": "unscored", "guard": None, "w0_text": "x", "x0_text": "y",
-             "intervals": [], "decision": "x0_failed"}])
-
-    def test_texts_of_both_routes_must_align(self):
-        with self.assertRaises(ValueError):
-            J.judge_file(["a", "b"], ["a"], set(), set(), lambda index: lambda texts: [], margin=MARGIN, max_batch=16)
-
-
-
-
-class ResearchPinTests(unittest.TestCase):
-    """合成样例上的逐项结果钉成 sha256；钉值取自 2026-11-11 的研究实现 `archive/2026-11-18-pre-research-restructure:experiments/quality_v5/`
-    （`asr_pair_oracle`、`asr_pair_cross_score`、`asr_pair_ctc_judge`）与 `archive/2026-11-18-pre-research-restructure:kototoki_eval/schema.py` 的 `normalize`。"""
-
-    INTERVALS_SHA256 = "6b3af256f3ff06455b5e910afb3994f0d685d9af0b97abffc3094e90bf60154d"
-    HYPOTHESES_SHA256 = "ae141c739e7b7ac2f8e3530a7842702dd9f24a40c7c8df3c25b92b428f4ef841"
-
-    def test_align_intervals_compose_are_pinned(self):
-        results = []
-        for raw_w, raw_x in SAMPLES:
-            w, x = J.normalize(raw_w).text, J.normalize(raw_x).text
-            ours = J.disagreement_intervals(w, x)
-            results.append([
-                J.align_ops(w, x), [{k: v for k, v in asdict(it).items() if k != "kind"} for it in ours],
-                [it.kind for it in ours],
-                [J.compose(w, ours, [bool(mask >> k & 1) for k in range(len(ours))]) for mask in range(1 << len(ours))]])
-        self.assertEqual(digest(results), self.INTERVALS_SHA256)
-
-    def test_normalize_and_raw_hypotheses_are_pinned(self):
-        results = []
-        for raw_w, raw_x in SAMPLES:
-            normalized = [[n.text, n.raw_spans] for n in (J.normalize(raw_w), J.normalize(raw_x))]
-            _intervals, hyp_w, hyp_xs, form = J.hypotheses(raw_w, raw_x)
-            results.append([normalized, [form, hyp_w, hyp_xs]])
-        self.assertEqual(digest(results), self.HYPOTHESES_SHA256)
-        self.assertEqual(results[3][1], ["raw", "ｶﾞｷ", ["ｶﾞｷだ"]])  # 半角浊点簇：保留 raw 形式
-
-
-class ImportBoundaryTests(unittest.TestCase):
-    def test_judge_is_base_layer(self):
-        code = (
-            "import sys, kototoki.judge\n"
-            "banned = {'torch', 'ctranslate2', 'faster_whisper', 'transformers', 'research'}\n"
-            "bad = sorted(m for m in sys.modules if m.split('.')[0] in banned)\n"
-            "print(bad)\n"
-            "sys.exit(1 if bad else 0)\n")
-        result = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

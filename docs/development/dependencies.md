@@ -75,7 +75,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
   - `hy-mt2-30b-a3b-apex-i-compact` 的条目已于 2026-11-08 删除（产品翻译不再用它，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）；研究侧 H0 仍用 `.local/models/translation/` 下已有的文件，路径由各 demo 自己管理，不在清单里。
 - llama.cpp 工具与 `qwen3.8-27b-ud-iq3_s` 模型条目已于 2026-11-18 删除（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。
 - `scripts/assets.py`：`fetch-models`、`verify` 两个子命令；下载先写 `.partial` 并边下边算 SHA256，一致才改名；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
-- 测试（core）：`tests/core/test_assets_manifest.py` 钉住代码常量与默认模型路径 == 清单、清单只有 `models`；`tests/core/test_assets_script.py` 用本地 `file://` URL 覆盖模型下载、SHA 不符清理、门控令牌与离线核对。
+- 测试（core）：`tests/core/test_assets_manifest.py` 钉住 `kototoki/plan.py` 的模型文件 SHA256 表 == 清单。`scripts/assets.py` 的下载、SHA 不符清理、门控令牌与离线核对自 2026-11-22 测试精简后没有测试。
 - **外部前置：Strata**（产品翻译，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）：Strata 0.2 版本线（本机 0.2.13.1／build 0.1.59.1）用其安装器装好，`strata` 在 PATH 上（`~/.local/bin/strata`），状态与日志在 `~/.local/state/strata/`，翻译模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录；两者都**不在 `assets.toml` 里**，`install`／`fetch-models`／`verify-assets` 不管它们，由用户安装与维护。
 
   产品启动翻译时按 ADR-0021「Q3 服务与运行顺序」核对版本线、端口 8080、run config 与上下文，不符即拒绝运行；0.2 线内升级 Strata 不改配方身份（实际版本只记进 `strata.json`，ADR-0034「Strata 版本」），换版本线或换模型须新决定。运行前须没有别的 Strata launch 在服务，且空闲显存 ≥14000 MiB。
@@ -84,5 +84,5 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
   2026-11-08 首用 smoke（`.local/smoke/20261108T104209Z/`）**通过**：合成 12 条、2 包，首次尝试全部接受（格式失败 0、交付失败 0、回退 0），`reasoning_content` 全空，推理自救／非有限 logits／重复截停 0，high 条目注入 1 行生效；Strata 加载 89 s，探测核对 0.2.12／build 0.1.58、DFlash2、kv int8、spec 4；整机显存峰值 16.1 GB、内存峰值 42.9 GiB；`--stop` 后 status 为空、空闲显存 14884 MiB。**每包约 25–31 s（均值 27.8 s，输出约 130 token）**，远慢于 v12 F1（MTP、32k）的约 3.2 s；冷启动后只有 2 包，原因未查明。
 
   此前两次失败已修：子进程里 `strata launch --no-tui` 不点名模型以退出码 2 拒绝（改为 `--model iq3_s`）；研究侧 probe 按参数判断起草方式，把默认启动误认成 MTP（改读服务日志）。
-- `scripts/upgrade.py`（`just upgrade`／`upgrade-check`）：规则见上文[升级](#升级)。测试（core）`tests/core/test_upgrade_script.py` 覆盖主版本判定、去钉／锚点与 uv 输出解析，不碰网络与 uv。2026-10-19 `just upgrade-check` 实测三项均为最新（跳过 pillow 12→13）；实际升级路径（非 `--check`）尚未端到端运行过，其步骤与同日的手动升级一致。
+- `scripts/upgrade.py`（`just upgrade`／`upgrade-check`）：规则见上文[升级](#升级)。自 2026-11-22 测试精简后没有测试。2026-10-19 `just upgrade-check` 实测三项均为最新（跳过 pillow 12→13）；实际升级路径（非 `--check`）尚未端到端运行过，其步骤与同日的手动升级一致。
 - `scripts/assets.py` 的真实下载路径（HF）仍未运行过，只由本地伪 URL 覆盖；Ubuntu 上第一次 `just fetch-models` 时验证。

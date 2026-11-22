@@ -54,10 +54,11 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/judge.py`；`WhisperAsr.score` 在 `kototoki/asr_whisper.py`，cross 的壳在 `kototoki/workers/asr.py`（[枢纽页](../stt-asr.md#代码与验证入口)）。
-- `tests/core/test_asr_whisper.py` 的 `score`：伪模型按输入顺序累加 log 概率、空文本得 0 且不送入 `align`、分批。
-- `tests/core/test_judge.py`：规范化、编辑对齐与分歧区间、偏移映射、原文假设与规范化回退、相同窗口不打分、`d > m` 边界、多区间合并、空结果守卫、批切分、数量不符抛错、`clean_x0`、`judge_file` 的逐窗决策（w0 失败优先于 x0 失败、打分出错、窗口记录、计数）；与研究脚本合成样例的结果钉成 sha256。
-- `tests/core/test_stt_workers.py` 的 ASR 部分：
-  - `cross`：四个产物齐全且身份分别按单引擎／cross 计算、边界 d 保持 w0、偏好 x0 的区间被切换、w0 失败窗口仍记失败、x0 失败窗口取 w0、打分出错与数量不符取 w0 且日志不含文字、w0 那一路之后失败时四个产物都不写、合并结果被对齐消费。
-  - 加载：先 Whisper 后 Qwen 并拆分两路模型身份、单引擎只加载自己的部件（`CrossStartupTest`）。
-  - 字节：四个 cross 产物与单引擎 `asr.json` 钉成 sha256（`AsrArtifactBytesTest`，`time.perf_counter` 固定）。
+- `tests/core/test_asr_whisper.py` 的 `score`：伪模型按输入顺序累加 log 概率；空文本得 0 且不送入 `align`。
+- `tests/core/test_judge.py`：分歧区间的种类与下标、`compose`；原文假设保留 w0 标点、映射失败回退规范化；`d` 恰在边界时保持 w0；相同窗口不打分；单区间记录与多区间合并；空结果守卫；`clean_x0`；`judge_file` 的逐窗决策（identical／judged／w0_failed／x0_failed／score_error）与计数。
+- `tests/core/test_stt_workers.py` 的 cross：四个产物齐全且身份分别按单引擎／cross 计算、偏好 x0 的区间被切换、x0 触顶窗口记失败、w0 失败窗口仍记失败且不打分、`failed_windows` 与审计记录正确。
+- 测试精简（2026-11-22）后不再有测试覆盖：
+  - 裁判：编辑对齐的相邻区间与末尾插入、半角浊音簇映射、两路空文本、批切分与 `max_batch`、数量不符抛错、不可规范化文本保持 w0、`summarize` 计数、与研究脚本合成样例的 sha256 钉子、`judge` 属基础层的导入边界。
+  - cross 壳：margin 边界、守卫只走 w0 路径且裁判看守卫后文字、打分出错与数量不符取 w0 且日志不含文字、w0 之后失败则四个产物都不写、先 Whisper 后 Qwen 的加载与两路模型身份拆分、四个 cross 产物与单引擎 `asr.json` 的字节 sha256 钉子、合并结果被对齐消费。
+  - `score`：log 概率下限钳位、概率与结果数量不符抛错、编码一次与每批至多 16、起始序列。
 - 真实模型验证与未验证项见[枢纽页](../stt-asr.md#代码与验证入口)。

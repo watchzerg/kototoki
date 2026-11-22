@@ -46,9 +46,12 @@ covers:
 
 - 代码：`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contained`、`ProcessLock`、`LockError`）；worker 启动在 `kototoki/job.py`（`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
 - 测试（core，`just test`）：
-  - `tests/core/test_protocol.py`：`classify_launch`（正常、部分失败、`fatal`、`startup_failed`、无事件崩溃、退出码 1 但缺事件）。
-  - `tests/core/test_procs.py`：锁内容、空锁文件与不可解析、无 `pid_created` 的外部锁、死 pid 与破锁、非整数 pid、并发创建、`update` 只改自己的锁、`release` 只删自己的锁；`/proc` 启动时间（含带空格与括号的 comm）与 pid 复用判定、`contained` 的命令前缀。
-  - 同文件的 `LockTests`（锁冲突退出码、残留锁、空的／无法解析的锁、锁内 pid 记录）、`ScanTests`（早期失败时释放工作根锁）、`IsolationTests`（崩溃文件隔离、按文件重启、`_launch` 异常时回收 worker）。
-- 测试（full，`just test-full`）：`tests/full/test_procs_children.py` 起真的父进程按产品方式启动子进程，强杀父进程后子进程随之结束，且子进程不在父进程的进程组里。
+  - `tests/core/test_protocol.py`：`run_worker` 单文件失败隔离、`fatal` 以退出码 2 停止；`classify_launch` 的部分失败（不重启）、`fatal`（从下一文件重启）、无事件崩溃归咎于最后已处理 id 之后的文件；`failed_windows` 清空窗口文字并记录。
+  - `tests/core/test_procs.py`：存活持有者永不被抢占；死持有者的残留锁默认拒绝、`break_stale` 才替换并记录旧锁；`release` 只删自己的锁；`process_created`／`process_matches` 以启动时间识别 pid 复用。
+  - `tests/core/test_job.py` 的 `LockTests`（GPU 锁冲突时保留 CPU 阶段产物）与 `IsolationTests`（崩溃文件隔离并按文件重启 worker）。
+  - 测试精简（2026-11-22）后不再有测试覆盖：
+    - 进程原语：锁内容、空锁与不可解析的锁、无 `pid_created` 的外部锁按 pid 判断、非整数 pid、并发创建报锁错误、`update` 只改自己的锁、含空格与括号的 comm 解析、无效 pid 无身份、`contained` 的 `setpriv` 前缀。
+    - 协议：`jobs` 文件往返与畸形输入、全部完成退出 0 且每文件一行 UTF-8、启动失败退出码 2、`run_worker` 只加载一次、`classify_launch` 的 `startup_failed`、退出码 1 缺事件、全部已报告后崩溃无嫌疑、无待处理 id 的事件被忽略、`fail_window` 与 `validate` 的拒绝。
+    - 编排侧：`startup_failed` 不重启、退出码 1 缺事件按崩溃重启、读 worker 输出时中断回收 worker、各类锁冲突与残留锁、空锁破除、锁内 pid 记录。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。
 - 未验证（Linux）：整批运行中强杀编排器后 GPU worker 释放显存的真实路径（Windows 时期的[最终验收](../../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)只作历史）。

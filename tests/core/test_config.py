@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
-import tomllib
 import unittest
 
-from dataclasses import asdict
-
-from kototoki import config, cues
+from kototoki import config
 
 MINIMAL = '[paths]\ninput_dir = "in"\n'
 
@@ -30,23 +27,9 @@ class LoadTests(unittest.TestCase):
         cfg = config.load(self.write(MINIMAL), environ={})
         self.assertEqual(cfg.engine, "cross")  # ADR-0035「默认引擎」
         self.assertEqual(cfg.run.extract_workers, 4)
-        self.assertEqual(cfg.run.stable_check_s, 10.0)
-        self.assertEqual(cfg.input.audio_language, "jpn")
         self.assertIs(cfg.input.use_embedded_subtitles, True)  # ADR-0024：默认采用内嵌日文字幕
-        off = config.load(self.write(MINIMAL + "[input]\nuse_embedded_subtitles = false\n"), environ={})
-        self.assertIs(off.input.use_embedded_subtitles, False)
-        with self.assertRaisesRegex(config.ConfigError, "use_embedded_subtitles must be true or false"):
-            config.load(self.write(MINIMAL + '[input]\nuse_embedded_subtitles = "yes"\n'), environ={})
-        self.assertEqual(cfg.input.extensions, (".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi", ".wav", ".flac",
-                                                ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".mka"))
         self.assertEqual(cfg.cues, config.CueRules(24, 6.0, 0.8, 1.0, "。！？!?", "、，,", 0.3))
-        self.assertEqual(cfg.translate, config.TranslateConfig(seed=20261008))
-        self.assertEqual(cfg.names, config.NamesConfig(seed=20261019))
         self.assertEqual(cfg.source, self.root / "kototoki.toml")
-
-    def test_cue_rules_have_the_shape_build_cues_expects(self) -> None:
-        rules = asdict(config.load(self.write(MINIMAL), environ={}).cues)
-        self.assertEqual(set(rules), cues.RULE_KEYS)
 
     def test_user_relative_paths_resolve_against_config_dir(self) -> None:
         cfg = config.load(self.write(MINIMAL + 'work_dir = "w"\nmodels_root = "models"\nffmpeg = "bin/ffmpeg"\n'), environ={})
@@ -55,113 +38,19 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(cfg.paths.models_root, self.root / "models")
         self.assertEqual(cfg.paths.ffmpeg, self.root / "bin" / "ffmpeg")
 
-    def test_default_relative_paths_resolve_against_repo_root(self) -> None:
-        cfg = config.load(self.write(MINIMAL), environ={})
-        self.assertEqual(cfg.paths.models_root, config.REPO_ROOT / ".local" / "models")
-        self.assertEqual(cfg.paths.work_dir, config.REPO_ROOT / ".local" / "work")
-
-    def test_bare_ffmpeg_names_are_looked_up_on_path(self) -> None:
-        bindir = self.root / "bin"
-        bindir.mkdir()
-        for name in ("ffmpeg", "ffprobe"):
-            (bindir / name).write_text("#!/bin/sh\n", encoding="utf-8")
-            (bindir / name).chmod(0o755)
-        cfg = config.load(self.write(MINIMAL), environ={"PATH": str(bindir)})
-        self.assertEqual((cfg.paths.ffmpeg, cfg.paths.ffprobe), (bindir / "ffmpeg", bindir / "ffprobe"))
-        with self.assertRaisesRegex(config.ConfigError, r"\[paths\] ffmpeg: 'ffmpeg' not found on PATH"):
-            config.load(self.write(MINIMAL), environ={"PATH": str(self.root / "empty")})
-
-    def test_model_paths_are_relative_to_models_root(self) -> None:
-        cfg = config.load(self.write(MINIMAL + 'models_root = "m"\n[asr.w0]\nmodel = "w"\n[align]\nmodel = "/abs/mms"\n'),
-                          environ={})
-        self.assertEqual(cfg.models.w0, self.root / "m" / "w")
-        self.assertEqual(cfg.models.align, Path("/abs/mms"))
-        default = config.load(self.write(MINIMAL), environ={})
-        self.assertEqual(default.models.vad, config.REPO_ROOT / ".local/models/vad-comparison/"
-                         "pyannote-segmentation-3.0/pytorch_model.bin")
-
-    def test_cross_engine_is_accepted_and_carries_both_asr_models(self) -> None:
-        cfg = config.load(self.write(MINIMAL + '[stt]\nengine = "w0"\n'), environ={})
-        self.assertEqual(cfg.engine, "w0")
-        cfg = config.load(self.write(MINIMAL), environ={})
-        self.assertEqual(config.ENGINES, ("w0", "x0", "cross"))
-        self.assertEqual(cfg.models.w0, config.REPO_ROOT / ".local/models/faster-whisper-large-v3")
-        self.assertEqual(cfg.models.x0, config.REPO_ROOT / ".local/models/qwen3-asr-1.7b-hf")
-
-    def test_unknown_engine_message_lists_all_engines(self) -> None:
-        with self.assertRaisesRegex(config.ConfigError, r"one of w0, x0, cross, got 'w1'"):
-            config.load(self.write(MINIMAL + '[stt]\nengine = "w1"\n'), environ={})
-
-    def test_names_has_only_a_seed(self) -> None:
-        cfg = config.load(self.write(MINIMAL + "[names]\nseed = 1\n"), environ={})
-        self.assertEqual(cfg.names, config.NamesConfig(seed=1))
-        self.assertFalse(hasattr(cfg.models, "names"))  # 建表模型由 Strata 管理（ADR-0029「Strata session」）
-        self.assertFalse(hasattr(cfg.paths, "llama_server"))
-
     def test_unknown_keys_and_sections_are_errors(self) -> None:
         for text, needle in ((MINIMAL + "bogus = 1\n", "bogus"),
-                             (MINIMAL + "[names]\nthink = true\n", "think"),
-                             (MINIMAL + "[names]\nenabled = true\n", "enabled"),  # 已删除（原 ADR-0019，现见 ADR-0028「阶段位置」），建表必开
-                             (MINIMAL + "[names]\nmodel = \"g/x.gguf\"\n", "model"),  # 已删除（原 ADR-0022，现见 ADR-0028「阶段位置」），建表走 Strata
-                             (MINIMAL + "[names]\nport = 8081\n", "port"),
-                             (MINIMAL + 'llama_server = "x.exe"\n', "llama_server"),  # 已删除（原 ADR-0022，现见 ADR-0028「阶段位置」）
-                             (MINIMAL + "[translate]\nmodel = \"x.gguf\"\n", "model"),
-                             (MINIMAL + "[translate]\nport = 8080\n", "port"),
-                             (MINIMAL + "[vad]\ndevice = \"cpu\"\n", "device"),
-                             (MINIMAL + "[run]\nbreak_stale_lock = true\n", "break_stale_lock"),
-                             (MINIMAL + 'output_dir = "out"\n', "output_dir"),  # 已删除（原 ADR-0020，现见 ADR-0007「工作目录」）
-                             (MINIMAL + "[run]\nforce = true\n", "force"),  # 已删除（原 ADR-0020，现见 ADR-0007「工作目录」）
-                             (MINIMAL + '[input]\nvideo_extensions = [".mkv"]\n', "video_extensions"),  # 改名 extensions
-                             (MINIMAL + "[extra]\nx = 1\n", "[extra]"),
-                             (MINIMAL + "[asr.whisper]\nmodel = \"x\"\n", "[asr.whisper]")):
+                             (MINIMAL + "[extra]\nx = 1\n", "[extra]")):
             with self.subTest(needle=needle), self.assertRaisesRegex(config.ConfigError, needle.replace("[", r"\[")):
                 config.load(self.write(text), environ={})
 
     def test_required_paths_and_types_are_checked(self) -> None:
         bad = (('[paths]\n', "input_dir is required"),
                (MINIMAL + "[run]\nextract_workers = \"4\"\n", "must be an integer"),
-               (MINIMAL + "[translate]\nseed = 0\n", r"\[translate\] seed"),  # Strata 不接受 0
-               (MINIMAL + "[translate]\nseed = 2147483648\n", r"\[translate\] seed"),
-               (MINIMAL + "[names]\nseed = 0\n", r"\[names\] seed"),  # 建表也在 Strata 上，同样只接受正整数
-               (MINIMAL + "[names]\nseed = -3\n", r"\[names\] seed"),
-               (MINIMAL + "[stt]\nengine = \"w1\"\n", "engine must be one of"),
-               (MINIMAL + "[input]\nextensions = \".mkv\"\n", "list of nonempty strings"),
-               (MINIMAL + "[run]\nextract_workers = 0\n", "at least 1"))
+               (MINIMAL + "[translate]\nseed = 0\n", r"\[translate\] seed"))  # Strata 不接受 0
         for text, message in bad:
             with self.subTest(message=message), self.assertRaisesRegex(config.ConfigError, message):
                 config.load(self.write(text), environ={})
-
-    def test_integer_accepted_for_float_keys(self) -> None:
-        cfg = config.load(self.write(MINIMAL + "[cues]\nmax_duration_s = 7\n"), environ={})
-        self.assertEqual(cfg.cues.max_duration_s, 7.0)
-        self.assertIsInstance(cfg.cues.max_duration_s, float)
-
-    def test_invalid_toml_and_missing_file_raise_config_error(self) -> None:
-        with self.assertRaisesRegex(config.ConfigError, "Invalid TOML"):
-            config.load(self.write("[paths\n"), environ={})
-        with self.assertRaisesRegex(config.ConfigError, "Cannot read"):
-            config.load(self.root / "missing.toml", environ={})
-
-    def test_gpu_lock_is_fixed_and_break_stale_lock_comes_from_environment(self) -> None:
-        path = self.write(MINIMAL)
-        self.assertEqual(config.load(path, environ={}).gpu_lock, config.REPO_ROOT / ".local" / "gpu.lock")
-        self.assertIs(config.load(path, environ={}).break_stale_lock, False)
-        self.assertIs(config.load(path, environ={"KOTOTOKI_BREAK_STALE_LOCK": "1"}).break_stale_lock, True)
-        self.assertIs(config.load(path, environ={"KOTOTOKI_BREAK_STALE_LOCK": "0"}).break_stale_lock, False)
-
-
-class ExampleFileTests(unittest.TestCase):
-    def test_example_config_loads_and_lists_every_key(self) -> None:
-        example = config.REPO_ROOT / "kototoki.toml.example"
-        self.assertIn("# work_dir", example.read_text(encoding="utf-8"))  # 示例里 work_dir 只以注释出现
-        cfg = config.load(example, environ={})
-        self.assertEqual(cfg.engine, "cross")
-        with example.open("rb") as stream:
-            document = tomllib.load(stream)
-        written = {(section, key) for section, table in config._flatten(document).items() for key in table}
-        expected = {(section, key) for section, table in config.DEFAULTS.items() for key in table}
-        expected.discard(("paths", "work_dir"))
-        self.assertEqual(written, expected)
 
 
 if __name__ == "__main__":

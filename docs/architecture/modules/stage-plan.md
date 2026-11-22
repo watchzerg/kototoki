@@ -82,7 +82,7 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 ### 引擎组成
 
-`ENGINE_PARTS`（`w0 → ("w0",)`、`x0 → ("x0",)`、`cross → ("w0", "x0")`）是"一个 ASR 引擎由哪些模型组成"的唯一出处：`model_files`、worker 壳 `workers/asr.start`（加载哪些适配器）与复读守卫的判定（这一路是不是 w0）都读它。它与 `ASR_RECIPES`、`config.ENGINES` 同键（`config` 在基础层，不反向导入 `plan`，靠测试保持一致）。
+`ENGINE_PARTS`（`w0 → ("w0",)`、`x0 → ("x0",)`、`cross → ("w0", "x0")`）是"一个 ASR 引擎由哪些模型组成"的唯一出处：`model_files`、worker 壳 `workers/asr.start`（加载哪些适配器）与复读守卫的判定（这一路是不是 w0）都读它。它与 `ASR_RECIPES`、`config.ENGINES` 同键（`config` 在基础层，不反向导入 `plan`，已无测试保持一致，改动时需人工核对）。
 
 ### 模型文件 SHA256
 
@@ -104,13 +104,14 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 
 - 代码：`kototoki/plan.py`（`Target`、`Plan`、`next_stage`、`advance`、`PlanError`、`ModelSha`、`ENGINE_PARTS`、`ASR_RECIPES`、各阶段身份函数、`embedded_identity`、`embedded_current`、`_current_with_ja_srt`、`EMBEDDED_KEY`、`names_identity`、`translate_plan`、`STAGES`／`GPU_STAGES`／`STAGE_INPUTS`／`STAGE_OUTPUT`／`IDENTITY_KEY`、`worker_models`、`model_files`、`recipe_hash`、模型文件 SHA256 常量）。
 - `tests/core/test_plan.py`：
-  - 阶段链逐级推进；cues 阶段同时要求 `ja-cues.json` 与 SHA256 相符的 `ja.srt`（手改 `ja.srt` 后 cues 重建，缺 `ja_srt_sha256` 不当前）；`MEDIA` hash 变而 PCM 不变时 vad 及下游仍当前。
-  - 无语音直达 `publish`；`advance` 停在未写出产物的阶段、拒绝终态；连续调用结果相同且不改写入参；`PlanError` 标明阶段；损坏产物视为不当前。
-  - 翻译阶段以属性 patch 替换 `kototoki.translate.plan`，names 阶段用伪建表 hash。
-  - names 组：身份随配方 hash 与 seed 变化；链为 cues → names → translate；表过期停在 names；改高置信条目改变翻译身份、只改中低置信条目不变；从 names 继续推进；无语音路径没有 names 键。
-  - 内嵌字幕组（`EmbeddedChainTests`）：身份随输入文件、配方与流索引变化；计划从 names 起且不调用 `ModelSha`；内嵌记录只在身份与 `ja.srt` 都相符时当前；一条路径改写 `ja.srt` 使另一条路径的记录不当前；目录里遗留的 STT 产物不影响这条路径。
-  - 引擎组（`AsrEngineTests`）：`ENGINE_PARTS` 表及其与 `ASR_RECIPES`、`config.ENGINES` 同键；`model_files` 按表中次序给出清单；cross 身份含两路模型与 cross 配方 hash；单引擎配方 hash 钉值。
-- `tests/core/test_job.py` 核对一次整批运行中每文件 `next_stage` 恰一次、每个跑过的阶段 `advance` 恰一次；`tests/core/test_stt_workers.py` 核对壳写出的身份与本模块的期望身份逐字段相等。
+  - 阶段链：首个需要的阶段随产物推进；手改 `ja.srt` 后 cues 重跑；无语音直达 `publish`；上游身份失效则从该阶段重启。
+  - names 组：表过期停在 names；改高置信条目改变翻译身份、只改中低置信条目不变。
+  - 内嵌字幕组（`EmbeddedChainTests`）：计划从 names 起且不要求 GPU 模型。
+- `tests/core/test_job.py` 的 `ScanTests`／`StageTests`／`ResumeTests` 经伪 worker（`tests/fake_worker.py` 同样经本模块取身份）走整批运行；`tests/core/test_stt_workers.py` 对 worker 壳写出身份的核对已被精简，见下。
+- 测试精简（2026-11-22）后不再有测试覆盖：
+  - 阶段链：cues 阶段要求 `ja_srt_sha256`、`MEDIA` hash 变而 PCM 不变时下游仍当前、`advance` 的推进与对终态的拒绝、已发布记录仍返回 translate、`PlanError` 标明阶段、重复调用的纯度。
+  - names 与内嵌：身份随配方 hash 与 seed、链序 cues → names → translate、坏表是 translate 的计划错误、无语音路径无 names 键、内嵌身份随输入／配方／流索引、两条路径互相使对方 `ja.srt` 失效、遗留 STT 产物被忽略。
+  - 引擎与阶段表：`ENGINE_PARTS` 与 `ASR_RECIPES`、`config.ENGINES` 同键、`model_files` 次序、cross 身份含两路模型 SHA、`worker_models`、各配方 hash 钉值、`STAGE_INPUTS`／`STAGE_OUTPUT`／`IDENTITY_KEY`；每文件 `next_stage` 与每阶段 `advance` 的调用次数；壳写出身份与期望身份逐字段相等。
 - 未验证：没有单独的真实运行；行为由编排与 worker 的整片验收间接覆盖。
 
 ## 变更与决策来源

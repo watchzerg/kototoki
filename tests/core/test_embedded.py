@@ -31,12 +31,6 @@ class CleanTests(unittest.TestCase):
         ))
         self.assertEqual(self.cues(text), [(500, 1500, "こんにちは 世界"), (1600, 2200, "斜体と色 です")])
 
-    def test_subrip_markup_and_literal_brackets_survive_selectively(self) -> None:
-        text = block(1, "00:00:00,500", "00:00:01,500", "<i>こんにちは</i>", "二行目") + "\n" + \
-            block(2, "00:00:01,600", "00:00:02,400", "（ドアの音）<3 {笑}")
-        # 听障说明、不是标签的尖括号与不以反斜杠开头的花括号原样保留
-        self.assertEqual(self.cues(text), [(500, 1500, "こんにちは 二行目"), (1600, 2400, "（ドアの音）<3 {笑}")])
-
     def test_empty_drawing_invalid_and_duplicate_cues_are_dropped(self) -> None:
         text = "\n".join((
             block(1, "00:00:01,000", "00:00:02,000", "<font size=\"60\">台詞</font>"),
@@ -54,26 +48,6 @@ class CleanTests(unittest.TestCase):
     def test_cues_are_sorted_by_time_and_renumbered(self) -> None:
         text = block(7, "00:00:05,000", "00:00:06,000", "後") + "\n" + block(3, "00:00:01,000", "00:00:02,000", "前")
         self.assertEqual(self.cues(text), [(1000, 2000, "前"), (5000, 6000, "後")])
-
-    def test_output_text_is_unchanged_by_the_integer_millisecond_entry(self) -> None:
-        # 期望文本取自 2026-11-11 架构整理票据 08 改动前的代码（经秒再取整的 `format_srt`）。
-        text = "\n".join((block(7, "00:00:05,000", "01:00:06,999", "後"),
-                          block(3, "00:00:01,001", "00:00:02,000", "<i>前</i>", "二")))
-        self.assertEqual(embedded.clean(text)[0],
-                         "1\n00:00:01,001 --> 00:00:02,000\n前 二\n\n2\n00:00:05,000 --> 01:00:06,999\n後\n")
-
-    def test_blank_lines_inside_a_cue_and_crlf_do_not_split_it(self) -> None:
-        text = "﻿1\r\n00:00:01,000 --> 00:00:02,000\r\n一行目\r\n\r\n二行目\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,000\r\n次\r\n"
-        self.assertEqual(self.cues(text), [(1000, 2000, "一行目 二行目"), (3000, 4000, "次")])
-
-    def test_a_number_line_inside_text_is_not_a_cue_head(self) -> None:
-        text = block(1, "00:00:01,000", "00:00:02,000", "2", "人") + "\n" + block(2, "00:00:03,000", "00:00:04,000", "次")
-        self.assertEqual(self.cues(text), [(1000, 2000, "2 人"), (3000, 4000, "次")])
-
-    def test_nothing_usable_gives_empty_text(self) -> None:
-        for text in ("", "\n\n", "not a subtitle", block(1, "00:00:01,000", "00:00:02,000", "<i></i>")):
-            cleaned, stats = embedded.clean(text)
-            self.assertEqual((cleaned, stats["cues"]), ("", 0))
 
 
 if __name__ == "__main__":

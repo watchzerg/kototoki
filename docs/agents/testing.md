@@ -6,7 +6,7 @@
 
 任何测试（core 与 full，含 `gate-full`）都**不加载模型权重、不推理、不占 GPU**，因此都不需要 `.local/gpu.lock`。
 
-- **core**：轻量测试，在进程内或本解释器（`sys.executable`）子进程中运行；不碰网络与 socket、不调用外部二进制，可用临时文件；可在任意 worktree 并行运行，整套单机约半分钟。单 ticket 阶段的完整门禁只跑这一层。允许子进程是用户 2026-10-18 的裁定：伪 worker 子进程与导入边界测试（ADR-0007「锁与进程」"编排器不 import torch"）留在快门禁里，代价是 core 约 30 s 而不是几秒。
+- **core**：轻量测试，在进程内或本解释器（`sys.executable`）子进程中运行；不碰网络与 socket、不调用外部二进制，可用临时文件；可在任意 worktree 并行运行，整套单机约 10 秒。单 ticket 阶段的完整门禁只跑这一层。允许子进程是用户 2026-10-18 的裁定：伪 worker 子进程与导入边界测试（ADR-0007「锁与进程」"编排器不 import torch"）留在快门禁里，代价是 core 有约 10 秒而不是一两秒。
 - **full**：离线集成测试，可调用项目内 ffmpeg 合成秒级素材、用 fake worker 子进程、起本地伪 HTTP server、用 mock；不调用真实模型。随 ticket 编写并接入标准入口 `just test-full`，可在 ticket 阶段定向运行，无筛选的完整 full 验证留到最终集成。
 - **规则移植**：研究结论进产品后，产品实现是唯一权威，研究直接调用产品实现，不保留研究侧副本，因此没有产品与研究实现的实时对照层；core 不导入研究代码，需要钉住的取值在 core 里以字面量钉，注释写明来源（ADR 或归档 tag 路径）与取值日期（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) R6，[ADR-0025](../adr/0025-product-package-boundaries.md) 第 4 点）。
 - **小模型例外**：体积很小、可在 CPU 运行的产品模型可以进 full，每个须用户单独批准，批准记录写在本节下方。CPU 测试走的是另一条设备路径（产品 VAD 设备固定为 `cuda:0`，ADR-0007），不能当作 GPU 路径的证据。当前唯一候选是产品 VAD 用的 pyannote segmentation-3.0（`pytorch_model.bin` 约 5.9 MB），尚未批准。

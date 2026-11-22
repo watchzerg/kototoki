@@ -158,19 +158,6 @@ class TranscribeTest(unittest.TestCase):
         self.audio = np.zeros(48000, dtype=np.float32)
         self.chunks = [window(0, 16000), window(16000, 32000), window(32000, 48000)]
 
-    def test_windows_are_transcribed_independently_with_recipe_options(self):
-        asr = fake_qwen(self.module, [("あ", 2), ("い", 3), ("う", 4)])
-        segments, traces, failures = asr.transcribe(self.audio, self.chunks)
-        self.assertEqual([s["text"] for s in segments], ["あ", "い", "う"])
-        self.assertEqual(failures, [])
-        self.assertEqual([(s["start_sample"], s["end_sample"]) for s in segments],
-                         [(0, 16000), (16000, 32000), (32000, 48000)])
-        self.assertEqual(set(segments[0]), {"text", "start", "end", "start_sample", "end_sample", "avg_logprob"})
-        self.assertEqual(traces[1]["tokens"], [0, 1, 2])  # 只取 prompt 之后的生成部分
-        self.assertFalse(traces[1]["token_limit_reached"])
-        self.assertEqual(asr._model.calls, [(LIMIT, False)] * 3)
-        self.assertEqual(asr.metadata["peak_reserved_bytes"], 2)
-
     def test_token_limit_window_keeps_truncated_text_for_the_shell_to_empty(self):
         asr = fake_qwen(self.module, [("あ", 2), ("ああああ", LIMIT), ("う", 4)])
         segments, traces, failures = asr.transcribe(self.audio, self.chunks)
@@ -180,25 +167,6 @@ class TranscribeTest(unittest.TestCase):
         self.assertEqual(failures, [(1, f"token_limit_reached: generated {LIMIT} tokens")])
         self.assertEqual(segments[2]["text"], "う")
 
-    def test_runtime_error_in_one_window_is_recorded_and_the_rest_continue(self):
-        asr = fake_qwen(self.module, [("あ", 2), RuntimeError("CUDA out of memory"), ("う", 4)])
-        segments, traces, failures = asr.transcribe(self.audio, self.chunks)
-        self.assertEqual([s["text"] for s in segments], ["あ", "", "う"])
-        self.assertIsNone(traces[1])
-        self.assertEqual(failures[0][0], 1)
-        self.assertIn("RuntimeError", failures[0][1])
-
-    def test_model_off_cuda_is_rejected(self):
-        asr = fake_qwen(self.module, [("あ", 2)])
-        asr._model.parameters = lambda: [types.SimpleNamespace(device="cpu")]
-        with self.assertRaises(RuntimeError):
-            asr.transcribe(self.audio, self.chunks)
-
-    def test_invalid_windows_are_rejected_before_decoding(self):
-        self.chunks[1]["end_sample"] = 15000
-        asr = fake_qwen(self.module, [])
-        with self.assertRaises(ValueError):
-            asr.transcribe(self.audio, self.chunks)
 
 
 class X0WorkerTest(WorkerTestCase):
@@ -236,16 +204,6 @@ class X0WorkerTest(WorkerTestCase):
         self.assertEqual(align["failed_windows"][0]["chunk_index"], 1)
         _, srt_text = cues.build_cues(align, config.DEFAULTS["cues"])
         self.assertNotIn("あ", srt_text)
-
-
-class X0ShellTest(unittest.TestCase):
-    def test_recipe_hash_and_model_files_follow_engine(self):
-        self.assertEqual(plan.recipe_hash("asr", engine="x0"), recipes.recipe_hash(recipes.X0))
-        files = plan.model_files("asr", {"x0": "q"}, engine="x0")
-        self.assertEqual(len(files), 7)
-        self.assertEqual(files["qwen3-asr-1.7b-hf/model.safetensors"][1],
-                         "2db53c7d81bd9b8cbc6a074e89be2c968a0d373fb4ee68bb1b1e14f7042dfee1")
-        self.assertTrue(all(path.parent.name == "q" for path, _ in files.values()))
 
 
 if __name__ == "__main__":

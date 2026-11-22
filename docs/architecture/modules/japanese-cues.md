@@ -70,10 +70,8 @@ covers:
 
 - 代码：`kototoki/cues.py`（`build_cues`、`is_lexical`）；日志行在 `kototoki/job.py`（`cues_batch`、`build_ja_cues`）。
 - 测试（core，`just test`）：
-  - `tests/core/test_cues.py`：插值、边缘外推与夹取、整窗 `fallback`、三级切分与时长切分、句末与全文末单个超限字符不再切、lead-out 不重叠、min-duration。
-  - 同一文件：间隔断句（跨子段切、同一子段内不切、子段相接与跨窗口照切）、空输入、全 `text_only` 窗、纯标点、♪ 附着。
-  - 同一文件：非零 `offset_s` 对窗口、子段与 units 各只加一次（另有一条 `align.map_records` → `build_cues` 整链用例，期望值取自 offset 挪到 cue 之前的代码，证明结果不变）、SRT 可被 `parse_srt` 解析且与 payload 一致、规则键校验。
-  - `tests/core/test_job.py` 的 `RunLogTests`：cues 三件套、done 行计数、0 条 cue 为 WARNING。
+  - `tests/core/test_cues.py`：字符时间插值、整窗 `fallback` 按 VAD 子段分配；跨 VAD 子段的间隔断句、句末标点断句并留在原条、长句在最后一个放得下的软断点切开、无软断点时均衡硬切、超时长切分；lead-out 不越过下一条起点、min-duration 向前延长且不重叠；纯标点给 0 条；`offset_s` 只加一次、SRT 与 payload 一致。
+  - 测试精简（2026-11-22）后不再有测试覆盖：边缘外推与夹取、回退时长上限与余数分配、纯文字窗在有时间窗之间、同一子段内与跨窗口的间隔、句末与全文末单个超限字符不再切、空输入、♪ 附着、非零 `offset_s` 整链、规则键校验、`RunLogTests` 中 cues 三件套的日志行与 0 条 cue 的 WARNING。
 - 离线观感（2026-10-14，当时的 `[cues]` 初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（现行默认值见[配置参考](config-and-media/reference.md)）。记录见票据 04 Comments。
 - x0 标点密度离线对照（2026-10-14，票据 07；现有同窗 X0／W0 研究期 `result.json`，hf-ii／hf-iii 各 6 个冻结窗口中两引擎都有结果的 11 个，同一组 101 个 VAD 窗口，默认 `[cues]`）：x0 每 100 个词汇字符有 7.7 个句末标点、2.5 个逗号，w0 为 2.3 与 0.6；cue 数 626 对 591，平均每条 9.9 对 9.8 字、p90 均为 18、触及 24 字上限 4 对 3 条，平均时长 1.84 s 对 1.99 s；以句末标点收尾的 cue 占 69% 对 20%，w0 其余多在时间间隔或硬切处断开。结论：x0 的标点主要改变断点位置（更多落在句末），不改变条目长度，现有初值无需按引擎区分。
 - 票据 12 离线重算（2026-10-15，整片验收 `align.json`，初值 `[cues]`）：跨 VAD 子段才断句后，cue 数 w0／II 1056→1048、w0／III 1188→1181、x0／II 1154→1150、x0／III 1263→1257，≤2 字条目 113→110、124→118、115→114、95→90，重叠与 >6 s 条目数不变。建票样本（HF II w0 约 1969 s 的两字词）仍为两条：两字都落在 VAD 子段之外（Pyannote 漏检了约 2.4 s 的拖长音），本规则无法判定；词边界方案由票据 13 调研，结论见下一条。

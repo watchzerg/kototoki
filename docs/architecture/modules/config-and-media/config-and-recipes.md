@@ -25,7 +25,7 @@ covers:
 - cue：切分顺序、回填方式、整窗回退每字符时长上限 0.25 s（`CUES["fallback_max_char_s"]`，`cues` 直接读它，没有第二份常量）与毫秒取整；数值规则在配置 `[cues]`，作为影响输出的配置键另入身份。
 - `SAMPLE_RATE`、`MAX_WINDOW_SAMPLES` 只在 `recipes.py` 定义。
 
-**cross 引擎的配方**：`cross` 需要 `[asr.w0]` 与 `[asr.x0]` 两节的模型路径，不新增配置键。配方 `CROSS`（id `cross-w0-x0-whisper-judge-v1`，hash 由 `tests/core/test_recipes.py` 钉住）嵌入 `W0` 与 `X0` 两个子配方和裁判参数 `judge`：
+**cross 引擎的配方**：`cross` 需要 `[asr.w0]` 与 `[asr.x0]` 两节的模型路径，不新增配置键。配方 `CROSS`（id `cross-w0-x0-whisper-judge-v1`，hash 不再由测试钉住）嵌入 `W0` 与 `X0` 两个子配方和裁判参数 `judge`：
 
 - 判定阈值 `margin` −1.0、`length_weight` 0.0（无长度项）、打分批上限 `max_batch` 16。
 - 打分器与 start_sequence 约定：`tokenizer.sot_sequence` 即 `<|startoftranscript|><|ja|><|transcribe|>`，CT2 自动接 `<|notimestamps|>`，等价于产品无时间戳、无 initial prompt 的提示。
@@ -42,5 +42,6 @@ covers:
 
 - 代码：`kototoki/config.py`、`kototoki/recipes.py`、`kototoki.toml.example`。
 - 测试（core，`just test`）：
-  - `tests/core/test_config.py`：默认值、两种相对路径基准、模型路径、未知键与已删除键、类型、环境变量破锁、示例文件覆盖全部键。
-  - `tests/core/test_recipes.py`：`pan` 系数与归一化、不削波、重采样参数、`LAYOUT_BY_CHANNELS`、音轨选择（含 `LANGUAGE_ALIASES`）与采样率纠正规则进 hash、固定值、无翻译配方；`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 的 hash 全部钉住。
+  - `tests/core/test_config.py`：见[配置参考](reference.md#代码与验证入口)。
+  - `tests/core/test_recipes.py`：`PAN` 环绕系数为归一化标准权重、LFE 丢弃、满幅同相不削波；各配方（`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`）的 hash 是配方的规范 SHA256 且两两不同；`pan` 与重采样常量进 `MEDIA` hash。
+  - 测试精简（2026-11-22）后不再有测试覆盖：各配方 hash 的固定值（含 `EMBEDDED`）、单声道与立体声系数、声道数回退、无隐式 AC 矩阵、`CROSS` 嵌入两个子配方与 `judge` 参数、采样率纠正规则与音轨选择／布局回退进 `MEDIA` hash、规格固定值、无翻译配方。

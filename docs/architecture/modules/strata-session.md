@@ -94,12 +94,12 @@ covers:
 - 代码：`kototoki/strata.py`（`Session`、`StrataServer`、`StrataRefused`、`probe`、`expert_arena`、`drafting_from_log`、`ResourceSampler`、`wait_for_free_vram`、`nvidia_smi`、`available_ram_gib`、身份常量）；`kototoki/local_client.py`（`LlamaClient`、`InfraFailure`、`explicit_oom`）。
 - 测试（core，`just test`）：
   - `tests/core/test_strata.py`（伪 CLI）：
-    - 启动与停止：正常启动、核对与停止；已有 launch 时拒绝且不替别人停；`probe` 各项不符即停并拒绝；未就绪、两个 launch、启动命令失败、被中断都 `--stop`；停止未确认或显存未释放只记录不抛出（ERROR 行指向 `strata-final.json`）。
-    - 等待与资源：等显存与超时；启动前等内存、等不到只警告；`mmap` 或未确认锁定时停掉并拒绝；`--status` 只解析 JSON 行；显存轮询的告警与超时。
-    - 日志：launching 与 stopping 行；就绪超时与启动命令失败的消息带服务日志路径或目录。
-    - 共享 `Session`：首次才启动、`stop` 后再起为新 session、成功启动不限次、启动失败累计 3 次或被拒即不可用（每次启动失败一行 WARNING、不可用一行 ERROR）、`client()` 的 trace 目录、`label` 跟随启动序号；旧的 `translate/strata.py` 已不存在。
-  - `tests/core/test_local_client.py`：OOM 识别、`chat_completion` 的端点与 `chat-NN` trace、无标签请求的序号目录、研究专用方法不在产品客户端、非回环 URL 被拒、旧的 `llama_server` 模块已不存在。
-  - 使用者侧的启动失败、被拒与重启见 `tests/core/test_translate.py`、`tests/core/test_names_session.py`，整批只启动一次见 `tests/core/test_job.py`。
+    - 启动与停止：正常启动、核对与停止；已有 launch 时拒绝且不替别人停；`probe` 不符即停并拒绝；会话内被中断即 `--stop`。
+    - 等显存：达阈值即返回读数、超时抛错并带最后读数。
+    - 共享 `Session`：首次才启动并跨阶段复用、`stop` 后再起为新 session、启动失败累计后批次不可用、被拒即不可用。
+    - 测试精简（2026-11-22）后不再有测试覆盖：未就绪、两个 launch、启动命令失败与加载中被中断仍 `--stop`；停止未确认与显存未释放的记录；等内存与内存不足警告；`mmap` 或未确认锁定时停掉并拒绝；`expert_arena`、`available_ram_gib` 与 `--status` 的解析；显存等待的告警日志；成功启动不限次、一次失败后成功、`client()` 的 trace 目录、`label` 跟随启动序号；旧 `translate/strata.py` 已不存在的检查。
+  - `tests/core/test_local_client.py`：OOM 消息识别、`chat_completion` 的端点与 `chat-NN` trace、非回环 URL 被拒。其余（非 OOM 消息不误判、无标签请求的序号目录、研究专用方法不在产品客户端、旧 `llama_server` 模块已不存在）不再有测试覆盖。
+  - 使用者侧的启动失败、被拒与重启见 `tests/core/test_translate.py`、`tests/core/test_names_session.py`，整批只启动一次见 `tests/core/test_job.py`（精简后 `test_job.py` 只剩共享 session 的阶段顺序与 names 表身份变化重译）。
 - 真实运行：经 `just smoke translate_product`、`just smoke names_product`（占 GPU，须用户批准，不属于任何 gate），见[翻译子系统](translation-subsystem.md#代码与验证入口)与[专名一致性](name-consistency.md#代码与验证入口)。
 - 未验证：强杀后残留 launch 被拒绝的真实运行。已知限制：空闲显存等满 120 s 仍低于 14000 MiB（桌面程序占用较多）即启动失败；可用内存不足 50 GiB 时专家区可能退到 mmap，启动被拒绝，须先关掉部分程序；50 到 51 GiB 之间没有实测过。
 
