@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "kototoki",
+  "project_id": "b0027e6c-4e0e-4e65-98f2-056a5a9fb082"
+}
