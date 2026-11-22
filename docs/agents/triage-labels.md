@@ -1,13 +1,11 @@
 # Triage labels
 
-Use these values in local ticket `Status:` lines.
-
-| Role | Value | Meaning |
+| Canonical role | Tracker label | 用途 |
 | --- | --- | --- |
-| needs-triage | needs-triage | Needs evaluation |
-| needs-info | needs-info | Needs more information |
-| ready-for-agent | ready-for-agent | Fully specified for agent implementation |
-| ready-for-human | ready-for-human | Requires human implementation |
-| wontfix | wontfix | Will not be actioned |
+| `needs-triage` | `needs-triage` | 等待维护者评估 |
+| `needs-info` | `needs-info` | 等待补充信息 |
+| `ready-for-agent` | `ready-for-agent` | 需求已明确，可交给 agent |
+| `ready-for-human` | `ready-for-human` | 需要人工处理 |
+| `wontfix` | `wontfix` | 不计划处理 |
 
-For execution states, see [issue-tracker.md](issue-tracker.md).
+技能提到 canonical role 时，使用表中对应的 Beads label。领取、进行中、关闭等执行状态用 Beads `status`，见 [issue-tracker.md](issue-tracker.md)。

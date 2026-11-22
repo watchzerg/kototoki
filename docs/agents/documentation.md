@@ -7,7 +7,7 @@
 每份文档只属于以下一态，不混写：
 
 - **存量当前正文**：描述同一仓库版本的已实现系统，持续改写，每条规则只有一处权威，其他位置摘要加链接。不按迭代追加"本次增量"章节。
-- **本次增量**：说明这次改变什么、验收什么、涉及哪些当前正文。产品侧的增量由 issue tracker 承载：计划写 `.scratch/<slug>/spec.md`，票据、执行提示词、验收脚本放同一目录（[tracker 约定](issue-tracker.md)）；`.scratch/` 已纳入 Git。进行中可改；完工时把已实现的规则写入当前正文、未实现的范围另开票据，然后删除该目录（git 历史可追溯）。研究轮次的计划写在 `research/<轮次>/` 里，不用 `.scratch/`。
+- **本次增量**：说明这次改变什么、验收什么、涉及哪些当前正文。产品侧的增量由 issue tracker（Beads）承载：计划是 `epic`，票据是它的子 issue，执行提示词与验收脚本写进 bead（[tracker 约定](issue-tracker.md)）。进行中可改；完工时把已实现的规则写入当前正文、未实现的范围另开 bead，然后关闭。研究轮次的计划写在 `research/<轮次>/` 里，不建 bead。
 - **研究记录**：调研、实验、验收记录，放 `research/`，带时点和适用条件，按 [ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) 精简书写（R2、R3）。冻结靠 git：结题后状态写 `concluded`／`stopped`，修错、修链接、精简随时可以做，原始材料从归档 tag `archive/2026-11-18-pre-research-restructure` 或 git 历史取；代码不对文档做 sha256 自检。正文中的"当前""尚未实施"只描述记录时点。
 
 代码是实际行为的证据，当前正文是预期行为依据。两者冲突时就地记录实现差异并明确修代码还是修文档，不把缺陷改写为正常行为，也不把待实现设计写成现状。
@@ -21,11 +21,11 @@
 | 术语的定义或取舍 | `GLOSSARY.md` |
 | 难以逆转、事后看不出原因、有真实取舍的决定 | `docs/adr/` 新增一条，并按[决定索引·记录新决定](../adr/INDEX.md#记录新决定)同步 `docs/adr/INDEX.md` |
 | 已实现行为或结构的澄清 | 所属模块页或模块边界 |
-| 尚未实现的产品需求、范围或计划 | `.scratch/<slug>/` 的 spec 与票据；研究轮次的计划写在轮次目录 |
+| 尚未实现的产品需求、范围或计划 | Beads 的 spec（`epic`）与票据；研究轮次的计划写在轮次目录 |
 | 评审时反复出现的判断类问题 | `CODING_STANDARDS.md` |
 | 工具链、命令、门禁的约定 | `docs/development/` |
 | 带时点的比较或实验结果 | `research/<轮次>/README.md` 并在 [research/INDEX.md](../../research/INDEX.md) 登记 |
-| 产品批量运行的结果与观察到的问题 | `runs/<日期>-<slug>.md` 并在 [runs/INDEX.md](../../runs/INDEX.md) 登记；问题转 run-findings 票据（[批量运行与跑次记录](production-runs.md)） |
+| 产品批量运行的结果与观察到的问题 | `runs/<日期>-<slug>.md` 并在 [runs/INDEX.md](../../runs/INDEX.md) 登记；问题转 `run-finding` bead（[批量运行与跑次记录](production-runs.md)） |
 
 ## 权威归属与创建时机
 
@@ -48,7 +48,7 @@
 | 调研、实验、验收证据 | `research/<YYYY-MM>-<slug>/README.md`，验收在 `research/acceptance/`，登记在 `research/INDEX.md` | 立项时 | 研究记录不冒充当前覆盖 |
 | 工具链、命令、门禁、测试分层 | `docs/development/` | 初始化，阶段 3 填入 | 模块页链接测试入口，不复制执行说明 |
 | 部署、运行配置、发布与回滚 | `docs/operations/` | 有可部署产物时 | development 链接发布入口 |
-| 产品侧计划、票据、执行提示词、验收脚本 | `.scratch/<slug>/` | 立项时 | 完工后结论写进模块页或 ADR，删除目录；当前正文不链接 `.scratch` 目录 |
+| 产品侧计划、票据、执行提示词、验收脚本 | Beads（`bd`） | 立项时 | 完工后结论写进模块页或 ADR，关闭 bead；当前正文可引用 bead ID |
 
 ## 模块页模板
 

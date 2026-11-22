@@ -1,7 +1,7 @@
 """检查仓库文档的结构约束；只依赖标准库，不联网。每条错误带文件与行号。
 
-链接与锚点：根目录 README、AGENTS、GLOSSARY、CODING_STANDARDS，docs/、research/ 与 runs/ 下全部 Markdown，
-.scratch/**/*.md。模块页（docs/architecture/modules/*.md）必须能从 docs/architecture/INDEX.md 沿链接到达。
+链接与锚点：根目录 README、AGENTS、GLOSSARY、CODING_STANDARDS，docs/、research/ 与 runs/ 下全部 Markdown。
+模块页（docs/architecture/modules/*.md）必须能从 docs/architecture/INDEX.md 沿链接到达。
 指向仓库之外的相对链接（相邻仓库，本机未必存在）不检查，只计数。
 
 登记：docs/ 下每篇 Markdown 至少被一个 INDEX.md 链接；research/ 的每个轮次 README 与每篇验收记录
@@ -51,7 +51,7 @@ BUDGET_WHITELIST: dict[str, Budget] = {
 }
 
 # 路径检查认的顶层目录；.local/ 等未跟踪目录不查。
-PATH_ROOTS = ("kototoki/", "research/", "runs/", "scripts/", "tests/", "docs/", ".scratch/", ".claude/")
+PATH_ROOTS = ("kototoki/", "research/", "runs/", "scripts/", "tests/", "docs/", ".claude/")
 # 活文档里作为历史或规则提到、并不存在的路径：路径 -> 原因。
 REMOVED_PATHS: dict[str, str] = {
     "kototoki/llama_server.py": "ADR-0025 拆掉；决定索引演进链按历史提到",
@@ -65,13 +65,6 @@ KNOWN_MISSING_PATHS: set[tuple[str, str]] = {
 # 还没有模块页归属的产品模块。
 KNOWN_UNOWNED_MODULES: set[str] = {
 }
-# 已结题（冻结）的 .scratch/ 票据里指向已删除文档的链接：冻结后不能修，只对 .scratch/ 下的来源放行。
-FROZEN_DEAD_TARGETS = {
-    "docs/architecture/bilingual-pipeline-architecture.md",
-    "docs/changes/cross-asr-judge.md",
-    "docs/changes/name-consistency-product.md",
-}
-
 # 研究记录的必填二级标题，与 research/TEMPLATE.md 一致（tests/core/test_check_docs.py 核对）。
 ROUND_HEADINGS = ("状态", "时间", "问题", "策略", "环境与版本", "测试", "结果", "结论与去向")
 ACCEPTANCE_HEADINGS = ("时间", "对象", "环境与版本", "测试", "结果", "结论")
@@ -173,8 +166,6 @@ def link_scope(root: Path) -> set[Path]:
     for directory in (RESEARCH, RUNS):
         if (root / directory).is_dir():
             files |= set((root / directory).rglob("*.md"))
-    if (root / ".scratch").is_dir():
-        files |= set((root / ".scratch").rglob("*.md"))
     return files
 
 
@@ -438,9 +429,6 @@ def check_documents(root: Path) -> tuple[list[str], int, int, int]:
             location = f"{source.relative_to(root).as_posix()}:{number}"
             if not target.is_relative_to(root):
                 external += 1
-                continue
-            if (source.is_relative_to(root / ".scratch")
-                    and target.relative_to(root).as_posix() in FROZEN_DEAD_TARGETS):
                 continue
             if not target.exists():
                 errors.append(f"{location} 链接目标不存在：{destination}")

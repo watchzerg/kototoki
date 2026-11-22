@@ -43,7 +43,7 @@ Inspect the real recipe in `justfile` before invoking anything. `just --list` �
 | `test` | `unittest discover -s tests/core -t . -v [参数 ...]`：core 层；可追加 unittest 参数（如 `-k 名称片段`）定向运行 |
 | `test-full` | `unittest discover -s tests/full -t . -v [参数 ...]`：full 层离线集成测试，不加载模型、不占 GPU、不持锁 |
 | `smoke` | 真实模型验证，不属于任何 gate：`scripts/smoke/run_all.py [名称 ...]` 在独立子进程中逐项运行，加载模型、独占 GPU，每次须先经用户批准；细节见表下 |
-| `docs-check` | `scripts/check_docs.py`：链接与锚点（根文档、`docs/`、`research/`、`.scratch/`）、模块页可达性；登记（`docs/` 每篇被某个 `INDEX.md` 链接、`research/` 每个轮次 README 与验收记录在 `research/INDEX.md`、`kototoki/` 每个模块在某篇模块页的"代码与验证入口"、ADR 文件与决定索引一致）；预算（`AGENTS.md`、各 `INDEX.md`、活正文的字符数与行长）；活文档里反引号包住的仓库路径存在；研究记录（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) R8）：轮次 README 与验收记录的必填标题、`research/` 无 64 位十六进制串、`research/`／`docs/`／`tests/` 无盘符绝对路径（测试虚构路径在 `ALLOWED_ABSOLUTE_PATHS` 登记）。状态行含 3 个以上日期只告警。指向仓库之外的相对链接只计数。超标的既有文件记在脚本的 `BUDGET_WHITELIST`，只许降不许升；检查本身的单元测试在 `tests/core/test_check_docs.py` |
+| `docs-check` | `scripts/check_docs.py`：链接与锚点（根文档、`docs/`、`research/`、`runs/`）、模块页可达性；登记（`docs/` 每篇被某个 `INDEX.md` 链接、`research/` 每个轮次 README 与验收记录在 `research/INDEX.md`、`kototoki/` 每个模块在某篇模块页的"代码与验证入口"、ADR 文件与决定索引一致）；预算（`AGENTS.md`、各 `INDEX.md`、活正文的字符数与行长）；活文档里反引号包住的仓库路径存在；研究记录（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md) R8）：轮次 README 与验收记录的必填标题、`research/` 无 64 位十六进制串、`research/`／`docs/`／`tests/` 无盘符绝对路径（测试虚构路径在 `ALLOWED_ABSOLUTE_PATHS` 登记）。状态行含 3 个以上日期只告警。指向仓库之外的相对链接只计数。超标的既有文件记在脚本的 `BUDGET_WHITELIST`，只许降不许升；检查本身的单元测试在 `tests/core/test_check_docs.py` |
 | `gate-core` | `check-toolchain` → `docs-check` → `check` → `test`，首错停止 |
 | `gate-full` | `gate-core` 后运行 `test-full`；不加载模型 |
 

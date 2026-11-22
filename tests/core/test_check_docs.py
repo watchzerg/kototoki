@@ -75,19 +75,9 @@ class CheckDocsTest(unittest.TestCase):
         self.assertIn("docs/architecture/modules/alpha.md:9 链接目标不存在：missing.md", errors)
         self.assertIn("docs/architecture/modules/alpha.md:9 章节不存在：../INDEX.md#不存在", errors)
 
-    def test_links_in_research_records_and_tickets_are_checked(self) -> None:
+    def test_links_in_research_records_are_checked(self) -> None:
         self.write("research/2026-01-demo/README.md", ROUND + "[无](gone.md)\n")
-        self.write(".scratch/feature/spec.md", "[无](gone.md)\n")
-        errors = self.errors()
-        self.assertIn("research/2026-01-demo/README.md:35 链接目标不存在：gone.md", errors)
-        self.assertIn(".scratch/feature/spec.md:1 链接目标不存在：gone.md", errors)
-
-    def test_frozen_ticket_link_to_removed_document_is_allowed_only_under_scratch(self) -> None:
-        dead = sorted(check_docs.FROZEN_DEAD_TARGETS)[0]
-        self.write(".scratch/feature/spec.md", f"[旧](../../{dead})\n")
-        self.assertEqual(self.errors(), [])
-        self.write("docs/architecture/modules/alpha.md", MODULE_PAGE + f"\n[旧](../../../{dead})\n")
-        self.assertEqual(len(self.errors()), 1)
+        self.assertIn("research/2026-01-demo/README.md:35 链接目标不存在：gone.md", self.errors())
 
     def test_document_must_be_linked_from_an_index(self) -> None:
         self.write("docs/specs/topic.md", "# 规格\n")
@@ -186,7 +176,7 @@ class CheckDocsTest(unittest.TestCase):
         self.assertEqual(check_docs.repo_path("kototoki/translate/recipes.py::name_rows"), "kototoki/translate/recipes.py")
         self.assertEqual(check_docs.repo_path("docs/adr/INDEX.md#演进链"), "docs/adr/INDEX.md")
         self.assertEqual(check_docs.repo_path("research/2026-10-vad/"), "research/2026-10-vad")
-        for token in ("research/20*", ".scratch/<slug>/spec.md", "python -m kototoki", ".local/work/", "kototoki.toml"):
+        for token in ("research/20*", "python -m kototoki", ".local/work/", "kototoki.toml"):
             self.assertIsNone(check_docs.repo_path(token), token)
 
     def test_missing_backticked_path_is_reported_outside_code_fences(self) -> None:

@@ -38,11 +38,11 @@
 
 记录的"问题"一节每条都要有去向，三选一：
 
-- **票据**：写进 `.scratch/run-findings/issues/<NN>-<slug>.md`（[tracker 约定](issue-tracker.md)），票据里写来源跑次（`runs/` 下的文件名）与涉及的工作 id；同一问题已有票据时追加 `## Comments`，不重复开票。目录不存在时先建 `spec.md`，范围写"批量运行中发现的问题"并列出票据；全部票据 resolved 后按 tracker 约定删除整个目录，下次发现问题再新建，编号接着 git 历史里用过的最大号，不复用，免得记录里的 `run-findings NN` 指向两张票。
+- **票据**：在 Beads 建 bead 并加 label `run-finding`（[tracker 约定](issue-tracker.md)），描述里写来源跑次（`runs/` 下的文件名）与涉及的工作 id；先用 `bd list --all --label run-finding` 查重，同一问题已有 bead 时追加评论，不重复开票。
 - **不处理**：写明理由（预期行为、输入本身的问题、已知限制）。
 - **待观察**：写明再出现几次或在什么条件下转票据。
 
-记录里提到票据用纯文本（如 `run-findings 03`），不用链接：票据目录完工后会删除。修复落地后用下一次运行验证，验证结论写在新的跑次记录里，并在票据里回填。
+记录里提到票据写完整 bead ID（如 `kototoki-abc`）。修复落地后用下一次运行验证，验证结论写在新的跑次记录里，并在票据里回填。
 
 ## 跑次之间的对比
 

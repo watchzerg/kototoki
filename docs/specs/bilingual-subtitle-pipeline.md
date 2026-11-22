@@ -166,7 +166,7 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 
 ## 11. 未来方向
 
-未裁定事项与未来方向见[待裁定事项](../pending-decisions.md)与 `.scratch/next-directions/issues/` 的票据；本节原文见历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。
+未裁定事项与未来方向见[待裁定事项](../pending-decisions.md)与 Beads 票据 `kototoki-671`（说话人信息）；本节原文见历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）。
 
 ## 拆出的内容
 

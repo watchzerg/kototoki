@@ -129,5 +129,5 @@
 ## 变更与决策来源
 
 - [ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0008](../../adr/0008-no-multi-translation-selection.md)、[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)
-- 归档 tag 中的 .scratch/bilingual-subtitle-pipeline/issues/（05、09、15、16）、`.scratch/architecture-review/issues/01-small-fixes.md`、.scratch/name-consistency-product/issues/02-shared-llama-server.md、.scratch/q2-product-switch/、.scratch/q3-product-switch/、.scratch/architecture-cleanup/、.scratch/runtime-logging-gaps/、.scratch/batch-run-fixes/issues/08-short-cue-translation.md
+- 归档 tag 中的 .scratch/bilingual-subtitle-pipeline/issues/（05、09、15、16）、.scratch/name-consistency-product/issues/02-shared-llama-server.md、.scratch/q2-product-switch/、.scratch/q3-product-switch/、.scratch/architecture-cleanup/、.scratch/runtime-logging-gaps/、.scratch/batch-run-fixes/issues/08-short-cue-translation.md；Beads `kototoki-e8t.1`（2026-10-19 审计小修）
 - 归档 tag `archive/2026-11-18-pre-research-restructure` 中：计划 docs/plans/product-names-on-strata.md、docs/plans/architecture-cleanup.md；技术设计历史原文 docs/research/2026-11-11-bilingual-pipeline-spec-history.md；模块页拆出的历史记录 docs/research/acceptance/2026-11-11-module-page-history-translation-names.md

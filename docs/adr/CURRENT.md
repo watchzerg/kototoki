@@ -77,7 +77,7 @@ GPU 锁冲突一律退出码 4、不写逐文件 `failure.json`；产品不为�
 
 ### 研究与文档布局
 
-研究一轮一目录 `research/<YYYY-MM>-<slug>/`，在 [research/INDEX.md](../../research/INDEX.md) 登记；README 按 `research/TEMPLATE.md` 填必填项，不写哈希（git commit 除外）、本机绝对路径、逐条明细与执行台账；冻结靠 git 与归档 tag `archive/2026-11-18-pre-research-restructure`；产品不导入 `research/`，研究可以导入产品；`.scratch/<slug>/` 只放进行中的产品侧计划，完工后删除（[0031](0031-research-layout-and-lightweight-records.md)）。
+研究一轮一目录 `research/<YYYY-MM>-<slug>/`，在 [research/INDEX.md](../../research/INDEX.md) 登记；README 按 `research/TEMPLATE.md` 填必填项，不写哈希（git commit 除外）、本机绝对路径、逐条明细与执行台账；冻结靠 git 与归档 tag `archive/2026-11-18-pre-research-restructure`；产品不导入 `research/`，研究可以导入产品；（[0031](0031-research-layout-and-lightweight-records.md)）。产品侧计划与票据放 Beads（`bd`），完工后关闭（[0037](0037-beads-issue-tracker.md)）。
 
 ### 平台、工具链与外部前置
 
