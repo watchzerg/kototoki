@@ -73,3 +73,5 @@
 
 sync:
     remote: "git+https://github.com/watchzerg/kototoki.git"
+dolt:
+    auto-push: true
