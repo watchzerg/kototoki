@@ -48,7 +48,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 ## 代码与验证入口
 
 - 代码：`kototoki/workers/asr.py`（壳，`transcribe`、`apply_guard`、`compute`、cross 编排）；适配器见[w0／x0 适配器](stt-asr/engines.md#代码与验证入口)，守卫见[整窗守卫](stt-asr/window-guard.md#代码与验证入口)，裁判见[cross 引擎与裁判](stt-asr/cross-judge.md#代码与验证入口)。共用壳 `kototoki/workers/gpu.py` 见 [STT worker](stt-workers.md)。
-- 真实模型验证：`just smoke ct2_after_torch`（CT2 的 CUDA 库来源）；其余路径由小批量 `just subtitles` 覆盖（[STT worker](stt-workers.md#代码与验证入口)）。
+- 真实模型验证：`mise run smoke ct2_after_torch`（CT2 的 CUDA 库来源）；其余路径由小批量 `mise run subtitles` 覆盖（[STT worker](stt-workers.md#代码与验证入口)）。
 - 未验证：显存紧张的机器上 `cross` 共驻能否放下（没有回退路径）、w0 失败窗口以 x0 替代（不做）、数值确定性、译文层收益与新材料确认；x0 触顶的真实路径。
 
 ## 变更与决策来源

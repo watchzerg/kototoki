@@ -1,6 +1,6 @@
 """Check host tool versions against mise.toml and .python-version without syncing or downloading.
 
-Run via `just check-toolchain` (uv --no-project --no-python-downloads); standard library only.
+Run via `mise run check-toolchain` (uv --no-project --no-python-downloads); standard library only.
 """
 
 import re

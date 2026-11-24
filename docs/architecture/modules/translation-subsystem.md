@@ -66,9 +66,9 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/translate/__init__.py`（`plan`、`translate_document` 与导出）、`kototoki/merge.py`；其余模块见[请求子页](translation-subsystem/requests-and-resolution.md#代码与验证入口)与[运行目录子页](translation-subsystem/run-directory.md#代码与验证入口)。Strata 与客户端见 [Strata 服务与共享 session](strata-session.md#代码与验证入口)。
-- 测试（core，`just test`）：`tests/core/test_merge.py`：中上日下且保留头部、多行译文以空格连接、`None` 只输出日文一行、零条目得空串、缺失译文抛错。其余测试见子页。
+- 测试（core，`mise run test`）：`tests/core/test_merge.py`：中上日下且保留头部、多行译文以空格连接、`None` 只输出日文一行、零条目得空串、缺失译文抛错。其余测试见子页。
 - 测试精简（2026-11-22）后不再有测试覆盖：`merge` 的译文与日文相同时两行照留、合并结果回解析条数、多出的译文与空串译文抛错、`None` 仍须其余 id 齐全且 id 已知。
-- 真实模型验证（占 GPU，须用户批准）：`just smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
+- 真实模型验证（占 GPU，须用户批准）：`mise run smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
 - 未验证：追问与拆分只经伪客户端，追问窗口下的译文质量无裁判证据；Strata 的请求不复现（同 seed 跨启动约半数 cue 不同，ADR-0021「未验证与已知限制」），重跑不保证同一译文；产品配方在产品里的质量没有独立裁判证据（沿用 ADR-0021「依据」的 v12 F1 证据）。
 
 ## 变更与决策来源

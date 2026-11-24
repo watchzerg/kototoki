@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="用默认配置为目标目录生成双语字幕（占 GPU、加载模型、可能跑数小时，须先问）"
+# 相对路径按调用目录（MISE_ORIGINAL_CWD）解析；只设 input_dir，其余取默认。退出码同产品入口。
+set -euo pipefail
+if [ "$#" -ne 1 ]; then
+  echo "usage: mise run subtitles <input_dir>" >&2
+  exit 2
+fi
+target="$1"
+case "$target" in
+  /*) ;;
+  *) target="${MISE_ORIGINAL_CWD:-$PWD}/$target" ;;
+esac
+exec uv run --locked --offline python scripts/subtitles.py "$target"

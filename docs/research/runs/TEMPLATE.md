@@ -8,7 +8,7 @@
 # <YYYY-MM-DD> <slug>：<一句话说明这次跑什么>
 
 ## 运行
-运行日志的 UTC 戳、开始与结束时间、入口（`just subtitles` 或 `python -m kototoki`）、退出码；中断时写原因。
+运行日志的 UTC 戳、开始与结束时间、入口（`mise run subtitles` 或 `python -m kototoki`）、退出码；中断时写原因。
 
 ## 版本
 commit 短 SHA（工作区有未提交改动时注明改了什么）、engine、配置与默认值的差异、日志首行的 `ffmpeg=`、Strata 版本。

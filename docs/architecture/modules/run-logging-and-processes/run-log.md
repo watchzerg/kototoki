@@ -57,9 +57,9 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/logs.py`（`LOG_FORMAT`、`LOG_DATEFMT`、`RunFormatter`）；挂接在 `kototoki/job.py`（`_run_logging`、`QUIET_ENV`、`child_env`）。
-- 测试（core，`just test`）：`tests/core/test_job.py` 的 `InvariantTests` 断言转写、译文与专名文字不进运行日志与 worker stderr 日志。
+- 测试（core，`mise run test`）：`tests/core/test_job.py` 的 `InvariantTests` 断言转写、译文与专名文字不进运行日志与 worker stderr 日志。
 - 测试精简（2026-11-22）后不再有测试覆盖运行日志本身：
   - 日志格式的单元测试与 `RunLogTests` 全部删除：行格式与墙钟跳变下的相对秒、文件与控制台逐行相同、`[run]`／`[lock]`／`[plan]`／`[summary]` 各行、ABORTED 收尾（含 `KeyboardInterrupt` 无 traceback）、extract 与 cues 三件套及计数。
   - 级别与 traceback 规则：告警与失败的级别、worker 报告的失败一行 ERROR、同一缓存异常或同类失败只有一份 traceback、Strata 不可用后的失败不带 traceback、非 0／1 退出码的 stderr 指针行、破残留锁与 `warnings.warn` 进日志、第三方 logger 前缀、worker stderr 告警计数、handler 复原。
   - 各阶段 done 行的字段：worker `done` 的数值字段、翻译耗时与 `(resumed)`、names 的重试次数、媒体与补偿告警（含续跑跳过 extract）。
-- 测试（full，`just test-full`）：没有覆盖运行日志的用例（`tests/full/test_media_ffmpeg.py` 不再断言补入告警）。
+- 测试（full，`mise run test-full`）：没有覆盖运行日志的用例（`tests/full/test_media_ffmpeg.py` 不再断言补入告警）。

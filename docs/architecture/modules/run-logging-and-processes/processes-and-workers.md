@@ -45,7 +45,7 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contained`、`ProcessLock`、`LockError`）；worker 启动在 `kototoki/job.py`（`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
-- 测试（core，`just test`）：
+- 测试（core，`mise run test`）：
   - `tests/core/test_protocol.py`：`run_worker` 单文件失败隔离、`fatal` 以退出码 2 停止；`classify_launch` 的部分失败（不重启）、`fatal`（从下一文件重启）、无事件崩溃归咎于最后已处理 id 之后的文件；`failed_windows` 清空窗口文字并记录。
   - `tests/core/test_procs.py`：存活持有者永不被抢占；死持有者的残留锁默认拒绝、`break_stale` 才替换并记录旧锁；`release` 只删自己的锁；`process_created`／`process_matches` 以启动时间识别 pid 复用。
   - `tests/core/test_job.py` 的 `LockTests`（GPU 锁冲突时保留 CPU 阶段产物）与 `IsolationTests`（崩溃文件隔离并按文件重启 worker）。

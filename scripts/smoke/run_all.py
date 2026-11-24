@@ -1,4 +1,4 @@
-"""`just smoke` 入口：依次在独立子进程中运行真实模型验证（CT2 环境 smoke、产品翻译与产品专名 smoke；占 GPU、加载模型，
+"""`mise run smoke` 入口：依次在独立子进程中运行真实模型验证（CT2 环境 smoke、产品翻译与产品专名 smoke；占 GPU、加载模型，
 每次运行前须经用户批准；不属于任何 gate）。
 
 用法：`python scripts/smoke/run_all.py [名称 ...]`，省略名称时按 SMOKES 顺序全跑；每项是本目录下的

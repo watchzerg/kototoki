@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Python（uv）：运行 tests/core（unittest）；可传 unittest 参数定向（如 -k 名称片段）"
+# 目录为空时 unittest 报 NO TESTS RAN 并非零退出。
+set -euo pipefail
+exec uv run --locked --offline python -m unittest discover -s tests/core -t . -v "$@"

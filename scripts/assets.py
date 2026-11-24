@@ -1,6 +1,6 @@
 """资产清单 `assets.toml` 的执行入口：下载模型、离线核对（docs/development/dependencies.md）。
 
-用法（经 `just fetch-models`、`just verify-assets` 调用）：
+用法（经 `mise run fetch-models`、`mise run verify-assets` 调用）：
 
     python scripts/assets.py fetch-models    # 按清单下载缺失或不符的模型文件（联网，约 11 GB）
     python scripts/assets.py verify          # 离线核对全部 models，不下载

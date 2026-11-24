@@ -122,5 +122,5 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 ## 代码与验证入口
 
 - 代码：`kototoki/config.py`（`DEFAULTS`、`load`、`ConfigError`、`ENGINES`）、`kototoki/__main__.py`（`check_input_dir`、`check_work_dir`）、`kototoki.toml.example`。
-- 测试（core，`just test`）：`tests/core/test_config.py`：默认值填充、用户配置里的相对路径以配置文件目录为基准、未知键与未知节报错、必填路径与类型检查。
+- 测试（core，`mise run test`）：`tests/core/test_config.py`：默认值填充、用户配置里的相对路径以配置文件目录为基准、未知键与未知节报错、必填路径与类型检查。
   - 测试精简（2026-11-22）后不再有测试覆盖：默认相对路径以仓库根为基准、裸 ffmpeg 名走 PATH、模型路径相对 `models_root`、cross 引擎接受与未知引擎的报错列出全部引擎、`[names]` 只有 seed、整数可作浮点键、无效 TOML 与缺文件、GPU 锁固定与环境变量破锁、cue 规则形状、示例配置文件覆盖全部键。

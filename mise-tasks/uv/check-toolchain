@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Python（uv）：核对 mise.toml 钉住的 uv 与 .python-version 一致；不同步依赖、不下载解释器"
+set -euo pipefail
+exec uv run --no-project --no-env-file --no-python-downloads --offline python scripts/check_toolchain.py

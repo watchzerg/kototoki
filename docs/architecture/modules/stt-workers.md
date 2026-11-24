@@ -131,7 +131,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
   - align：torchaudio 最小版本、模型字典过滤（含 transformers 5 的分隔符）、小写展开报错、数值作用域的设置与恢复、`sample_window` 的各种拒绝；`map_records` 的 `offset` 与缺记录保留文字。
   - schema：多数拒绝分支、1 ms 容差、采样率常量只在 recipes 定义。
   - 壳：身份不自有、非法窗口使文件失败、配方与引擎启动校验、`main` 读 jobs、日志去向与启动失败的 traceback、`read_wav`、模型文件清单、`gpu.file_processor` 的一次 CUDA 检查、logger 名、TF32 告警过滤；整链 `align.json`、`ja-cues.json`、`ja.srt` 的字节 sha256 钉子已删除。
-- 真实模型路径由小批量 `just subtitles` 验证；对照研究期冻结窗口的门禁已随 ADR-0034 删除，不再与 W0／X0 demo 逐 token 比对。
+- 真实模型路径由小批量 `mise run subtitles` 验证；对照研究期冻结窗口的门禁已随 ADR-0034 删除，不再与 W0／X0 demo 逐 token 比对。
 - 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 
 ## 变更与决策来源

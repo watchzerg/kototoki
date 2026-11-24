@@ -6,16 +6,16 @@
 
 分层标准（core 与 full 都不调用真实模型）见[测试设计与验收](../agents/testing.md#分层)；本节是目录、入口与资源合同。
 
-- core：`tests/core/` 下的产品 `unittest` 测试，`just test` 以 `discover -s tests/core -t .` 收录（`tests/__init__.py`、`tests/core/__init__.py` 须保留，模块以 `tests.core.*` 导入）；覆盖产品包 `kototoki/` 的全部模块，各模块的测试清单与覆盖行为见其模块页"代码与验证入口"（[架构总览的模块地图](../architecture/INDEX.md#模块地图)）。进程内或本解释器子进程：GPU 阶段由 `tests/fake_worker.py` 子进程顶替、翻译用伪 server 对象／伪客户端、导入边界用 `sys.executable -c` 子进程核对；不调用外部二进制、不碰网络与 socket、不读真实视频、不加载模型。
-- full：`tests/full/` 下的离线集成测试，`just test-full` 以 `discover -s tests/full -t .` 收录；用系统 ffmpeg（`config.load` 默认从 PATH 查找）合成秒级小样本：`test_media_ffmpeg`（媒体提取合同）、`test_job_ffmpeg`（端到端：真实媒体阶段、fake worker 顶替 GPU 阶段、假翻译 session，检查发布结果）与 `test_procs_children`（真实子进程随父进程退出）。不加载模型、不占 GPU，因此不需要 `.local/gpu.lock`；经 `scripts/with_lock.py` 持主机级锁（默认 `~/.cache/gate-full.lock`，`flock`）串行，不同 worktree 同时跑不互相干扰。
+- core：`tests/core/` 下的产品 `unittest` 测试，`mise run test`（定向用 `mise run uv:test -k …`）以 `discover -s tests/core -t .` 收录（`tests/__init__.py`、`tests/core/__init__.py` 须保留）；覆盖 `kototoki/` 全部模块，清单见各模块页"代码与验证入口"（[模块地图](../architecture/INDEX.md#模块地图)）。进程内或本解释器子进程：GPU 阶段由 `tests/fake_worker.py` 顶替、翻译用伪客户端、导入边界用 `sys.executable -c` 核对；不调外部二进制、不碰网络与 socket、不读真实视频、不加载模型。
+- full：`tests/full/` 下的离线集成测试，`mise run test-full`（定向用 `mise run uv:test-full -k …`）以 `discover -s tests/full -t .` 收录；用系统 ffmpeg 合成秒级样本：`test_media_ffmpeg`（媒体提取）、`test_job_ffmpeg`（真实媒体＋fake worker＋假翻译 session）与 `test_procs_children`（子进程随父进程退出）。不加载模型、不占 GPU，不需 `.local/gpu.lock`；经 `scripts/with_lock.py` 持主机锁（默认 `~/.cache/gate-full.lock`，`flock`）串行，多 worktree 并行不互扰。
 - 没有产品与研究实现的实时对照层：研究直接调用产品实现；core 里需要钉住的取值以字面量钉，注释写来源（ADR 或归档 tag 路径）；`tests/core/test_boundaries.py` 以 AST 扫描要求 `kototoki/` 不导入 `research`，`tests/core` 自身不导入 `research`（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)）。`gate-full` = `gate-core` + `test-full`。
-- `fake_worker.py` 留在 `tests/` 根，供两层共用。`just check` 编译 `kototoki`、`scripts` 与 `tests`。
-- 真实模型验证（不是测试，不属于任何 gate）：入口是 `just smoke`（`scripts/smoke/`），每次运行都须用户批准。
+- `fake_worker.py` 留在 `tests/` 根，供两层共用。`mise run check` 编译 `kototoki`、`scripts` 与 `tests`。
+- 真实模型验证（不是测试，不属于任何 gate）：入口是 `mise run smoke`（`scripts/smoke/`），每次运行都须用户批准。
 - 独占资源：GPU，由 `.local/gpu.lock` 标记运行中的作业；同一时间一个作业，不抢占、不删除活跃锁，先用 `ps -p <pid>`／`pgrep` 核实真实进程。产品只起 Strata（建表与翻译共用一个 session），固定占用 127.0.0.1:8080，且同一时间只允许一个 Strata launch；llama-server 默认也用 8080，不能与 Strata 同时运行。运行产物写入 `.local/` 下的新目录，拒绝覆盖。
 
 ## 保留范围
 
-2026-11-22 第一次用 `/prune-tests` 精简：core 764 → 206 个测试（约 37 s → 8 s），full 21 → 5 个（约 6 s → 1 s），`just gate-full` 约 43 s → 10 s。
+2026-11-22 第一次用 `/prune-tests` 精简：core 764 → 206 个测试（约 37 s → 8 s），full 21 → 5 个（约 6 s → 1 s），`gate-full` 约 43 s → 10 s。
 
 - **core 聚焦的核心规则**（每条一两个代表性用例，经公开接口）：
   - 阶段计划：按产物身份逐级推进与失效重来、手改 `ja.srt` 回到 cues、专名表 high 条目进翻译身份、内嵌路径；产物契约：工作 id、最终路径、身份失效、原子写。

@@ -41,7 +41,7 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/config.py`、`kototoki/recipes.py`、`kototoki.toml.example`。
-- 测试（core，`just test`）：
+- 测试（core，`mise run test`）：
   - `tests/core/test_config.py`：见[配置参考](reference.md#代码与验证入口)。
   - `tests/core/test_recipes.py`：`PAN` 环绕系数为归一化标准权重、LFE 丢弃、满幅同相不削波；各配方（`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`）的 hash 是配方的规范 SHA256 且两两不同；`pan` 与重采样常量进 `MEDIA` hash。
   - 测试精简（2026-11-22）后不再有测试覆盖：各配方 hash 的固定值（含 `EMBEDDED`）、单声道与立体声系数、声道数回退、无隐式 AC 矩阵、`CROSS` 嵌入两个子配方与 `judge` 参数、采样率纠正规则与音轨选择／布局回退进 `MEDIA` hash、规格固定值、无翻译配方。

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Python（uv）：格式化（尚未选定工具，按契约非零退出）"
+set -euo pipefail
+echo "fmt: no formatter selected for this project (see docs/development/toolchain.md)" >&2
+exit 1

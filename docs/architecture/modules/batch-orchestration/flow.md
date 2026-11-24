@@ -55,7 +55,7 @@ covers:
   - `kototoki/__main__.py`（`main`、`check_input_dir`、`check_work_dir`）。
   - `kototoki/job.py`（`run`、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`speech_gate`、`advance_or_fail`、`build_ja_cues`、`cues_batch`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。
   - `kototoki/logs.py`、`kototoki/procs.py`、`kototoki/workers/protocol.py` 与 worker 启动见[运行日志与进程原语](../run-logging-and-processes.md)。
-- 测试（core，`just test`）：
+- 测试（core，`mise run test`）：
   - `tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`（经 `plan` 取身份）、属性 patch 的专名、翻译与 Strata 函数（`merge` 用真的）、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖主路径：
     - `ScanTests`：扫描过滤与排序、字幕发布在源文件旁、同目录同名主干的后一文件失败、大小采样决定稳定性、源文件旁已有字幕则跳过。
     - `StageTests`／`IsolationTests`／`ResumeTests`：整批按阶段顺序再翻译、发布；崩溃文件隔离且 worker 为后续文件重启；无语音发布空字幕并跳过后续阶段；中断后续跑只补缺失阶段；字幕被删后不取 GPU 锁而重新发布。

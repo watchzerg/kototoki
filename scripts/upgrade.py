@@ -1,6 +1,6 @@
 """把 Python 依赖升到最新稳定版（docs/development/dependencies.md#升级）。
 
-用法（经 `just upgrade` 调用；联网、改环境，须先问）：
+用法（经 `mise run upgrade` 调用；联网、改环境，须先问）：
 
     python scripts/upgrade.py [--check]
 
@@ -134,7 +134,7 @@ def upgrade_python(check: bool) -> dict[str, Any]:
         LOCK.write_text(original_lock, encoding="utf-8", newline="\n")
         raise
     return {"status": "upgraded", "changes": changes, "skipped_major": skipped,
-            "pending": "just smoke ct2_after_torch 与小批量 just subtitles（占 GPU，须用户批准）"}
+            "pending": "mise run smoke ct2_after_torch 与小批量 mise run subtitles（占 GPU，须用户批准）"}
 
 
 # --- 入口 -------------------------------------------------------------------------------------

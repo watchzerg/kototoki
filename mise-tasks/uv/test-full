@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Python（uv）：在主机锁内运行 tests/full（离线集成，不加载模型、不占 GPU）；可传 unittest 参数定向"
+# 经 with_lock.py 持主机级锁串行，不同 worktree 同时跑不互相干扰（ADR-0034「子进程与长任务」）。
+set -euo pipefail
+if [ -z "${GATE_LOCK_HELD:-}" ]; then
+  export GATE_LOCK_HELD=1
+  exec python3 "${MISE_CONFIG_ROOT:-.}/scripts/with_lock.py" "$0" "$@"
+fi
+exec uv run --locked --offline python -m unittest discover -s tests/full -t . -v "$@"

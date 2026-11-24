@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Python（uv）：按 uv.lock 同步根环境（联网、改环境，须先问；ffmpeg、Strata 等外部前置由用户安装）"
+set -euo pipefail
+exec uv sync --locked

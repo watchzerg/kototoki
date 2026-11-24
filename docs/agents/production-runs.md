@@ -1,6 +1,6 @@
 # 批量运行与跑次记录
 
-本文规定 agent 替用户跑产品批量（`python -m kototoki`、`just subtitles`）时怎么跑、原始产物在哪、跑完写什么记录、发现的问题怎么转成票据。运行日志的格式归[运行日志与进程原语](../architecture/modules/run-logging-and-processes/run-log.md#运行日志)，工作目录布局归[批量编排](../architecture/modules/batch-orchestration.md)，本文不重复。
+本文规定 agent 替用户跑产品批量（`python -m kototoki`、`mise run subtitles`）时怎么跑、原始产物在哪、跑完写什么记录、发现的问题怎么转成票据。运行日志的格式归[运行日志与进程原语](../architecture/modules/run-logging-and-processes/run-log.md#运行日志)，工作目录布局归[批量编排](../architecture/modules/batch-orchestration.md)，本文不重复。
 
 ## 跑之前
 

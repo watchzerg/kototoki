@@ -31,4 +31,4 @@ covers:
 - 测试精简（2026-11-22）后不再有测试覆盖：
   - w0：torch 先于 ctranslate2 的导入顺序、满窗裁到 3000 帧、空窗或超 30 s 窗口被拒、按整数样本裁剪、非法窗口解码前被拒。
   - x0：配方生成参数与逐窗独立转写、只取 prompt 之后的 token、`RuntimeError` 窗口、模型不在 CUDA 即失败、非法窗口被拒、x0 壳的配方 hash 与模型文件清单随引擎变化。
-- 真实模型验证：`just smoke ct2_after_torch`（CT2 的 CUDA 库来源）。
+- 真实模型验证：`mise run smoke ct2_after_torch`（CT2 的 CUDA 库来源）。

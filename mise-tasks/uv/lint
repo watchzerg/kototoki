@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Python（uv）：静态检查（尚未选定工具，按契约非零退出）"
+set -euo pipefail
+echo "lint: no linter selected; 'mise run check' is only a compile check (see docs/development/toolchain.md)" >&2
+exit 1

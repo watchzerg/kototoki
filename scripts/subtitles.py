@@ -1,4 +1,4 @@
-"""`just subtitles <目录>`：用默认配置为一个目标目录生成双语字幕（占 GPU、加载模型，运行前须先问）。
+"""`mise run subtitles <目录>`：用默认配置为一个目标目录生成双语字幕（占 GPU、加载模型，运行前须先问）。
 
 产品入口仍是配置文件驱动的 `python -m kototoki [kototoki.toml]`（ADR-0007）。本脚本只写一份仅含
 `[paths] input_dir` 的配置到 `.local/run-configs/<末段名>-<sha12>.toml`（同一目录每次覆写同一文件，
@@ -33,7 +33,7 @@ def write_config(input_dir: Path, config_dir: Path | None = None) -> Path:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
-        print("usage: just subtitles <input_dir>", file=sys.stderr)
+        print("usage: mise run subtitles <input_dir>", file=sys.stderr)
         return 2
     return cli.main([str(write_config(Path(argv[0])))])
 

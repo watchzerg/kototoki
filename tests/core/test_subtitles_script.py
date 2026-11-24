@@ -1,4 +1,4 @@
-"""`scripts/subtitles.py`（`just subtitles <目录>`）：写出的临时配置能被 `config.load` 读回、只设 input_dir，并原样转交产品入口。"""
+"""`scripts/subtitles.py`（`mise run subtitles <目录>`）：写出的临时配置能被 `config.load` 读回、只设 input_dir，并原样转交产品入口。"""
 
 from __future__ import annotations
 

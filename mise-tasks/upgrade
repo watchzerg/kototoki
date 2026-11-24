@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="按选版规则把 Python 依赖升到最新稳定版，随后跑 core、full 测试与资产核对（联网、改环境，须先问）"
+set -euo pipefail
+uv run --no-project --no-python-downloads --offline python scripts/upgrade.py "$@"
+mise run test
+mise run test-full
+mise run verify-assets

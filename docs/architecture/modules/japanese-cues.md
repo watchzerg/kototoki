@@ -69,7 +69,7 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/cues.py`（`build_cues`、`is_lexical`）；日志行在 `kototoki/job.py`（`cues_batch`、`build_ja_cues`）。
-- 测试（core，`just test`）：
+- 测试（core，`mise run test`）：
   - `tests/core/test_cues.py`：字符时间插值、整窗 `fallback` 按 VAD 子段分配；跨 VAD 子段的间隔断句、句末标点断句并留在原条、长句在最后一个放得下的软断点切开、无软断点时均衡硬切、超时长切分；lead-out 不越过下一条起点、min-duration 向前延长且不重叠；纯标点给 0 条；`offset_s` 只加一次、SRT 与 payload 一致。
   - 测试精简（2026-11-22）后不再有测试覆盖：边缘外推与夹取、回退时长上限与余数分配、纯文字窗在有时间窗之间、同一子段内与跨窗口的间隔、句末与全文末单个超限字符不再切、空输入、♪ 附着、非零 `offset_s` 整链、规则键校验、`RunLogTests` 中 cues 三件套的日志行与 0 条 cue 的 WARNING。
 - 离线观感（2026-10-14，当时的 `[cues]` 初值，`.local/fullfilm-comparison/fullfilm-v1/runs/w0-pyannote-current-hf-ii-full/align/alignment.json`，前 5 分钟）：1627 条，无重叠、无超 6 s；`max_gap_s=0.4` 在 CTC 字间间隔处把词切碎（"先｜輩…"、"なん｜だ?"），≤2 字的条目 374 条；同一输入 `max_gap_s=1.0` 时降到 123 条。用户据此把初值改为 1.0（现行默认值见[配置参考](config-and-media/reference.md)）。记录见票据 04 Comments。

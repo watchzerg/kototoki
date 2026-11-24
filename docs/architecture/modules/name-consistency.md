@@ -74,7 +74,7 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/names/__init__.py`（`build_document`、`NamesError`、`_TokenCounter`）、`kototoki/names/table.py`（`SYSTEM_PROMPT`、`USER_TEMPLATE`、`build_messages`、`parse_reply`、归一函数、`build_table`、`BuildResult`）、`kototoki/names/recipes.py`（`BUILD`、`BUILD_RECIPE_HASH`）；编排侧 `kototoki/job.py` 的 `names_batch`。
-- 测试（core，`just test`）：
+- 测试（core，`mise run test`）：
   - `tests/core/test_names_table.py`：渲染去时间戳、保留序号并连接多行；解析归一；称呼词识别与丢弃并记录；日文写法形状的保留与丢弃例；person 的 high 证据不足时降级 medium；`build_table` 的成功载荷与请求体、length 失败后换 seed 重试、空回复一次接受、5 次都失败返回 `failed` 空表、超预算不发送、零 cue 不调用。
   - `tests/core/test_names_recipes.py`：`SYSTEM_PROMPT` 的 sha256 与 `BUILD` hash 钉子（含配方名 `q3-names-v3`）。
   - `tests/core/test_names_session.py`：伪 Strata session／伪客户端：零 cue 不碰 session、经共享 session 建表、首次不合格后换 seed 成功、5 次都失败写空表且恰好 5 个请求、超预算不发送、HTTP 错误带 OOM 正文时抛 `NamesError` 并停 Strata、被拒使本文档与后续文档都失败。
@@ -84,7 +84,7 @@ covers:
   - 解析与归一：think 块与围栏、畸形回复、空条目、`kind` 与重复实体、forms 去重、zh 形状与长度、上限、schema 必填、提示 v5 的各条款、`USER_TEMPLATE` 与 cue 渲染的 sha256 钉子、日文写法的 NFKC 与空白清理、证据范围与 confidence 的其余分支、`dropped_*` 记录。
   - 建表与 session：第 4 次尝试成功、失败尝试日志不含回复文字、预算边界、`count_tokens` 退路、非 OOM 的 HTTP 错误与传输失败、起不来后下一文档重试；与 v13 的请求体、seed 序列、提示、schema 及 `s1_recipe("v4")` 的字面量对照，运行时身份等于翻译配方，改值即改 hash。
   - 编排：阶段顺序与锁里的 Strata pid、终态失败空表照常发布、session 不可用只让有 cue 的影片失败、建表异常只影响该影片、零条目不取锁、重试成功的 done 行带 attempt、Strata 不可用后 FAILED 行不带 traceback。
-- 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：`just smoke names_product`（`scripts/smoke/names_product.py`）在产品自动启停的 Strata 上走 `plan.names_identity` → 共享 `Session` → `build_document` → `write_artifact`（默认 seed）。
+- 真实模型验证（占 GPU，须用户批准，不属于任何 gate）：`mise run smoke names_product`（`scripts/smoke/names_product.py`）在产品自动启停的 Strata 上走 `plan.names_identity` → 共享 `Session` → `build_document` → `write_artifact`（默认 seed）。
   - 输入是脚本内置的 12 条合成日语短句（同一人名的正确写法与一处 ASR 式误写、一个职阶名、其余中性）。
   - 通过条件：`expert_arena` 为 `ram`、`build.status == ok`、表至少一条 person、全程没有 llama-server 进程、停止后 status 为空且显存释放、无异常；结果只记计数、哈希、耗时与资源峰值。
   - 运行记录：Strata 路径见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7；27B 时期见 [2026-10-20 验收记录](../../research/acceptance/name-consistency-product-2026-10-20.md)。

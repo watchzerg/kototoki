@@ -1,2 +1,86 @@
+# 项目命令契约：check-toolchain、install、fmt、lint、typecheck、test、test-full、docs-check、docs-affected、gate-core、gate-full 是必需的公开 task，名称与职责保持稳定。
+# stack 实现位于 mise-tasks/uv/ 下的可执行 file task，由此处公开 task 聚合；定向运行直接调用 mise run uv:<task> [参数]。
+# 本项目另有 check（compileall）、subtitles、upgrade、upgrade-check、fetch-models、verify-assets、smoke；定义见 docs/development/workflow.md。
+
 [tools]
 uv = "0.13"
+
+[env]
+# 项目公共环境变量（不含离线开关、动态缓存路径与一次性破锁 KOTOTOKI_BREAK_STALE_LOCK，这些由代码或单次调用管理）。
+# 本机私有或敏感值写 mise.local.toml（已加入 .gitignore，不提交），例如：
+#   HF_TOKEN = "hf_..."            # 门控模型下载（mise run fetch-models）
+#   GATE_LOCK_FILE = "..."         # 覆盖 full 测试主机锁路径（默认 ~/.cache/gate-full.lock）
+#   STRATA_RUNTIME_DIR = "..."     # 覆盖 Strata 服务日志目录
+PYTHONUTF8 = "1"
+HF_HUB_DISABLE_TELEMETRY = "1"
+PYANNOTE_METRICS_ENABLED = "0"
+
+# --- Contract tasks (docs/development/workflow.md#命令与门禁) ---
+
+[tasks.check-toolchain]
+description = "核对 mise.toml 钉住的工具（uv）与 .python-version 一致；不同步环境"
+depends = ["uv:check-toolchain"]
+
+[tasks.install]
+description = "按 uv.lock 同步根环境（联网、改环境，须先问）"
+depends = ["uv:install"]
+
+[tasks.fmt]
+description = "格式化（尚未选定工具，按契约非零退出，不属于门禁）"
+depends = ["uv:fmt"]
+
+[tasks.lint]
+description = "静态检查（尚未选定工具，按契约非零退出，不在门禁内）"
+depends = ["uv:lint"]
+
+[tasks.typecheck]
+description = "类型检查（尚未选定工具，按契约非零退出，不在门禁内）"
+depends = ["uv:typecheck"]
+
+[tasks.test]
+description = "运行全部 core 测试（定向筛选用 mise run uv:test -k 名称片段）"
+depends = ["uv:test"]
+
+[tasks.test-full]
+description = "在主机锁内运行全部 full 离线集成测试（定向筛选用 mise run uv:test-full -k 名称片段）"
+depends = ["uv:test-full"]
+
+[tasks.check]
+description = "Python 编译检查（compileall 覆盖 kototoki、scripts、tests；不等同 lint）"
+run = "uv run --locked --offline python -m compileall -q kototoki scripts tests"
+
+[tasks.docs-check]
+description = "检查文档链接、锚点、可达性、索引登记、体量预算、标题骨架与 covers，不联网"
+run = "python3 scripts/check_docs.py"
+
+[tasks.docs-affected]
+description = "改动提示：列出相对基准（默认 HEAD，可传参）的改动命中 covers 的文档页；总是成功，不属于门禁"
+run = "python3 scripts/check_docs.py --affected"
+
+# lint、typecheck 未选定工具，不在门禁内；以编译检查 check 代替（docs/development/workflow.md#命令与门禁）。
+[tasks.gate-core]
+description = "可跨 worktree 并行：工具链、文档、编译检查与全部 core 测试，彼此并行"
+depends = ["check-toolchain", "docs-check", "check", "test"]
+
+[tasks.gate-full]
+description = "完整门禁：gate-core 通过后在主机锁内运行 full 测试（不加载模型）"
+depends = ["gate-core"]
+run = [{ task = "test-full" }]
+
+# --- Project-specific tasks ---
+
+[tasks.upgrade-check]
+description = "只报告可升级的 Python 依赖项，不改文件（联网查询 PyPI）"
+run = "uv run --no-project --no-python-downloads --offline python scripts/upgrade.py --check"
+
+[tasks.fetch-models]
+description = "按 assets.toml 下载缺失或不符的模型（几十 GB、联网，须先问；门控模型取 HF_TOKEN）"
+run = "uv run --locked --offline python scripts/assets.py fetch-models"
+
+[tasks.verify-assets]
+description = "离线核对已下载的模型与 assets.toml 一致（size+mtime 缓存，不下载）"
+run = "uv run --locked --offline python scripts/assets.py verify"
+
+[tasks.smoke]
+description = "真实模型验证（占 GPU、加载模型，每次须先问；不属于任何 gate）；可只跑指定项"
+run = "uv run --locked --offline python scripts/smoke/run_all.py"

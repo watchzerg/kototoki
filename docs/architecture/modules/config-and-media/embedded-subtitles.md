@@ -26,10 +26,10 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/embedded.py`，选轨与抽取在 `kototoki/media.py`（`select_subtitle`、`extract_subtitle`）。
-- 测试（core，`just test`）：
+- 测试（core，`mise run test`）：
   - `tests/core/test_embedded.py`：ASS 标签与覆盖块去除、多行并成一行；绘图／空／重复／非正时长条目丢弃及计数；按时间排序与重新编号；清洗结果过 `srt.parse_srt`。
   - 测试精简（2026-11-22）后不再有测试覆盖：SubRip 标记与字面方括号的选择性保留、整数毫秒条目输出不变、cue 内空行与 CRLF 不分割、正文里的数字行不当条目头、无可用条目给空文本。
-- 测试（full，`just test-full`）：
+- 测试（full，`mise run test-full`）：
   - `tests/full/test_job_ffmpeg.py`：真实 ffmpeg 合成带 SubRip 字幕轨（容器起点 +2 s）的片段走完整批次编排，字幕替代语音识别。ASS 与 mov_text 轨不再有测试。
 - 未验证：
   - 内嵌字幕：真实片源（流媒体、字幕组 ASS 特效）、假名注音、标签与内容语言不符的轨。
