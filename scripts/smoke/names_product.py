@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import traceback
 from typing import Any
 
 import smokelib
@@ -100,6 +101,7 @@ def main() -> int:
             built = names.build_document(work_dir, document, session, cfg.names.seed)
             result["llama_servers_during"] = len(smokelib.list_llama_servers())
     except Exception as error:  # 记录失败类别后照常写结果
+        traceback.print_exc(file=sys.stderr)
         failures.append(f"build {type(error).__name__}: {str(error)[:500]}")
     timer.mark("build")
     if result.get("llama_servers_during"):
@@ -146,6 +148,7 @@ def main() -> int:
             if not result["table_current"]:
                 failures.append("written name table is not current for its identity")
         except Exception as error:
+            traceback.print_exc(file=sys.stderr)
             failures.append(f"write_artifact {type(error).__name__}: {str(error)[:300]}")
 
         rows = translate_recipes.name_rows(built.payload)

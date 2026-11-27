@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import traceback
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
@@ -63,9 +64,10 @@ def is_major_bump(old: str, new: str) -> bool:
 
 def run_uv(*args: str) -> str:
     result = subprocess.run([shutil.which("uv") or "uv", *args], cwd=REPO, capture_output=True, text=True,
-                            encoding="utf-8")
+                            encoding="utf-8", errors="replace")
     if result.returncode != 0:
-        raise UpgradeError(f"uv {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()[-2000:]}")
+        output = "\n".join(part for part in (result.stderr.strip(), result.stdout.strip()) if part) or "(no output)"
+        raise UpgradeError(f"uv {' '.join(args)} failed ({result.returncode}): {output[-2000:]}")
     return result.stderr + result.stdout
 
 
@@ -148,8 +150,12 @@ def main(argv: list[str] | None = None) -> int:
     failed = False
     try:
         report["python"] = upgrade_python(args.check)
-    except (UpgradeError, OSError) as error:
-        report["python"] = {"status": "failed", "error": str(error)}
+    except UpgradeError as error:
+        report["python"] = {"status": "failed", "error_type": type(error).__name__, "error": str(error)}
+        failed = True
+    except OSError as error:
+        traceback.print_exc(file=sys.stderr)
+        report["python"] = {"status": "failed", "error_type": type(error).__name__, "error": str(error)}
         failed = True
     print(f"python: {json.dumps(report['python'], ensure_ascii=False)}", flush=True)
     if not args.check:

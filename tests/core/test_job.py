@@ -28,6 +28,7 @@ from kototoki import __main__ as cli
 from kototoki import artifacts, job, media
 from kototoki.config import ConfigError, load
 from kototoki.merge import merge as real_merge
+from kototoki.procs import ProcessLock
 from tests.fake_worker import FAKE_MODELS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -73,12 +74,14 @@ class JobCase(unittest.TestCase):
         # 媒体、cue 构建：假实现，并记录调用。
         self.probed: list[str] = []
         self.extracted: list[str] = []
+        self.probe_warnings: dict[str, tuple[str, ...]] = {}
         self.subtitles: dict[str, tuple[dict, ...]] = {}   # rel → 伪 probe 给出的字幕流清单
         self.subtitle_text: dict[str, object] = {}         # rel → 伪抽轨给出的 SRT 文本，或要抛的异常
+        self.subtitle_warnings: dict[str, tuple[str, ...]] = {}
         self.subtitle_extracted: list[str] = []
         if self.FAKE_MEDIA:
             self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
-            self.enterContext(mock.patch("kototoki.job.media.ffmpeg_version", return_value="n0.0-fake"))
+            self.enterContext(mock.patch("kototoki.job.media.probe_ffmpeg_version", return_value=("n0.0-fake", None)))
             self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
             self.enterContext(mock.patch("kototoki.job.media.extract_subtitle", side_effect=self._extract_subtitle))
         self.enterContext(mock.patch("kototoki.job.cues.build_cues", side_effect=self._build_cues))
@@ -139,17 +142,23 @@ class JobCase(unittest.TestCase):
         return Path(path).relative_to(self.input).as_posix()
 
     def _probe(self, path: Path, config) -> media.Probe:
-        self.probed.append(self._rel(path))
+        rel = self._rel(path)
+        self.probed.append(rel)
         track = media.AudioTrack(index=0, codec_name="aac", channels=2, channel_layout="stereo", sample_rate=48000,
                                  language="jpn", default=True, comment=False, start_time=0.0, duration=10.0)
+        ffprobe_warnings = self.probe_warnings.get(rel, ())
         return media.Probe(
             ffprobe={"streams": [{"index": 0, "codec_name": "aac"}], "format": {"duration": "10"}},
             audio=track, audio_tracks=(track,), has_video=True, duration_s=10.0, duration_source="stream.duration",
-            container_start_time=0.0, subtitles=self.subtitles.get(self._rel(path), ()), warnings=())
+            container_start_time=0.0, subtitles=self.subtitles.get(rel, ()), warnings=ffprobe_warnings,
+            ffprobe_warnings=ffprobe_warnings)
 
-    def _extract_subtitle(self, path: Path, index: int, ffmpeg: Path) -> str:
+    def _extract_subtitle(self, path: Path, index: int, ffmpeg: Path,
+                          *, warnings: list[str] | None = None) -> str:
         rel = self._rel(path)
         self.subtitle_extracted.append(rel)
+        if warnings is not None:
+            warnings.extend(self.subtitle_warnings.get(rel, ()))
         text = self.subtitle_text.get(rel, SRT_JA)
         if isinstance(text, Exception):
             raise text
@@ -159,6 +168,7 @@ class JobCase(unittest.TestCase):
         rel = self._rel(path)
         self.extracted.append(rel)
         wav = Path(work_dir) / artifacts.AUDIO_16K
+        wav_existed = wav.exists()
         pcm = hashlib.sha256(rel.encode()).digest()  # 每个文件不同的 16 个样本；伪 worker 从 WAV 重算同一 SHA
         with wave.open(str(wav), "wb") as stream:
             stream.setnchannels(1)
@@ -168,19 +178,20 @@ class JobCase(unittest.TestCase):
         return media.Extract(
             wav=wav, log=Path(work_dir) / artifacts.EXTRACT_LOG, sample_rate=16000, samples=len(pcm) // 2,
             pcm_sha256=hashlib.sha256(pcm).hexdigest(), decoded_duration_s=10.0, duration_s=10.0, offset_s=0.0,
-            pan="", compensation={}, warnings=())
+            pan="", compensation={}, warnings=(),
+            overwritten=(artifacts.AUDIO_16K,) if wav_existed else ())
 
     def _build_cues(self, align, options):
         return fake_cue_payload(1), SRT_JA
 
-    def _build_document(self, work_dir, document, session, seed):
+    def _build_document(self, work_dir, document, session, seed, *, relative=None):
         identifier = Path(work_dir).name
         if document.cues:  # 同真实模块：有 cue 才向共享 session 要模型（可能就在这里启动 Strata）
             if session is None:
                 raise AssertionError("a document with cues was built without a session")
             session.ensure_started()
         self.calls.append(f"names:{identifier}")
-        self.names_snapshots.append({"session": session is not None, "seed": seed})
+        self.names_snapshots.append({"session": session is not None, "seed": seed, "relative": relative})
         entries = [dict(entry) for entry in self.name_entries] if document.cues else []
         payload = {"schema": "name-table-v2", "prompt_version": "fake", "work_guess": None, "entries": entries,
                    "meta": {"seed": seed, "attempt": 1, "dropped_shape": [], "dropped_honorific": [{"ja": "x"}],
@@ -436,8 +447,11 @@ class IsolationTests(JobCase):
         self.assertNotIn("warning/error line(s)", console.getvalue())
         (stderr_log,) = self.work_root.glob("run-*-vad.stderr.log")
         raw = stderr_log.read_bytes()
+        header, rest = raw.split(b"\n", 1)
+        self.assertRegex(header.decode("utf-8"),
+                         r"^--- \[vad\] launch pid=\d+ utc=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z files=1 ---$")
         self.assertEqual(
-            raw,
+            rest,
             b"[stdout] 2026-10-18 12:00:00Z [    1.0s] WARNING  from stdout\n"
             b"[stdout] [1, 2]\n"
             b"[stdout] \xff bad utf8\n"
@@ -632,6 +646,251 @@ class InvariantTests(JobCase):
         for bad in (REPO_ROOT / "work", REPO_ROOT, self.input / "work", self.input):
             with self.subTest(work_dir=bad), self.assertRaises(ConfigError):
                 cli.check_work_dir(self.with_paths(work_dir=bad))
+
+
+class RunLogTests(JobCase):
+    """编排统一日志出口（`job.run`）：L4 启动/收尾异常进日志、跨进程关联与未知事件回退、退出码 1/2 指针合并。"""
+
+    def run_logs(self) -> list[Path]:
+        return sorted(self.work_root.glob("run-*[0-9]Z.log"))
+
+    def warning_lines(self, text: str) -> list[str]:
+        return [m[2] for line in text.splitlines() if (m := LOG_LINE.match(line)) and m[1] == "WARNING"]
+
+    def test_uncaught_startup_and_lock_release_errors_reach_run_log(self) -> None:
+        # 启动初始化（record_input）在取工作锁后失败：异常进 run-*.log 且释放工作根锁
+        with mock.patch("kototoki.job.artifacts.record_input", side_effect=OSError("disk full")), \
+                self.assertRaisesRegex(OSError, "disk full"):
+            self.run_job()
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+        (first_log,) = self.run_logs()
+        first_text = first_log.read_text(encoding="utf-8")
+        self.assertIn("ERROR    [run] ABORTED: OSError", first_text)
+        self.assertIn("OSError: disk full", first_text)
+        self.assertIn("[summary]", first_text)
+        first_log.unlink()
+
+        # 收尾释放锁（GPU 锁与工作根锁）抛错：均记入 run-*.log，且 GPU 锁释放失败时工作根锁仍继续释放
+        self.make_inputs("a.mkv")
+        real_release = ProcessLock.release
+
+        def flaky_release(lock: ProcessLock) -> None:
+            real_release(lock)
+            if lock.kind == "GPU lock":
+                raise OSError("gpu lock unlink boom")
+            if lock.kind == "work directory lock":
+                raise OSError("work lock unlink boom")
+
+        with mock.patch("kototoki.job._gpu_stages", side_effect=RuntimeError("gpu boom")), \
+                mock.patch.object(ProcessLock, "release", flaky_release), \
+                self.assertRaisesRegex(OSError, "work lock unlink boom"):
+            self.run_job()
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+        (second_log,) = self.run_logs()
+        second_text = second_log.read_text(encoding="utf-8")
+        self.assertIn("ERROR    [run] ABORTED: RuntimeError", second_text)
+        self.assertIn("ERROR    [run] ABORTED: OSError", second_text)
+        self.assertIn("gpu lock unlink boom", second_text)
+        self.assertIn("work lock unlink boom", second_text)
+        second_log.unlink()
+
+        # _log_summary 失败时仍必须释放 GPU 锁与工作根锁
+        released: list[str] = []
+
+        def track_release(lock: ProcessLock) -> None:
+            if lock.held:
+                released.append(lock.kind)
+            real_release(lock)
+
+        with mock.patch("kototoki.job.run_gpu_stage", side_effect=RuntimeError("gpu boom")), \
+                mock.patch("kototoki.job._log_summary", side_effect=OSError("summary disk full")), \
+                mock.patch.object(ProcessLock, "release", track_release), \
+                self.assertRaisesRegex(OSError, "summary disk full"):
+            self.run_job()
+        self.assertEqual(released, ["GPU lock", "work directory lock"])
+        self.assertFalse(self.config.gpu_lock.exists())
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+        (third_log,) = self.run_logs()
+        third_text = third_log.read_text(encoding="utf-8")
+        self.assertIn("ERROR    [run] ABORTED: OSError", third_text)
+        self.assertIn("summary disk full", third_text)
+
+    def test_cross_process_correlation_and_unknown_event_id_fallback(self) -> None:
+        # 未知进度事件 id 回退保留原 id；worker 启动 pid 与文件数、重启分隔行及 work_id 双向可关联
+        self.make_inputs("a.mkv", "b.mkv")
+        self.plan({"asr": {"a.mkv": "crash"}})
+        # 在 vad 阶段注入一条未知 id 进度事件，其余阶段走 fake_worker（asr 含一次重启）
+        inject = (
+            "import json, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import fake_worker\n"
+            "if sys.argv[2] == 'vad':\n"
+            "    sys.stdout.buffer.write(json.dumps({'event': 'done', 'id': 'ghost-id', 'windows': 7}).encode() + b'\\n')\n"
+            "    sys.stdout.buffer.flush()\n"
+            "sys.exit(fake_worker.main(['fake_worker.py', sys.argv[2], '--jobs', sys.argv[3]]))\n"
+        )
+        summary = job.run(
+            self.config,
+            worker_command=lambda stage, jobs: [sys.executable, "-c", inject, str(FAKE_WORKER.parent), stage, str(jobs)],
+            sleep=lambda _: None,
+            console=io.StringIO(),
+        )
+        self.assertEqual(summary.failed, {"a.mkv": "asr"})
+        self.assertEqual(summary.published, ["b.mkv"])
+        (run_log,) = self.run_logs()
+        run_text = run_log.read_text(encoding="utf-8")
+        a_id, b_id = self.ids("a.mkv", "b.mkv")
+        # 未知 id 保留原样、不被丢弃
+        self.assertRegex(run_text, r"\[vad\] done .*ghost-id.*windows=7")
+        # 进度与失败行带 work_id
+        self.assertRegex(run_text, rf"\[vad\] done a\.mkv: .*work_id={a_id}")
+        self.assertRegex(run_text, rf"ERROR\s+\[asr\] FAILED a\.mkv \(work_id={a_id}\): WorkerCrashed")
+        # 两次 asr 启动的 pid 均同时出现在 run-*.log 与 run-*-asr.stderr.log 的分隔行中
+        asr_launches = self.launches("asr")
+        self.assertEqual(len(asr_launches), 2)
+        (asr_stderr,) = self.work_root.glob("run-*-asr.stderr.log")
+        asr_err_text = asr_stderr.read_text(encoding="utf-8")
+        for launch in asr_launches:
+            pid = launch["pid"]
+            self.assertRegex(run_text, rf"\[asr\] worker launched: pid={pid}, {len(launch['ids'])} file\(s\)")
+            self.assertTrue(
+                any(re.match(rf"^--- \[asr\] launch pid={pid} utc=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z files={len(launch['ids'])} ---$", ln)
+                    for ln in asr_err_text.splitlines()),
+                f"missing launch separator for pid={pid} in {asr_err_text!r}",
+            )
+
+    def test_exit_code_1_and_2_emit_at_most_one_stderr_pointer(self) -> None:
+        # vad：退出码 1 且 stderr 无结构化告警（裸崩溃）→ 仍给 1 条 see stderr 指针；
+        # asr：退出码 2 且 stderr 有 1 条结构化 ERROR → 合并为唯一 1 条 see stderr 指针，不重复两条。
+        self.make_inputs("a.mkv")
+        bare_exit_1 = (
+            "import json, sys\n"
+            "sys.stdout.buffer.write(json.dumps({'event': 'started'}).encode() + b'\\n')\n"
+            "sys.stdout.buffer.flush()\n"
+            "sys.stderr.write('Traceback (most recent call last):\\nRuntimeError: bare crash\\n')\n"
+            "sys.exit(1)\n"
+        )
+        console1 = io.StringIO()
+        summary1 = job.run(
+            self.config,
+            worker_command=lambda stage, jobs: [sys.executable, "-c", bare_exit_1],
+            sleep=lambda _: None,
+            console=console1,
+        )
+        self.assertEqual(summary1.failed, {"a.mkv": "vad"})
+        vad_warnings = [w for w in self.warning_lines(console1.getvalue()) if w.startswith("[vad] ")]
+        self.assertEqual(len(vad_warnings), 1)
+        self.assertRegex(vad_warnings[0], r"worker exited with code 1.*see run-.*-vad\.stderr\.log")
+
+        # 第二次：加入 b.mkv，vad 正常完成，asr 以退出码 2 退出且 stderr 带一条标准格式 ERROR
+        self.make_inputs("b.mkv")
+        self.plan({})
+        exit_2_with_problem = (
+            "import json, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import fake_worker\n"
+            "if sys.argv[2] == 'asr':\n"
+            "    sys.stderr.write('2026-11-27 00:00:00Z [     0.1s] ERROR    [asr] startup failed: RuntimeError\\n')\n"
+            "    sys.stderr.flush()\n"
+            "    sys.stdout.buffer.write(json.dumps({'event': 'startup_failed', 'error_type': 'RuntimeError'}).encode() + b'\\n')\n"
+            "    sys.stdout.buffer.flush()\n"
+            "    sys.exit(2)\n"
+            "sys.exit(fake_worker.main(['fake_worker.py', sys.argv[2], '--jobs', sys.argv[3]]))\n"
+        )
+        console2 = io.StringIO()
+        summary2 = job.run(
+            self.config,
+            worker_command=lambda stage, jobs: [sys.executable, "-c", exit_2_with_problem,
+                                                str(FAKE_WORKER.parent), stage, str(jobs)],
+            sleep=lambda _: None,
+            console=console2,
+        )
+        self.assertEqual(summary2.failed, {"a.mkv": "asr", "b.mkv": "asr"})
+        asr_warnings = [w for w in self.warning_lines(console2.getvalue()) if w.startswith("[asr] ")]
+        self.assertEqual(len(asr_warnings), 1)
+        self.assertRegex(asr_warnings[0], r"code 2.*1 warning/error line\(s\).*see run-.*-asr\.stderr\.log")
+
+    def test_ffmpeg_diag_media_warnings_corrupt_artifact_and_overwrite_audit(self) -> None:
+        # 1) ffmpeg=unavailable 在 [run] start 后紧跟诊断 WARNING；ffprobe/抽轨 0 退出码 stderr 告警进运行日志；首次新建无覆盖日志
+        self.make_inputs("a.mkv", "sub.mkv")
+        self.subtitles["sub.mkv"] = JPN_SRT_TRACK
+        self.subtitle_text["sub.mkv"] = SRT_JA
+        self.probe_warnings["a.mkv"] = ("ffprobe reported stderr despite exit 0: minor header issue",)
+        self.probe_warnings["sub.mkv"] = ("ffprobe reported stderr despite exit 0: sub header note",)
+        self.subtitle_warnings["sub.mkv"] = ("ffmpeg subtitle extraction reported stderr despite exit 0: sub track note",)
+        with mock.patch("kototoki.job.media.probe_ffmpeg_version",
+                        return_value=("unavailable", "failed to execute /bad/ffmpeg (FileNotFoundError: missing)")):
+            summary1 = self.run_job()
+        self.assertEqual(sorted(summary1.published), ["a.mkv", "sub.mkv"])
+        first_log = self.run_logs()[0].read_text(encoding="utf-8")
+        lines = first_log.splitlines()
+        start_idx = next(i for i, ln in enumerate(lines) if "[run] start:" in ln)
+        self.assertIn("ffmpeg=unavailable", lines[start_idx])
+        self.assertIn("WARNING", lines[start_idx + 1])
+        self.assertIn("/bad/ffmpeg", lines[start_idx + 1])
+        self.assertIn("FileNotFoundError", lines[start_idx + 1])
+        self.assertIn("[extract] a.mkv: ffprobe reported stderr despite exit 0: minor header issue", first_log)
+        self.assertIn("[extract] sub.mkv: ffprobe reported stderr despite exit 0: sub header note", first_log)
+        self.assertIn("[extract] sub.mkv: ffmpeg subtitle extraction reported stderr despite exit 0: sub track note",
+                      first_log)
+        self.assertNotIn("overwrote", first_log)
+
+        # 2) 损坏 probe.json + 重跑覆盖既有产物与音频：is_current 记 WARNING，覆盖阶段产物/WAV/publish SRT 记 INFO，且不泄露正文
+        self.run_logs()[0].unlink()
+        self.final("a.mkv").unlink()
+        (self.work_dir("a.mkv") / artifacts.PROBE).write_text("{CORRUPT_CONTENT", encoding="utf-8")
+        summary2 = self.run_job()
+        self.assertEqual(summary2.published, ["a.mkv"])
+        second_log = self.run_logs()[0].read_text(encoding="utf-8")
+        self.assertIn("WARNING  [artifacts] failed to read", second_log)
+        self.assertIn("probe.json", second_log)
+        self.assertIn("INFO     [artifacts] overwrote", second_log)
+        self.assertIn("INFO     [extract] overwrote audio-16k.wav for a.mkv", second_log)
+        self.assertIn("INFO     [srt] overwrote publish/a.ja-zh.srt", second_log)
+        for secret in ("CORRUPT_CONTENT", "こんにちは", "你好"):
+            self.assertNotIn(secret, second_log)
+
+    def test_strata_unavailable_omits_duplicate_traceback_while_unexpected_keeps_it(self) -> None:
+        # StrataRefused 在当次调用置位 session.unavailable：names 与 translate 的 FAILED 行不带重复 traceback；
+        # 未置 unavailable 的意外 RuntimeError 仍保留 traceback。
+        from kototoki import names, translate
+
+        self.make_inputs("a.mkv", "b.mkv")
+
+        seen_relatives: list[str | None] = []
+
+        def refuse_names(work_dir, document, session, seed, *, relative=None):
+            seen_relatives.append(relative)
+            session.unavailable = "another Strata launch is serving"
+            raise names.NamesError("Strata unavailable: another Strata launch is serving")
+
+        with mock.patch("kototoki.names.build_document", refuse_names):
+            summary1 = self.run_job()
+        self.assertEqual(seen_relatives, ["a.mkv", "b.mkv"])
+        self.assertEqual(summary1.failed, {"a.mkv": "names", "b.mkv": "names"})
+        log1 = self.run_logs()[0].read_text(encoding="utf-8")
+        self.assertIn("ERROR    [names] FAILED a.mkv", log1)
+        self.assertNotIn("Traceback (most recent call last):", log1)
+        self.run_logs()[0].unlink()
+
+        # 改走 unexpected RuntimeError（session.unavailable 为 None）：必须带 traceback
+        def boom_names(work_dir, document, session, seed, *, relative=None):
+            if relative == "a.mkv":
+                raise RuntimeError("unexpected names crash")
+            return self._build_document(work_dir, document, session, seed, relative=relative)
+
+        def refuse_translate(plan, session, *, relative):
+            session.unavailable = "another Strata launch is serving"
+            raise translate.TranslateError("Strata refused: another Strata launch is serving")
+
+        with mock.patch("kototoki.names.build_document", boom_names), \
+                mock.patch("kototoki.translate.translate_document", refuse_translate):
+            summary2 = self.run_job()
+        self.assertEqual(summary2.failed, {"a.mkv": "names", "b.mkv": "translate"})
+        log2 = self.run_logs()[0].read_text(encoding="utf-8")
+        self.assertIn("RuntimeError: unexpected names crash", log2)
+        self.assertEqual(log2.count("Traceback (most recent call last):"), 1)
+        self.assertIn("ERROR    [translate] FAILED b.mkv", log2)
 
 
 if __name__ == "__main__":

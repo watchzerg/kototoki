@@ -29,7 +29,7 @@ covers:
 - x0 窗口失败（含触顶）：取 w0，不裁判（`x0_failed`）。
 - 两路规范化后相同：取 w0，不打分（`identical`）。
 - 原文无法规范化：取 w0（`guard = normalize_failed`）；合并结果为空而 w0 非空：保持 w0（`guard = empty_result`）。
-- 打分抛 `RuntimeError`／`ValueError`（如 `align` 返回数量不符）：取 w0，记一条 WARNING（只记窗口序号、异常类型与消息），计入 `score_error`，不作为窗口级失败、不中断文件。
+- 打分抛 `RuntimeError`／`ValueError`（如 `align` 返回数量不符）：取 w0，记一条 WARNING（只记窗口序号与异常摘要，按每文件同类去重堆栈：首次附 `exc_info`、后续单行），计入 `score_error`，不作为窗口级失败、不中断文件。
 - 被守卫折叠的窗口照常裁判，hyp_w 与 `w0_text` 都是折叠后的文字。x0 那一路不过守卫：x0 自己的复读只有在裁判选中它时才会进合并结果。
 - 不做：幻觉过滤、叠加 Qwen 或 MMS 分数、长度项。
 
@@ -56,9 +56,9 @@ covers:
 - 代码：`kototoki/judge.py`；`WhisperAsr.score` 在 `kototoki/asr_whisper.py`，cross 的壳在 `kototoki/workers/asr.py`（[枢纽页](../stt-asr.md#代码与验证入口)）。
 - `tests/core/test_asr_whisper.py` 的 `score`：伪模型按输入顺序累加 log 概率；空文本得 0 且不送入 `align`。
 - `tests/core/test_judge.py`：分歧区间的种类与下标、`compose`；原文假设保留 w0 标点、映射失败回退规范化；`d` 恰在边界时保持 w0；相同窗口不打分；单区间记录与多区间合并；空结果守卫；`clean_x0`；`judge_file` 的逐窗决策（identical／judged／w0_failed／x0_failed／score_error）与计数。
-- `tests/core/test_stt_workers.py` 的 cross：四个产物齐全且身份分别按单引擎／cross 计算、偏好 x0 的区间被切换、x0 触顶窗口记失败、w0 失败窗口仍记失败且不打分、`failed_windows` 与审计记录正确。
+- `tests/core/test_stt_workers.py` 的 cross：四个产物齐全且身份分别按单引擎／cross 计算、偏好 x0 的区间被切换、x0 触顶窗口记失败、w0 失败窗口仍记失败且不打分、`failed_windows` 与审计记录正确，以及 `score_error` 单窗异常的每文件去重堆栈。
 - 测试精简（2026-11-22）后不再有测试覆盖：
   - 裁判：编辑对齐的相邻区间与末尾插入、半角浊音簇映射、两路空文本、批切分与 `max_batch`、数量不符抛错、不可规范化文本保持 w0、`summarize` 计数、与研究脚本合成样例的 sha256 钉子、`judge` 属基础层的导入边界。
-  - cross 壳：margin 边界、守卫只走 w0 路径且裁判看守卫后文字、打分出错与数量不符取 w0 且日志不含文字、w0 之后失败则四个产物都不写、先 Whisper 后 Qwen 的加载与两路模型身份拆分、四个 cross 产物与单引擎 `asr.json` 的字节 sha256 钉子、合并结果被对齐消费。
+  - cross 壳：margin 边界、守卫只走 w0 路径且裁判看守卫后文字、w0 之后失败则四个产物都不写、先 Whisper 后 Qwen 的加载与两路模型身份拆分、四个 cross 产物与单引擎 `asr.json` 的字节 sha256 钉子、合并结果被对齐消费。
   - `score`：log 概率下限钳位、概率与结果数量不符抛错、编码一次与每批至多 16、起始序列。
 - 真实模型验证与未验证项见[枢纽页](../stt-asr.md#代码与验证入口)。

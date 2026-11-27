@@ -188,7 +188,9 @@ class BuildTableTests(unittest.TestCase):
 
     def test_length_first_then_success_bumps_seed(self):
         server = FakeServer(response(reply_text(), "length"), response(reply_text()))
-        result = bt.build_table(document(), server.chat, server.tokenize, 100)
+        with self.assertLogs("kototoki.names.table", level="WARNING") as logs:
+            result = bt.build_table(document(), server.chat, server.tokenize, 100)
+        self.assertIn("ValueError:", logs.records[0].getMessage())
         self.assertEqual([b["seed"] for b in server.bodies], [100, 101])
         self.assertEqual((result.status, result.attempts), ("ok", 2))
         self.assertEqual(result.payload["meta"]["seed"], 101)
@@ -203,7 +205,9 @@ class BuildTableTests(unittest.TestCase):
 
     def test_five_failures_return_failed_empty_table(self):
         server = FakeServer(*[response(reply_text(), "length")] * 4, response("不是 JSON\n第二行"))
-        result = bt.build_table(document(), server.chat, server.tokenize, 100)
+        with self.assertLogs("kototoki.names.table", level="WARNING") as logs:
+            result = bt.build_table(document(), server.chat, server.tokenize, 100)
+        self.assertEqual(len(logs.records), 5)
         self.assertEqual((result.status, result.attempts, len(server.bodies)), ("failed", 5, 5))
         self.assertEqual([b["seed"] for b in server.bodies], [100, 101, 102, 103, 104])
         payload = result.payload

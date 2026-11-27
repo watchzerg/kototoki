@@ -103,6 +103,16 @@ class ClassifyLaunchTests(unittest.TestCase):
         self.assertEqual(p.classify_launch(self.IDS, 3, [{"event": "started"}]),
                          p.LaunchOutcome((), "a", False, None, ("b", "c", "d")))
 
+    def test_startup_failed_preserves_message_summary_and_handles_blank(self) -> None:
+        long_event = {"event": "startup_failed", "error_type": "ValueError",
+                      "message": "  " + ("x" * 250) + "\nsecond line"}
+        self.assertEqual(p.classify_launch(self.IDS, p.EXIT_FATAL, [long_event]),
+                         p.LaunchOutcome((), None, False, f"ValueError: {'x' * 200}", ()))
+        for blank in ({"event": "startup_failed", "error_type": "RuntimeError", "message": " \n "},
+                      {"event": "startup_failed", "error_type": "RuntimeError"}):
+            self.assertEqual(p.classify_launch(self.IDS, p.EXIT_FATAL, [blank]),
+                             p.LaunchOutcome((), None, False, "RuntimeError", ()))
+
 
 class ProgressEventTests(unittest.TestCase):
     def test_lifecycle_events_are_not_forwarded(self) -> None:

@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import tempfile
+import time
 from typing import Any
 import unittest
+from unittest import mock
 
 from kototoki import artifacts
 from kototoki import strata as S
 from kototoki.artifacts import read_json
 from kototoki.local_client import InfraFailure
-from kototoki.strata import StrataRefused, StrataServer, wait_for_free_vram
+from kototoki.strata import ResourceSampler, StrataRefused, StrataServer, wait_for_free_vram
 from tests.core.strata_fakes import StrataHarness
 
 # Strata 默认启动真实写下的参数形状（0.2.12 Windows 与 0.2.13.1 Linux 相同）：总带 `--mtp <权重目录>`，DFlash2 不在 run config 里（2026-11-08 smoke）。
@@ -108,13 +111,13 @@ class StrataServerTests(unittest.TestCase):
         self.now = [0.0]
         self.pids: list[int | None] = []
 
-    def server(self) -> StrataServer:
-        def sleep(seconds: float) -> None:
+    def server(self, *, cli: Any = None, get: Any = None, sleep: Any = None) -> StrataServer:
+        def advance(seconds: float) -> None:
             self.now[0] += seconds
 
-        return StrataServer(self.root, on_pid=self.pids.append, cli=self.fake.cli, get=self.fake.get,
-                            free_vram=self.fake.free_vram, available_ram=self.fake.available_ram, sleep=sleep,
-                            clock=lambda: self.now[0], log_dir=self.root / "logs",
+        return StrataServer(self.root, on_pid=self.pids.append, cli=cli or self.fake.cli, get=get or self.fake.get,
+                            free_vram=self.fake.free_vram, available_ram=self.fake.available_ram,
+                            sleep=sleep or advance, clock=lambda: self.now[0], log_dir=self.root / "logs",
                             engine_log_dir=self.root / "launch-logs")
 
     def verbs(self) -> list[str]:
@@ -203,6 +206,108 @@ class StrataServerTests(unittest.TestCase):
         self.assertEqual(self.verbs(), [])
         self.assertEqual(self.pids, [])
 
+    def test_exit_emits_single_warning_when_sampler_had_errors(self) -> None:
+        status_calls = 0
+
+        def flaky_get(url: str) -> dict[str, Any]:
+            nonlocal status_calls
+            if url.endswith("/v1/status"):
+                status_calls += 1
+                if status_calls >= 2:
+                    raise TimeoutError("status poll timed out")
+            return self.fake.get(url)
+
+        server = self.server(get=flaky_get, sleep=lambda s: None)
+        with self.assertLogs("kototoki.strata", level="WARNING") as logs:
+            with server:
+                pass
+        resources = read_json(self.root / "resources.json")
+        self.assertEqual(resources["errors"], 2)
+        self.assertEqual(resources["last_error"], "TimeoutError: status poll timed out")
+        warnings = [r for r in logs.records if r.levelname == "WARNING"]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("2", warnings[0].getMessage())
+        self.assertIn("TimeoutError: status poll timed out", warnings[0].getMessage())
+
+    def test_exit_emits_single_error_when_final_sample_raises_unexpected(self) -> None:
+        status_calls = 0
+
+        def bad_final_get(url: str) -> dict[str, Any]:
+            nonlocal status_calls
+            if url.endswith("/v1/status"):
+                status_calls += 1
+                if status_calls >= 3:
+                    raise RuntimeError("final probe crashed")
+            return self.fake.get(url)
+
+        server = self.server(get=bad_final_get, sleep=lambda s: None)
+        with self.assertLogs("kototoki.strata", level="WARNING") as logs:
+            with server:
+                pass
+        resources = read_json(self.root / "resources.json")
+        self.assertEqual(resources["errors"], 1)
+        self.assertEqual(resources["last_error"], "RuntimeError: final probe crashed")
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(logs.records[0].levelname, "ERROR")
+        self.assertIn("final resource sample failed", logs.records[0].getMessage())
+        self.assertIn("RuntimeError: final probe crashed", logs.records[0].getMessage())
+
+    def test_final_write_error_logs_error_and_omits_missing_path(self) -> None:
+        final_path = self.root / "strata-final.json"
+        final_path.mkdir()
+        (final_path / "keep").write_text("x", encoding="utf-8")
+
+        def stop_fails(*args: str, timeout: float = 120.0) -> str:
+            if args == S.STOP_ARGS:
+                self.fake.commands.append(args)
+                raise OSError("cannot stop")
+            return self.fake.cli(*args, timeout=timeout)
+
+        with self.assertLogs("kototoki.strata", level="ERROR") as logs:
+            with self.server(cli=stop_fails):
+                pass
+        self.assertEqual(self.pids, [4242, None])
+        errors = [r.getMessage() for r in logs.records if r.levelname == "ERROR"]
+        self.assertTrue(any("IsADirectoryError" in msg and str(final_path) in msg for msg in errors), errors)
+        unconfirmed = [msg for msg in errors if "Strata stop not confirmed" in msg]
+        self.assertEqual(len(unconfirmed), 1)
+        self.assertNotIn("strata-final.json", unconfirmed[0])
+
+    def test_called_process_error_preserves_stderr_and_exit_status_error(self) -> None:
+        def pre_status_fails(*args: str, timeout: float = 120.0) -> str:
+            if args == S.STATUS_ARGS:
+                raise subprocess.CalledProcessError(2, ["strata", *args], stderr="pre-launch status stderr")
+            return self.fake.cli(*args, timeout=timeout)
+
+        with self.assertRaisesRegex(InfraFailure, "pre-launch status stderr"):
+            with self.server(cli=pre_status_fails):
+                self.fail("must not enter")
+
+        # 就绪轮询遇到 --status 失败时保留 stderr；退出时 --stop 与 --status 轮询失败分别记入 stop 与 status_error。
+        self.fake = FakeStrata(self.root)
+        self.now = [0.0]
+        launched = False
+
+        def lifecycle_fails(*args: str, timeout: float = 120.0) -> str:
+            nonlocal launched
+            if args == S.LAUNCH_ARGS:
+                launched = True
+                return self.fake.cli(*args, timeout=timeout)
+            if args == S.STATUS_ARGS and launched:
+                raise subprocess.CalledProcessError(4, ["strata", *args], stderr="status poll stderr")
+            if args == S.STOP_ARGS:
+                raise subprocess.CalledProcessError(3, ["strata", *args], stderr="stop cmd stderr")
+            return self.fake.cli(*args, timeout=timeout)
+
+        with self.assertLogs("kototoki.strata", level="ERROR"):
+            with self.assertRaisesRegex(InfraFailure, "status poll stderr"):
+                with self.server(cli=lifecycle_fails):
+                    self.fail("must not enter")
+        final = read_json(self.root / "strata-final.json")
+        self.assertIn("stop cmd stderr", str(final["stop"]))
+        self.assertIn("status poll stderr", str(final.get("status_error")))
+        self.assertIsNone(final["status_empty"])
+
 
 class WaitForFreeVramTests(unittest.TestCase):
     """空闲显存轮询（ADR-0025 起从 `llama_server.py` 并入本模块；测试随之从 `test_llama_server.py` 搬来）。"""
@@ -234,6 +339,15 @@ class WaitForFreeVramTests(unittest.TestCase):
         with self.assertRaises(InfraFailure) as caught:
             self._wait([1000, 2000, 3456])
         self.assertIn("3456", str(caught.exception))
+
+    def test_default_nvidia_smi_query_preserves_failure_reason_without_thread_local(self) -> None:
+        with mock.patch("kototoki.strata.subprocess.run", side_effect=FileNotFoundError("no nvidia-smi")):
+            with self.assertRaisesRegex(InfraFailure, r"nvidia-smi failed: FileNotFoundError: no nvidia-smi"):
+                wait_for_free_vram(14300, 0.0, sleep=self._sleep, clock=lambda: self.now)
+        with mock.patch("kototoki.strata.subprocess.run",
+                        return_value=subprocess.CompletedProcess(["nvidia-smi"], 9, stdout="", stderr="driver error")):
+            with self.assertRaisesRegex(InfraFailure, r"nvidia-smi failed: exit 9: driver error"):
+                wait_for_free_vram(14300, 0.0, sleep=self._sleep, clock=lambda: self.now)
 
 
 class SessionTests(unittest.TestCase):
@@ -313,6 +427,34 @@ class SessionTests(unittest.TestCase):
                          [("ERROR", "[strata] unavailable for the rest of this batch: refused 1")])  # 只记一次
         self.assertEqual(self.h.events, ["start:1"])  # 被拒的服务已自行停掉，不再 stop
         self.assertEqual(self.h.pids, [None])
+
+
+class ResourceSamplerTests(unittest.TestCase):
+    def test_background_uncaught_exception_is_rate_limited_and_recorded(self) -> None:
+        calls = 0
+
+        def bad_get(url: str) -> dict[str, Any]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {"machine": {"gpu": {"used_mib": 15600}, "ram": {"used_gib": 21.5}}}
+            raise RuntimeError("unexpected probe boom")
+
+        sampler = ResourceSampler("http://127.0.0.1:8080", bad_get, every=0.005)
+        with self.assertLogs("kototoki.strata", level="WARNING") as logs:
+            sampler.start()
+            try:
+                deadline = time.monotonic() + 2.0
+                while sampler.peak["errors"] < 3 and time.monotonic() < deadline:
+                    time.sleep(0.005)
+            finally:
+                sampler.stop()
+        self.assertGreaterEqual(sampler.peak["errors"], 3)
+        self.assertIn("RuntimeError: unexpected probe boom", str(sampler.peak.get("last_error")))
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(logs.records[0].levelname, {"WARNING", "ERROR"})
+        self.assertIn("RuntimeError", logs.records[0].getMessage())
+        self.assertIn("unexpected probe boom", logs.records[0].getMessage())
 
 
 if __name__ == "__main__":

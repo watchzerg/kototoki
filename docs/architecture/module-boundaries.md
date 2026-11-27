@@ -24,9 +24,9 @@
 - 阶段链、`ENGINE_PARTS`（唯一出处）、模型清单与各阶段期望身份归[阶段计划](modules/stage-plan.md)；translate 身份转问翻译子系统，是否已发布由编排按字幕文件是否存在判定。
 - 翻译配方与 `RECIPE_HASH`（只在 `kototoki/translate/recipes.py`）、注入规则、run 目录键、`needs_model`、按条追问与未翻译归[翻译子系统](modules/translation-subsystem.md)；双语合并归[双语合并](modules/translation-subsystem/bilingual-merge.md)。
 - 建表配方与 hash（只在 `kototoki/names/recipes.py`）、建表请求额度与 `name-table.json` 的内容归[专名一致性](modules/name-consistency.md)；文件由编排写，表的用法（注入哪些行）归翻译子系统。
-- 扫描、调度、锁、发布、子进程环境与运行日志归[批次编排](modules/batch-orchestration.md)；进程原语在基础层 `kototoki/procs.py`，日志行格式在 `kototoki/logs.py`。
+- 扫描、调度、锁、发布、子进程环境与运行日志归[批次编排](modules/batch-orchestration.md)；进程原语在基础层 `kototoki/procs.py`，日志行格式与共用日志辅助在 `kototoki/logs.py`。
 - 本机回环客户端 `LlamaClient`、`InfraFailure`、失败分类 `classify_failure`／`response_body` 归 `kototoki/local_client.py`；llama-server 进程生命周期不在产品里，`list_llama_servers` 在 `scripts/smoke/`。
-- Strata 起停、显存轮询（`nvidia_smi`、`wait_for_free_vram`）、身份核对与常量、共享 `Session` 归 `kototoki/strata.py`（[Strata session](modules/strata-session.md)）；启动额度只由 `Session` 计数，`unavailable` 只由它写。
+- Strata 起停、显存轮询（`probe_nvidia_smi`、`nvidia_smi`、`wait_for_free_vram`）、身份核对与常量、共享 `Session` 归 `kototoki/strata.py`（[Strata session](modules/strata-session.md)）；启动额度只由 `Session` 计数，`unavailable` 只由它写。
 
 ## 依赖方向
 
@@ -101,7 +101,7 @@
   - 每个阶段期望身份的组成只在 `plan.py` 写一次，worker 壳与编排消费不复制；没有模块把绝对路径写进身份。
 - **子进程环境**归编排：`PYTHONUTF8=1`、离线变量、共用 `HF_HOME`／`TORCH_HOME=<work_dir>/cache/` 由编排传入，worker 不自行设置 PATH 或 `LD_LIBRARY_PATH`。
 - **日志**目的地与格式只归编排（`kototoki/logs.py` 的格式；`gpu.main` 只把 worker 日志按同一格式写到 stderr，由编排存档）。
-  - 产品模块经各自 `kototoki.*` logger 发进度与告警：`job`、`translate.*`、`strata`（前缀 `[strata]`）、`names.table`（不合格的尝试）、worker 壳；`names` 包顶层只发 `count_tokens` 不可用与停 Strata 前的两条 WARNING，建表结果行由编排写。
+  - 产品模块经各自 `kototoki.*` logger 发进度与告警：`job`、`translate.*`、`strata`（前缀 `[strata]`）、`names.table`（不合格的尝试）、`artifacts`（损坏产物 WARNING 与覆盖 INFO）、`srt`（覆盖 INFO）、worker 壳；`names` 包顶层只发 `count_tokens` 不可用与停 Strata 前的两条 WARNING，建表结果行由编排写。
   - 推理模块不发日志、不打印；转写、译文、提示与模型响应正文不进任何日志。细则见[批次编排](modules/batch-orchestration.md)。
 
 ### 接缝
@@ -114,7 +114,7 @@
 
 共享 session 的调用契约：
 
-- 编排持有 `strata.Session`，传给 `names.build_document(work_dir, document, session, seed)` 与 `translate_document(plan, session)`。
+- 编排持有 `strata.Session`，传给 `names.build_document(work_dir, document, session, seed, *, relative=None)` 与 `translate_document(plan, session, *, relative)`（`relative` 仅用于日志）。
 - 两阶段经 `ensure_started()` 取运行中的服务、经 `label` 与 `client()` 取 session 名与客户端，基础设施失败时 `stop()`；不碰 `ordinal`、`runtime_root`、`client_factory`。
 - `plan` 调用 `translate.plan(work_dir, document, name_table, config)` 取翻译身份与 `needs_model`；编排从 `TranslateResult` 读回退计数。
 - 翻译的同调用内重启与降级留在 `kototoki/translate/generate.py`，经 `stop()`／`ensure_started()` 重启；names 不做同调用内重启。

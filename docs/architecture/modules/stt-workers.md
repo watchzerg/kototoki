@@ -68,7 +68,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 - 与研究期实现的差别：TorchAudio 要求放宽为 ≥2.10，实际版本记入 `metadata.package_versions`。
 - 字典只取 id < `model.config.vocab_size` 的词表项（`align.model_dictionary`）：分词器多出的 added token `|`（id 2268）被丢弃并记入 `metadata.dropped_tokenizer_entries`，通配符列号仍为 2268。
-- `map_records(segments, records)` 与 `MmsAligner.align(audio, segments)` 不收 offset，units 输出 WAV 本地秒。
+- `map_records(segments, records)` 与 `MmsAligner.align(audio, segments, on_error=None)` 不收 offset，units 输出 WAV 本地秒；单窗对齐失败且传入 `on_error` 时同步回调 `(index, error)`。
 - 窗口一律是整数样本（`align.sample_window` 校验整数边界且秒与样本一致，不符即该文件失败）。
 - 单窗 `RuntimeError`／`ValueError` 记入该窗 `failure`，字符成为 `text_only`，不转 CPU 重试。
 - `asr.json` 中被置空的失败窗口没有可对齐字符（`skip_reason = no_eligible_characters`）。
@@ -86,7 +86,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - 推理模块（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`）只做"加载一次、按窗口推理"：输入输出是内存对象与 WAV 本地坐标，只依赖基础层、互不导入，不读写产物、不判断跳过、不打印。
 - worker 壳（`kototoki/workers/{vad,asr,align}.py`）负责读输入、重验上游身份、组装 payload 与 `failed_windows` 记账，经 `protocol.run_worker` 运行，`__main__` 两行。
 
-**共用部分在 `kototoki/workers/gpu.py`**：命令行入口 `main`、读 WAV `read_wav`（mono 16 kHz PCM16，返回 float32 波形与 PCM SHA256）、读上游产物并重验 `read_input_artifact`、`require_recipe`、`verify_models`、CUDA 守卫 `check_cuda` 与写产物 `file_processor`。
+**共用部分在 `kototoki/workers/gpu.py`**：命令行入口 `main`、读 WAV `read_wav`（mono 16 kHz PCM16，返回 float32 波形与 PCM SHA256）、读上游产物并重验 `read_input_artifact`、`require_recipe`、`verify_models`、CUDA 守卫 `check_cuda` 与写产物 `file_processor`（覆盖既有产物时带 `recomputed <stage> stage output` 原因），以及单窗异常去重日志 `log_window_error`（消费 `kototoki.logs` 的 `failure_kind` 与 `format_error`）。
 
 - 每个壳的 `Compute` 对一个文件返回若干 `(path, identity, payload)` 与进度行附加字段。
 - `gpu.file_processor` 查一次 CUDA 后按顺序全部写出，阶段产物（如 `asr.json`）排在最后，所以中途失败时没有新的阶段产物。
@@ -107,37 +107,29 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 **日志**（由 `gpu.main` 配置）：
 
-- root 上一个写 stderr 的 handler（`kototoki.logs.RunFormatter`，与运行日志同格式），`kototoki` logger 为 INFO；第三方只有 WARNING 及以上；`logging.captureWarnings(True)` 把 Python warnings 收进同一流；`gpu.quiet_known_warnings` 只过滤 `KNOWN_HARMLESS_WARNINGS` 列出的已知无害告警（当前一条：pyannote 在 GPU 上关掉 TF32 时的 `ReproducibilityWarning`，按 `UserWarning` 与消息开头匹配），免得 vad 每次运行都在运行日志里留一行告警计数，其他告警照常。
-- 三个壳的 logger 固定命名为 `kototoki.workers.<stage>`：以 `python -m kototoki.workers.<stage>` 运行时 `__name__` 是 `__main__`，不在 INFO 级的 `kototoki` 之下，每文件 INFO 行会被丢弃。
-- 壳记模型核对与加载耗时、每文件窗口数／失败数／推理秒数；每个失败窗口一行 WARNING（只记序号与 reason，不记文字）。
+- 先将支持 `reconfigure` 的 `sys.stderr` 设为 `errors="backslashreplace"`，再挂 `RunFormatter` stderr handler、`kototoki` 设 INFO（第三方只收 WARNING 及以上）、开启 `captureWarnings(True)` 并过滤 `KNOWN_HARMLESS_WARNINGS`（仅 pyannote 关 TF32 的 `ReproducibilityWarning`），**之后**再解析参数。
+- 参数错误与顶层未捕获异常（含写 `failure.json` 或 `stdout` 失败）均经同一格式器记 `ERROR` 后以退出码 2 退出，并在 `finally` 摘除 handler、恢复级别与告警捕获。
+- 三个壳的 logger 固定命名为 `kototoki.workers.<stage>`：以 `python -m` 运行时 `__name__` 是 `__main__`，不在 INFO 级的 `kototoki` 之下，每文件 INFO 行会被丢弃。
+- 壳记模型核对与加载耗时、每文件窗口数／失败数／推理秒数；单窗异常经可选 `on_error` 回调交由壳记 `WARNING`（不重复记两遍），并按每文件 `(异常类型, 文件, 行号)` 去重堆栈（首次附 `exc_info`，后续单行摘要，不记文字）；无异常的失败（`token_limit_reached`、`guard:*`）记单行 `WARNING`。
 - `protocol` 对单文件失败、`FatalWorkerError` 与启动失败记 ERROR（异常类型＋traceback）；启动失败行为 `[<stage>] startup failed: <类型>`，读 jobs 失败、还不知道阶段时为 `[worker] startup failed: <类型>`。
 - stderr 侧文件里的相对秒自 worker 进程启动起算，不是自本次 `run` 起。
 - 推理模块不发日志；stdout 只留协议 JSON 行，`done` 行的数值字段由编排抄进运行日志。stderr 的存放与告警计数见[运行日志](run-logging-and-processes/run-log.md#运行日志)。
 
 ## 代码与验证入口
 
-- 代码：`kototoki/vad.py`、`kototoki/align.py`、`kototoki/schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py`（`kototoki/workers/protocol.py` 归[产物契约](artifact-contract.md)；ASR 推理模块、`kototoki/guard.py` 与 `kototoki/judge.py` 归 [STT ASR](stt-asr.md)）。
-- `tests/core/test_vad.py`：`chunk_intervals` 的并集（重叠与乱序）、超长硬切、贪心合并不超上限。
-- `tests/core/test_align.py`：`character_targets` 重复字保位置、未知字用通配；`map_records` 每个字恰好一个 unit、失败或无效记录退为只有文字；`MmsAligner.align` 逐窗循环按样本边界出记录且 units 为 WAV 本地秒；`normalize_window` 短窗右补零到最小长度。
-- `tests/core/test_schema.py`：`validate_transcript` 拒绝错误 schema 版本或缺文字；`validate_windows` 接受精确窗口与空列表、拒绝重叠乱序与超 480000 样本；`validate_units` 的精确覆盖、只有文字的 unit、缺漏、重复覆盖与时间越界。
-- `tests/core/test_stt_workers.py`（伪推理对象）：
-  - vad 壳写出的身份等于 `plan.vad_identity`，坐标与 `stages` 如实；asr 壳身份链到 vad 且逐窗文字、`failed_windows` 正确；失败窗口置空并记录；复读窗口被折叠并写 trace 与 WARNING（日志不含文字）；vad 对应另一份音频则整文件失败。
-  - align 壳的链产出能被 `cues.build_cues` 消费；对齐改文字则整文件失败。
-  - CUDA 守卫：坏 CUDA 出错或成功均退出码 2 且不写产物；`gpu.verify_models` 核对并缓存 sha256；`gpu.read_wav` 归一化 PCM16 为 float32 并算 PCM sha256。
-  - 壳导入不加载推理库。
-  - ASR 与 `cross` 的用例见 [STT ASR](stt-asr/cross-judge.md#代码与验证入口)。
-- 测试精简（2026-11-22）后不再有测试覆盖：
-  - vad：`chunk_intervals` 的取整、越界裁剪与计数、窗口外区间丢弃、内部静音记账、非法区间与样本数、输出过窗口 schema；`validate_audio` 的形状与 dtype。
-  - align：torchaudio 最小版本、模型字典过滤（含 transformers 5 的分隔符）、小写展开报错、数值作用域的设置与恢复、`sample_window` 的各种拒绝；`map_records` 的 `offset` 与缺记录保留文字。
-  - schema：多数拒绝分支、1 ms 容差、采样率常量只在 recipes 定义。
-  - 壳：身份不自有、非法窗口使文件失败、配方与引擎启动校验、`main` 读 jobs、日志去向与启动失败的 traceback、模型文件清单、`gpu.file_processor` 的一次 CUDA 检查、logger 名、TF32 告警过滤；整链 `align.json`、`ja-cues.json`、`ja.srt` 的字节 sha256 钉子已删除。
-- 真实模型路径由小批量 `mise run subtitles` 验证；对照研究期冻结窗口的门禁已随 ADR-0034 删除，不再与 W0／X0 demo 逐 token 比对。
+- 代码：`kototoki/vad.py`、`kototoki/align.py`、`kototoki/schema.py`、`kototoki/workers/{vad,asr,align,gpu}.py`（`kototoki/workers/protocol.py` 归[产物契约](artifact-contract.md)；ASR 推理、`guard` 与 `judge` 归 [STT ASR](stt-asr.md)）。
+- 离线单元测试（`mise run test`）：
+  - `tests/core/test_vad.py`：`chunk_intervals` 的并集、超长硬切与贪心合并。
+  - `tests/core/test_align.py`：`character_targets`、`map_records`、`normalize_window` 与 `MmsAligner.align` 逐窗循环及 `on_error` 回调。
+  - `tests/core/test_schema.py`：`validate_transcript`、`validate_windows` 与 `validate_units` 核心不变量。
+  - `tests/core/test_stt_workers.py`（伪推理对象）：三阶段身份与坐标链、`failed_windows`、守卫折叠与跨簇 NFKC 跳过（日志不含文字）、CUDA 守卫退出码 2、`gpu.verify_models`／`read_wav`、壳导入不加载推理库；`gpu.main` 参数／顶层未捕获异常入 `stderr` 与 handler 清理、`file_processor` 覆盖审计原因，以及 ASR／对齐／cross 单窗异常的每文件去重堆栈（ASR 与 `cross` 另见 [STT ASR](stt-asr/cross-judge.md#代码与验证入口)）。
+- 测试精简（2026-11-22）后未保留部分边界单测（如窗口越界裁剪细节、torchaudio 版本与字典过滤、schema 多数拒绝分支、TF32 告警过滤、`main` 正常读 jobs 主循环与字节 sha256 钉子）；真实模型路径由小批量 `mise run subtitles` 验证（研究对照门禁已随 ADR-0034 删除）。
 - 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 
 ## 变更与决策来源
 
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
-- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`、`issues/14-stage-plan-module.md`）、.scratch/cross-asr-judge/、.scratch/runtime-logging-gaps/
+- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`、`issues/14-stage-plan-module.md`）、.scratch/cross-asr-judge/、.scratch/runtime-logging-gaps/；Beads `kototoki-598`（`kototoki-598.2`）
 - 计划：`archive/2026-11-18-pre-research-restructure:docs/plans/architecture-cleanup.md`、`archive/2026-11-18-pre-research-restructure:docs/plans/asr-repeat-guard.md`
 - 验收：[两部整片验收](../../research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)、[最终验收](../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)、[swr 回归](../../research/acceptance/bilingual-pipeline-swr-regression-2026-10-16.md)
 - 历史记录：模块页拆出的历史记录（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md`）、技术设计历史（`archive/2026-11-18-pre-research-restructure:docs/research/2026-11-11-bilingual-pipeline-spec-history.md`）

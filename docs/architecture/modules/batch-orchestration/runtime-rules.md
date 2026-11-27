@@ -18,11 +18,11 @@ covers:
 - 锁文件记录编排器 pid 与创建时间，以及运行中的 worker 与 Strata 服务的 pid。
 - 两把锁都是持有者存活即拒绝、残留锁默认拒绝，`KOTOTOKI_BREAK_STALE_LOCK=1` 时移除残留锁；GPU 锁取不到时抛 `GpuLocked`，整批以退出码 4 结束：任何阶段——vad、asr、align、names、translate——需要 GPU 锁而撞上都如此，不写逐文件 `failure.json`；已完成的 CPU 产物保留，可续跑；同批的零条目文件也等到下一次运行再发布。
 
-**`failure.json` 清理**：该文件本次成功发布后、以及发布期发现源文件旁已有同名字幕而按已存在跳过时删除；重跑时不看 `failure.json`，只按产物身份决定从哪个阶段继续，新的失败覆盖旧记录。
+**`failure.json` 清理**：该文件本次成功发布后、以及发布期发现源文件旁已有同名字幕而按已存在跳过时删除，仅在 `failure.json` 确实存在并删除时记 INFO 审计记录（不存在时不输出）；重跑时不看 `failure.json`，只按产物身份决定从哪个阶段继续，新的失败覆盖旧记录。
 
 ## 运行日志
 
-编排持有运行日志的目的地（`<work root>/run-<UTC戳>.log`、控制台、`run-<戳>-<stage>.stderr.log`）；挂接、行格式、级别与内容规则见[运行日志与进程原语](../run-logging-and-processes/run-log.md#运行日志)。
+编排持有运行日志的目的地（`<work root>/run-<UTC戳>.log`、控制台、`run-<戳>-<stage>.stderr.log`），并在取得工作根锁后立即进入 `_run_logging` 上下文以兜底初始化与锁释放异常；挂接、行格式、级别与内容规则见[运行日志与进程原语](../run-logging-and-processes/run-log.md#运行日志)。
 
 ## 代码与验证入口
 

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
+from kototoki.logs import format_error
 from kototoki.srt import SourceDocument
 from kototoki.strata import MODEL
 
@@ -398,10 +399,11 @@ def _request_body(messages: list[dict[str, str]], seed: int) -> dict[str, Any]:
             "chat_template_kwargs": {"enable_thinking": False}, "stream": False, "model": MODEL}
 
 
-def build_table(document: SourceDocument, chat: Chat, tokenize: Tokenize, seed: int) -> BuildResult:
+def build_table(document: SourceDocument, chat: Chat, tokenize: Tokenize, seed: int,
+                *, label: str | None = None) -> BuildResult:
     """建表。零条目文档不请求；system+user 提示的 token 总数超预算返回 `too_long` 空表；否则最多 `ATTEMPTS` 次，第 N 次 seed 加
     `(N-1) * SEED_STEP`，回复被截断（`finish_reason == length`）或 `parse_reply` 抛 `ValueError`（格式不合格）即重试，
-    全部失败返回 `failed` 空表（原因取最后一次错误的首行）。传输层异常不在此处理，直接抛给调用方。"""
+    全部失败返回 `failed` 空表（原因取最后一次错误的首行）。`label` 仅用于日志定位；传输层异常不在此处理，直接抛给调用方。"""
     none_dropped: tuple[list, list, list] = ([], [], [])
     if not document.cues:
         payload = _payload(seed, 0, None, [], none_dropped, {}, 0.0, "ok", None)
@@ -432,10 +434,11 @@ def build_table(document: SourceDocument, chat: Chat, tokenize: Tokenize, seed: 
             guess, entries = parse_reply((choice.get("message") or {}).get("content") or "", cue_count, *dropped)
         except ValueError as exc:  # json.JSONDecodeError 是其子类
             last_error = exc
-            # 只记错误首行、停止原因与计数，回复正文不进日志。
+            # 只记异常摘要（含类型与首行）、停止原因与计数，回复正文不进日志。
             content = (choice.get("message") or {}).get("content")
-            log.warning("[names] attempt %d/%d failed (seed %d): %s; finish %s, %s completion tok, reply %s char(s)",
-                        attempt, ATTEMPTS, used_seed, (str(exc).splitlines() or [type(exc).__name__])[0][:200],
+            prefix = f"[names] {label}: " if label else "[names] "
+            log.warning("%sattempt %d/%d failed (seed %d): %s; finish %s, %s completion tok, reply %s char(s)",
+                        prefix, attempt, ATTEMPTS, used_seed, format_error(exc),
                         choice.get("finish_reason"), usage.get("completion_tokens"),
                         len(content) if isinstance(content, str) else 0)
             continue

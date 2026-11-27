@@ -87,11 +87,11 @@ class TranscribeTest(unittest.TestCase):
             {"start": 2.0, "end": 3.0, "start_sample": 32000, "end_sample": 48000, "segments": [[2.0, 3.0]]},
         ]
 
-    def run_transcribe(self, generate):
+    def run_transcribe(self, generate, *, on_error=None):
         features = mock.Mock(return_value=np.zeros((128, 3000), dtype=np.float32))
         with mock.patch.object(self.module, "features", features), \
                 mock.patch.object(self.module, "generate", side_effect=generate):
-            return self.asr.transcribe(self.audio, self.chunks), features
+            return self.asr.transcribe(self.audio, self.chunks, on_error=on_error), features
 
     def test_runtime_error_in_one_window_is_recorded_and_the_rest_continue(self):
         def generate(model, mel, options):
@@ -100,13 +100,16 @@ class TranscribeTest(unittest.TestCase):
                 raise RuntimeError("CUDA failed with error out of memory")
             return {"text": "文", "avg_logprob": -0.2, "tokens": [], "prompt": [], "kwargs": {}}
         generate.calls = 0
-        (segments, traces, failures), _ = self.run_transcribe(generate)
+        seen_errors = []
+        (segments, traces, failures), _ = self.run_transcribe(
+            generate, on_error=lambda idx, err: seen_errors.append((idx, type(err), str(err))))
         self.assertEqual([s["text"] for s in segments], ["文", "", "文"])
         self.assertIsNone(traces[1])
         self.assertIsNone(segments[1]["avg_logprob"])
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0][0], 1)
         self.assertIn("RuntimeError", failures[0][1])
+        self.assertEqual(seen_errors, [(1, RuntimeError, "CUDA failed with error out of memory")])
 
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -96,6 +97,31 @@ class ArtifactTests(TempCase):
         failure = a.read_json(self.root / a.FAILURE)
         self.assertEqual((failure["stage"], failure["error_type"], failure["message"]), ("asr", "RuntimeError", "boom"))
         self.assertEqual(failure["completed"], [a.PROBE, a.VAD])
+
+    def test_is_current_warns_only_on_corrupt_existing_artifact(self) -> None:
+        path = self.root / "work123" / a.NAME_TABLE
+        with self.assertNoLogs("kototoki.artifacts", logging.WARNING):
+            self.assertFalse(a.is_current(path, self.identity()))
+        path.parent.mkdir(parents=True)
+        path.write_text("{SECRET_TRANSCRIPT", encoding="utf-8")
+        with self.assertLogs("kototoki.artifacts", logging.WARNING) as logs:
+            self.assertFalse(a.is_current(path, self.identity()))
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("work123/name-table.json", logs.output[0])
+        self.assertIn("JSONDecodeError", logs.output[0])
+        self.assertNotIn("SECRET_TRANSCRIPT", logs.output[0])
+
+    def test_write_artifact_logs_info_only_when_overwriting(self) -> None:
+        path = self.root / "work123" / a.VAD
+        with self.assertNoLogs("kototoki.artifacts", logging.INFO):
+            a.write_artifact(path, self.identity(), {"offset_s": 0, "secret": "SECRET_PAYLOAD"})
+        with self.assertLogs("kototoki.artifacts", logging.INFO) as logs:
+            a.write_artifact(path, self.identity(recipe_hash=SHA_C), {"offset_s": 0, "secret": "SECRET_PAYLOAD"},
+                             reason="identity changed")
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("work123/vad.json", logs.output[0])
+        self.assertIn("identity changed", logs.output[0])
+        self.assertNotIn("SECRET_PAYLOAD", logs.output[0])
 
 
 class ModelVerificationTests(TempCase):

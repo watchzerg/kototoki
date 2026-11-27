@@ -11,6 +11,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from unittest import mock
+
 from kototoki import procs
 from kototoki.procs import LockError, ProcessLock
 
@@ -68,6 +70,45 @@ class ProcessLockTests(unittest.TestCase):
         lock.acquire()
         lock.release()
         self.assertFalse(self.path.exists())
+
+    def test_read_preserves_error_and_update_release_log_warnings(self) -> None:
+        self.write("{not json")
+        read = self.lock().read()
+        self.assertIsNotNone(read)
+        assert read is not None
+        self.assertTrue(read.get("unparseable"))
+        self.assertIn("JSONDecodeError", read.get("error", ""))
+        with self.assertRaisesRegex(LockError, r"JSONDecodeError"):
+            self.lock().acquire()
+
+        lock = self.lock()
+        self.path.unlink()
+        lock.acquire()
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")), \
+                self.assertLogs("kototoki.procs", "WARNING") as logs:
+            lock.update(worker_pid=99)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("PermissionError: denied", logs.records[0].getMessage())
+
+        self.write(json.dumps({"pid": OTHER_PID, "pid_created": lock.created}))
+        with self.assertLogs("kototoki.procs", "WARNING") as logs:
+            lock.release()
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("owner mismatch", logs.records[0].getMessage())
+        self.assertTrue(self.path.exists())
+
+    def test_break_stale_open_failure_retains_removed_lock_info(self) -> None:
+        old = {"pid": OTHER_PID, "pid_created": 7, "worker_stage": "asr", "owner": "kototoki"}
+        self.write(json.dumps(old))
+        with mock.patch("kototoki.procs.os.open", side_effect=FileExistsError("concurrent")), \
+                self.assertLogs("kototoki.procs", "WARNING") as logs, \
+                self.assertRaises(LockError) as raised:
+            self.lock().acquire(break_stale=True)
+        self.assertFalse(self.path.exists())  # 旧锁确实已被删除
+        for text in (str(raised.exception), logs.records[0].getMessage()):
+            self.assertIn(str(OTHER_PID), text)
+            self.assertIn("worker_stage=asr", text)
+            self.assertIn("FileExistsError", text)
 
 
 class ProcessIdentityTests(unittest.TestCase):

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import importlib.metadata
 from pathlib import Path
@@ -71,13 +72,15 @@ class QwenAsr:
                                  for name in ("transformers", "torch", "numpy")},
         }
 
-    def transcribe(self, audio: Any, chunks: list[dict[str, Any]]
+    def transcribe(self, audio: Any, chunks: list[dict[str, Any]],
+                   on_error: Callable[[int, Exception], None] | None = None
                    ) -> tuple[list[dict[str, Any]], list[dict[str, Any] | None], list[tuple[int, str]]]:
         """逐窗独立解码 → (窗口段, 逐窗 trace, 失败窗口)，形状同 `asr_whisper.WhisperAsr.transcribe`。
 
         生成达到 `max_new_tokens` 的窗口：段内保留截断文字、trace 照常记录，并以 `(窗口序号, 原因)`
         列入失败窗口，由 worker 壳置空。单窗生成抛 `RuntimeError`（显存不足等）时该窗文字为空、
-        trace 为 None，同样列入失败窗口，继续下一窗；是否已是 CUDA 粘性错误由 worker 壳判定。
+        trace 为 None，同样列入失败窗口，若传入 `on_error` 则同步回调 `(窗口序号, 异常)` 后继续下一窗；
+        是否已是 CUDA 粘性错误由 worker 壳判定。
         """
         validate_windows(chunks, len(audio))
         segments: list[dict[str, Any]] = []
@@ -111,6 +114,8 @@ class QwenAsr:
                 segments.append(segment)
                 traces.append(None)
                 failures.append((index, f"{type(error).__name__}: {error}"))
+                if on_error is not None:
+                    on_error(index, error)
                 continue
             inference_s = time.perf_counter() - mark
             if output.device.type != "cuda":

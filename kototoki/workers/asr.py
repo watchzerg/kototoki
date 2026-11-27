@@ -15,13 +15,13 @@ payload 为 `schema_version`、`engine`、`offset_s`、`input`、`chunks`（照�
 
 w0 的转写（w0 引擎，以及 cross 的 w0 那一路）在解码之后过一遍整窗守卫（`kototoki.guard`，ADR-0030）：
 复读窗口折叠后改写段文字；复读折叠后仍命中、语速超限或整窗是已知幻听句的作为失败窗口（原因 `guard:<规则名>`）置空；
-两种情况都在该窗 trace 里记 `guard`。x0 的转写不过守卫。
+遇到无法规范化的跨簇 NFKC 文本时跳过守卫并保留原文；三种情况都在该窗 trace 里记 `guard`。x0 的转写不过守卫。
 本模块导入时不加载 torch／CT2，适配器在 `start` 里才导入。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Container, Mapping
 import logging
 from pathlib import Path
 import sys
@@ -29,6 +29,7 @@ import time
 from typing import Any, NamedTuple
 
 from kototoki import artifacts, guard, judge, plan, recipes
+from kototoki.logs import FailureKind
 from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, fail_window, retained_text, validate_failed_windows
 
@@ -53,17 +54,20 @@ def transcript_document(engine: str, vad: Mapping[str, Any], segments: list[dict
     return document
 
 
-def log_failures(job_id: str, failures: list[tuple[int, str]], label: str = "") -> None:
-    for index, reason in failures:  # 不记窗口文字
-        logger.warning("[%s] %s: %swindow %d failed: %s", STAGE, job_id, label, index, reason)
+def log_failures(job_id: str, failures: list[tuple[int, str]], label: str = "",
+                 *, skip: Container[int] = ()) -> None:
+    for index, reason in failures:  # 不记窗口文字；已由回调记录的单窗异常不重复记
+        if index not in skip:
+            logger.warning("[%s] %s: %swindow %d failed: %s", STAGE, job_id, label, index, reason)
 
 
 def apply_guard(job_id: str, segments: list[dict[str, Any]], traces: list[Any],
                 failures: list[tuple[int, str]]) -> int:
     """对未失败的 w0 窗口逐个过整窗守卫，就地改 `segments`／`traces`／`failures`，返回被守卫改动的窗口数。
 
-    折叠：换掉该段文字；置空：文字不动，追加一条失败（之后由 `fail_window` 移入 `failed_windows`）。
-    两者都把守卫记录写进该窗 trace 的 `guard`。日志只记窗口号、动作与计数。
+    折叠：换掉该段文字；置空：文字不动，追加一条失败（之后由 `fail_window` 移入 `failed_windows`）；
+    无法规范化跳过：文字与失败均不动，仅记守卫 trace 与 WARNING，不计入改动窗口数。
+    三种情况都把守卫记录写进该窗 trace 的 `guard`。日志只记窗口号、动作与计数。
     """
     failed = {index for index, _ in failures}
     guarded = 0
@@ -73,8 +77,11 @@ def apply_guard(job_id: str, segments: list[dict[str, Any]], traces: list[Any],
         text, record = guard.apply(segment["text"], segment["end"] - segment["start"])
         if record is None:
             continue
-        guarded += 1
         traces[index] = {**(traces[index] or {}), "guard": record}
+        if record["action"] == "skip":
+            logger.warning("[%s] %s: window %d guard skipped: %s", STAGE, job_id, index, record["reason"])
+            continue
+        guarded += 1
         if record["action"] == "blank":
             failures.append((index, f"guard:{record['rule']}"))
         else:
@@ -96,13 +103,20 @@ class Transcript(NamedTuple):
 
 
 def transcribe(job_id: str, asr: Any, part: str, audio: Any, vad: Mapping[str, Any], load_s: float,
-               label: str = "") -> Transcript:
+               label: str = "", *, traced: set[FailureKind] | None = None) -> Transcript:
     """一路转写 → 计时 → 守卫 → 记失败 → 组文档；`part` 是 `plan.ENGINE_PARTS` 的部件名，只有 w0 过整窗守卫。"""
+    logged: set[int] = set()
+    seen = traced if traced is not None else set()
+
+    def on_error(index: int, error: Exception) -> None:
+        logged.add(index)
+        gpu.log_window_error(logger, seen, error, "[%s] %s: %swindow %d failed", STAGE, job_id, label, index)
+
     started = time.perf_counter()
-    segments, traces, failures = asr.transcribe(audio, vad["chunks"])
+    segments, traces, failures = asr.transcribe(audio, vad["chunks"], on_error=on_error)
     inference_s = time.perf_counter() - started
     guarded = apply_guard(job_id, segments, traces, failures) if part == "w0" else 0  # x0 不过守卫
-    log_failures(job_id, failures, label)
+    log_failures(job_id, failures, label, skip=logged)
     document = transcript_document(part, vad, segments, traces, failures, asr.metadata,
                                    {"load_s": load_s, "inference_s": inference_s})
     return Transcript(segments, traces, failures, guarded, inference_s, document)
@@ -135,15 +149,16 @@ def compute_cross(whisper: Any, qwen: Any, model_sha256: Mapping[str, str], w0_s
         audio, pcm_sha256 = gpu.read_wav(job.inputs["wav"])
         vad, vad_sha256 = gpu.read_input_artifact(job.inputs["vad"], pcm_sha256)
         chunks = vad["chunks"]
-        w0 = transcribe(job.id, whisper, "w0", audio, vad, loads["load_w0_s"], "w0 ")  # 裁判与合并用守卫后的 w0 文字
-        x0 = transcribe(job.id, qwen, "x0", audio, vad, loads["load_x0_s"], "x0 ")
+        traced: set[FailureKind] = set()
+        w0 = transcribe(job.id, whisper, "w0", audio, vad, loads["load_w0_s"], "w0 ", traced=traced)  # 裁判与合并用守卫后的 w0 文字
+        x0 = transcribe(job.id, qwen, "x0", audio, vad, loads["load_x0_s"], "x0 ", traced=traced)
 
         def score_for(index: int) -> Callable[[list[str]], list[float]]:
             return lambda texts: whisper.score(audio, chunks[index], texts, max_batch)
 
         def score_error(index: int, error: Exception) -> None:  # 只记序号与异常，不记文字
-            logger.warning("[%s] %s: window %d score error, keeping w0: %s: %s",
-                           STAGE, job.id, index, type(error).__name__, error)
+            gpu.log_window_error(logger, traced, error, "[%s] %s: window %d score error, keeping w0",
+                                 STAGE, job.id, index)
 
         started = time.perf_counter()
         judged = judge.judge_file([s["text"] for s in w0.segments], [s["text"] for s in x0.segments],
@@ -205,13 +220,13 @@ def start(jobs: Jobs) -> Any:
         load_s[part] = time.perf_counter() - started
         logger.info("[%s] %smodel loaded in %.1fs", STAGE, f"{part} " if len(parts) > 1 else "", load_s[part])
     if len(parts) == 1:
-        return gpu.file_processor(compute(adapters[engine], engine, model_sha256, load_s[engine]))
+        return gpu.file_processor(compute(adapters[engine], engine, model_sha256, load_s[engine]), stage=STAGE)
     # 两路各自的模型身份只含该路模型文件（部件名同单引擎名）
     w0_sha256, x0_sha256 = ({name: model_sha256[name] for name in plan.model_files(STAGE, models, engine=part)}
                             for part in parts)
     loads = {"load_s": load_s["w0"] + load_s["x0"], "load_w0_s": load_s["w0"], "load_x0_s": load_s["x0"]}
     return gpu.file_processor(compute_cross(adapters["w0"], adapters["x0"], model_sha256, w0_sha256, x0_sha256,
-                                            loads))
+                                            loads), stage=STAGE)
 
 
 if __name__ == "__main__":

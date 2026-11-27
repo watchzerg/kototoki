@@ -13,16 +13,16 @@ covers:
 - **锁文件**（`ProcessLock(path, kind, info)`）：
   - `acquire` 用 O_EXCL 创建锁文件，写入 `pid`、`pid_created`、调用方的 `info`、`owner: "kototoki"`、`created_at_utc` 与 `replaced_stale_lock`。
   - 已有锁文件时：持有者存活（`process_matches`）即抛 `LockError`，从不抢占存活的持有者；没有 `pid_created` 的外部锁只按 pid 判断。
-  - 残留锁（死 pid，或空的／无法解析的／pid 不是整数的锁文件）默认抛 `LockError`，消息提示 `KOTOTOKI_BREAK_STALE_LOCK=1`；`acquire(break_stale=True)` 时删除残留锁再创建，旧内容记入 `replaced_stale_lock`。
+  - `read()` 在文件缺失时返回 `None`；遇到 `OSError`、`ValueError` 或非对象 JSON 时返回 `{"unparseable": True, "error": "<类型>: <首行消息>"}`（保留底层原因）。
+  - 残留锁（死 pid，或空的／无法解析的／pid 不是整数的锁文件）默认抛 `LockError`（保留 `read()` 的诊断消息并提示 `KOTOTOKI_BREAK_STALE_LOCK=1`）；`acquire(break_stale=True)` 时删除残留锁再创建，旧内容记入 `replaced_stale_lock`。若删掉旧锁后后续 `os.open` 失败，先记 `WARNING` 并在抛出的 `LockError` 中保留已删旧锁摘要与底层错误。
   - 并发创建撞上即抛 `LockError`。
-  - `update(**fields)` 只在持有且锁文件仍属本进程时原子改写；`release()` 只删 pid 与创建时间都与本进程相同的锁。
+  - `update(**fields)` 只在持有且锁文件仍属本进程（`pid` 与 `pid_created` 均匹配）时原子改写；`release()` 只删 `pid` 与创建时间都与本进程相同的锁（并复位 `held`）。两者在持有期间遇到锁缺失、读锁失败或所有权不符时均通过标准库 `logging` 记 `WARNING` 而非静默跳过。
   - 编排经 `update` 往 GPU 锁写附加字段：worker 运行期间 `worker_pid`／`worker_stage`（`Popen.pid`，`setpriv` exec 后即 worker 本身）；Strata 运行期间 `server_pid`（由共享 `strata.Session` 的 `on_server_pid` 回调提供：ready 后写入、停止后清空；pid 取自 `strata launch --status`，缺失时不记）。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contained`、`ProcessLock`、`LockError`）。
 - 测试（core，`mise run test`）：
-  - `tests/core/test_procs.py`：存活持有者永不被抢占；死持有者的残留锁默认拒绝、`break_stale` 才替换并记录旧锁；`release` 只删自己的锁；`process_created`／`process_matches` 以启动时间识别 pid 复用。
-  - 测试精简（2026-11-22）后不再有测试覆盖（进程原语部分）：
-    - 进程原语：锁内容、空锁与不可解析的锁、无 `pid_created` 的外部锁按 pid 判断、非整数 pid、并发创建报锁错误、`update` 只改自己的锁、含空格与括号的 comm 解析、无效 pid 无身份、`contained` 的 `setpriv` 前缀。
+  - `tests/core/test_procs.py`：存活持有者永不被抢占；死持有者的残留锁默认拒绝、`break_stale` 才替换并记录旧锁；`release` 只删自己的锁；`read()` 保留错误、`update`/`release` 读锁失败或所有权不符记 `WARNING`、`break_stale` 删锁后打开失败保留旧锁与错误；`process_created`／`process_matches` 以启动时间识别 pid 复用。
+  - 测试精简（2026-11-22）后仍未覆盖的进程原语细节：无 `pid_created` 的外部锁按 pid 判断、非整数 pid、含空格与括号的 comm 解析、无效 pid 无身份、`contained` 的 `setpriv` 前缀。
 - 未验证（Linux）：整批运行中强杀编排器后 GPU worker 释放显存的真实路径（Windows 时期的[最终验收](../../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)只作历史）。

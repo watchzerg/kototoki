@@ -28,6 +28,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 
 from kototoki.local_client import InfraFailure, classify_failure, response_body
+from kototoki.logs import format_error
 from kototoki.srt import SourceDocument
 from kototoki.strata import MODEL, Session, StrataRefused
 
@@ -54,8 +55,10 @@ class _TokenCounter:
     WARNING；与研究侧 v13 `NamesClient.tokenize` 的退路相同（复制，不导入）。
     """
 
-    def __init__(self, client: Any):
+    def __init__(self, client: Any, *, label: str, trace_label: str):
         self.client = client
+        self.label = label
+        self.trace_label = trace_label
         self.ok: bool | None = None
         self.error: str | None = None
 
@@ -68,9 +71,9 @@ class _TokenCounter:
             if type(n) is not int:
                 raise ValueError(f"input_tokens is {type(n).__name__}")
         except (HTTPError, URLError, KeyError, ValueError, TypeError) as exc:
-            self.ok, self.error = False, f"{type(exc).__name__}: {exc}"[:300]
-            log.warning("[names] count_tokens unavailable (%s): no prompt budget precheck for this document",
-                        self.error[:200])  # build 块的 `prompt_check` 仍记 300 字符
+            self.ok, self.error = False, format_error(exc, 300)
+            log.warning("[names] %s: count_tokens unavailable (%s): no prompt budget precheck; see %s",
+                        self.label, format_error(exc), self.trace_label)  # build 块的 `prompt_check` 仍记 300 字符
             return 0
         self.ok = True
         return n
@@ -80,40 +83,47 @@ def _no_server(*args: Any) -> Any:
     raise AssertionError("a zero-cue document must not reach the server")
 
 
-def build_document(work_dir: Path, document: SourceDocument, session: Session | None, seed: int) -> BuildResult:
+def build_document(work_dir: Path, document: SourceDocument, session: Session | None, seed: int,
+                   *, relative: str | None = None) -> BuildResult:
     """为一部影片建表，返回 `BuildResult`（payload 即 `name-table.json` 的内容，不含身份块）。
 
-    零条目文档不碰 session（可为 None），直接得到空表。`session.ensure_started()` 被拒绝（`StrataRefused`，含本批已不可用）
-    或启动失败（`InfraFailure`）时抛 `NamesError`；传输失败、HTTP 错误或 OOM 时停掉 Strata（下一部需要模型的影片
-    `ensure_started` 再启动）并抛 `NamesError`，消息只带状态码与分类，回复正文留在交换目录里。
+    `relative` 为用于日志定位的影片标识（缺省回退工作目录名）。零条目文档不碰 session（可为 None），直接得到空表。
+    `session.ensure_started()` 被拒绝（`StrataRefused`，含本批已不可用）或启动失败（`InfraFailure`）时抛 `NamesError`；
+    传输失败、HTTP 错误或 OOM 时停掉 Strata（下一部需要模型的影片 `ensure_started` 再启动）并抛 `NamesError`，
+    消息只带状态码与分类，回复正文留在交换目录里。
     """
     if not document.cues:
         return build_table(document, _no_server, _no_server, seed)
     assert session is not None
+    work_dir = Path(work_dir)
+    label = relative or work_dir.name
     try:
         session.ensure_started()
     except StrataRefused as exc:
         raise NamesError(f"Strata unavailable: {exc}") from exc
     except InfraFailure as exc:
         raise NamesError(f"Strata failed to start: {exc}") from exc
-    trace_dir = Path(work_dir) / TRANSPORT_DIR / session.label
+    trace_dir = work_dir / TRANSPORT_DIR / session.label
+    trace_label = f"{work_dir.name}/{TRANSPORT_DIR}/{session.label}" if work_dir.name else f"{TRANSPORT_DIR}/{session.label}"
     client = session.client(trace_dir, timeout=CLIENT_TIMEOUT_SECONDS)
-    counter = _TokenCounter(client)
+    counter = _TokenCounter(client, label=label, trace_label=trace_label)
     try:
-        result = build_table(document, client.chat_completion, counter, seed)
+        result = build_table(document, client.chat_completion, counter, seed, label=label)
     except HTTPError as exc:
         body = response_body(client) + str(exc)
         kind = classify_failure(body)
-        log.warning("[names] stopping Strata after HTTP %s (%s)", exc.code, kind)
+        log.warning("[names] %s: stopping Strata after HTTP %s (%s): response body %d char(s); see %s",
+                    label, exc.code, kind, len(body), trace_label)
         session.stop()
-        raise NamesError(f"HTTP {exc.code} ({kind}): response body {len(body)} char(s); see {trace_dir}") from exc
+        raise NamesError(f"HTTP {exc.code} ({kind}): response body {len(body)} char(s); see {trace_label}") from exc
     except (URLError, ConnectionError, TimeoutError) as exc:
-        log.warning("[names] stopping Strata after %s", type(exc).__name__)
+        log.warning("[names] %s: stopping Strata after %s; see %s", label, format_error(exc), trace_label)
         session.stop()
-        raise NamesError(f"transport failure: {type(exc).__name__}: {exc}") from exc
+        detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        raise NamesError(f"transport failure: {detail}") from exc
     except Exception as exc:
         # 意外异常（非 JSON 响应、响应缺字段等）：停掉可能不健康的 Strata，原样上抛给编排器（同 translate）。
-        log.warning("[names] stopping Strata after %s", type(exc).__name__)
+        log.warning("[names] %s: stopping Strata after %s; see %s", label, format_error(exc), trace_label)
         session.stop()
         raise
     # 预算检查的方式与"按 usage 看是否超预算"记进 build 块（计数不可用时提示仍照常发送，只记录、不失败）。

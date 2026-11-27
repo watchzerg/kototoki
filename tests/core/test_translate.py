@@ -223,7 +223,12 @@ class TranslateDocumentTests(unittest.TestCase):
         with (self.h.run_root(doc) / "batches.jsonl").open("ab") as stream:
             stream.write(b'{"index": 1, "batch_id": "tor')
         self.h.requests.clear()
-        result = self.h.translate(doc)
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            result = self.h.translate(doc)
+        self.assertTrue(any("truncated 29 byte(s)" in r.getMessage() and "unterminated final line" in r.getMessage()
+                            and f"{self.h.run_root(doc).name}/batches.jsonl" in r.getMessage()
+                            and str(self.h.root) not in r.getMessage()
+                            for r in logs.records))
         self.assertEqual(len(result.translations), 23)
         self.assertEqual(len(self.h.requests), 2)
         self.assertEqual([row["index"] for row in self.batch_lines(doc)], [0, 1, 2])
@@ -277,7 +282,9 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_oom_restarts_strata_as_a_new_session(self) -> None:
         doc = document(23)
         self.h.plans = [{2: "oom"}]
-        result = self.h.translate(doc)
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            result = self.h.translate(doc)
+        self.assertTrue(any(REL in r.getMessage() and "Strata restart 1/2" in r.getMessage() for r in logs.records))
         self.assertEqual(len(result.translations), 23)
         self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2"])
         self.assertEqual(self.h.pids, [1001, None, 1002, None])
@@ -314,7 +321,8 @@ class TranslateDocumentTests(unittest.TestCase):
     def test_infra_failure_gives_up_after_two_restarts(self) -> None:
         doc = document(12)
         self.h.plans = [{1: "oom"}, {1: "oom"}, {1: "oom"}]
-        with self.assertRaisesRegex(TranslateError, "after 2 Strata restarts"):
+        with self.assertNoLogs("kototoki.translate", level="ERROR"), \
+                self.assertRaisesRegex(TranslateError, "after 2 Strata restarts"):
             self.h.translate(doc)
         self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2", "stop:2", "start:3", "stop:3"])
         run = self.run_json(doc)
@@ -330,6 +338,26 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertNotEqual(self.h.plan(old).run_dir, self.h.plan(new).run_dir)
         self.assertEqual(self.h.plan(new).run_dir.parent.name, f"srt-{new.source_sha256[:12]}")
         self.assertFalse(self.h.plan(old).needs_model)
+
+    def test_replay_skips_duplicate_split_warnings_and_corrupt_jsonl_truncates_with_warning(self) -> None:
+        doc = document(10)
+        self.h.poison = {doc.cues[3].id}
+        self.h.plans = [{5: KeyboardInterrupt()}]
+        with self.assertRaises(KeyboardInterrupt):
+            self.h.translate(doc)
+        with (self.h.run_root(doc) / "nodes.jsonl").open("ab") as stream:
+            stream.write(b"{corrupt\n")
+        with self.assertLogs("kototoki.translate", level="WARNING") as logs:
+            self.h.translate(doc)
+        msgs = [r.getMessage() for r in logs.records]
+        self.assertTrue(any("truncated 9 byte(s)" in m and "corrupt final JSON line" in m
+                            and f"{self.h.run_root(doc).name}/nodes.jsonl" in m
+                            and str(self.h.root) not in m
+                            for m in msgs))
+        splits = [m for m in msgs if "splitting into" in m]
+        # 原批次与 .a 已在首轮记录并回放，不再重复记 splitting；只新拆 .a.b
+        self.assertEqual(len(splits), 1)
+        self.assertIn(".a.b failed", splits[0])
 
 
 if __name__ == "__main__":

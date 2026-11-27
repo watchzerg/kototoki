@@ -146,7 +146,7 @@ class LaunchOutcome:
     failed: tuple[str, ...]        # 报告了 `failed` 的 id（`failure.json` 已由 worker 写出），按待跑顺序
     crashed: str | None            # 崩溃文件：worker 退出时正在处理的 id；正常结束或启动失败时为 None
     fatal: bool                    # 崩溃文件报告了 `fatal`（`failure.json` 已由 worker 写出）
-    startup_failed: str | None     # 启动失败原因（`startup_failed` 的 `error_type` 或 `exited with code <n>`）；有它即剩余全部失败、不重启
+    startup_failed: str | None     # 启动失败原因（`startup_failed` 的 `error_type` 及首行消息摘要，或 `exited with code <n>`）；有它即剩余全部失败、不重启
     remaining: tuple[str, ...]     # 需要重启 worker 继续跑的 id，按待跑顺序
     error_types: Mapping[str, str] = field(default_factory=dict)  # `failed` 的 id 与 `fatal` 的崩溃文件 id → worker 报告的 `error_type`
 
@@ -169,7 +169,11 @@ def classify_launch(ids: Sequence[str], exit_code: int, events: Sequence[Mapping
                              error_types=error_types)
     startup = next((event for event in events if event.get("event") == "startup_failed"), None)
     if startup is not None:
-        return LaunchOutcome(failed=failed, crashed=None, fatal=False, startup_failed=str(startup.get("error_type")),
+        error_type = str(startup.get("error_type"))
+        raw_message = startup.get("message")
+        message = "" if raw_message is None else str(raw_message).strip()
+        reason = f"{error_type}: {message.splitlines()[0][:200]}" if message else error_type
+        return LaunchOutcome(failed=failed, crashed=None, fatal=False, startup_failed=reason,
                              remaining=(), error_types=error_types)
     position = {i: at for at, i in enumerate(ids)}
     started = any(event.get("event") == "started" for event in events)

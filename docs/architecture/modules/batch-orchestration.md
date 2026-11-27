@@ -46,7 +46,7 @@ covers:
 以普通导入使用四个子系统（都不导入 `plan`、`job`，不加载 torch，测试以属性 patch 替换，如 `mock.patch("kototoki.translate.translate_document")`）：
 
 - `kototoki.strata`：共享 session，`Session(config, on_server_pid=...)` 上下文管理器。
-- `kototoki.names`：`build_document(work_dir, document, session | None, seed)` 返回带 `payload`／`status`／`attempts`／`seconds` 的结果；names 身份由阶段计划算。
+- `kototoki.names`：`build_document(work_dir, document, session | None, seed, *, relative=None)` 返回带 `payload`／`status`／`attempts`／`seconds` 的结果（`relative` 仅用于日志）；names 身份由阶段计划算。
 - `kototoki.translate`：`translate_document(plan, session | None, *, relative)` 返回带 `translations`（cue id → 译文，不出中文为 `None`）与 `untranslated_count` 的结果；`TranslatePlan` 由阶段计划经 `translate.plan` 取得。
 - `kototoki.merge`：`merge(ja_document, translations) -> srt_text`。
 

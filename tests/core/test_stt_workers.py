@@ -12,10 +12,12 @@ import io
 import json
 import logging
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import wave
 
 import numpy as np
@@ -67,7 +69,7 @@ class FakeAsr:
     def __init__(self, failures=()):
         self.failures = list(failures)
 
-    def transcribe(self, audio, chunks):
+    def transcribe(self, audio, chunks, on_error=None):
         segments = [{"text": "" if i in dict(self.failures) else text, "start": c["start"], "end": c["end"],
                      "start_sample": c["start_sample"], "end_sample": c["end_sample"], "avg_logprob": -0.1}
                     for i, (c, text) in enumerate(zip(chunks, ("こんにちは。", "元気？", "はい")))]
@@ -81,7 +83,7 @@ class FakeEngine:
         self.metadata = {"device": "fake", "engine": name}
         self.texts, self.failures = list(texts), list(failures)
 
-    def transcribe(self, audio, chunks):
+    def transcribe(self, audio, chunks, on_error=None):
         segments = [{"text": text, "start": c["start"], "end": c["end"], "start_sample": c["start_sample"],
                      "end_sample": c["end_sample"], "avg_logprob": -0.1} for c, text in zip(chunks, self.texts)]
         return segments, [{"window": i} for i in range(len(segments))], self.failures
@@ -111,7 +113,7 @@ class FakeAligner:
     """每个字符占 0.1 s，窗口内从窗口起点排开。"""
     metadata = {"device": "fake"}
 
-    def align(self, audio, segments):
+    def align(self, audio, segments, on_error=None):
         records = []
         for index, segment in enumerate(segments):
             count = len(segment["text"])
@@ -142,10 +144,10 @@ class WorkerTestCase(unittest.TestCase):
         self.pcm_sha256 = write_wav(self.wav, (np.arange(SAMPLES) % 200 - 100).astype(np.int16))
         self.stream = io.BytesIO()
 
-    def run_stage(self, compute, inputs, *, check=no_check) -> int:
+    def run_stage(self, compute, inputs, *, check=no_check, stage: str | None = "stage") -> int:
         job = FileJob("0123456789ab", self.work_dir, {name: Path(path) for name, path in inputs.items()})
         jobs = Jobs("stage", "0" * 64, {}, (job,))
-        return run_jobs(jobs, gpu.file_processor(compute, check=check), stream=self.stream)
+        return run_jobs(jobs, gpu.file_processor(compute, stage=stage, check=check), stream=self.stream)
 
     def progress(self) -> list[dict]:
         return [json.loads(line) for line in self.stream.getvalue().decode("utf-8").splitlines()]
@@ -231,6 +233,22 @@ class AsrWorkerTest(WorkerTestCase):
         self.assertIn("3 window(s), 0 failed, 1 guarded, inference ", output)
         for text in ("うっ", "まって", "だめ"):
             self.assertNotIn(text, output)
+
+    def test_guard_skip_on_cross_cluster_nfkc_records_trace_and_warns_without_mutating(self) -> None:
+        self.run_vad()
+        bad = "\u1100\u1161"
+        with self.assertLogs("kototoki.workers.asr", "WARNING") as logs:
+            self.assertEqual(self.run_asr(FakeEngine("w0", ("こんにちは。", bad, "はい"))), EXIT_OK)
+        document = artifacts.read_json(self.work_dir / artifacts.ASR)
+        validate_transcript(document)
+        self.assertEqual([s["text"] for s in document["original_segments"]], ["こんにちは。", bad, "はい"])
+        self.assertEqual(document["failed_windows"], [])
+        self.assertEqual(document["asr_traces"][1],
+                         {"window": 1, "guard": {"rule": "normalize", "action": "skip", "reason": "normalize_failed"}})
+        self.assertEqual(self.progress()[-1]["guarded_windows"], 0)
+        output = "\n".join(logs.output)
+        self.assertIn("window 1 guard skipped: normalize_failed", output)
+        self.assertNotIn(bad, output)
 
     def test_vad_from_other_audio_fails_the_file(self):
         self.run_vad()
@@ -351,8 +369,8 @@ class AlignWorkerTest(WorkerTestCase):
 
     def test_alignment_that_changes_text_fails_the_file(self):
         class Lossy(FakeAligner):
-            def align(self, audio, segments):
-                result = super().align(audio, segments)
+            def align(self, audio, segments, on_error=None):
+                result = super().align(audio, segments, on_error=on_error)
                 return {**result, "text": result["text"][:-1]}
         self.run_vad()
         self.run_asr()
@@ -406,6 +424,20 @@ class GpuHelpersTest(unittest.TestCase):
         np.testing.assert_array_equal(waveform, np.array([-1.0, 0.0, 32767 / 32768.0], dtype=np.float32))
         self.assertEqual(pcm_sha256, expected_sha256)
 
+    def test_file_processor_logs_stage_reason_when_overwriting_existing_artifact(self) -> None:
+        work = self.root / "0123456789ab"
+        work.mkdir()
+        target = work / artifacts.VAD
+        identity = {"upstream": {"audio-16k.wav": "a" * 64}, "recipe_hash": "b" * 64, "models": {}, "config": {}}
+        artifacts.write_artifact(target, identity, {"offset_s": 0})
+        process = gpu.file_processor(lambda job: ([(target, identity, {"offset_s": 0})], {}),
+                                     stage="vad", check=no_check)
+        with self.assertLogs("kototoki.artifacts", level="INFO") as logs:
+            process(FileJob("0123456789ab", work, {}))
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("recomputed vad stage output", logs.records[0].getMessage())
+        self.assertNotIn("replacing existing artifact", logs.records[0].getMessage())
+
 
 class ImportBoundaryTest(unittest.TestCase):
     def test_worker_shells_import_without_inference_libraries(self):
@@ -416,6 +448,180 @@ class ImportBoundaryTest(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
                                 cwd=Path(__file__).resolve().parents[2])
         self.assertEqual(result.stdout.strip(), "[]")
+
+
+LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z \[ *[0-9.]+s\] (WARNING|ERROR) +(.*)$", re.MULTILINE)
+
+
+class WorkerMainTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def test_cli_argument_error_uses_run_formatter_before_parsing_and_cleans_handlers(self) -> None:
+        class ReconfigurableStderr(io.StringIO):
+            def __init__(self) -> None:
+                super().__init__()
+                self.reconfigured: list[dict[str, object]] = []
+
+            def reconfigure(self, **kwargs: object) -> None:
+                self.reconfigured.append(kwargs)
+
+        stderr = ReconfigurableStderr()
+        before_handlers = list(logging.getLogger().handlers)
+        with mock.patch.object(sys, "stderr", stderr):
+            code = gpu.main(lambda jobs: (lambda job: None), [])
+        self.assertEqual(code, EXIT_FATAL)
+        self.assertEqual(stderr.reconfigured, [{"errors": "backslashreplace"}])
+        self.assertEqual(logging.getLogger().handlers, before_handlers)
+        lines = stderr.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        match = LOG_LINE.match(lines[0])
+        self.assertIsNotNone(match, lines[0])
+        assert match is not None
+        self.assertEqual(match.group(1), "ERROR")
+        self.assertIn("--jobs", match.group(2))
+
+    def test_top_level_uncaught_exception_is_logged_as_error_to_stderr(self) -> None:
+        jobs_path = self.root / "jobs.json"
+        work_dir = self.root / "item"
+        work_dir.mkdir()
+        from kototoki.workers.protocol import write_jobs
+        write_jobs(jobs_path, Jobs("asr", "0" * 64, {}, (FileJob("item", work_dir, {}),)))
+        stderr = io.StringIO()
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        before_handlers = list(logging.getLogger().handlers)
+
+        def fail_process(job: FileJob) -> None:
+            raise RuntimeError("boom")
+
+        with mock.patch.object(sys, "stderr", stderr), \
+                mock.patch.object(sys, "stdout", stdout), \
+                mock.patch("kototoki.workers.protocol.write_failure", side_effect=OSError("disk full")):
+            code = gpu.main(lambda jobs: fail_process, ["--jobs", str(jobs_path)])
+        self.assertEqual(code, EXIT_FATAL)
+        self.assertEqual(logging.getLogger().handlers, before_handlers)
+        output = stderr.getvalue()
+        errors = [m for m in map(LOG_LINE.match, output.splitlines()) if m and m.group(1) == "ERROR"]
+        self.assertTrue(any("OSError" in m.group(2) and "disk full" in m.group(2) for m in errors), output)
+        self.assertIn("Traceback (most recent call last):", output)
+
+
+def _raise_a(message: str) -> None:
+    raise RuntimeError(message)
+
+
+def _raise_b(message: str) -> None:
+    raise RuntimeError(message)
+
+
+class WindowErrorDedupTest(WorkerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.run_vad()
+
+    def test_asr_window_errors_deduplicate_tracebacks_per_file_without_double_logging(self) -> None:
+        chunks_4 = [window(0, 16000), window(16000, 32000), window(32000, 48000), window(48000, 64000)]
+
+        class WindowFailingAsr:
+            metadata = {"device": "fake"}
+
+            def transcribe(self, audio, chunks, on_error=None):
+                segments, traces, failures = [], [], []
+                for idx, chunk in enumerate(chunks_4):
+                    seg = {"text": "", "start": chunk["start"], "end": chunk["end"],
+                           "start_sample": chunk["start_sample"], "end_sample": chunk["end_sample"], "avg_logprob": None}
+                    if idx in (0, 1):
+                        try:
+                            _raise_a("boom a\nignored detail")
+                        except RuntimeError as error:
+                            failures.append((idx, f"{type(error).__name__}: {error}"))
+                            if on_error is not None:
+                                on_error(idx, error)
+                    elif idx == 2:
+                        try:
+                            _raise_b("boom b")
+                        except RuntimeError as error:
+                            failures.append((idx, f"{type(error).__name__}: {error}"))
+                            if on_error is not None:
+                                on_error(idx, error)
+                    else:
+                        seg["text"] = "truncated"
+                        failures.append((idx, "token_limit_reached: generated 4096 tokens"))
+                    segments.append(seg)
+                    traces.append(None)
+                return segments, traces, failures
+
+        # 替换 4 窗 vad.json 使其与 WindowFailingAsr 对齐
+        vad_path = self.work_dir / artifacts.VAD
+        vad_doc = artifacts.read_json(vad_path)
+        vad_doc["chunks"] = chunks_4
+        artifacts.atomic_write_json(vad_path, vad_doc)
+
+        with self.assertLogs("kototoki.workers.asr", "WARNING") as logs:
+            self.assertEqual(self.run_asr(WindowFailingAsr(), engine="x0"), EXIT_OK)
+        self.assertEqual(len(logs.records), 4)
+        r0, r1, r2, r3 = logs.records
+        self.assertIsNotNone(r0.exc_info)
+        self.assertIn("_raise_a", logs.output[0])
+        self.assertIsNone(r1.exc_info)
+        self.assertNotIn("\n", r1.getMessage())
+        self.assertIn("window 1 failed: RuntimeError: boom a", r1.getMessage())
+        self.assertIsNotNone(r2.exc_info)
+        self.assertIn("_raise_b", logs.output[2])
+        self.assertIsNone(r3.exc_info)
+        self.assertIn("window 3 failed: token_limit_reached", r3.getMessage())
+
+        # 第二个文件重新获得首次 traceback
+        with self.assertLogs("kototoki.workers.asr", "WARNING") as second_logs:
+            self.assertEqual(self.run_asr(WindowFailingAsr(), engine="x0"), EXIT_OK)
+        self.assertIsNotNone(second_logs.records[0].exc_info)
+
+    def test_cross_score_error_deduplicates_tracebacks_per_file(self) -> None:
+        class FailingScoreWhisper(FakeWhisper):
+            def score(self, audio, chunk, texts, max_batch=16):
+                _raise_a("score failed\nline2")
+
+        whisper = FailingScoreWhisper(("あ", "い", "う"))
+        qwen = FakeEngine("x0", ("x", "y", "z"))
+        with self.assertLogs("kototoki.workers.asr", "WARNING") as logs:
+            self.assertEqual(self.run_cross(whisper, qwen), EXIT_OK)
+        self.assertEqual(len(logs.records), 3)
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertIn("_raise_a", logs.output[0])
+        self.assertIsNone(logs.records[1].exc_info)
+        self.assertNotIn("\n", logs.records[1].getMessage())
+        self.assertIsNone(logs.records[2].exc_info)
+
+    def test_align_window_errors_deduplicate_tracebacks_per_file_without_double_logging(self) -> None:
+        self.run_asr()
+
+        class WindowFailingAligner(FakeAligner):
+            def align(self, audio, segments, on_error=None):
+                records = []
+                for idx, segment in enumerate(segments):
+                    record = {"segment_index": idx, "window_start": segment["start"], "window_end": segment["end"],
+                              "frame_count": 50, "failure": None, "tokens": []}
+                    if idx in (0, 1):
+                        try:
+                            _raise_a("align boom\nline2")
+                        except RuntimeError as error:
+                            record["failure"] = f"{type(error).__name__}: {error}"
+                            if on_error is not None:
+                                on_error(idx, error)
+                    records.append(record)
+                return map_records(segments, records)
+
+        with self.assertLogs("kototoki.workers.align", "WARNING") as logs:
+            self.assertEqual(self.run_stage(align_worker.compute(WindowFailingAligner(), MODELS, 3.0),
+                                            {"wav": self.wav, "asr": self.work_dir / artifacts.ASR}), EXIT_OK)
+        self.assertEqual(len(logs.records), 2)
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertIn("_raise_a", logs.output[0])
+        self.assertIsNone(logs.records[1].exc_info)
+        self.assertNotIn("\n", logs.records[1].getMessage())
+        self.assertIn("window 1 alignment failed: RuntimeError: align boom", logs.records[1].getMessage())
 
 
 if __name__ == "__main__":

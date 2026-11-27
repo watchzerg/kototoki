@@ -39,6 +39,7 @@ from urllib.error import HTTPError, URLError
 from kototoki import artifacts
 from kototoki.artifacts import atomic_write_json, object_hash, read_json, sha256_bytes, utc_now
 from kototoki.config import Config
+from kototoki.logs import format_error, path_label
 from kototoki.srt import SourceDocument
 
 from kototoki.local_client import InfraFailure, classify_failure, response_body
@@ -160,7 +161,7 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
                 # 消息只带状态码、分类与正文长度；正文在 transport 交换目录里。
                 raise StepFailed(f"HTTP {exc.code} ({kind}): response body {len(text)} char(s)", kind) from exc
             except (URLError, ConnectionError, TimeoutError) as exc:
-                raise StepFailed(f"completion transport: {exc}", "server") from exc
+                raise StepFailed(f"completion transport: {format_error(exc)}", "server") from exc
             finally:
                 attempt.update(completion_seconds=time.perf_counter() - completion_start,
                                exchange=getattr(client, "last_exchange", None))
@@ -290,21 +291,26 @@ def _open_run(root: Path, seed: int, names: list[dict[str, str]], document: Sour
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """读出追加写的 JSONL；末尾不完整的一行（中断时写了一半）截掉，其余行损坏即报错。"""
+    """读出追加写的 JSONL；末尾不完整或损坏的一行（中断时写了一半）截掉并记 WARNING，其余行损坏即报错。"""
     if not path.is_file():
         return []
     data = path.read_bytes()
     complete = data[:data.rfind(b"\n") + 1]
     lines = complete.splitlines()
     rows: list[dict[str, Any]] = []
+    corrupt_final = False
     for number, line in enumerate(lines, 1):
         try:
             rows.append(json.loads(line))
         except ValueError:
             if number < len(lines):
                 raise ValueError(f"{path}: corrupt line {number}") from None
+            corrupt_final = True
             complete = complete[:len(complete) - len(line) - 1]
     if len(complete) != len(data):
+        truncated = len(data) - len(complete)
+        reason = "corrupt final JSON line" if corrupt_final else "unterminated final line"
+        log.warning("[translate] truncated %d byte(s) from %s (%s)", truncated, path_label(path), reason)
         with path.open("r+b") as stream:
             stream.truncate(len(complete))
     return rows
@@ -549,22 +555,24 @@ def _run_session(tr: _Translation, restarts: int) -> int:
         session.stop()
         restarts += 1
         if restarts > MAX_RESTARTS:
-            log.error("[translate] giving up after %d Strata restart(s): %s: %s", MAX_RESTARTS, kind, _first_line(exc))
             raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} Strata restarts "
                                  f"({kind}): {exc}") from exc
-        log.warning("[translate] Strata restart %d/%d: %s: %s", restarts, MAX_RESTARTS, kind, _first_line(exc))
+        batch_note = f" (batch {state.current.batch_id})" if state.current is not None else ""
+        detail = _first_line(exc)
+        log.warning("[translate] %s: Strata restart %d/%d%s: %s%s",
+                    tr.relative, restarts, MAX_RESTARTS, batch_note, kind, f": {detail}" if detail else "")
     except StrataRefused as exc:
         # 身份不符或已有别的 launch 在服务：重启无济于事；`Session` 已置 unavailable，本批其余需要模型的影片也不再尝试。
         session.stop()
-        log.error("[translate] Strata refused: %s", _first_line(exc))
         raise TranslateError(f"Strata refused: {exc}") from exc
     except Exception as exc:
         # 意外异常（非 JSON 响应、写盘失败等）：记录后停掉可能不健康的 server，原样上抛给编排器。
         if state.entry is not None:
             state.entry["stop_reason"] = f"session_error: {type(exc).__name__}: {exc}"[:2000]
-        # traceback 由编排器的 ctx.fail 记一次，这里不再附 exc_info，避免运行日志里出现两份。
-        log.error("[translate] unexpected %s during translation%s; stopping Strata", type(exc).__name__,
-                  f" (batch {state.current.batch_id})" if state.current is not None else "")
+        batch_note = f" (batch {state.current.batch_id})" if state.current is not None else ""
+        # 仅作停服前 WARNING，唯一 ERROR 与 traceback 由编排器的 ctx.fail 记录。
+        log.warning("[translate] %s: unexpected %s during translation%s; stopping Strata",
+                    tr.relative, type(exc).__name__, batch_note)
         session.stop()
         raise
     finally:
@@ -580,7 +588,7 @@ def _run_session(tr: _Translation, restarts: int) -> int:
 
 def translate_document(plan: TranslatePlan, session: Session | None, *, relative: str) -> TranslateResult:
     """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文（不出中文的 cue 为 None）；零条目文档不请求模型。`relative` 是输入目录内的相对路径，
-    只进 session start 日志行，让多集批次里的批次与告警能归到某一集。
+    只进日志行（session start、Strata 重启与意外异常），让多集批次里的告警能归到某一集。
 
     已完成的批次（含追问完成的）直接复用；全部完成时不启动 Strata。`session` 只在 `plan.needs_model` 时使用，
     编排器在不需要模型时可传 None；计划说不需要而批次仍未完成（`run.json` 与 `batches.jsonl` 不一致）时抛

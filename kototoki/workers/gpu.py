@@ -12,19 +12,30 @@ import json
 import logging
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, NoReturn
 import warnings
 import wave
 
 from kototoki import artifacts
-from kototoki.logs import RunFormatter
+from kototoki.logs import FailureKind, RunFormatter, failure_kind, format_error
 from kototoki.recipes import SAMPLE_RATE
-from kototoki.workers.protocol import FatalWorkerError, FileJob, Jobs, run_worker
+from kototoki.workers.protocol import EXIT_FATAL, FatalWorkerError, FileJob, Jobs, run_worker
+
+logger = logging.getLogger(__name__)
 
 # 一个要写出的产物：(路径, 身份, payload)
 Output = tuple[Path, Mapping[str, Any], Mapping[str, Any]]
 # compute(job) -> (按写出顺序排列的产物，阶段产物在最后, 进度行附加字段)
 Compute = Callable[[FileJob], tuple[Sequence[Output], Mapping[str, Any]]]
+
+
+def log_window_error(log: logging.Logger, traced: set[FailureKind], error: BaseException,
+                     message: str, *args: Any) -> None:
+    """按每文件 `(异常类型, 文件, 行号)` 去重堆栈：同类首次记带 `exc_info` 的 WARNING，后续单行 WARNING。"""
+    kind = failure_kind(error)
+    first = kind not in traced
+    traced.add(kind)
+    log.warning(f"{message}: %s", *args, format_error(error), exc_info=error if first else None)
 
 # 每次运行都会出现、已知无害的第三方告警：(类别, 消息开头的正则)。pyannote 在 GPU 上关掉 TF32 时发
 # `ReproducibilityWarning`（`UserWarning` 子类，这里不导入 pyannote，按父类匹配）；它会让 vad 每次都有告警计数行。
@@ -37,24 +48,60 @@ def quiet_known_warnings() -> None:
         warnings.filterwarnings("ignore", message=message, category=category)
 
 
+class _CliArgumentError(ValueError):
+    """CLI 参数解析失败（缺参数、未知选项等）。"""
+
+
+class _WorkerArgumentParser(argparse.ArgumentParser):
+    """把参数解析错误转成异常，交由 `main` 用 `RunFormatter` 记进 stderr 日志。"""
+
+    def error(self, message: str) -> NoReturn:
+        raise _CliArgumentError(message)
+
+
 def main(start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]],
          argv: list[str] | None = None) -> int:
     """`python -m kototoki.workers.<stage> --jobs <path>`；返回协议退出码。
 
     日志只写 stderr（编排器把它存成 `run-<戳>-<stage>.stderr.log`），stdout 只留协议 JSON 行。
-    handler 挂在 root 上：`kototoki` logger 放到 INFO，第三方库按 root 默认级别只有 WARNING 及以上。
+    先配置编码容错、handler 与告警捕获再解析参数，并兜底顶层未捕获异常；handler 挂在 root 上，
+    `kototoki` logger 放到 INFO，退出时摘除并恢复，避免测试或进程内多次调用泄漏 handler。
     """
+    reconfigure = getattr(sys.stderr, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(errors="backslashreplace")
     formatter = RunFormatter()  # 相对秒自 worker 进程启动起算
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--jobs", type=Path, required=True)
-    jobs_path = parser.parse_args(argv).jobs
+    root, ours = logging.getLogger(), logging.getLogger("kototoki")
+    previous_level, previous_showwarning = ours.level, warnings.showwarning
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(formatter)
-    logging.getLogger().addHandler(handler)
-    logging.getLogger("kototoki").setLevel(logging.INFO)
+    root.addHandler(handler)
+    ours.setLevel(logging.INFO)
     logging.captureWarnings(True)
     quiet_known_warnings()
-    return run_worker(jobs_path, start)
+    parser = _WorkerArgumentParser()
+    parser.add_argument("--jobs", type=Path, required=True)
+    try:
+        jobs_path = parser.parse_args(argv).jobs
+        return run_worker(jobs_path, start)
+    except _CliArgumentError as error:
+        logger.error("[worker] invalid arguments: %s", error)
+        return EXIT_FATAL
+    except SystemExit as error:
+        code = error.code
+        if code is None or code == 0:
+            return 0
+        logger.error("[worker] uncaught SystemExit: %s", code, exc_info=error)
+        return code if type(code) is int else EXIT_FATAL
+    except BaseException as error:
+        logger.error("[worker] uncaught %s: %s", type(error).__name__, error, exc_info=error)
+        return EXIT_FATAL
+    finally:
+        if warnings.showwarning is not previous_showwarning:
+            logging.captureWarnings(False)
+        ours.setLevel(previous_level)
+        root.removeHandler(handler)
+        handler.close()
 
 
 def require_recipe(jobs: Jobs, recipe_hash: str) -> None:
@@ -107,8 +154,8 @@ def check_cuda() -> None:
         raise FatalWorkerError(f"CUDA context is unusable: {type(error).__name__}: {error}") from error
 
 
-def file_processor(compute: Compute, *, check: Callable[[], None] = check_cuda
-                   ) -> Callable[[FileJob], Mapping[str, Any]]:
+def file_processor(compute: Compute, *, stage: str | None = None,
+                   check: Callable[[], None] = check_cuda) -> Callable[[FileJob], Mapping[str, Any]]:
     """把 `compute` 包成协议的逐文件处理函数：算完先确认 CUDA 仍可用，再按顺序写出全部产物。
 
     模块内部按窗口吞掉的错误也可能来自粘性错误，所以写产物前无论成败都检查一次；
@@ -125,6 +172,7 @@ def file_processor(compute: Compute, *, check: Callable[[], None] = check_cuda
             raise
         check()
         for path, identity, payload in outputs:
-            artifacts.write_artifact(path, identity, payload)
+            reason = f"recomputed {stage} stage output" if stage else f"recomputed {path.stem} output"
+            artifacts.write_artifact(path, identity, payload, reason=reason)
         return fields
     return process

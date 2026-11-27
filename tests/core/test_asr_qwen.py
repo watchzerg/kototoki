@@ -167,6 +167,16 @@ class TranscribeTest(unittest.TestCase):
         self.assertEqual(failures, [(1, f"token_limit_reached: generated {LIMIT} tokens")])
         self.assertEqual(segments[2]["text"], "う")
 
+    def test_runtime_error_window_invokes_on_error_and_continues(self):
+        asr = fake_qwen(self.module, [("あ", 2), RuntimeError("CUDA OOM"), ("う", 4)])
+        seen_errors = []
+        segments, traces, failures = asr.transcribe(
+            self.audio, self.chunks, on_error=lambda idx, err: seen_errors.append((idx, type(err), str(err))))
+        self.assertEqual([s["text"] for s in segments], ["あ", "", "う"])
+        self.assertIsNone(traces[1])
+        self.assertEqual(failures, [(1, "RuntimeError: CUDA OOM")])
+        self.assertEqual(seen_errors, [(1, RuntimeError, "CUDA OOM")])
+
 
 
 class X0WorkerTest(WorkerTestCase):

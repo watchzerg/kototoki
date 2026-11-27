@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from kototoki import artifacts, plan
+from kototoki.logs import FailureKind
 from kototoki.recipes import SAMPLE_RATE
 from kototoki.schema import validate_transcript, validate_units
 from kototoki.workers import gpu
@@ -33,8 +34,15 @@ def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu
         asr, asr_sha256 = gpu.read_input_artifact(job.inputs["asr"], pcm_sha256)
         validate_failed_windows(asr)
         offset, duration = asr["offset_s"], len(audio) / SAMPLE_RATE
+        logged: set[int] = set()
+        traced: set[FailureKind] = set()
+
+        def on_error(index: int, error: Exception) -> None:
+            logged.add(index)
+            gpu.log_window_error(logger, traced, error, "[%s] %s: window %d alignment failed", STAGE, job.id, index)
+
         started = time.perf_counter()
-        aligned = aligner.align(audio, asr["original_segments"])
+        aligned = aligner.align(audio, asr["original_segments"], on_error=on_error)
         inference_s = time.perf_counter() - started
         if aligned["text"] != asr["text"]:
             raise ValueError("Alignment must preserve the complete ASR text")
@@ -53,7 +61,7 @@ def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu
                   "failed_alignment_windows": sum(1 for record in aligned["records"] if record["failure"]),
                   "text_only_units": sum(1 for unit in aligned["units"] if unit["status"] == "text_only")}
         for record in aligned["records"]:
-            if record["failure"]:  # 只有异常类型与消息，不含窗口文字
+            if record["failure"] and record["segment_index"] not in logged:  # 只有异常类型与消息，不含窗口文字
                 logger.warning("[%s] %s: window %d alignment failed: %s",
                                STAGE, job.id, record["segment_index"], record["failure"])
         logger.info("[%s] %s: %d window(s), %d failed alignment, %d text-only unit(s), inference %.1fs",
@@ -75,7 +83,7 @@ def start(jobs: Jobs) -> Any:
     aligner = MmsAligner(Path(models["align"]))
     load_s = time.perf_counter() - started
     logger.info("[%s] model loaded in %.1fs", STAGE, load_s)
-    return gpu.file_processor(compute(aligner, model_sha256, load_s))
+    return gpu.file_processor(compute(aligner, model_sha256, load_s), stage=STAGE)
 
 
 if __name__ == "__main__":

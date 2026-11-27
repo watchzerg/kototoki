@@ -61,6 +61,7 @@ from kototoki import artifacts
 from kototoki.artifacts import atomic_write_json, utc_now
 from kototoki.config import Config
 from kototoki.local_client import InfraFailure, LlamaClient
+from kototoki.logs import format_error
 from kototoki.procs import contained
 
 __all__ = [
@@ -68,8 +69,8 @@ __all__ = [
     "MIN_AVAILABLE_RAM_GIB", "MIN_FREE_MIB", "MMAP_MARKERS", "MODEL", "POLL_S", "PORT", "RAM_WAIT_S",
     "SESSIONS_DIR", "STATUS_ARGS", "STOP_ARGS", "STRATA_LAUNCH", "STRATA_RESOLVED",
     "STRATA_SERIES", "ResourceSampler", "Session", "StrataRefused", "StrataServer", "available_ram_gib",
-    "drafting_from_log", "expert_arena", "http_get", "log_events", "log_sizes", "nvidia_smi", "probe", "read_from",
-    "run_cli", "running", "wait_for_free_vram",
+    "drafting_from_log", "expert_arena", "http_get", "log_events", "log_sizes", "nvidia_smi", "probe",
+    "probe_nvidia_smi", "read_from", "run_cli", "running", "wait_for_free_vram",
 ]
 
 # Strata 服务身份（ADR-0021「Q3 服务与运行顺序」）：产品用 `strata launch --no-tui --model iq3_s` 启动，`probe` 逐项核对。
@@ -114,23 +115,55 @@ FREE_VRAM_WARN_SECONDS = 30.0  # 等显存超过这么久记一次 warning
 log = logging.getLogger(__name__)
 
 
-def nvidia_smi(query: str) -> int | None:
+_MEMINFO_WARNED: set[tuple[Path, str]] = set()
+_MEMINFO_WARN_LOCK = threading.Lock()
+
+
+def probe_nvidia_smi(query: str) -> tuple[int | None, str | None]:
+    """运行 `nvidia-smi --query-gpu=<query>`，返回 `(整数读数, None)`；失败时返回 `(None, 诊断原因)`。"""
     try:
-        result = subprocess.run(["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
-                                capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    first = result.stdout.split()[0] if result.returncode == 0 and result.stdout.strip() else ""
-    return int(first) if first.isdigit() else None
+        result = subprocess.run(
+            ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, format_error(exc)
+    if result.returncode != 0:
+        tail = _compact_tail(result.stderr, 200)
+        return None, f"exit {result.returncode}" + (f": {tail}" if tail else "")
+    raw = result.stdout.strip()
+    first = raw.split()[0] if raw else ""
+    if first.isascii() and first.isdigit():
+        return int(first), None
+    snippet = " ".join(raw.split())[:120]
+    return None, f"unexpected stdout: {snippet!r}"
+
+
+def nvidia_smi(query: str) -> int | None:
+    return probe_nvidia_smi(query)[0]
+
+
+class _NvidiaSmiQuery:
+    """无参数显存查询回调，附带最近一次失败原因 `last_error`。"""
+
+    def __init__(self, query: str = "memory.free") -> None:
+        self.query = query
+        self.last_error: str | None = None
+
+    def __call__(self) -> int | None:
+        value, self.last_error = probe_nvidia_smi(self.query)
+        return value
 
 
 def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS, *, stage: str = "strata",
-                       query: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
+                       query: Callable[[], int | None] | None = None,
                        sleep: Callable[[float], None] = time.sleep,
                        clock: Callable[[], float] = time.monotonic) -> int:
     """轮询 `nvidia-smi memory.free` 直到不低于阈值；超时抛 `InfraFailure` 并写明最后一次读数。
 
     产品只有 `StrataServer` 调用（`stage="strata"`）；研究侧 `experiments/translation_v3/llama_server.py` 也导入。"""
+    if query is None:
+        query = _NvidiaSmiQuery("memory.free")
     started = clock()
     deadline = started + timeout
     warned = False
@@ -138,7 +171,10 @@ def wait_for_free_vram(min_mib: int, timeout: float = FREE_VRAM_TIMEOUT_SECONDS,
         free = query()
         if free is not None and free >= min_mib:
             return free
-        seen = "unknown (nvidia-smi failed)" if free is None else f"{free} MiB"
+        detail = getattr(query, "last_error", None) if free is None else None
+        seen = (f"{free} MiB" if free is not None
+                else f"unknown (nvidia-smi failed: {detail})" if detail
+                else "unknown (nvidia-smi failed)")
         if not warned and clock() - started > FREE_VRAM_WARN_SECONDS:
             warned = True
             log.warning("[%s] waiting for free GPU memory: %s < %d MiB after %.0fs", stage, seen, min_mib,
@@ -236,14 +272,33 @@ def log_sizes(log_dir: Path, pattern: str = "launch-*.server.log") -> dict[str, 
     return {p.name: p.stat().st_size for p in log_dir.glob(pattern)} if log_dir.is_dir() else {}
 
 
+def _warn_meminfo_once(meminfo: Path, kind: str, message: str, *args: Any) -> None:
+    key = (meminfo, kind)
+    with _MEMINFO_WARN_LOCK:
+        if key in _MEMINFO_WARNED:
+            return
+        _MEMINFO_WARNED.add(key)
+    log.warning(message, *args)
+
+
 def available_ram_gib(meminfo: Path = Path("/proc/meminfo")) -> float | None:
     """可用内存（`/proc/meminfo` 的 `MemAvailable`，含可回收的页缓存）；取不到为 None。"""
     try:
         text = meminfo.read_text(encoding="ascii")
-    except OSError:
+    except OSError as exc:
+        _warn_meminfo_once(meminfo, type(exc).__name__,
+                           "[strata] failed to read %s (%s); continuing without RAM check",
+                           meminfo, format_error(exc))
         return None
     match = re.search(r"^MemAvailable:\s+(\d+) kB$", text, re.MULTILINE)
-    return round(int(match.group(1)) / 2**20, 1) if match else None
+    if not match:
+        _warn_meminfo_once(meminfo, "MissingMemAvailable",
+                           "[strata] MemAvailable missing in %s; continuing without RAM check", meminfo)
+        return None
+    with _MEMINFO_WARN_LOCK:
+        for key in [k for k in _MEMINFO_WARNED if k[0] == meminfo]:
+            _MEMINFO_WARNED.discard(key)
+    return round(int(match.group(1)) / 2**20, 1)
 
 
 def expert_arena(engine_text: str) -> str | None:
@@ -256,6 +311,19 @@ def expert_arena(engine_text: str) -> str | None:
 
 def _first_line(error: BaseException | str) -> str:
     return (str(error).splitlines() or [""])[0][:200]
+
+
+def _compact_tail(text: str | bytes | None, limit: int = 300) -> str:
+    raw = text.decode("utf-8", errors="replace") if isinstance(text, bytes) else (text or "")
+    return " ".join(raw.split())[-limit:]
+
+
+def _format_cli_error(exc: BaseException, limit: int = 300) -> str:
+    """格式化 CLI 异常摘要；`CalledProcessError` 保留返回码与 `stderr` 截尾。"""
+    if isinstance(exc, subprocess.CalledProcessError):
+        tail = _compact_tail(exc.stderr, limit)
+        return f"{type(exc).__name__} (exit {exc.returncode})" + (f": {tail}" if tail else "")
+    return format_error(exc, limit)
 
 
 def read_from(path: Path, offset: int) -> str:
@@ -279,25 +347,58 @@ class ResourceSampler:
 
     def __init__(self, url: str, get: Callable[[str], dict], every: float = SAMPLE_SECONDS):
         self.url, self.get, self.every = url, get, every
-        self.peak: dict[str, Any] = {"gpu_used_mib": None, "ram_used_gib": None, "samples": 0, "errors": 0}
+        self.peak: dict[str, Any] = {
+            "gpu_used_mib": None,
+            "ram_used_gib": None,
+            "samples": 0,
+            "errors": 0,
+            "last_error": None,
+        }
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        self._unexpected_logged = False
+        self._expected_errors = 0
+        self._last_expected_error: str | None = None
+
+    def _record_error_locked(self, exc: BaseException, *, expected: bool) -> str:
+        detail = format_error(exc)
+        self.peak["errors"] += 1
+        self.peak["last_error"] = detail
+        if expected:
+            self._expected_errors += 1
+            self._last_expected_error = detail
+        return detail
+
+    def _record_unexpected(self, exc: BaseException) -> tuple[str, bool]:
+        with self._lock:
+            detail = self._record_error_locked(exc, expected=False)
+            should_log = not self._unexpected_logged
+            self._unexpected_logged = True
+        return detail, should_log
 
     def sample(self) -> None:
         try:
             machine = self.get(self.url + "/v1/status").get("machine") or {}
-        except (URLError, ConnectionError, TimeoutError, ValueError, OSError):
-            self.peak["errors"] += 1
+        except (URLError, ConnectionError, TimeoutError, ValueError, OSError) as exc:
+            with self._lock:
+                self._record_error_locked(exc, expected=True)
             return
-        self.peak["samples"] += 1
-        for key, value in (("gpu_used_mib", (machine.get("gpu") or {}).get("used_mib")),
-                           ("ram_used_gib", (machine.get("ram") or {}).get("used_gib"))):
-            if isinstance(value, (int, float)) and (self.peak[key] is None or value > self.peak[key]):
-                self.peak[key] = value
+        with self._lock:
+            self.peak["samples"] += 1
+            for key, value in (("gpu_used_mib", (machine.get("gpu") or {}).get("used_mib")),
+                               ("ram_used_gib", (machine.get("ram") or {}).get("used_gib"))):
+                if isinstance(value, (int, float)) and (self.peak[key] is None or value > self.peak[key]):
+                    self.peak[key] = value
 
     def _run(self) -> None:
         while not self._stop.wait(self.every):
-            self.sample()
+            try:
+                self.sample()
+            except Exception as exc:
+                detail, should_log = self._record_unexpected(exc)
+                if should_log:
+                    log.error("[strata] resource sampler thread failed (%s)", detail, exc_info=True)
 
     def start(self) -> None:
         self.sample()
@@ -307,6 +408,24 @@ class ResourceSampler:
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=self.every + 35)
+
+    def finish(self) -> dict[str, Any]:
+        """停止后台线程并补做最终采样；返回线程安全的峰值快照，并汇总尚未记录过的采样失败。"""
+        self.stop()
+        try:
+            self.sample()
+        except Exception as error:
+            detail, should_log = self._record_unexpected(error)
+            if should_log:
+                log.error("[strata] final resource sample failed (%s)", detail, exc_info=error)
+        with self._lock:
+            peak = dict(self.peak)
+            expected_errors = self._expected_errors
+            last_expected = self._last_expected_error
+        if expected_errors > 0:
+            log.warning("[strata] resource sampling had %d error(s); last error: %s",
+                        expected_errors, last_expected)
+        return peak
 
 
 class StrataServer:
@@ -318,12 +437,13 @@ class StrataServer:
 
     def __init__(self, runtime_dir: Path, *, on_pid: Callable[[int | None], None] = lambda pid: None,
                  cli: Callable[..., str] = run_cli, get: Callable[[str], dict] = http_get,
-                 free_vram: Callable[[], int | None] = lambda: nvidia_smi("memory.free"),
+                 free_vram: Callable[[], int | None] | None = None,
                  available_ram: Callable[[], float | None] = available_ram_gib,
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
                  log_dir: Path = LOG_DIR, engine_log_dir: Path = ENGINE_LOG_DIR):
         self.runtime_dir = Path(runtime_dir)
-        self.on_pid, self.cli, self.get, self.free_vram = on_pid, cli, get, free_vram
+        self.on_pid, self.cli, self.get = on_pid, cli, get
+        self.free_vram = free_vram if free_vram is not None else _NvidiaSmiQuery("memory.free")
         self.sleep, self.clock, self.log_dir = sleep, clock, Path(log_dir)
         self.available_ram, self.engine_log_dir = available_ram, Path(engine_log_dir)
         self.url = f"http://{HOST}:{PORT}"
@@ -356,7 +476,7 @@ class StrataServer:
         try:
             busy = running(self.cli)
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
-            raise InfraFailure(f"strata launch --status failed: {type(exc).__name__}: {exc}") from exc
+            raise InfraFailure(f"strata launch --status failed: {_format_cli_error(exc)}") from exc
         if busy:
             raise StrataRefused(f"another Strata launch is serving ({[r.get('name') for r in busy]!r}); this run does "
                                 "not stop it. Stop it with `strata launch --stop` and run again")
@@ -372,7 +492,7 @@ class StrataServer:
                 self.cli(*LAUNCH_ARGS, timeout=LAUNCH_TIMEOUT_S)
             except subprocess.CalledProcessError as exc:
                 # Strata 的 stderr 是它自己的说明文字（不含字幕内容），截尾写进消息便于诊断。
-                tail = " ".join((exc.stderr or "").split())[-300:]
+                tail = _compact_tail(exc.stderr)
                 raise InfraFailure(f"strata launch exited with {exc.returncode}" + (f": {tail}" if tail else "")
                                    + self._see_log(sizes)) from exc
             except (OSError, subprocess.SubprocessError) as exc:
@@ -414,7 +534,7 @@ class StrataServer:
             try:
                 last = running(self.cli)
             except (OSError, subprocess.SubprocessError, ValueError) as exc:
-                last = f"{type(exc).__name__}: {exc}"
+                last = _format_cli_error(exc)
             if isinstance(last, list):
                 if len(last) > 1:
                     raise StrataRefused(f"expected one Strata launch, got {len(last)}")
@@ -427,12 +547,17 @@ class StrataServer:
 
     def __exit__(self, *exc: Any) -> None:
         if self.sampler is not None:
-            self.sampler.stop()
-            self.sampler.sample()
-            atomic_write_json(self.runtime_dir / "resources.json", dict(
-                self.sampler.peak, log_events=None if self.log_path is None else log_events(self.log_path,
-                                                                                            self.log_offset),
-                server_log=None if self.log_path is None else str(self.log_path), finished_at_utc=utc_now()))
+            peak = self.sampler.finish()
+            resources_path = self.runtime_dir / "resources.json"
+            try:
+                atomic_write_json(resources_path, dict(
+                    peak,
+                    log_events=None if self.log_path is None else log_events(self.log_path, self.log_offset),
+                    server_log=None if self.log_path is None else str(self.log_path),
+                    finished_at_utc=utc_now(),
+                ))
+            except OSError as error:
+                log.error("[strata] failed to write %s: %s", resources_path, format_error(error))
             self.sampler = None
         if not self.launched:
             return
@@ -443,13 +568,15 @@ class StrataServer:
             self.cli(*STOP_ARGS, timeout=STOP_TIMEOUT_S)
             final["stop"] = "ok"
         except (OSError, subprocess.SubprocessError) as error:
-            final["stop"] = f"{type(error).__name__}: {error}"[:500]
+            final["stop"] = _format_cli_error(error, limit=500)[:500]
         deadline = self.clock() + STOP_TIMEOUT_S
         while True:
             try:
                 final["status_empty"] = not running(self.cli)
-            except (OSError, subprocess.SubprocessError, ValueError):
+                final.pop("status_error", None)
+            except (OSError, subprocess.SubprocessError, ValueError) as error:
                 final["status_empty"] = None
+                final["status_error"] = _format_cli_error(error, limit=500)[:500]
             if final["status_empty"] or self.clock() >= deadline:
                 break
             self.sleep(POLL_S)
@@ -459,16 +586,21 @@ class StrataServer:
         except InfraFailure as error:
             final["error"] = str(error)
         final["stopped_at_utc"] = utc_now()
+        final_path = self.runtime_dir / "strata-final.json"
+        final_written = False
         try:
-            atomic_write_json(self.runtime_dir / "strata-final.json", final)
-        except OSError:
-            pass
+            atomic_write_json(final_path, final)
+            final_written = True
+        except OSError as error:
+            log.error("[strata] failed to write %s: %s", final_path, format_error(error))
         if final["released"]:
             log.info("[strata] Strata stopped; %s MiB GPU memory free", final["free_vram_mib"])
         else:
-            log.error("[strata] Strata stop not confirmed (stop %s, status empty %s, free %s MiB); "
-                      "check `strata launch --status` and nvidia-smi; see %s", final["stop"], final["status_empty"],
-                      final["free_vram_mib"], self.runtime_dir / "strata-final.json")
+            status_note = f", status error {final['status_error'][:200]}" if "status_error" in final else ""
+            see_note = f"; see {final_path}" if final_written else ""
+            log.error("[strata] Strata stop not confirmed (stop %s, status empty %s%s, free %s MiB); "
+                      "check `strata launch --status` and nvidia-smi%s",
+                      final["stop"], final["status_empty"], status_note, final["free_vram_mib"], see_note)
         self.on_pid(None)
 
 
