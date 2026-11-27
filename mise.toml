@@ -51,11 +51,11 @@ run = "uv run --locked --offline python -m compileall -q kototoki scripts tests"
 
 [tasks.docs-check]
 description = "检查文档链接、锚点、可达性、索引登记、体量预算、标题骨架与 covers，不联网"
-run = "python3 scripts/check_docs.py"
+run = "uv run --no-project --no-env-file --no-python-downloads --offline python scripts/check_docs.py"
 
 [tasks.docs-affected]
 description = "改动提示：列出相对基准（默认 HEAD，可传参）的改动命中 covers 的文档页；总是成功，不属于门禁"
-run = "python3 scripts/check_docs.py --affected"
+run = "uv run --no-project --no-env-file --no-python-downloads --offline python scripts/check_docs.py --affected"
 
 # lint、typecheck 未选定工具，不在门禁内；以编译检查 check 代替（docs/development/workflow.md#命令与门禁）。
 [tasks.gate-core]

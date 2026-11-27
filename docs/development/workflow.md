@@ -47,8 +47,8 @@ Inspect the real task in `mise.toml` or `mise-tasks/` before invoking anything. 
 | `test-full` | 聚合 `uv:test-full`（经 `scripts/with_lock.py` 持主机锁运行 `unittest discover -s tests/full -t . -v`）：全部 full 离线集成测试，不加载模型、不占 GPU；定向传参用 `mise run uv:test-full -k 名称片段` |
 | `subtitles <目录>` | `mise-tasks/subtitles`：按调用目录（`MISE_ORIGINAL_CWD`）解析路径并经 `scripts/subtitles.py` 运行默认配置产品流水线；占 GPU、加载模型，须先问 |
 | `smoke [名称 ...]` | 真实模型验证，不属于任何 gate：`scripts/smoke/run_all.py [名称 ...]` 在独立子进程中逐项运行，加载模型、独占 GPU，每次须先经用户批准；细节见表下 |
-| `docs-check` | `python3 scripts/check_docs.py`（[ADR-0039](../adr/0039-setup-project-docs-check.md)）：本地链接与锚点、全量可达、`docs/adr/` 与 `docs/research/` 登记索引、体量预算、模块页与行为规格骨架、`covers` 有匹配；规则见[文档维护规则·自动检查](../agents/documentation.md#自动检查) |
-| `docs-affected [base]` | `python3 scripts/check_docs.py --affected`：列出相对 `base`（默认 `HEAD`）的改动命中页首 `covers` 的文档页，标出本次未修改的；只提示，总是成功，不在任何 gate 内 |
+| `docs-check` | `uv run --no-project --no-env-file --no-python-downloads --offline python scripts/check_docs.py`（[ADR-0039](../adr/0039-setup-project-docs-check.md)）：本地链接与锚点、全量可达、`docs/adr/` 与 `docs/research/` 登记索引、体量预算、模块页与行为规格骨架、`covers` 有匹配；规则见[文档维护规则·自动检查](../agents/documentation.md#自动检查) |
+| `docs-affected [base]` | `uv run --no-project --no-env-file --no-python-downloads --offline python scripts/check_docs.py --affected`：列出相对 `base`（默认 `HEAD`）的改动命中页首 `covers` 的文档页，标出本次未修改的；只提示，总是成功，不在任何 gate 内 |
 | `gate-core` | 并行运行 `check-toolchain`、`docs-check`、`check`、`test`，任一失败即失败 |
 | `gate-full` | `gate-core` 通过后在主机锁内运行 `test-full`；不加载模型 |
 

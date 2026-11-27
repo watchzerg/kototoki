@@ -4,6 +4,6 @@
 set -euo pipefail
 if [ -z "${GATE_LOCK_HELD:-}" ]; then
   export GATE_LOCK_HELD=1
-  exec python3 "${MISE_CONFIG_ROOT:-.}/scripts/with_lock.py" "$0" "$@"
+  exec uv run --no-project --no-env-file --no-python-downloads --offline python "${MISE_CONFIG_ROOT:-.}/scripts/with_lock.py" "$0" "$@"
 fi
 exec uv run --locked --offline python -m unittest discover -s tests/full -t . -v "$@"
