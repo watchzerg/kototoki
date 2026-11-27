@@ -16,7 +16,7 @@ import hashlib
 import math
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Literal
 
 from kototoki.artifacts import atomic_write_text
 
@@ -69,7 +69,7 @@ def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def subtitle_text_problem(text: Any) -> str | None:
+def subtitle_text_problem(text: Any) -> Literal["empty", "blank_line"] | None:
     """字幕文字规则的唯一出处：非空字符串，且归一换行后没有空白行（否则会把 SRT 块拆断）。
 
     没问题返回 `None`，空或非字符串返回 `"empty"`，含空白行返回 `"blank_line"`。

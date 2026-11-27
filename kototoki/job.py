@@ -42,7 +42,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, BinaryIO, TextIO
+from typing import Any, BinaryIO, NamedTuple, TextIO
 import warnings
 
 from kototoki import artifacts, cues, embedded, media, merge, names, plan, recipes, srt, strata, translate
@@ -641,15 +641,22 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) 
     logger.info(f"[names] end: {done} done, {len(batch) - done} failed, {time.perf_counter() - started:.1f}s")
 
 
+class _Translated(NamedTuple):
+    """一个文件的翻译结果，供 `_publish_stage` 合并发布。"""
+    translations: dict[str, str | None]
+    untranslated: int   # 未翻译条数
+    run_dir: str        # run 目录，相对工作目录
+
+
 def translate_batch(ctx: _Context, batch: list[VideoFile],
-                    session: strata.Session) -> dict[str, tuple[dict[str, str | None], int, str]]:
+                    session: strata.Session) -> dict[str, _Translated]:
     """按各文件的 `TranslatePlan` 翻译；返回 相对路径 → (译文, 未翻译条数, run 目录相对工作目录)。
 
     只有某个文件 `needs_model` 时才取 GPU 锁（names 已取时沿用），需要模型的文件拿到共享 `session`（names 阶段没有
     启动 Strata 时在这里第一次启动）；零条目或 run 已完成的文件不需要模型，传 None、直接读回译文。撞 GPU 锁
     （`GpuLocked`）向上抛、整批退出码 4。
     """
-    results: dict[str, tuple[dict[str, str | None], int, str]] = {}
+    results: dict[str, _Translated] = {}
     if not batch:
         return results
     started = time.perf_counter()
@@ -668,7 +675,7 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
         except Exception as error:
             ctx.fail(video, "translate", error, traceback=not known)
             continue
-        results[video.relative] = (dict(result.translations), int(result.untranslated_count), tplan.relative)
+        results[video.relative] = _Translated(dict(result.translations), int(result.untranslated_count), tplan.relative)
         ctx.summary.untranslated_cues += int(result.untranslated_count)  # 翻译完成即计，与发布成败无关
         resumed = " (resumed)" if tplan.document.cues and not tplan.needs_model else ""  # 全部批次已完成，未用模型
         (logger.warning if result.untranslated_count else logger.info)(
@@ -838,7 +845,7 @@ def _gpu_stages(ctx: _Context) -> None:
             run_gpu_stage(ctx, stage, batch)
 
 
-def _model_stages(ctx: _Context) -> dict[str, tuple[dict[str, str | None], int, str]]:
+def _model_stages(ctx: _Context) -> dict[str, _Translated]:
     """names 与 translate 共用一个 Strata session：第一次需要模型时启动，退出上下文（正常、出错、中断）即 `--stop` 并核实
     显存释放，之后才放 GPU 锁；两阶段都不需要模型时整批不启动。pid 经回调写进 GPU 锁（未取锁时 update 是空操作）。"""
     with strata.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid)) as session:
@@ -848,7 +855,7 @@ def _model_stages(ctx: _Context) -> dict[str, tuple[dict[str, str | None], int, 
     return translated
 
 
-def _publish_stage(ctx: _Context, translated: dict[str, tuple[dict[str, str | None], int, str]]) -> None:
+def _publish_stage(ctx: _Context, translated: dict[str, _Translated]) -> None:
     for video in _live(ctx):
         try:
             stage = video.plan.stage if video.plan is not None else None
@@ -856,10 +863,10 @@ def _publish_stage(ctx: _Context, translated: dict[str, tuple[dict[str, str | No
                 if publish(ctx, video, "", "", 0):
                     ctx.summary.no_speech.append(video.relative)
             elif stage == "translate" and video.relative in translated:
-                translations, untranslated, translate_dir = translated[video.relative]
+                done = translated[video.relative]
                 document = video.plan.translate.document
-                text = merge.merge(document, translations) if document.cues else ""
-                publish(ctx, video, text, translate_dir, untranslated)
+                text = merge.merge(document, done.translations) if document.cues else ""
+                publish(ctx, video, text, done.run_dir, done.untranslated)
         except Exception as error:
             ctx.fail(video, "publish", error)
 

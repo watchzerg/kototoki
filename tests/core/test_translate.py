@@ -68,6 +68,12 @@ class FakeClient:
             behaviour()
         if behaviour == "oom":
             raise closed_http_error(500, "CUDA error: out of memory")
+        if behaviour == "http_other":
+            raise closed_http_error(500, "boom")
+        if behaviour == "error_field":  # 200 响应里带 error 字段
+            return {"error": {"message": "boom"}}
+        if behaviour == "oom_and_context":  # 同时命中 OOM 与超出 context 的文本：先判 oom
+            raise closed_http_error(500, "CUDA error: out of memory; the request exceeds the available context size")
         user = body["messages"][1]["content"]
         cache_n = 0 if self.server.completions == 1 and not self.server.harness.warm_cache else 5
         base = {"usage": {"prompt_tokens": len(user), "completion_tokens": 12}, "timings": {"cache_n": cache_n}}
@@ -282,6 +288,20 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual(second["batches_written"], 2)
         self.assertTrue(run["resumed"])
         self.assertEqual(run["completion"]["restarts_last_call"], 1)
+
+    def test_failure_text_is_classified_in_translate_call_sites(self) -> None:
+        for behaviour, kind in (("http_other", "server_error"), ("error_field", "server_error"), ("oom_and_context", "oom")):
+            with self.subTest(behaviour=behaviour):
+                self.setUp()
+                doc = document(3)
+                self.h.plans = [{1: behaviour}]
+                self.h.translate(doc)
+                if kind == "oom":  # oom 停 Strata 并重启，失败类别记在 session 里
+                    first = self.run_json(doc)["sessions"][0]
+                    self.assertEqual((first["stop_reason"], first["infra_failure"]["kind"]), ("oom", "oom"))
+                else:  # server_error 换 seed 重试，类别记在尝试记录里
+                    first = self.batch_lines(doc)[0]["request"]["attempts"][0]
+                    self.assertEqual((first["status"], first["error_kind"]), ("failed", "server_error"))
 
     def test_context_overflow_is_classified_context_in_attempt_records(self) -> None:
         doc = document(4)

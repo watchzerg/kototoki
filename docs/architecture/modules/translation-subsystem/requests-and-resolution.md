@@ -50,4 +50,4 @@ covers:
   - 测试精简（2026-11-22）后不再有测试覆盖：
     - 配方与请求：提示文本与请求体形状的字面量钉子；注入行的窗口过滤、`names_sha256` 只随条目、空表被拒、结构严格校验；场景 id、cue id 与时间随 ja.srt、可见上限先丢后侧；无注入时为朴素 Q2 system message；停顿处切点移向更长停顿。
     - 追问与解析：单条批不拆而留作未翻译、记录的单条失败续跑时重建为未翻译、节点日志行落在计划之外被拒、空场景写空报告；对半拆、被拒请求与追问中基础设施失败的日志与重启。
-- `tests/core/test_translate.py` 的重启与第二次尝试用例见[运行目录子页](run-directory.md#代码与验证入口)。失败分类的代表性测试在 `tests/core/test_local_client.py`。
+- `tests/core/test_translate.py` 的重启与第二次尝试用例见[运行目录子页](run-directory.md#代码与验证入口)。失败分类的代表性测试在 `tests/core/test_local_client.py`；`test_translate.py` 的 `test_failure_text_is_classified_in_translate_call_sites` 另覆盖翻译两处调用点（HTTP 错误与响应 `error` 字段无 OOM 文本记 `server_error`，同时命中 OOM 与超出 context 的文本先判 `oom`）。

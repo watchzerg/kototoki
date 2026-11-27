@@ -469,10 +469,11 @@ def _open_translation(plan: TranslatePlan, session: Session | None, relative: st
     return _Translation(plan, session, relative, scene, run, batches, done, recorded)
 
 
-def _register_session(tr: _Translation, state: _SessionState) -> tuple[dict[str, Any], Any]:
-    """启动 Strata，把 session 记录登记进 `run.json`，返回记录与本 session 的客户端。"""
+def _register_session(tr: _Translation, state: _SessionState) -> tuple[Any, dict[str, Any]]:
+    """启动 Strata，把 session 记录登记进 `run.json`（记录存于 `state.entry`），返回本 session 的客户端与 cache 记录。"""
     session, root = tr.session, tr.root
     server = session.ensure_started()
+    cache_state = _cache_state(session)
     state.entry = entry = {
         "index": len(tr.run["sessions"]) + 1, "server_session": session.label, "started_at_utc": utc_now(),
         "engine": {key: server.identity.get(key) for key in SESSION_ENGINE_KEYS},
@@ -483,13 +484,14 @@ def _register_session(tr: _Translation, state: _SessionState) -> tuple[dict[str,
     log.info("[translate] session %d start %s (%s): %d of %d batch(es) pending", entry["index"], tr.relative,
              entry["server_session"], entry["pending_at_start"], len(tr.batches))
     client = session.client(root / "transport" / f"session-{entry['index']:02d}", timeout=CLIENT_TIMEOUT_SECONDS)
-    return entry, client
+    return client, cache_state
 
 
-def _translate_pending(tr: _Translation, state: _SessionState, entry: dict[str, Any], client: Any,
-                       cache_state: dict[str, Any]) -> None:
+def _translate_pending(tr: _Translation, state: _SessionState, client: Any, cache_state: dict[str, Any]) -> None:
     """按序翻译尚未完成的批次，每批追加 `batches.jsonl` 并刷新 `run.json`。"""
-    plan, root, number = tr.plan, tr.root, entry["index"]
+    plan, root, entry = tr.plan, tr.root, state.entry
+    assert entry is not None
+    number = entry["index"]
 
     def attempt(node: Batch) -> dict[str, Any]:
         try:
@@ -540,8 +542,8 @@ def _run_session(tr: _Translation, restarts: int) -> int:
         # 原因由 `Session` 写：启动额度耗尽（"failed to start N times … (start budget exhausted)"）或被拒（身份不符等）。
         raise TranslateError(f"Strata is unavailable for the rest of this batch: {session.unavailable}")
     try:
-        entry, client = _register_session(tr, state)
-        _translate_pending(tr, state, entry, client, _cache_state(session))
+        client, cache_state = _register_session(tr, state)
+        _translate_pending(tr, state, client, cache_state)
     except (StepFailed, InfraFailure) as exc:
         kind = _record_infra_failure(tr, state, exc)
         session.stop()
