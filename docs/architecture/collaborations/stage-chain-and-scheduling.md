@@ -88,5 +88,5 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 [orch]: ../modules/batch-orchestration.md
 [orch-spec]: ../modules/batch-orchestration/runtime-rules.md
 [plan]: ../modules/stage-plan.md
-[run-proc]: ../modules/run-logging-and-processes/processes-and-workers.md#进程原语
-[run-worker]: ../modules/run-logging-and-processes/processes-and-workers.md#worker-子进程
+[run-proc]: ../modules/run-logging-and-processes/process-primitives.md#进程原语
+[run-worker]: ../modules/run-logging-and-processes/worker-subprocess.md#worker-子进程
