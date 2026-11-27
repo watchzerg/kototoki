@@ -16,7 +16,7 @@ covers:
 
 **cross 引擎的配方**：`cross` 需要 `[asr.w0]` 与 `[asr.x0]` 两节的模型路径，不新增配置键。配方 `CROSS`（id `cross-w0-x0-whisper-judge-v1`，hash 不再由测试钉住）嵌入 `W0` 与 `X0` 两个子配方和裁判参数 `judge`：
 
-- 判定阈值 `margin` −1.0、`length_weight` 0.0（无长度项）、打分批上限 `max_batch` 16。
+- 判定阈值 `margin`（取值与判定规则见 [cross 裁判](../stt-asr/cross-judge.md)）、`length_weight` 0.0、打分批上限 `max_batch` 16。
 - 打分器与 start_sequence 约定：`tokenizer.sot_sequence` 即 `<|startoftranscript|><|ja|><|transcribe|>`，CT2 自动接 `<|notimestamps|>`，等价于产品无时间戳、无 initial prompt 的提示。
 - 规范化与区间规则；文本形式：w0 原文，只替换分歧区间的字符，映射失败退回规范化文本。
 - 守卫：`identical_windows`、`empty_result`、`x0_failed_window`、`w0_failed_window`、`score_error`。

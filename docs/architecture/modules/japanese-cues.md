@@ -48,7 +48,7 @@ covers:
 - `payload`（`ja-cues.json` 的内容，身份由编排器包装）：
   - `cues[]`：`index`、`start_ms`、`end_ms`、`text`、`char_start/char_end`、`unit_start/unit_end`（一字符一 unit，与字符范围相同）、`time_sources` 计数、`backfilled_units`；
   - 全文 `time_sources` 计数；`backfilled_units`（回填 unit 的连续区间与来源）；`fallback_windows`（整窗回退的窗口序号）；`unrendered_chars`（不在任何 cue 内的字符数，有 cue 时为 0）。
-  - 编排写出时另在 payload 里加 `ja_srt_sha256`（写出的 `ja.srt` 的 SHA256），供阶段计划判定 `ja.srt` 是否仍是本阶段的输出；本模块不算它。
+  - 编排写出时另在 payload 里加 `ja_srt_sha256`（写出的 `ja.srt` 的 SHA256），当前性判定见[阶段计划](stage-plan.md)；本模块不算它。
 
 ## 实现设计
 
