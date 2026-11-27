@@ -56,7 +56,7 @@ covers:
 
 ### 运行日志
 
-（本模块不发日志，由编排 `job._run` 的 cues 循环按 payload 写，只报数、不设阈值）：
+（本模块不发日志，由编排 `job.cues_batch` 按 payload 写，只报数、不设阈值）：
 
 - `[cues] start: N file(s)`；每文件 `[cues] done <相对路径>: N cue(s), I interpolated unit(s), F fallback unit(s), W fallback window(s), U unrendered char(s)`，计数取 payload 的 `cues` 条数、全文 `time_sources` 的 `interpolated`／`fallback`、`fallback_windows` 条数与 `unrendered_chars`；
 - cue 数为 0 时 done 行用 WARNING（走到 cues 阶段的文件 VAD 有语音，0 条会发布成近乎空的字幕）；

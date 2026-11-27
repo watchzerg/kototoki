@@ -745,10 +745,29 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
     return ctx.summary
 
 
+def _live(ctx: _Context) -> list[VideoFile]:
+    return [video for video in ctx.files if not video.failed]
+
+
+def _planned(ctx: _Context, stage: str) -> list[VideoFile]:
+    return [video for video in _live(ctx) if video.plan is not None and video.plan.stage == stage]
+
+
 def _run(ctx: _Context) -> None:
+    _scan_stage(ctx)
+    _extract_stage(ctx)
+    _plan_stage(ctx)
+    _gpu_stages(ctx)
+    cues_batch(ctx, _planned(ctx, "cues"))
+    translated = _model_stages(ctx)
+    _publish_stage(ctx, translated)
+    _check_all_published(ctx)
+
+
+def _scan_stage(ctx: _Context) -> None:
+    """扫描、稳定性检查与去重：填 `ctx.files`（待处理文件）并更新 summary 的 total／unstable／existing。"""
     config, summary = ctx.config, ctx.summary
     input_dir = config.paths.input_dir
-
     found = scan(input_dir, config.input.extensions)
     summary.total = len(found)
     stable, summary.unstable = stable_files(found, config.run.stable_check_s, ctx.sleep)
@@ -778,11 +797,14 @@ def _run(ctx: _Context) -> None:
                 f"subtitles, {len(summary.unstable)} unstable, "
                 f"{sum(stage == 'scan' for stage in summary.failed.values())} failed")
 
+
+def _extract_stage(ctx: _Context) -> None:
+    """线程池并行 probe 与提取音频；Ctrl+C 时取消排队中的文件，只等正在跑的 ffmpeg 结束。"""
     started = time.perf_counter()
     logger.info(f"[extract] start: {len(ctx.files)} file(s)")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=config.run.extract_workers) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ctx.config.run.extract_workers) as pool:
         try:
-            futures = {pool.submit(probe_and_extract, config, video): video for video in ctx.files}
+            futures = {pool.submit(probe_and_extract, ctx.config, video): video for video in ctx.files}
             for future in concurrent.futures.as_completed(futures):
                 video = futures[future]
                 if future.exception() is not None:
@@ -799,42 +821,43 @@ def _run(ctx: _Context) -> None:
     ok = sum(1 for video in ctx.files if not video.failed)
     logger.info(f"[extract] end: {ok} done, {len(ctx.files) - ok} failed, {time.perf_counter() - started:.1f}s")
 
-    def live() -> list[VideoFile]:
-        return [video for video in ctx.files if not video.failed]
 
-    for video in live():  # 每文件一次：从 vad 起核对到第一个需要运行的阶段
+def _plan_stage(ctx: _Context) -> None:
+    for video in _live(ctx):  # 每文件一次：从 vad 起核对到第一个需要运行的阶段
         try:
-            video.plan = plan.next_stage(video.target(), config, ctx.models)
+            video.plan = plan.next_stage(video.target(), ctx.config, ctx.models)
         except PlanError as error:
             ctx.fail(video, error.stage, error)
-    logger.info(_plan_line([video.plan.stage for video in live() if video.plan is not None]))
+    logger.info(_plan_line([video.plan.stage for video in _live(ctx) if video.plan is not None]))
 
-    def planned(stage: str) -> list[VideoFile]:
-        return [video for video in live() if video.plan is not None and video.plan.stage == stage]
 
+def _gpu_stages(ctx: _Context) -> None:
     for stage in GPU_STAGES:
         if stage == "asr":
-            speech_gate(ctx, planned(stage))
-        batch = planned(stage)
+            speech_gate(ctx, _planned(ctx, stage))
+        batch = _planned(ctx, stage)
         if batch:
             ctx.ensure_gpu_lock()
             run_gpu_stage(ctx, stage, batch)
 
-    cues_batch(ctx, planned("cues"))
 
-    # names 与 translate 共用一个 Strata session：第一次需要模型时启动，退出上下文（正常、出错、中断）即 `--stop` 并核实
-    # 显存释放，之后才放 GPU 锁；两阶段都不需要模型时整批不启动。pid 经回调写进 GPU 锁（未取锁时 update 是空操作）。
-    with strata.Session(config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid)) as session:
-        names_batch(ctx, planned("names"), session)
-        translated = translate_batch(ctx, planned("translate"), session)
+def _model_stages(ctx: _Context) -> dict[str, tuple[dict[str, str | None], int, str]]:
+    """names 与 translate 共用一个 Strata session：第一次需要模型时启动，退出上下文（正常、出错、中断）即 `--stop` 并核实
+    显存释放，之后才放 GPU 锁；两阶段都不需要模型时整批不启动。pid 经回调写进 GPU 锁（未取锁时 update 是空操作）。"""
+    with strata.Session(ctx.config, on_server_pid=lambda pid: ctx.gpu_lock.update(server_pid=pid)) as session:
+        names_batch(ctx, _planned(ctx, "names"), session)
+        translated = translate_batch(ctx, _planned(ctx, "translate"), session)
     ctx.gpu_lock.release()
+    return translated
 
-    for video in live():
+
+def _publish_stage(ctx: _Context, translated: dict[str, tuple[dict[str, str | None], int, str]]) -> None:
+    for video in _live(ctx):
         try:
             stage = video.plan.stage if video.plan is not None else None
             if stage == "publish":
                 if publish(ctx, video, "", "", 0):
-                    summary.no_speech.append(video.relative)
+                    ctx.summary.no_speech.append(video.relative)
             elif stage == "translate" and video.relative in translated:
                 translations, untranslated, translate_dir = translated[video.relative]
                 document = video.plan.translate.document
@@ -843,10 +866,12 @@ def _run(ctx: _Context) -> None:
         except Exception as error:
             ctx.fail(video, "publish", error)
 
-    # 收尾不变量：未失败的文件必须已发布（含无语音）或按"已存在"跳过；某个计划阶段没被任何执行器处理时记失败，
-    # 不让它既不发布也不失败、整批却以 0 退出。
-    for video in live():
-        if video.relative not in summary.published and video.relative not in summary.existing:
+
+def _check_all_published(ctx: _Context) -> None:
+    """收尾不变量：未失败的文件必须已发布（含无语音）或按"已存在"跳过；某个计划阶段没被任何执行器处理时记失败，
+    不让它既不发布也不失败、整批却以 0 退出。"""
+    for video in _live(ctx):
+        if video.relative not in ctx.summary.published and video.relative not in ctx.summary.existing:
             stage = video.plan.stage if video.plan is not None else None
             ctx.fail(video, "publish", NotPublished(f"planned stage {stage!r} was not handled by any executor"))
 
