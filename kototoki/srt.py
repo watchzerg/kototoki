@@ -70,13 +70,25 @@ def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _check_text(text: Any, what: str) -> str:
+def subtitle_text_problem(text: Any) -> str | None:
+    """字幕文字规则的唯一出处：非空字符串，且归一换行后没有空白行（否则会把 SRT 块拆断）。
+
+    没问题返回 `None`，空或非字符串返回 `"empty"`，含空白行返回 `"blank_line"`。
+    """
     if not isinstance(text, str) or not text.strip():
+        return "empty"
+    if any(not line.strip() for line in _normalize_newlines(text).split("\n")):
+        return "blank_line"
+    return None
+
+
+def _check_text(text: Any, what: str) -> str:
+    problem = subtitle_text_problem(text)
+    if problem == "empty":
         raise ValueError(f"{what}: empty subtitle text")
-    text = _normalize_newlines(text)
-    if any(not line.strip() for line in text.split("\n")):
+    if problem == "blank_line":
         raise ValueError(f"{what}: blank text line would break SRT")
-    return text
+    return _normalize_newlines(text)
 
 
 def parse_srt(text: str, *, source_sha256: str | None = None, encoding: str = "utf-8") -> SourceDocument:
@@ -109,7 +121,7 @@ def parse_srt(text: str, *, source_sha256: str | None = None, encoding: str = "u
         if end <= start:
             raise ValueError(f"Cue {ordinal}: end time must be after start time")
         body = "\n".join(lines[2:])
-        if not body.strip() or any(not line.strip() for line in lines[2:]):
+        if subtitle_text_problem(body) is not None:
             raise ValueError(f"Cue {ordinal}: empty subtitle text or text line")
         seen.add(index)
         cues.append(SourceCue(
@@ -151,9 +163,10 @@ def validate_translations(document: SourceDocument, translations: Mapping[str, s
     invalid = []
     for cue_id in sorted(expected & actual):
         text = translations[cue_id]
-        if not isinstance(text, str) or not text.strip():
+        problem = subtitle_text_problem(text)
+        if problem == "empty":
             invalid.append({"id": cue_id, "reason": "empty_or_nonstring_text"})
-        elif any(not line.strip() for line in _normalize_newlines(text).split("\n")):
+        elif problem == "blank_line":
             invalid.append({"id": cue_id, "reason": "blank_text_line_would_break_srt"})
     missing = [cue.id for cue in document.cues if cue.id not in actual]
     unexpected = sorted(actual - expected, key=str)
