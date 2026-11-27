@@ -58,7 +58,7 @@ def start(jobs: Jobs) -> Any:
     vad = PyannoteVad(Path(models["vad"]))
     load_s = time.perf_counter() - started
     logger.info("[%s] model loaded in %.1fs", STAGE, load_s)
-    return gpu.file_processor(compute(vad, model_sha256, load_s))
+    return gpu.file_processor(compute(vad, model_sha256, load_s), stage=STAGE)
 
 
 if __name__ == "__main__":

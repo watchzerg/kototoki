@@ -144,10 +144,10 @@ class WorkerTestCase(unittest.TestCase):
         self.pcm_sha256 = write_wav(self.wav, (np.arange(SAMPLES) % 200 - 100).astype(np.int16))
         self.stream = io.BytesIO()
 
-    def run_stage(self, compute, inputs, *, check=no_check) -> int:
+    def run_stage(self, compute, inputs, *, check=no_check, stage: str | None = "stage") -> int:
         job = FileJob("0123456789ab", self.work_dir, {name: Path(path) for name, path in inputs.items()})
         jobs = Jobs("stage", "0" * 64, {}, (job,))
-        return run_jobs(jobs, gpu.file_processor(compute, check=check), stream=self.stream)
+        return run_jobs(jobs, gpu.file_processor(compute, stage=stage, check=check), stream=self.stream)
 
     def progress(self) -> list[dict]:
         return [json.loads(line) for line in self.stream.getvalue().decode("utf-8").splitlines()]
@@ -423,6 +423,20 @@ class GpuHelpersTest(unittest.TestCase):
         self.assertEqual(waveform.dtype, np.float32)
         np.testing.assert_array_equal(waveform, np.array([-1.0, 0.0, 32767 / 32768.0], dtype=np.float32))
         self.assertEqual(pcm_sha256, expected_sha256)
+
+    def test_file_processor_logs_stage_reason_when_overwriting_existing_artifact(self) -> None:
+        work = self.root / "0123456789ab"
+        work.mkdir()
+        target = work / artifacts.VAD
+        identity = {"upstream": {"audio-16k.wav": "a" * 64}, "recipe_hash": "b" * 64, "models": {}, "config": {}}
+        artifacts.write_artifact(target, identity, {"offset_s": 0})
+        process = gpu.file_processor(lambda job: ([(target, identity, {"offset_s": 0})], {}),
+                                     stage="vad", check=no_check)
+        with self.assertLogs("kototoki.artifacts", level="INFO") as logs:
+            process(FileJob("0123456789ab", work, {}))
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("recomputed vad stage output", logs.records[0].getMessage())
+        self.assertNotIn("replacing existing artifact", logs.records[0].getMessage())
 
 
 class ImportBoundaryTest(unittest.TestCase):

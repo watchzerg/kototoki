@@ -39,6 +39,7 @@ from urllib.error import HTTPError, URLError
 from kototoki import artifacts
 from kototoki.artifacts import atomic_write_json, object_hash, read_json, sha256_bytes, utc_now
 from kototoki.config import Config
+from kototoki.logs import format_error, path_label
 from kototoki.srt import SourceDocument
 
 from kototoki.local_client import InfraFailure, classify_failure, response_body
@@ -160,8 +161,7 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
                 # 消息只带状态码、分类与正文长度；正文在 transport 交换目录里。
                 raise StepFailed(f"HTTP {exc.code} ({kind}): response body {len(text)} char(s)", kind) from exc
             except (URLError, ConnectionError, TimeoutError) as exc:
-                detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
-                raise StepFailed(f"completion transport: {detail}", "server") from exc
+                raise StepFailed(f"completion transport: {format_error(exc)}", "server") from exc
             finally:
                 attempt.update(completion_seconds=time.perf_counter() - completion_start,
                                exchange=getattr(client, "last_exchange", None))
@@ -310,7 +310,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if len(complete) != len(data):
         truncated = len(data) - len(complete)
         reason = "corrupt final JSON line" if corrupt_final else "unterminated final line"
-        log.warning("[translate] truncated %d byte(s) from %s (%s)", truncated, path, reason)
+        log.warning("[translate] truncated %d byte(s) from %s (%s)", truncated, path_label(path), reason)
         with path.open("r+b") as stream:
             stream.truncate(len(complete))
     return rows

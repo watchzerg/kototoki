@@ -163,16 +163,18 @@ class BuildDocumentTests(Case):
             with self.assertRaisesRegex(names.NamesError, r"^HTTP 500 \(oom\)") as caught, \
                     self.assertLogs("kototoki.names", level="WARNING") as logs:
                 names.build_document(self.work, self.doc, session, 7)
-            trace_dir = self.h.clients[-1]["trace_dir"]
+            trace_label = f"abc/names/transport/{session.label}"
             body_len = len(self.h.error_raw) + len("HTTP Error 500: error")
             self.assertEqual(
                 logs.records[-1].getMessage(),
-                f"[names] abc: stopping Strata after HTTP 500 (oom): response body {body_len} char(s); see {trace_dir}",
+                f"[names] abc: stopping Strata after HTTP 500 (oom): response body {body_len} char(s); see {trace_label}",
             )
+            self.assertNotIn(str(self.h.root), logs.records[-1].getMessage())
             self.assertNotIn("out of memory", logs.records[-1].getMessage())
             self.assertIsNone(session.server)
             self.assertEqual(self.h.events, ["start:1", "stop:1"])
             self.assertNotIn("out of memory", str(caught.exception))  # 正文留在交换目录，不进消息
+            self.assertNotIn(str(self.h.root), str(caught.exception))
             self.assertIsNone(session.unavailable)  # 下一部需要模型的影片再启动
 
     def test_non_json_response_raises_and_stops_strata(self) -> None:
@@ -181,11 +183,12 @@ class BuildDocumentTests(Case):
             with self.assertRaisesRegex(ValueError, "Expected server JSON object"), \
                     self.assertLogs("kototoki.names", level="WARNING") as logs:
                 names.build_document(self.work, self.doc, session, 7)
-            trace_dir = self.h.clients[-1]["trace_dir"]
+            trace_label = f"abc/names/transport/{session.label}"
             self.assertEqual(
                 logs.records[-1].getMessage(),
-                f"[names] abc: stopping Strata after ValueError: Expected server JSON object; see {trace_dir}",
+                f"[names] abc: stopping Strata after ValueError: Expected server JSON object; see {trace_label}",
             )
+            self.assertNotIn(str(self.h.root), logs.records[-1].getMessage())
             self.assertIsNone(session.server)
             self.assertEqual(self.h.events, ["start:1", "stop:1"])
             self.assertIsNone(session.unavailable)
@@ -194,12 +197,13 @@ class BuildDocumentTests(Case):
         self.h.count_result = http_error(404)
         with self.h.session() as session, self.assertLogs("kototoki.names", level="WARNING") as logs:
             result = names.build_document(self.work, self.doc, session, 7, relative="S1/ep01.mkv")
+            trace_label = f"abc/names/transport/{session.label}"
         self.assertEqual(result.status, "ok")
-        trace_dir = self.h.clients[-1]["trace_dir"]
         msg = logs.records[-1].getMessage()
         self.assertIn("S1/ep01.mkv", msg)
         self.assertIn("HTTPError:", msg)
-        self.assertIn(str(trace_dir), msg)
+        self.assertIn(trace_label, msg)
+        self.assertNotIn(str(self.h.root), msg)
 
     def test_refused_strata_fails_this_and_every_later_document(self) -> None:
         self.h.start_failures = [StrataRefused("another Strata launch is serving")]

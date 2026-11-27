@@ -68,7 +68,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 
 - 与研究期实现的差别：TorchAudio 要求放宽为 ≥2.10，实际版本记入 `metadata.package_versions`。
 - 字典只取 id < `model.config.vocab_size` 的词表项（`align.model_dictionary`）：分词器多出的 added token `|`（id 2268）被丢弃并记入 `metadata.dropped_tokenizer_entries`，通配符列号仍为 2268。
-- `map_records(segments, records)` 与 `MmsAligner.align(audio, segments)` 不收 offset，units 输出 WAV 本地秒。
+- `map_records(segments, records)` 与 `MmsAligner.align(audio, segments, on_error=None)` 不收 offset，units 输出 WAV 本地秒；单窗对齐失败且传入 `on_error` 时同步回调 `(index, error)`。
 - 窗口一律是整数样本（`align.sample_window` 校验整数边界且秒与样本一致，不符即该文件失败）。
 - 单窗 `RuntimeError`／`ValueError` 记入该窗 `failure`，字符成为 `text_only`，不转 CPU 重试。
 - `asr.json` 中被置空的失败窗口没有可对齐字符（`skip_reason = no_eligible_characters`）。
@@ -86,7 +86,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - 推理模块（`kototoki/vad.py`、`asr_whisper.py`、`asr_qwen.py`、`align.py`）只做"加载一次、按窗口推理"：输入输出是内存对象与 WAV 本地坐标，只依赖基础层、互不导入，不读写产物、不判断跳过、不打印。
 - worker 壳（`kototoki/workers/{vad,asr,align}.py`）负责读输入、重验上游身份、组装 payload 与 `failed_windows` 记账，经 `protocol.run_worker` 运行，`__main__` 两行。
 
-**共用部分在 `kototoki/workers/gpu.py`**：命令行入口 `main`、读 WAV `read_wav`（mono 16 kHz PCM16，返回 float32 波形与 PCM SHA256）、读上游产物并重验 `read_input_artifact`、`require_recipe`、`verify_models`、CUDA 守卫 `check_cuda` 与写产物 `file_processor`，以及单窗异常的每文件去重堆栈辅助（`failure_kind`、`error_summary`、`log_window_error`）。
+**共用部分在 `kototoki/workers/gpu.py`**：命令行入口 `main`、读 WAV `read_wav`（mono 16 kHz PCM16，返回 float32 波形与 PCM SHA256）、读上游产物并重验 `read_input_artifact`、`require_recipe`、`verify_models`、CUDA 守卫 `check_cuda` 与写产物 `file_processor`（覆盖既有产物时带 `recomputed <stage> stage output` 原因），以及单窗异常去重日志 `log_window_error`（消费 `kototoki.logs` 的 `failure_kind` 与 `format_error`）。
 
 - 每个壳的 `Compute` 对一个文件返回若干 `(path, identity, payload)` 与进度行附加字段。
 - `gpu.file_processor` 查一次 CUDA 后按顺序全部写出，阶段产物（如 `asr.json`）排在最后，所以中途失败时没有新的阶段产物。
@@ -122,7 +122,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
   - `tests/core/test_vad.py`：`chunk_intervals` 的并集、超长硬切与贪心合并。
   - `tests/core/test_align.py`：`character_targets`、`map_records`、`normalize_window` 与 `MmsAligner.align` 逐窗循环及 `on_error` 回调。
   - `tests/core/test_schema.py`：`validate_transcript`、`validate_windows` 与 `validate_units` 核心不变量。
-  - `tests/core/test_stt_workers.py`（伪推理对象）：三阶段身份与坐标链、`failed_windows`、守卫折叠与跨簇 NFKC 跳过（日志不含文字）、CUDA 守卫退出码 2、`gpu.verify_models`／`read_wav`、壳导入不加载推理库；`gpu.main` 参数／顶层未捕获异常入 `stderr` 与 handler 清理，以及 ASR／对齐／cross 单窗异常的每文件去重堆栈（ASR 与 `cross` 另见 [STT ASR](stt-asr/cross-judge.md#代码与验证入口)）。
+  - `tests/core/test_stt_workers.py`（伪推理对象）：三阶段身份与坐标链、`failed_windows`、守卫折叠与跨簇 NFKC 跳过（日志不含文字）、CUDA 守卫退出码 2、`gpu.verify_models`／`read_wav`、壳导入不加载推理库；`gpu.main` 参数／顶层未捕获异常入 `stderr` 与 handler 清理、`file_processor` 覆盖审计原因，以及 ASR／对齐／cross 单窗异常的每文件去重堆栈（ASR 与 `cross` 另见 [STT ASR](stt-asr/cross-judge.md#代码与验证入口)）。
 - 测试精简（2026-11-22）后未保留部分边界单测（如窗口越界裁剪细节、torchaudio 版本与字典过滤、schema 多数拒绝分支、TF32 告警过滤、`main` 正常读 jobs 主循环与字节 sha256 钉子）；真实模型路径由小批量 `mise run subtitles` 验证（研究对照门禁已随 ADR-0034 删除）。
 - 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 

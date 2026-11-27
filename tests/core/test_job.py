@@ -692,6 +692,28 @@ class RunLogTests(JobCase):
         self.assertIn("ERROR    [run] ABORTED: OSError", second_text)
         self.assertIn("gpu lock unlink boom", second_text)
         self.assertIn("work lock unlink boom", second_text)
+        second_log.unlink()
+
+        # _log_summary 失败时仍必须释放 GPU 锁与工作根锁
+        released: list[str] = []
+
+        def track_release(lock: ProcessLock) -> None:
+            if lock.held:
+                released.append(lock.kind)
+            real_release(lock)
+
+        with mock.patch("kototoki.job.run_gpu_stage", side_effect=RuntimeError("gpu boom")), \
+                mock.patch("kototoki.job._log_summary", side_effect=OSError("summary disk full")), \
+                mock.patch.object(ProcessLock, "release", track_release), \
+                self.assertRaisesRegex(OSError, "summary disk full"):
+            self.run_job()
+        self.assertEqual(released, ["GPU lock", "work directory lock"])
+        self.assertFalse(self.config.gpu_lock.exists())
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+        (third_log,) = self.run_logs()
+        third_text = third_log.read_text(encoding="utf-8")
+        self.assertIn("ERROR    [run] ABORTED: OSError", third_text)
+        self.assertIn("summary disk full", third_text)
 
     def test_cross_process_correlation_and_unknown_event_id_fallback(self) -> None:
         # 未知进度事件 id 回退保留原 id；worker 启动 pid 与文件数、重启分隔行及 work_id 双向可关联

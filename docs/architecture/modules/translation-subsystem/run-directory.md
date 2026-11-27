@@ -34,7 +34,7 @@ covers:
 **日志**：logger `kototoki.translate.*`，写进运行日志（[运行日志](../run-logging-and-processes/run-log.md#运行日志)）。Strata 启停与核实由 `[strata]` 记（[Strata session](../strata-session.md)）。
 
 - INFO：session 起止（start 行带相对路径）；每批一行（cue 数、输出 token、tok/s、cache，取不到的省略；追问过的批次只有请求数与未翻译数）。编排的 done 行见[运行日志](../run-logging-and-processes/run-log.md#运行日志)。
-- WARNING：Strata 重启（带相对路径与已知时的批次 ID）；停 Strata 前的意外异常（带相对路径、异常类型与已知时的批次 ID）；续跑截断 `batches.jsonl`／`nodes.jsonl` 末尾字节（记路径、截断字节数与原因）；节点有未解决的 cue 与节点拆分（仅在节点当次实际执行时记录，回放 `nodes.jsonl` 已有节点时不重复输出）；未翻译 cue（ID 与原因）；每次失败的尝试各一行 `[translate] batch <ID> attempt n/2 failed (<kind>): <错误首行>; seed, finish, tok, reply 字符数, exchange <交换目录>`，第二次尝试被接受时也留下第一次的失败。
+- WARNING：Strata 重启（带相对路径与已知时的批次 ID）；停 Strata 前的意外异常（带相对路径、异常类型与已知时的批次 ID）；续跑截断 `batches.jsonl`／`nodes.jsonl` 末尾字节（记 `logs.path_label` 相对定位 `<run_dir.name>/<文件名>`、截断字节数与原因）；节点有未解决的 cue 与节点拆分（仅在节点当次实际执行时记录，回放 `nodes.jsonl` 已有节点时不重复输出）；未翻译 cue（ID 与原因）；每次失败的尝试各一行 `[translate] batch <ID> attempt n/2 failed (<kind>): <错误首行>; seed, finish, tok, reply 字符数, exchange <交换目录>`，第二次尝试被接受时也留下第一次的失败。
 - ERROR：本子系统不另发 ERROR 行；用尽重启、`StrataRefused` 与不可用状态抛 `TranslateError`，意外异常原样上抛，统一由编排与 `[strata]` 各自记唯一一条 ERROR。
 - HTTP 错误与 server error 的消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）；传输层错误保留异常类型名。校验消息为固定文本（`Duplicate JSON key` 不带键名）。提示、译文与响应正文不进日志。
 

@@ -47,7 +47,7 @@ import warnings
 
 from kototoki import artifacts, cues, embedded, media, merge, names, plan, recipes, srt, strata, translate
 from kototoki.config import REPO_ROOT, Config
-from kototoki.logs import RunFormatter
+from kototoki.logs import RunFormatter, failure_kind, format_error
 from kototoki.names import BuildResult
 from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
 from kototoki.procs import LockError, ProcessLock, contained
@@ -228,12 +228,6 @@ def _size(path: Path) -> tuple[int | None, OSError | None]:
         return None, error
 
 
-def _format_error(exc: BaseException) -> str:
-    """将底层异常压成单行 `<类型>: <首行消息>`（截到 200 字符），供扫描日志复用。"""
-    first = (str(exc).splitlines() or [""])[0][:200]
-    return f"{type(exc).__name__}: {first}" if first else type(exc).__name__
-
-
 def stable_files(files: list[tuple[str, Path]], interval_s: float,
                  sleep: Callable[[float], None]) -> tuple[list[tuple[str, Path]], list[str]]:
     """两次采样（间隔 `interval_s`）大小不变才视为写入完成；不看 mtime（拷贝工具常保留源 mtime）。"""
@@ -244,12 +238,12 @@ def stable_files(files: list[tuple[str, Path]], interval_s: float,
     for rel, path in files:
         size1, err1 = first[rel]
         if err1 is not None:
-            logger.warning(f"[scan] {rel}: stat failed ({_format_error(err1)}), skipped this run")
+            logger.warning(f"[scan] {rel}: stat failed ({format_error(err1)}), skipped this run")
             unstable.append(rel)
             continue
         size2, err2 = _size(path)
         if err2 is not None:
-            logger.warning(f"[scan] {rel}: stat failed ({_format_error(err2)}), skipped this run")
+            logger.warning(f"[scan] {rel}: stat failed ({format_error(err2)}), skipped this run")
             unstable.append(rel)
             continue
         if size2 == size1:
@@ -337,7 +331,7 @@ def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str,
                                                warnings=warnings)
             text, stats = embedded.clean(extracted)
         except (media.MediaError, ValueError) as error:
-            return f"{type(error).__name__}: {(str(error).splitlines() or [''])[0]}"
+            return format_error(error)
         if not text:
             return f"no usable cue among {stats['source_cues']}"
         work.mkdir(parents=True, exist_ok=True)
@@ -423,16 +417,6 @@ def child_env(config: Config) -> dict[str, str]:
     return {**os.environ, **OFFLINE_ENV, **QUIET_ENV, "HF_HOME": str(cache), "TORCH_HOME": str(cache)}
 
 
-def _failure_kind(stage: str, cause: BaseException) -> tuple[str, str, str | None, int | None]:
-    """失败类别：阶段、异常类型与抛出位置（最内层帧的文件与行号）。每个文件各抛一个新异常对象时（如发布的
-    `OSError`）也归为同一类；同类型但从别处抛出的仍算新的一类。没有 traceback 的异常位置为 None。"""
-    tb = cause.__traceback__
-    while tb is not None and tb.tb_next is not None:
-        tb = tb.tb_next
-    where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno) if tb is not None else (None, None)
-    return (stage, f"{type(cause).__module__}.{type(cause).__qualname__}", *where)
-
-
 @dataclass
 class _Context:
     config: Config
@@ -450,8 +434,8 @@ class _Context:
              error_type: str | None = None, traceback: bool = True) -> None:
         """记该文件该阶段失败；`error` 为 None 时 failure.json 已由 worker 写出，类型取 worker 事件的 `error_type`。
 
-        同一类失败（`_failure_kind`：阶段、异常类型、抛出位置）只在第一次带 traceback；不带 traceback 的行改为
-        附上异常消息首行（截到 200 字符），原因不丢（batch-run-fixes 06.3）。
+        同一类失败（阶段、`logs.failure_kind` 的异常类型与抛出位置）只在第一次带 traceback；不带 traceback 的行
+        改为附单行异常摘要（`format_error`，截到 200 字符），原因不丢（batch-run-fixes 06.3）。
         """
         if error is not None:
             artifacts.write_failure(video.work_dir, stage, error)
@@ -460,12 +444,14 @@ class _Context:
         self.summary.failed[video.relative] = stage
         cause = error.__cause__ if isinstance(error, PlanError) and error.__cause__ is not None else error
         if cause is not None and traceback:
-            kind = _failure_kind(stage, cause)
+            kind = (stage, *failure_kind(cause))
             traceback = kind not in self.traced
             self.traced.add(kind)
-        line = f"[{stage}] FAILED {video.relative} (work_id={video.work_dir.name})" + (f": {error_type}" if error_type else "")
-        if error is not None and not traceback and (message := str(error).strip()):
-            line += f": {message.splitlines()[0][:200]}"
+        if error is not None and not traceback:
+            line = f"[{stage}] FAILED {video.relative} (work_id={video.work_dir.name}): {format_error(error)}"
+        else:
+            line = (f"[{stage}] FAILED {video.relative} (work_id={video.work_dir.name})"
+                    + (f": {error_type}" if error_type else ""))
         logger.error(line, exc_info=error if traceback else None)
 
     def ensure_gpu_lock(self) -> None:
@@ -811,21 +797,21 @@ def _log_aborted(error: BaseException) -> None:
                  exc_info=None if isinstance(error, KeyboardInterrupt) else error)
 
 
-def _cleanup_run(summary: Summary, gpu_lock: ProcessLock | None, work_lock: ProcessLock) -> None:
-    """运行日志上下文内写汇总并依次释放 GPU 锁与工作根锁；任何异常先记 ERROR 再原样抛出。"""
+def _cleanup_step(action: Callable[..., Any], *args: Any) -> None:
     try:
-        _log_summary(summary)
-        if gpu_lock is not None:
-            gpu_lock.release()
+        action(*args)
     except BaseException as error:
         _log_aborted(error)
         raise
-    finally:
-        try:
-            work_lock.release()
-        except BaseException as error:
-            _log_aborted(error)
-            raise
+
+
+def _cleanup_run(summary: Summary, gpu_lock: ProcessLock | None, work_lock: ProcessLock) -> None:
+    """运行日志上下文内写汇总并依次释放 GPU 锁与工作根锁；任何一步抛错都先记 ERROR，仍继续清理剩余锁再抛出。"""
+    with contextlib.ExitStack() as stack:
+        stack.callback(_cleanup_step, work_lock.release)
+        if gpu_lock is not None:
+            stack.callback(_cleanup_step, gpu_lock.release)
+        _cleanup_step(_log_summary, summary)
 
 
 def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = worker_command,

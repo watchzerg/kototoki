@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from kototoki import artifacts, plan
+from kototoki.logs import FailureKind
 from kototoki.recipes import SAMPLE_RATE
 from kototoki.schema import validate_transcript, validate_units
 from kototoki.workers import gpu
@@ -34,7 +35,7 @@ def compute(aligner: Any, model_sha256: Mapping[str, str], load_s: float) -> gpu
         validate_failed_windows(asr)
         offset, duration = asr["offset_s"], len(audio) / SAMPLE_RATE
         logged: set[int] = set()
-        traced: set[gpu.FailureKind] = set()
+        traced: set[FailureKind] = set()
 
         def on_error(index: int, error: Exception) -> None:
             logged.add(index)
@@ -82,7 +83,7 @@ def start(jobs: Jobs) -> Any:
     aligner = MmsAligner(Path(models["align"]))
     load_s = time.perf_counter() - started
     logger.info("[%s] model loaded in %.1fs", STAGE, load_s)
-    return gpu.file_processor(compute(aligner, model_sha256, load_s))
+    return gpu.file_processor(compute(aligner, model_sha256, load_s), stage=STAGE)
 
 
 if __name__ == "__main__":

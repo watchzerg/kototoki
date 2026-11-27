@@ -8,10 +8,39 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import time
+
+__all__ = ["FailureKind", "LOG_DATEFMT", "LOG_FORMAT", "RunFormatter", "failure_kind", "format_error", "path_label"]
 
 LOG_FORMAT = "%(asctime)s [%(elapsed)8.1fs] %(levelname)-8s %(message)s"
 LOG_DATEFMT = "%Y-%m-%d %H:%M:%SZ"
+
+FailureKind = tuple[str, str | None, int | None]
+
+
+def format_error(error: BaseException, limit: int = 200) -> str:
+    """将异常压成单行 `<类型>: <首行消息>`（空消息时只保留类型名），总长截断到 `limit` 字符。"""
+    name = type(error).__name__
+    message = str(error).strip()
+    if not message:
+        return name[:limit]
+    return f"{name}: {message.splitlines()[0]}"[:limit]
+
+
+def path_label(path: Path) -> str:
+    """用 `<parent.name>/<name>` 标识路径（无父目录名时取 `name`），避免在日志里暴露宿主绝对路径。"""
+    path = Path(path)
+    return f"{path.parent.name}/{path.name}" if path.parent.name else path.name
+
+
+def failure_kind(cause: BaseException) -> FailureKind:
+    """提取异常类别 `(完整异常类型名, 最内层抛出文件, 行号)`；无 traceback 时位置为 None。"""
+    tb = cause.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno) if tb is not None else (None, None)
+    return (f"{type(cause).__module__}.{type(cause).__qualname__}", *where)
 
 
 class RunFormatter(logging.Formatter):

@@ -19,7 +19,7 @@ covers:
   - `started`／`failed`／`fatal`／`startup_failed` 不单独记行：`started` 只标加载完成，失败由 `run_gpu_stage` 把原因交给 `ctx.fail`、只记一行 ERROR `[stage] FAILED <相对路径> (work_id=<work_id>): <类型>`（无 traceback）。
   - 启动失败先记一行 ERROR `[stage] worker startup failed: <原因>`，随后逐文件的 FAILED 行不带 traceback（`WorkerCrashed: <stage> worker startup failed: <原因>`）。
   - 退出后只读本次启动新增的 `stderr` 片段统计结构化告警数（`problems`），并与非零退出码（`code`）合并为至多一条 `WARNING` 指向该 `stderr` 文件：两者均非零写 `worker exited with code <n> (<m> warning/error line(s)), see <stderr>`；仅 `problems > 0` 写 `<m> warning/error line(s), see <stderr>`；仅 `code != 0`（含退出码 1 无告警的裸崩溃）写 `worker exited with code <n>, see <stderr>`。
-- 同一类失败在多个文件的 FAILED 行里只在第一次带 traceback（batch-run-fixes 06.3）。类别 = 阶段 + 异常类型 + 抛出位置（最内层帧的文件与行号，`job._failure_kind`）；`PlanError` 包着缓存异常时按被包的异常算（如模型核对失败）。每个文件各抛一个新异常对象（如发布时同一处 `OSError`）也只带一次；同类型但抛出位置不同的算新的一类。
+- 同一类失败在多个文件的 FAILED 行里只在第一次带 traceback（batch-run-fixes 06.3）。类别 = 阶段 + 异常类型 + 抛出位置（最内层帧的文件与行号，`logs.failure_kind`）；`PlanError` 包着缓存异常时按被包的异常算（如模型核对失败）。每个文件各抛一个新异常对象（如发布时同一处 `OSError`）也只带一次；同类型但抛出位置不同的算新的一类。
 
 **崩溃与重启**（`job.run_gpu_stage`，按文件计）：每次启动 worker 后，`run_gpu_stage` 把待跑 id、退出码与进度事件交给 `protocol.classify_launch(ids, exit_code, events) -> LaunchOutcome`（规则见[产物契约](../artifact-contract/worker-protocol.md)），自己只做循环与 `ctx.fail`：
 

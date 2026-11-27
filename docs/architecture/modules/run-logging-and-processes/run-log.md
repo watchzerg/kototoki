@@ -29,7 +29,7 @@ covers:
   2026-10-18 13:05:02Z [  3531.0s] ERROR    [translate] FAILED S1/ep01.mkv (work_id=0123456789ab): TranslateError
   ```
 
-  文件级失败的 ERROR 行带 `(work_id=<id>)` 与异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；不带 traceback 的 FAILED 行（同类失败已记过、Strata 因被拒或启动额度用尽而不可用——含触发该状态的当次影片、worker 崩溃或启动失败）改为 `<类型>: <异常消息首行>`（截到 200 字符），例 `[publish] FAILED S1/ep02.mkv (work_id=0123456789ab): OSError: [Errno 28] No space left on device`。失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`，没有 traceback 也没有消息。
+  文件级失败的 ERROR 行带 `(work_id=<id>)` 与异常类型，traceback 随后，控制台与文件相同；不带 traceback 的行（同类失败已记过、Strata 不可用、worker 崩溃或启动失败）改为 `logs.format_error` 单行摘要（`<类型>: <首行>`，总长截到 200 字符），例 `[publish] FAILED S1/ep02.mkv (work_id=0123456789ab): OSError: [Errno 28] No space left on device`。worker 写出的失败只记事件 `error_type`，无消息。
 - **文件**：
   - `<work root>/run-<UTC戳>.log` 与控制台逐行相同，是权威副本。控制台流的编码取决于调用方，产品不改（batch-run-fixes 06.5）。
   - `<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时先写一条分隔行（`--- [<stage>] launch pid=<pid> utc=<UTC> files=<n> ---`，重启时先换行），再追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后只读本次新增部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，并与非零退出码合并为运行日志中最多一条 `WARNING ... see <stderr>`（含退出码 1 无告警的裸崩溃，以及退出码 2 带告警的致命/启动失败）。非本格式的行（裸 traceback、tqdm 残行与 torch glog 行）不计入告警计数。
@@ -57,8 +57,9 @@ covers:
 
 ## 代码与验证入口
 
-- 代码：`kototoki/logs.py`（`LOG_FORMAT`、`LOG_DATEFMT`、`RunFormatter`）；挂接在 `kototoki/job.py`（`_run_logging`、`QUIET_ENV`、`child_env`）。
+- 代码：`kototoki/logs.py`（`LOG_FORMAT`、`LOG_DATEFMT`、`RunFormatter`、`format_error`、`path_label`、`failure_kind`、`FailureKind`）；挂接在 `kototoki/job.py`（`_run_logging`、`QUIET_ENV`、`child_env`）。
 - 测试（core，`mise run test`）：
+  - `tests/core/test_logs.py`：`format_error` 空消息/多行/总长截断、`path_label` 与 `failure_kind` 最内层帧提取。
   - `tests/core/test_job.py` 的 `InvariantTests` 断言转写、译文与专名文字不进运行日志与 worker stderr 日志。
   - `tests/core/test_job.py` 的 `RunLogTests` 覆盖编排统一日志出口：启动与锁释放未捕获异常落入 `run-*.log`、跨进程 `work_id`/`pid` 与 `stderr.log` 分隔行关联、未知进度事件 `id` 回退保留原 `id`、退出码 1/2 合并单条 `WARNING` 指针、`ffmpeg=unavailable` 诊断、媒体 `stderr` 告警、既有产物读错 `WARNING`、覆盖 `INFO` 审计，以及 Strata 不可用免重复 traceback。
 - 仍未由离线日志测试覆盖：行格式与墙钟跳变下的相对秒、`KeyboardInterrupt` 无 traceback、同失败去重 traceback 细粒度断言、破残留锁与 `warnings.warn` 进日志、第三方 logger 前缀、handler 复原及各阶段数值字段与媒体告警。

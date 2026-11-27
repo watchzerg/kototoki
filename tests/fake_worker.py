@@ -66,7 +66,8 @@ def main(argv: list[str]) -> int:
                 identity = plan.asr_identity(jobs.config["engine"], pcm, artifacts.sha256_file(job.inputs["vad"]), FAKE_MODELS)
             else:
                 identity = plan.align_identity(pcm, artifacts.sha256_file(job.inputs["asr"]), FAKE_MODELS)
-            artifacts.write_artifact(job.work_dir / plan.STAGE_OUTPUT[stage], identity, payload)
+            artifacts.write_artifact(job.work_dir / plan.STAGE_OUTPUT[stage], identity, payload,
+                                     reason=f"recomputed {stage} stage output")
             return {"stage": stage, "windows": 1}  # 编排只把数值字段抄进运行日志
 
         return process

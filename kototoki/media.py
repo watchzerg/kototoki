@@ -32,6 +32,7 @@ import wave
 from kototoki import recipes
 from kototoki.artifacts import AUDIO_16K, EXTRACT_LOG
 from kototoki.config import Config
+from kototoki.logs import format_error
 from kototoki.procs import contained
 
 # swr 在 -loglevel verbose 下报告的硬补偿（`async=1`）；样本数按输入采样率计。实测只报告一部分
@@ -496,14 +497,6 @@ def parse_ffmpeg_version(text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _format_error(exc: BaseException) -> str:
-    """将异常压成单行 `<类型>: <首行消息>`（截断到 200 字符）。"""
-    message = str(exc).strip()
-    if not message:
-        return type(exc).__name__
-    return f"{type(exc).__name__}: {message.splitlines()[0][:200]}"
-
-
 def _stderr_summary(text: str, *, limit: int = 200) -> str:
     """将进程 stderr/stdout 压成单行摘要（首条非空行截断到 `limit` 字符，附其余行数）。"""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -519,7 +512,7 @@ def probe_ffmpeg_version(ffmpeg: Path) -> tuple[str, str | None]:
     try:
         result = _run([str(executable), "-version"])
     except OSError as error:
-        return "unavailable", f"failed to execute {executable} ({_format_error(error)})"
+        return "unavailable", f"failed to execute {executable} ({format_error(error)})"
     if result.returncode != 0:
         detail = _stderr_summary(result.stderr) or _stderr_summary(result.stdout) or "no output"
         return "unavailable", f"{executable} exited with code {result.returncode}: {detail}"
@@ -528,11 +521,6 @@ def probe_ffmpeg_version(ffmpeg: Path) -> tuple[str, str | None]:
         detail = _stderr_summary(result.stdout) or _stderr_summary(result.stderr) or "empty output"
         return "unavailable", f"unexpected `ffmpeg -version` output from {executable}: {detail}"
     return version, None
-
-
-def ffmpeg_version(ffmpeg: Path) -> str:
-    """`ffmpeg -version` 报的构建版本（如 `n9.0.2-31-g…`），写进运行日志首行；取不到时为 `unavailable`。"""
-    return probe_ffmpeg_version(ffmpeg)[0]
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:

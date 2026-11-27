@@ -12,6 +12,7 @@ import tempfile
 import time
 from typing import Any
 import unittest
+from unittest import mock
 
 from kototoki import artifacts
 from kototoki import strata as S
@@ -228,6 +229,29 @@ class StrataServerTests(unittest.TestCase):
         self.assertIn("2", warnings[0].getMessage())
         self.assertIn("TimeoutError: status poll timed out", warnings[0].getMessage())
 
+    def test_exit_emits_single_error_when_final_sample_raises_unexpected(self) -> None:
+        status_calls = 0
+
+        def bad_final_get(url: str) -> dict[str, Any]:
+            nonlocal status_calls
+            if url.endswith("/v1/status"):
+                status_calls += 1
+                if status_calls >= 3:
+                    raise RuntimeError("final probe crashed")
+            return self.fake.get(url)
+
+        server = self.server(get=bad_final_get, sleep=lambda s: None)
+        with self.assertLogs("kototoki.strata", level="WARNING") as logs:
+            with server:
+                pass
+        resources = read_json(self.root / "resources.json")
+        self.assertEqual(resources["errors"], 1)
+        self.assertEqual(resources["last_error"], "RuntimeError: final probe crashed")
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(logs.records[0].levelname, "ERROR")
+        self.assertIn("final resource sample failed", logs.records[0].getMessage())
+        self.assertIn("RuntimeError: final probe crashed", logs.records[0].getMessage())
+
     def test_final_write_error_logs_error_and_omits_missing_path(self) -> None:
         final_path = self.root / "strata-final.json"
         final_path.mkdir()
@@ -315,6 +339,15 @@ class WaitForFreeVramTests(unittest.TestCase):
         with self.assertRaises(InfraFailure) as caught:
             self._wait([1000, 2000, 3456])
         self.assertIn("3456", str(caught.exception))
+
+    def test_default_nvidia_smi_query_preserves_failure_reason_without_thread_local(self) -> None:
+        with mock.patch("kototoki.strata.subprocess.run", side_effect=FileNotFoundError("no nvidia-smi")):
+            with self.assertRaisesRegex(InfraFailure, r"nvidia-smi failed: FileNotFoundError: no nvidia-smi"):
+                wait_for_free_vram(14300, 0.0, sleep=self._sleep, clock=lambda: self.now)
+        with mock.patch("kototoki.strata.subprocess.run",
+                        return_value=subprocess.CompletedProcess(["nvidia-smi"], 9, stdout="", stderr="driver error")):
+            with self.assertRaisesRegex(InfraFailure, r"nvidia-smi failed: exit 9: driver error"):
+                wait_for_free_vram(14300, 0.0, sleep=self._sleep, clock=lambda: self.now)
 
 
 class SessionTests(unittest.TestCase):

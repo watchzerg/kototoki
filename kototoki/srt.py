@@ -20,13 +20,9 @@ import re
 from typing import Any, Literal
 
 from kototoki.artifacts import atomic_write_text
+from kototoki.logs import path_label
 
 logger = logging.getLogger(__name__)
-
-
-def _srt_label(path: Path) -> str:
-    """用 `<parent>/<name>` 标识字幕文件，兼顾目录语境且避免暴露宿主绝对路径。"""
-    return f"{path.parent.name}/{path.name}" if path.parent.name else path.name
 
 _TIME = re.compile(
     r"^(\d{2,}):([0-5]\d):([0-5]\d),(\d{3})[ \t]+-->[ \t]+"
@@ -206,4 +202,4 @@ def write_srt(text: str, path: Path | str, *, reason: str | None = None) -> None
     existed = target.exists()
     atomic_write_text(target, text)
     if existed:
-        logger.info("[srt] overwrote %s (%s)", _srt_label(target), reason or "replacing existing subtitle")
+        logger.info("[srt] overwrote %s (%s)", path_label(target), reason or "replacing existing subtitle")

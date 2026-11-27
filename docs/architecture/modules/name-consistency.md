@@ -51,8 +51,8 @@ covers:
 - Strata 的启动、等显存与内存、接入检查、停止来自 `kototoki.strata`，前缀 `[strata]`。
 - 每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T.Ts`，第 2 次及以后的尝试才成功时追加 `, attempt n/5`（上限取包顶层导出的 `ATTEMPTS`）；零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`。
 - 每次不合格的尝试（回复被截断、非 JSON、`entries` 不是列表）在该行之前各记一行 WARNING `[names] [<标识>: ]attempt n/5 failed (seed S): <异常类型>: <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`，无消息时只写异常类型，截到 200 字符）。
-- `count_tokens` 不可用时一行 WARNING `[names] <标识>: count_tokens unavailable (<异常摘要>): no prompt budget precheck; see <交换目录>`。
-- 传输失败、HTTP 错误、OOM 或意外异常停掉 Strata 前一行 WARNING `[names] <标识>: stopping Strata after <HTTP 状态 (类别): response body N char(s) | 异常摘要>; see <交换目录>`（来自包顶层，不写响应正文）。
+- `count_tokens` 不可用时一行 WARNING `[names] <标识>: count_tokens unavailable (<异常摘要>): no prompt budget precheck; see <工作目录相对交换路径>`（即 `<work_dir.name>/names/transport/<session.label>`）。
+- 传输失败、HTTP 错误、OOM 或意外异常停掉 Strata 前一行 WARNING `[names] <标识>: stopping Strata after <HTTP 状态 (类别): response body N char(s) | 异常摘要>; see <工作目录相对交换路径>`（来自包顶层，不写响应正文）。
 - `StrataRefused` 或启动额度用尽使共享 session 变为不可用时（含触发该状态的当次影片与本批其余影片），编排的 FAILED 行不带 traceback（原因已由 `[strata]` ERROR 行记过一次），行尾带异常消息首行。
 - 条目文字、`work_guess`、提示与回复正文不进日志，只在工作目录。
 

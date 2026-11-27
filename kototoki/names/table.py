@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
+from kototoki.logs import format_error
 from kototoki.srt import SourceDocument
 from kototoki.strata import MODEL
 
@@ -398,13 +399,6 @@ def _request_body(messages: list[dict[str, str]], seed: int) -> dict[str, Any]:
             "chat_template_kwargs": {"enable_thinking": False}, "stream": False, "model": MODEL}
 
 
-def error_summary(exc: BaseException, limit: int = 200) -> str:
-    """将异常压成单行 `<类型>: <首行消息>`（空消息时只保留类型名），并截断到 `limit` 字符。"""
-    first = (str(exc).splitlines() or [""])[0]
-    summary = f"{type(exc).__name__}: {first}" if first else type(exc).__name__
-    return summary[:limit]
-
-
 def build_table(document: SourceDocument, chat: Chat, tokenize: Tokenize, seed: int,
                 *, label: str | None = None) -> BuildResult:
     """建表。零条目文档不请求；system+user 提示的 token 总数超预算返回 `too_long` 空表；否则最多 `ATTEMPTS` 次，第 N 次 seed 加
@@ -444,7 +438,7 @@ def build_table(document: SourceDocument, chat: Chat, tokenize: Tokenize, seed: 
             content = (choice.get("message") or {}).get("content")
             prefix = f"[names] {label}: " if label else "[names] "
             log.warning("%sattempt %d/%d failed (seed %d): %s; finish %s, %s completion tok, reply %s char(s)",
-                        prefix, attempt, ATTEMPTS, used_seed, error_summary(exc),
+                        prefix, attempt, ATTEMPTS, used_seed, format_error(exc),
                         choice.get("finish_reason"), usage.get("completion_tokens"),
                         len(content) if isinstance(content, str) else 0)
             continue

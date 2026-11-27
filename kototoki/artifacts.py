@@ -40,6 +40,8 @@ import threading
 import time
 from typing import Any
 
+from kototoki.logs import format_error, path_label
+
 INDEX = "index.json"
 INPUT_RECORD = "input.json"
 LOCK = "lock"
@@ -76,19 +78,6 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 PROBE_STREAM_KEYS = ("index", "codec_name", "channels", "channel_layout", "sample_rate", "start_time", "duration")
 
 logger = logging.getLogger(__name__)
-
-
-def _artifact_label(path: Path) -> str:
-    """用 `<parent>/<name>` 标识产物，兼顾 work_id 与文件名且避免暴露宿主绝对路径。"""
-    return f"{path.parent.name}/{path.name}" if path.parent.name else path.name
-
-
-def _format_error(exc: BaseException) -> str:
-    """将异常压成单行 `<类型>: <首行消息>`（截断到 200 字符），不输出文件内容。"""
-    message = str(exc).strip()
-    if not message:
-        return type(exc).__name__
-    return f"{type(exc).__name__}: {message.splitlines()[0][:200]}"
 
 
 # --- 哈希与原子写 -------------------------------------------------------------------------
@@ -277,7 +266,7 @@ def write_artifact(path: Path, identity: Mapping[str, Any], payload: Mapping[str
     existed = path.exists()
     atomic_write_json(path, {"identity": dict(identity), **payload})
     if existed:
-        logger.info("[artifacts] overwrote %s (%s)", _artifact_label(path), reason or "replacing existing artifact")
+        logger.info("[artifacts] overwrote %s (%s)", path_label(path), reason or "replacing existing artifact")
 
 
 def is_current(path: Path, expected_identity: Mapping[str, Any]) -> bool:
@@ -289,7 +278,7 @@ def is_current(path: Path, expected_identity: Mapping[str, Any]) -> bool:
         return False
     except (OSError, ValueError) as error:
         logger.warning("[artifacts] failed to read %s (%s); treating as not current",
-                       _artifact_label(path), _format_error(error))
+                       path_label(path), format_error(error))
         return False
     return isinstance(artifact, dict) and artifact.get("identity") == json.loads(canonical(expected_identity))
 

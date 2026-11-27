@@ -165,7 +165,7 @@ class SubprocessDiagnosticsTests(unittest.TestCase):
         toml.write_text('[paths]\ninput_dir = "."\n', encoding="utf-8")
         return config.load(toml)
 
-    def test_probe_ffmpeg_version_reports_reason_and_keeps_string_wrapper(self) -> None:
+    def test_probe_ffmpeg_version_reports_reason(self) -> None:
         exe = Path("/missing/ffmpeg")
         with mock.patch("kototoki.media._run", side_effect=FileNotFoundError("no binary")):
             version, diag = media.probe_ffmpeg_version(exe)
@@ -173,7 +173,6 @@ class SubprocessDiagnosticsTests(unittest.TestCase):
             self.assertIsNotNone(diag)
             self.assertIn("/missing/ffmpeg", diag)
             self.assertIn("FileNotFoundError", diag)
-            self.assertEqual(media.ffmpeg_version(exe), "unavailable")
         with mock.patch("kototoki.media._run",
                         return_value=subprocess.CompletedProcess([str(exe)], 2, stdout="", stderr="bad flag\nline2")):
             version, diag = media.probe_ffmpeg_version(exe)

@@ -17,7 +17,7 @@ import warnings
 import wave
 
 from kototoki import artifacts
-from kototoki.logs import RunFormatter
+from kototoki.logs import FailureKind, RunFormatter, failure_kind, format_error
 from kototoki.recipes import SAMPLE_RATE
 from kototoki.workers.protocol import EXIT_FATAL, FatalWorkerError, FileJob, Jobs, run_worker
 
@@ -27,25 +27,6 @@ logger = logging.getLogger(__name__)
 Output = tuple[Path, Mapping[str, Any], Mapping[str, Any]]
 # compute(job) -> (按写出顺序排列的产物，阶段产物在最后, 进度行附加字段)
 Compute = Callable[[FileJob], tuple[Sequence[Output], Mapping[str, Any]]]
-FailureKind = tuple[str, str | None, int | None]
-
-
-def failure_kind(error: BaseException) -> FailureKind:
-    """异常类别：(完整异常类型名, 最内层抛出文件, 行号)；无 traceback 时位置为 None。"""
-    tb = error.__traceback__
-    while tb is not None and tb.tb_next is not None:
-        tb = tb.tb_next
-    where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno) if tb is not None else (None, None)
-    return (f"{type(error).__module__}.{type(error).__qualname__}", *where)
-
-
-def error_summary(error: BaseException, *, limit: int = 200) -> str:
-    """单行异常摘要：`<类型>: <首行消息>`（截断到 `limit` 字符），无消息时只有 `<类型>`。"""
-    name = type(error).__name__
-    message = str(error).strip()
-    if not message:
-        return name
-    return f"{name}: {message.splitlines()[0][:limit]}"
 
 
 def log_window_error(log: logging.Logger, traced: set[FailureKind], error: BaseException,
@@ -54,7 +35,7 @@ def log_window_error(log: logging.Logger, traced: set[FailureKind], error: BaseE
     kind = failure_kind(error)
     first = kind not in traced
     traced.add(kind)
-    log.warning(f"{message}: %s", *args, error_summary(error), exc_info=error if first else None)
+    log.warning(f"{message}: %s", *args, format_error(error), exc_info=error if first else None)
 
 # 每次运行都会出现、已知无害的第三方告警：(类别, 消息开头的正则)。pyannote 在 GPU 上关掉 TF32 时发
 # `ReproducibilityWarning`（`UserWarning` 子类，这里不导入 pyannote，按父类匹配）；它会让 vad 每次都有告警计数行。
@@ -173,8 +154,8 @@ def check_cuda() -> None:
         raise FatalWorkerError(f"CUDA context is unusable: {type(error).__name__}: {error}") from error
 
 
-def file_processor(compute: Compute, *, check: Callable[[], None] = check_cuda
-                   ) -> Callable[[FileJob], Mapping[str, Any]]:
+def file_processor(compute: Compute, *, stage: str | None = None,
+                   check: Callable[[], None] = check_cuda) -> Callable[[FileJob], Mapping[str, Any]]:
     """把 `compute` 包成协议的逐文件处理函数：算完先确认 CUDA 仍可用，再按顺序写出全部产物。
 
     模块内部按窗口吞掉的错误也可能来自粘性错误，所以写产物前无论成败都检查一次；
@@ -191,6 +172,7 @@ def file_processor(compute: Compute, *, check: Callable[[], None] = check_cuda
             raise
         check()
         for path, identity, payload in outputs:
-            artifacts.write_artifact(path, identity, payload)
+            reason = f"recomputed {stage} stage output" if stage else f"recomputed {path.stem} output"
+            artifacts.write_artifact(path, identity, payload, reason=reason)
         return fields
     return process

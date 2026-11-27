@@ -47,9 +47,9 @@ covers:
 
 两类日志都只读启动前记下的长度之后新写的部分。进入过程中任何异常（含被中断）都先走退出路径再上抛。
 
-**运行中**：`ResourceSampler` 每 5 s 从 `/v1/status` 取整机显存与内存的峰值（系统总量），采样失败记 `errors` 与 `last_error`；后台采样线程捕获未预期异常并按实例限频记一次 ERROR（不随 5 s 轮询刷屏）。服务日志只计事件数（推理循环自救、logits 非有限、单 token 重复截停），不复制日志。
+**运行中**：`ResourceSampler` 每 5 s 从 `/v1/status` 取整机显存与内存的峰值（系统总量），预期传输/解析失败静默计入 `errors` 与 `last_error`；后台采样线程捕获未预期异常并按实例限频记一次 `ERROR`（不随 5 s 轮询刷屏）。
 
-**退出（停止一个 session）**：只停自己启动的 launch。若采样 `errors > 0` 先记一条汇总 WARNING（含次数与 `last_error`）；执行 `strata launch --stop`，再轮询到 `--status` 为空、空闲显存回到 14000 MiB（各最多 180 s）。`--stop` 与轮询 `--status` 失败均保留 `CalledProcessError` 的 stderr 截尾到 `strata-final.json`（`stop` 与 `status_error`）；写盘遇 `OSError` 或核实失败只记 ERROR 不抛出，以免盖住原异常。产品进程被强杀时 Strata 可能留在后台，下次运行因 `--status` 非空而被拒绝，须手动 `strata launch --stop`。
+**退出（停止一个 session）**：只停自己启动的 launch。`ResourceSampler.finish()` 停线程、补做最终采样并取快照（有未记过 `ERROR` 的预期失败记一条汇总 `WARNING`，最终采样未预期异常只记一条 `ERROR`）；再执行 `strata launch --stop`，轮询 `--status` 为空与显存回到 14000 MiB（各 180 s）。`--stop`／`--status` 失败均保留 stderr 截尾到 `strata-final.json`（`stop`／`status_error`）；写盘或核实失败只记 ERROR 不抛出。强杀残留的后台 launch 须手动 `strata launch --stop`。
 
 **证据**：`<work root>/strata-sessions/<UTC戳>-<pid>/session-NN/`，names 与翻译共用：
 
@@ -60,8 +60,8 @@ covers:
 **日志**：logger `kototoki.strata`，前缀 `[strata]`，经编排写进运行日志（[运行日志](run-logging-and-processes/run-log.md#运行日志)）：
 
 - INFO：等完显存与内存、执行 `strata launch` 之前 `[strata] launching (free VRAM X MiB, available RAM Y GiB)`（取不到内存读数写 `unknown`）；ready；停止开始时 `[strata] stopping`；停止核实通过。
-- WARNING：等显存超过 30 s 的提示、内存不足、读 `/proc/meminfo` 失败或缺少 `MemAvailable`（按路径与错误类型限频一次）；退出时采样错误大于 0 的汇总（含 `last_error`）；每次启动失败（`InfraFailure`）`[strata] start failed n/3: <首行>`。
-- ERROR：`Session` 置 `unavailable` 时一次 `[strata] unavailable for the rest of this batch: <首行>`（被拒绝或启动额度用尽）；后台采样线程首次未预期异常（限频一次，含堆栈）；写 `resources.json` 或 `strata-final.json` 遇 `OSError`；停止未核实（写盘成功时行尾 `see <strata-final.json 路径>`，写盘失败时不指向不存在的文件）。首行截到 200 字符。
+- WARNING：等显存超过 30 s 的提示、内存不足、读 `/proc/meminfo` 失败或缺少 `MemAvailable`（按路径与错误类型限频一次）；退出时未记过 `ERROR` 的预期采样失败汇总（含 `last_error`）；每次启动失败（`InfraFailure`）`[strata] start failed n/3: <首行>`。
+- ERROR：`Session` 置 `unavailable` 时一次 `[strata] unavailable for the rest of this batch: <首行>`（被拒绝或启动额度用尽）；后台或最终采样首次未预期异常（按实例限频一次）；写 `resources.json` 或 `strata-final.json` 遇 `OSError`；停止未核实（写盘成功时行尾 `see <strata-final.json 路径>`，写盘失败时不指向不存在的文件）。首行截到 200 字符。
 - 启动失败（`strata launch` 退出码非 0）与就绪超时的异常消息带本次新写的服务日志的绝对路径（找不到唯一一份时给日志目录）。
 
 **本机客户端 `LlamaClient(url, timeout=180, trace_dir=None)`**：
@@ -91,12 +91,12 @@ covers:
 
 ## 代码与验证入口
 
-- 代码：`kototoki/strata.py`（`Session`、`StrataServer`、`StrataRefused`、`probe`、`expert_arena`、`drafting_from_log`、`ResourceSampler`、`wait_for_free_vram`、`nvidia_smi`、`available_ram_gib`、身份常量）；`kototoki/local_client.py`（`LlamaClient`、`InfraFailure`、`classify_failure`、`response_body`）。
+- 代码：`kototoki/strata.py`（`Session`、`StrataServer`、`StrataRefused`、`probe`、`expert_arena`、`drafting_from_log`、`ResourceSampler`、`wait_for_free_vram`、`probe_nvidia_smi`、`nvidia_smi`、`available_ram_gib`、身份常量）；`kototoki/local_client.py`（`LlamaClient`、`InfraFailure`、`classify_failure`、`response_body`）。
 - 测试（core，`mise run test`）：
   - `tests/core/test_strata.py`（伪 CLI）：
     - 启动与停止：正常启动、核对与停止；已有 launch 时拒绝且不替别人停；`probe` 不符即停并拒绝；会话内被中断即 `--stop`。
-    - 采样与退出日志可靠性：后台采样线程未预期异常限频记日志并保留 `last_error`；退出采样出错记单条汇总 WARNING；`strata-final.json` 写盘 `OSError` 记 ERROR 且不指向缺失文件；`--status`/`--stop` 保留 `CalledProcessError` 的 stderr 与 `status_error`。
-    - 等显存：达阈值即返回读数、超时抛错并带最后读数。
+    - 采样与退出日志可靠性：后台采样线程未预期异常限频记日志并保留 `last_error`；预期采样出错退出记单条汇总 `WARNING`，最终采样未预期异常只记单条 `ERROR`（不重复 `WARNING`）；`strata-final.json` 写盘 `OSError` 记 `ERROR` 且不指向缺失文件；`--status`／`--stop` 保留 `CalledProcessError` 的 stderr 与 `status_error`。
+    - 等显存：达阈值即返回读数、超时抛错并带最后读数、默认 `nvidia-smi` 查询失败诊断不依赖线程局部状态。
     - 共享 `Session`：首次才启动并跨阶段复用、`stop` 后再起为新 session、启动失败累计后批次不可用、被拒即不可用。
     - 测试精简（2026-11-22）后不再有测试覆盖：两个 launch、启动命令失败与加载中被中断仍 `--stop`；显存未释放超时记录；等内存与内存不足警告；`mmap` 或未确认锁定时停掉并拒绝；`expert_arena`、`available_ram_gib` 与正常 `--status` 的解析；显存等待与读内存失败的告警日志；成功启动不限次、一次失败后成功、`client()` 的 trace 目录、`label` 跟随启动序号；旧 `translate/strata.py` 已不存在的检查。
   - `tests/core/test_local_client.py`：OOM 消息识别、`classify_failure` 与 `response_body`、`chat_completion` 的端点与 `chat-NN` trace、非回环 URL 被拒。其余（无标签请求的序号目录、研究专用方法不在产品客户端、旧 `llama_server` 模块已不存在）不再有测试覆盖。

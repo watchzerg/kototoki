@@ -9,7 +9,7 @@ covers:
 **probe**（`kototoki/media.py`，`probe(path, config) -> Probe`）：ffprobe `-show_streams -show_format` 全部流；原始 JSON 保留在 `Probe.ffprobe`（供 `artifacts.video_identity` 取指纹，视频与音频同用），`Probe.payload()` 是 `probe.json` 的内容。
 
 - 退出码为 0 但 `stderr` 非空时追加单行摘要告警到 `Probe.warnings` 与 `Probe.ffprobe_warnings`，供编排记 `WARNING`（含内嵌字幕路径）。
-- `probe_ffmpeg_version(ffmpeg) -> (version, reason)` 在版本不可用时返回可执行路径与具体失败原因；`ffmpeg_version` 仍返回字符串以兼容旧调用。
+- `probe_ffmpeg_version(ffmpeg) -> (version, reason)` 返回构建版本或 `("unavailable", 含可执行路径与具体失败原因的诊断说明)`。
 
 - 音轨选择：语言标签归一化后（`jpn`／`ja`／`jp` 大小写不敏感视为 `jpn`，按 `recipes.LANGUAGE_ALIASES`，配置值同样归一化）等于 `input.audio_language` 且非 `disposition.comment` 的音轨优先，其中 `disposition.default` 优先、否则取第一条；多条匹配告警；无匹配取第一条音轨并告警，唯一的音轨没有语言标签或标为 `und` 时不告警（没得选；batch-run-fixes 06.4，只改告警，选轨规则与配方不变）；没有音轨报 `MediaError`。
 - 记录：所选与全部音轨的绝对流索引、编码、声道数与布局、采样率、语言、default／comment、`start_time` 与时长（只作诊断，不进时间轴）、`measured_sample_rate` 与 `corrected_sample_rate`（见下条）；容器 `start_time`；字幕流清单（索引、编码、语言、default、forced，供内嵌日文字幕选轨）；告警列表。

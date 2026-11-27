@@ -16,14 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from kototoki import artifacts
+from kototoki.logs import format_error
 
 logger = logging.getLogger(__name__)
-
-
-def _format_error(exc: BaseException) -> str:
-    """将底层异常压成单行 `<类型>: <首行消息>`（截到 200 字符），供锁诊断与告警日志复用。"""
-    first = (str(exc).splitlines() or [""])[0][:200]
-    return f"{type(exc).__name__}: {first}" if first else type(exc).__name__
 
 
 def _describe_stale(stale: Mapping[str, Any]) -> str:
@@ -107,11 +102,11 @@ class ProcessLock:
         except FileNotFoundError:
             return None
         except OSError as exc:
-            return {"unparseable": True, "error": _format_error(exc)}
+            return {"unparseable": True, "error": format_error(exc)}
         try:
             data = json.loads(text)
         except ValueError as exc:
-            return {"unparseable": True, "error": _format_error(exc)}
+            return {"unparseable": True, "error": format_error(exc)}
         if not isinstance(data, dict):
             return {"unparseable": True, "error": f"expected JSON object, got {type(data).__name__}"}
         return data
@@ -141,7 +136,7 @@ class ProcessLock:
         except OSError as exc:
             if self.stale is not None:
                 stale_info = _describe_stale(self.stale)
-                detail = _format_error(exc)
+                detail = format_error(exc)
                 logger.warning("[lock] removed stale %s %s (%s), but creating new lock failed: %s",
                                self.kind, self.path, stale_info, detail)
                 raise LockError(f"Failed to acquire {self.kind} {self.path} after removing stale lock "

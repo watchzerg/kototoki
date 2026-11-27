@@ -226,6 +226,8 @@ class TranslateDocumentTests(unittest.TestCase):
         with self.assertLogs("kototoki.translate", level="WARNING") as logs:
             result = self.h.translate(doc)
         self.assertTrue(any("truncated 29 byte(s)" in r.getMessage() and "unterminated final line" in r.getMessage()
+                            and f"{self.h.run_root(doc).name}/batches.jsonl" in r.getMessage()
+                            and str(self.h.root) not in r.getMessage()
                             for r in logs.records))
         self.assertEqual(len(result.translations), 23)
         self.assertEqual(len(self.h.requests), 2)
@@ -348,7 +350,10 @@ class TranslateDocumentTests(unittest.TestCase):
         with self.assertLogs("kototoki.translate", level="WARNING") as logs:
             self.h.translate(doc)
         msgs = [r.getMessage() for r in logs.records]
-        self.assertTrue(any("truncated 9 byte(s)" in m and "corrupt final JSON line" in m for m in msgs))
+        self.assertTrue(any("truncated 9 byte(s)" in m and "corrupt final JSON line" in m
+                            and f"{self.h.run_root(doc).name}/nodes.jsonl" in m
+                            and str(self.h.root) not in m
+                            for m in msgs))
         splits = [m for m in msgs if "splitting into" in m]
         # 原批次与 .a 已在首轮记录并回放，不再重复记 splitting；只新拆 .a.b
         self.assertEqual(len(splits), 1)

@@ -29,6 +29,7 @@ import time
 from typing import Any, NamedTuple
 
 from kototoki import artifacts, guard, judge, plan, recipes
+from kototoki.logs import FailureKind
 from kototoki.workers import gpu
 from kototoki.workers.protocol import FileJob, Jobs, fail_window, retained_text, validate_failed_windows
 
@@ -102,7 +103,7 @@ class Transcript(NamedTuple):
 
 
 def transcribe(job_id: str, asr: Any, part: str, audio: Any, vad: Mapping[str, Any], load_s: float,
-               label: str = "", *, traced: set[gpu.FailureKind] | None = None) -> Transcript:
+               label: str = "", *, traced: set[FailureKind] | None = None) -> Transcript:
     """一路转写 → 计时 → 守卫 → 记失败 → 组文档；`part` 是 `plan.ENGINE_PARTS` 的部件名，只有 w0 过整窗守卫。"""
     logged: set[int] = set()
     seen = traced if traced is not None else set()
@@ -148,7 +149,7 @@ def compute_cross(whisper: Any, qwen: Any, model_sha256: Mapping[str, str], w0_s
         audio, pcm_sha256 = gpu.read_wav(job.inputs["wav"])
         vad, vad_sha256 = gpu.read_input_artifact(job.inputs["vad"], pcm_sha256)
         chunks = vad["chunks"]
-        traced: set[gpu.FailureKind] = set()
+        traced: set[FailureKind] = set()
         w0 = transcribe(job.id, whisper, "w0", audio, vad, loads["load_w0_s"], "w0 ", traced=traced)  # 裁判与合并用守卫后的 w0 文字
         x0 = transcribe(job.id, qwen, "x0", audio, vad, loads["load_x0_s"], "x0 ", traced=traced)
 
@@ -219,13 +220,13 @@ def start(jobs: Jobs) -> Any:
         load_s[part] = time.perf_counter() - started
         logger.info("[%s] %smodel loaded in %.1fs", STAGE, f"{part} " if len(parts) > 1 else "", load_s[part])
     if len(parts) == 1:
-        return gpu.file_processor(compute(adapters[engine], engine, model_sha256, load_s[engine]))
+        return gpu.file_processor(compute(adapters[engine], engine, model_sha256, load_s[engine]), stage=STAGE)
     # 两路各自的模型身份只含该路模型文件（部件名同单引擎名）
     w0_sha256, x0_sha256 = ({name: model_sha256[name] for name in plan.model_files(STAGE, models, engine=part)}
                             for part in parts)
     loads = {"load_s": load_s["w0"] + load_s["x0"], "load_w0_s": load_s["w0"], "load_x0_s": load_s["x0"]}
     return gpu.file_processor(compute_cross(adapters["w0"], adapters["x0"], model_sha256, w0_sha256, x0_sha256,
-                                            loads))
+                                            loads), stage=STAGE)
 
 
 if __name__ == "__main__":
