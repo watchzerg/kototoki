@@ -8,11 +8,13 @@ GATE_LOCK_FILE 覆盖。使用 flock，锁只由本进程持有：命令作为�
 收到 SIGINT/SIGTERM 时转发给命令并等待其退出（终端 Ctrl-C 已同时送达命令时不重复转发）。
 
 用法：with_lock.py [--timeout 秒] 命令 [参数...]
-等待时每 30 秒打印持有者；超时退出码 75（稍后重试），不视为命令失败；等待中被中断退出码 130。
+首次等锁与持有者变化时打印持有者；非锁争用的系统错误立即报错退出（退出码 1）；
+超时退出码 75（稍后重试），不视为命令失败；等待中被中断退出码 130。
 命令被信号终止时退出码为 128 + 信号编号，其余情况返回命令自身的退出码。
 """
 
 import argparse
+import errno
 import fcntl
 import os
 import signal
@@ -23,7 +25,6 @@ from pathlib import Path
 
 EXIT_TEMPFAIL = 75
 EXIT_INTERRUPTED = 130
-REPORT_EVERY = 30
 
 
 def main() -> int:
@@ -45,20 +46,27 @@ def main() -> int:
     except KeyboardInterrupt:
         print(f"已中断：未取得主机锁 {lock_path}，命令未运行。", file=sys.stderr)
         return EXIT_INTERRUPTED
+    except OSError:
+        return 1
 
     return run(args.command, fd)
 
 
 def acquire(fd: int, lock_path: Path, timeout: float | None) -> bool:
-    """非阻塞轮询取锁；超时返回 False。等待期间每 30 秒打印一次持有者。"""
+    """非阻塞轮询取锁；超时返回 False，非争用系统错误打印到 stderr 后抛出。首次等待及持有者变化时打印持有者。"""
     started = time.monotonic()
-    last_report = started - REPORT_EVERY
+    last_holder: str | None = None
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
-        except OSError:
-            pass
+        except OSError as exc:
+            if not isinstance(exc, BlockingIOError) and exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                print(
+                    f"错误：无法获取主机锁 {lock_path}：{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                raise
         waited = time.monotonic() - started
         if timeout is not None and waited >= timeout:
             print(
@@ -66,9 +74,10 @@ def acquire(fd: int, lock_path: Path, timeout: float | None) -> bool:
                 file=sys.stderr,
             )
             return False
-        if time.monotonic() - last_report >= REPORT_EVERY:
-            print(f"等待主机锁 {lock_path}（已等 {waited:.0f} 秒）；{holder(fd)}", flush=True)
-            last_report = time.monotonic()
+        current_holder = holder(fd)
+        if current_holder != last_holder:
+            print(f"等待主机锁 {lock_path}（已等 {waited:.0f} 秒）；{current_holder}", flush=True)
+            last_holder = current_holder
         time.sleep(1)
 
 

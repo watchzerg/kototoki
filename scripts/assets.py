@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import sys
@@ -26,7 +27,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from kototoki.artifacts import verify_model  # noqa: E402
+from kototoki.artifacts import read_json, verify_model  # noqa: E402
 
 MANIFEST = REPO / "assets.toml"
 MODELS_ROOT = REPO / ".local" / "models"
@@ -56,20 +57,52 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _cache_problem(cache: Path) -> str | None:
+    """检查验证缓存是否可读且为 JSON 对象；缺失不算错误。"""
+    cache = Path(cache)
+    if not cache.exists():
+        return None
+    try:
+        data = read_json(cache)
+    except (OSError, ValueError) as error:
+        return f"verify cache {cache}: {type(error).__name__}: {error}"
+    if not isinstance(data, dict):
+        return f"verify cache {cache}: TypeError: expected JSON object, got {type(data).__name__}"
+    return None
+
+
+def _is_cache_oserror(error: OSError, cache: Path) -> bool:
+    if not error.filename:
+        return False
+    target = Path(cache)
+    failed = Path(error.filename)
+    return failed == target or (failed.parent == target.parent and failed.name.startswith(f".{target.name}."))
+
+
 def check_files(base: Path, files: Mapping[str, Mapping[str, Any]], cache: Path) -> list[str]:
     """逐文件核对大小与 SHA256（size+mtime 缓存）；返回问题清单，空表示全部一致。"""
-    problems = []
+    problems: list[str] = []
+    cache_error = _cache_problem(cache)
+    if cache_error is not None:
+        problems.append(cache_error)
     for relative, expected in files.items():
         path = _local(base, relative)
         if not path.is_file():
             problems.append(f"{relative}: missing")
-        elif path.stat().st_size != expected["size"]:
-            problems.append(f"{relative}: size {path.stat().st_size} != {expected['size']}")
-        else:
-            try:
+            continue
+        try:
+            size = path.stat().st_size
+            if size != expected["size"]:
+                problems.append(f"{relative}: size {size} != {expected['size']}")
+            elif cache_error is None:
                 verify_model(path, expected["sha256"], cache)
-            except ValueError as error:
-                problems.append(f"{relative}: {error}")
+        except json.JSONDecodeError as error:
+            problems.append(f"verify cache {cache}: {type(error).__name__}: {error}")
+        except OSError as error:
+            prefix = f"verify cache {cache}" if _is_cache_oserror(error, cache) else relative
+            problems.append(f"{prefix}: {type(error).__name__}: {error}")
+        except ValueError as error:
+            problems.append(f"{relative}: {type(error).__name__}: {error}")
     return problems
 
 
@@ -90,7 +123,8 @@ class _SafeRedirectHandler(HTTPRedirectHandler):
         return redirected
 
 
-def download(url: str, target: Path, sha256: str, *, headers: Mapping[str, str] | None = None) -> Path:
+def download(url: str, target: Path, sha256: str, *, headers: Mapping[str, str] | None = None,
+             reason: str | None = None) -> Path:
     """下载到 `<target>.partial`，边下边算 SHA256；一致才改名为 `target`，不一致删掉临时文件并报错。"""
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -103,21 +137,30 @@ def download(url: str, target: Path, sha256: str, *, headers: Mapping[str, str] 
             while chunk := response.read(CHUNK):
                 digest.update(chunk)
                 stream.write(chunk)
+        if digest.hexdigest() != sha256:
+            raise AssetError(f"SHA256 mismatch for {url} -> {target}: {digest.hexdigest()} != {sha256}")
+        if target.exists():
+            print(f"overwrite {target} ({reason or 'existing file'})", flush=True)
+        partial.replace(target)
+    except OSError as error:
+        partial.unlink(missing_ok=True)
+        raise AssetError(f"download {url} -> {target}: {type(error).__name__}: {error}") from error
     except BaseException:
         partial.unlink(missing_ok=True)
         raise
-    if digest.hexdigest() != sha256:
-        partial.unlink()
-        raise AssetError(f"SHA256 mismatch for {url}: {digest.hexdigest()} != {sha256}")
-    partial.replace(target)
     return target
 
 
 def fetch_model(name: str, model: Mapping[str, Any], *, models_root: Path = MODELS_ROOT, cache: Path = VERIFY_CACHE,
                 endpoint: str = HF_ENDPOINT, environ: Mapping[str, str] = os.environ) -> str:
     """下载缺失或不符的文件（`<endpoint>/<repo>/resolve/<revision>/<file>`）；已一致的文件不动。"""
+    if cache_error := _cache_problem(cache):
+        raise AssetError(f"models.{name}: {cache_error}")
     base = Path(models_root) / model["dir"]
-    pending = [relative for relative, entry in model["files"].items() if check_files(base, {relative: entry}, cache)]
+    pending: list[tuple[str, str]] = []
+    for relative, entry in model["files"].items():
+        if problems := check_files(base, {relative: entry}, cache):
+            pending.append((relative, "; ".join(problems)))
     if not pending:
         return "ok"
     headers = {}
@@ -127,9 +170,9 @@ def fetch_model(name: str, model: Mapping[str, Any], *, models_root: Path = MODE
             raise AssetError(f"models.{name}: {model['repo']} is gated; set HF_TOKEN to a token that has accepted "
                              "its conditions")
         headers["Authorization"] = f"Bearer {token}"
-    for relative in pending:
+    for relative, reason in pending:
         url = f"{endpoint.rstrip('/')}/{model['repo']}/resolve/{model['revision']}/{relative}"
-        download(url, _local(base, relative), model["files"][relative]["sha256"], headers=headers)
+        download(url, _local(base, relative), model["files"][relative]["sha256"], headers=headers, reason=reason)
     return f"fetched {len(pending)} file(s)"
 
 
@@ -159,7 +202,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             print(f"models.{name}: {fetch_model(name, entry)}", flush=True)
         except (AssetError, OSError) as error:  # OSError 含网络错误（URLError、HTTPError）
-            print(f"error: {error}", file=sys.stderr, flush=True)
+            detail = str(error)
+            prefix = f"models.{name}: "
+            if detail.startswith(prefix):
+                detail = detail[len(prefix):]
+            print(f"error: models.{name}: {type(error).__name__}: {detail}", file=sys.stderr, flush=True)
             failed = True
     return 1 if failed else 0
 
