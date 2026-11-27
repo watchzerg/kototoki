@@ -20,8 +20,8 @@ probe ──► extract ──► vad ──► asr ──► align ──► ja
 | align | `audio-16k.wav`＋`asr.json` → `align.json` | GPU | 同上 |
 | ja-cues | `align.json` → `ja.srt`＋`ja-cues.json` | CPU | [日文 cue][cues] |
 | names | `ja.srt` → `name-table.json` | GPU（与 translate 共用一个 Strata session） | [专名一致性][names] |
-| translate | `ja.srt`＋`name-table.json` → 翻译 run 目录 | GPU（独占） | [翻译子系统与双语合并][tr] |
-| merge | `ja.srt`＋译文 → `ja-zh.srt`（发布到源文件旁） | CPU | 同上 |
+| translate | `ja.srt`＋`name-table.json` → 翻译 run 目录 | GPU（独占） | [翻译子系统][tr] |
+| merge | `ja.srt`＋译文 → `ja-zh.srt`（发布到源文件旁） | CPU | [双语合并][merge] |
 
 **内嵌日文字幕**（[ADR-0024](../../adr/0024-embedded-japanese-subtitles.md)）：`[input] use_embedded_subtitles`（默认 `true`）开着且文件有可用的日文文本字幕轨时，该文件不经 extract、vad、asr、align、ja-cues，改走：
 
@@ -85,8 +85,9 @@ python -m kototoki kototoki.toml  (编排器：唯一持有 .local/gpu.lock；�
 [cues]: ../modules/japanese-cues.md
 [names]: ../modules/name-consistency.md
 [tr]: ../modules/translation-subsystem.md
+[merge]: ../modules/translation-subsystem/bilingual-merge.md
 [orch]: ../modules/batch-orchestration.md
 [orch-spec]: ../modules/batch-orchestration/runtime-rules.md
 [plan]: ../modules/stage-plan.md
-[run-proc]: ../modules/run-logging-and-processes/processes-and-workers.md#进程原语
-[run-worker]: ../modules/run-logging-and-processes/processes-and-workers.md#worker-子进程
+[run-proc]: ../modules/run-logging-and-processes/process-primitives.md#进程原语
+[run-worker]: ../modules/run-logging-and-processes/worker-subprocess.md#worker-子进程

@@ -10,8 +10,8 @@
 - full：`tests/full/` 下的离线集成测试，`mise run test-full`（定向用 `mise run uv:test-full -k …`）以 `discover -s tests/full -t .` 收录；用系统 ffmpeg 合成秒级样本：`test_media_ffmpeg`（媒体提取）、`test_job_ffmpeg`（真实媒体＋fake worker＋假翻译 session）与 `test_procs_children`（子进程随父进程退出）。不加载模型、不占 GPU，不需 `.local/gpu.lock`；经 `scripts/with_lock.py` 持主机锁（默认 `~/.cache/gate-full.lock`，`flock`）串行，多 worktree 并行不互扰。
 - 没有产品与研究实现的实时对照层：研究直接调用产品实现；core 里需要钉住的取值以字面量钉，注释写来源（ADR 或归档 tag 路径）；`tests/core/test_boundaries.py` 以 AST 扫描要求 `kototoki/` 不导入 `research`，`tests/core` 自身不导入 `research`（[ADR-0031](../adr/0031-research-layout-and-lightweight-records.md)、[ADR-0025](../adr/0025-product-package-boundaries.md)）。`gate-full` = `gate-core` + `test-full`。
 - `fake_worker.py` 留在 `tests/` 根，供两层共用。`mise run check` 编译 `kototoki`、`scripts` 与 `tests`。
-- 真实模型验证（不是测试，不属于任何 gate）：入口是 `mise run smoke`（`scripts/smoke/`），每次运行都须用户批准。
-- 独占资源：GPU，由 `.local/gpu.lock` 标记运行中的作业；同一时间一个作业，不抢占、不删除活跃锁，先用 `ps -p <pid>`／`pgrep` 核实真实进程。产品只起 Strata（建表与翻译共用一个 session），固定占用 127.0.0.1:8080，且同一时间只允许一个 Strata launch；llama-server 默认也用 8080，不能与 Strata 同时运行。运行产物写入 `.local/` 下的新目录，拒绝覆盖。
+- 真实模型验证（不是测试）：入口是 `mise run smoke`（`scripts/smoke/`），运行规则见[开发工作流](workflow.md#命令与门禁)。
+- 独占资源：GPU，由 `.local/gpu.lock` 标记运行中的作业；同一时间一个作业；不抢占与核实真实进程的规则见 [AGENTS.md](../../AGENTS.md#重任务与环境)。产品只起 Strata（建表与翻译共用一个 session），固定占用 127.0.0.1:8080，且同一时间只允许一个 Strata launch；llama-server 默认也用 8080，不能与 Strata 同时运行。运行产物写入 `.local/` 下的新目录，拒绝覆盖。
 
 ## 保留范围
 
