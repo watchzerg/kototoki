@@ -26,7 +26,7 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 
 **`asr.json`**（三种引擎同构）：`schema_version`、`engine`、`offset_s`、`input`、`chunks`（照抄 `vad.json`）、`original_segments`（与窗口一一对应：`text`、秒与整数样本、`avg_logprob`）、`asr_traces`、`failed_windows`、保留文本 `text`、`metadata`、`stages`。
 
-- `asr_traces` 是引擎自有的诊断：w0 为 tokens、prompt、解码参数、特征 SHA256，被整窗守卫改动的窗口另有 `guard`。
+- `asr_traces` 是引擎自有的诊断：w0 为 tokens、prompt、解码参数、特征 SHA256，被整窗守卫改动或因无法规范化跳过的窗口另有 `guard`。
 - x0 为 tokens、`generated_tokens`、`token_limit_reached`、原始输出、检测语言、输入设备与形状证据、PCM SHA256 与逐窗耗时。
 - 解码抛 `RuntimeError` 的失败窗口 trace 为 `null`。
 
@@ -56,5 +56,5 @@ worker 壳的共用规则（jobs、模型核对、身份、写产物、失败分
 - [ADR-0003](../../adr/0003-new-pyannote-baselines.md)、[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[现行决定](../../adr/CURRENT.md)
 - 研究：[交叉打分](../../research/2026-10-cross-asr-judge.md)、[v15](../../research/2026-11-asr-robustness-v14-v15.md)；`no_speech_prob` 测量（归档 experiments/asr_nospeech/，票据 batch-run-fixes 09）
 - 验收：[cross 共驻探针](../../research/acceptance/cross-coresidency-probe-2026-10-19.md)、[cross 产品路径验收](../../research/acceptance/cross-asr-acceptance-2026-10-19.md)、[两部整片验收](../../research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)、[最终验收](../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)
-- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、.scratch/cross-asr-judge/、.scratch/asr-repeat-guard/、.scratch/batch-run-fixes/（`issues/09-short-window-asr-overflow.md`）、.scratch/runtime-logging-gaps/
+- 票据：归档 tag 中的 .scratch/bilingual-subtitle-pipeline/（`issues/03-stt-workers.md`、`issues/07-x0-engine.md`）、.scratch/cross-asr-judge/、.scratch/asr-repeat-guard/、.scratch/batch-run-fixes/（`issues/09-short-window-asr-overflow.md`）、.scratch/runtime-logging-gaps/；Beads `kototoki-598`（`kototoki-598.2`）
 - 归档 tag `archive/2026-11-18-pre-research-restructure` 中：计划 docs/plans/asr-repeat-guard.md、docs/plans/architecture-cleanup.md；模块页拆出的历史记录 docs/research/acceptance/2026-11-11-module-page-history-stt-plan-artifacts.md；来源代码 experiments/ 下的 w0_demo/asr.py、x0_demo/asr.py、qwen/run_qwen.py、asr_robustness_v15/repeat.py、quality_v5

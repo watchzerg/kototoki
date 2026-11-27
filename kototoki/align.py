@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 import hashlib
 import importlib.metadata
@@ -292,10 +293,12 @@ class MmsAligner:
                  "token_probability": float(span.score)}
                 for index, (target, span) in enumerate(zip(targets, spans))]
 
-    def align(self, audio: Any, segments: list[dict]) -> dict:
+    def align(self, audio: Any, segments: list[dict],
+              on_error: Callable[[int, Exception], None] | None = None) -> dict:
         """逐窗对齐 → `{text, units, records, derived_segments}`。
 
-        单窗抛 `RuntimeError`／`ValueError` 时记入该窗 `failure`、tokens 置空并继续，
+        单窗抛 `RuntimeError`／`ValueError` 时记入该窗 `failure`、tokens 置空，
+        若传入 `on_error` 则回调 `(窗口序号, 异常)` 供调用方记录去重堆栈，并继续，
         不转 CPU 重试；该窗字符成为 `text_only`。
         """
         import numpy as np
@@ -319,4 +322,6 @@ class MmsAligner:
                 # Failed CUDA operations are recorded and never retried on CPU.
                 record["tokens"] = []
                 record["failure"] = f"{type(error).__name__}: {error}"
+                if on_error is not None:
+                    on_error(index, error)
         return map_records(segments, records)

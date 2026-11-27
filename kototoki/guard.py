@@ -13,7 +13,7 @@
 2. **语速 `speech-rate`**（ADR-0030）：（折叠后的）规范化字数 ÷ 窗口时长 > `max_chars_per_s` 即置空。
 3. **已知幻听句 `hallucination-phrase`**（ADR-0030）：（折叠后的）整窗规范化文字等于名单中的一句即置空。
 
-置空由调用方按 `failed_windows` 记。无法规范化的文字（跨簇 NFKC 组合）三条规则都不命中。
+置空由调用方按 `failed_windows` 记。无法规范化的文字（跨簇 NFKC 组合）三条规则都不命中，`apply` 返回非破坏性的跳过记录。
 
 模块页：docs/architecture/modules/stt-asr.md。
 """
@@ -115,7 +115,9 @@ def apply(text: str, duration_s: float) -> tuple[str, dict[str, Any] | None]:
 
     - `collapse`（只有复读）：新文字为折叠后的文字，记录同 `apply_repeat`；
     - `blank`：调用方应把该窗置空，返回的文字仍是原文。记录是第一个置空的规则：复读同 `apply_repeat`；
-      语速 `{rule, action, chars, duration_s}`；幻听句 `{rule, action, phrase_index}`。记录不含文字。
+      语速 `{rule, action, chars, duration_s}`；幻听句 `{rule, action, phrase_index}`。
+    - `skip`：无法规范化（跨簇 NFKC 组合），返回的文字仍是原文，记录为
+      `{rule: "normalize", action: "skip", reason: "normalize_failed"}`。记录均不含文字。
     """
     if duration_s <= 0:
         raise ValueError("Guard window duration must be positive")
@@ -123,6 +125,8 @@ def apply(text: str, duration_s: float) -> tuple[str, dict[str, Any] | None]:
     if record is not None and record["action"] == "blank":
         return text, record
     norm = _normalized(collapsed)
+    if norm is None:
+        return text, {"rule": "normalize", "action": "skip", "reason": "normalize_failed"}
     if norm:
         if len(norm) / duration_s > SPEECH_RATE["max_chars_per_s"]:
             return text, {"rule": SPEECH_RATE["rule"], "action": "blank", "chars": len(norm),
