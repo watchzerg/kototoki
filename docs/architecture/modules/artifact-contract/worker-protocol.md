@@ -23,8 +23,8 @@ covers:
 
 **整窗守卫记录**（w0 与 cross 的 `asr.json`、cross 的 `asr-w0.json`）：
 
-- 被守卫改动的窗口在 `asr_traces[i]` 里多一个键 `guard`，内容是生效规则的记录：复读 `{rule, action, period, copies, removed_raw_chars}`，语速 `{rule, action, chars, duration_s}`，幻听句 `{rule, action, phrase_index}`。
-- `action` 为 `collapse`（只有复读，`original_segments[i].text` 已是折叠后的文字）或 `blank`（该窗同时出现在 `failed_windows`）；没有被改动的窗口没有这个键。
+- 被守卫改动或跳过的窗口在 `asr_traces[i]` 里多一个键 `guard`，内容是生效规则或跳过记录：复读 `{rule, action, period, copies, removed_raw_chars}`，语速 `{rule, action, chars, duration_s}`，幻听句 `{rule, action, phrase_index}`，无法规范化跳过 `{rule: "normalize", action: "skip", reason: "normalize_failed"}`。
+- `action` 为 `collapse`（只有复读，`original_segments[i].text` 已是折叠后的文字）、`blank`（该窗同时出现在 `failed_windows`）或 `skip`（保留原文不置空）；没有命中或跳过的窗口没有这个键。
 - 记录只有规则名与计数，不含文字。字段含义见 [STT ASR](../stt-asr/window-guard.md#w0-整窗守卫)。
 
 
@@ -37,13 +37,13 @@ covers:
 规则：
 
 - 退出码 0／1 只有在每个待跑 id 都有事件时才算正常结束（退出码 1 也是 Python 未捕获异常的退出码）。
-- 否则有 `startup_failed` 即启动失败；既无 `started` 又无已报告的待跑文件事件（加载模型期间原生崩溃），同样按启动失败处理（`exited with code <n>`），剩余全部失败、不重启。
+- 否则有 `startup_failed` 即启动失败，`startup_failed` 保留 `error_type` 及事件 `message` 首行摘要（截断到 200 字符；为空时仅保留 `error_type`）；既无 `started` 又无已报告的待跑文件事件（加载模型期间原生崩溃），同样按启动失败处理（`exited with code <n>`），剩余全部失败、不重启。
 - 否则有 `fatal` 即该 id 为崩溃文件，从其后重启；再否则最后一个有事件的 id 之后的那个 id（有 `started` 而无文件事件时为首个 id）是崩溃文件，从其后重启。
 - 编排的 `run_gpu_stage` 只循环与记失败，不用字面量解释协议。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/workers/protocol.py`。
-- `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败与 `error_type` 传递、`progress_event`、`fatal`、启动期无 `started` 崩溃（不重启）与 `started` 后崩溃归咎；`failed_windows` 清空窗口文字并记录。
+- `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败与 `error_type` 传递、`startup_failed` 保留 `message` 首行摘要、`progress_event`、`fatal`、启动期无 `started` 崩溃（不重启）与 `started` 后崩溃归咎；`failed_windows` 清空窗口文字并记录。
 - 测试精简（2026-11-22）后不再有测试覆盖：
-  - 协议：jobs 解析、畸形 jobs 与不一致记录的 `validate`、`startup_failed` 与退出码 1 缺事件。
+  - 协议：jobs 解析、畸形 jobs 与不一致记录的 `validate` 与退出码 1 缺事件。

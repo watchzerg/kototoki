@@ -69,9 +69,11 @@ class AlignLoopTests(unittest.TestCase):
         return {"text": text, "start": start / 16000, "end": end / 16000, "start_sample": start, "end_sample": end}
 
     def test_records_use_sample_bounds_and_units_stay_local(self):
-        calls = []
+        calls, errors = [], []
         audio = np.zeros(32000, dtype=np.float32)
-        result = self.aligner(calls).align(audio, [self.segment("日", 16000, 32000), self.segment("壊", 0, 1600)])
+        result = self.aligner(calls).align(
+            audio, [self.segment("日", 16000, 32000), self.segment("壊", 0, 1600)],
+            on_error=lambda idx, err: errors.append((idx, type(err), str(err))))
         self.assertEqual(calls, [(32000, "日", 16000, 32000), (32000, "壊", 0, 1600)])
         first, second = result["records"]
         self.assertEqual((first["window_start"], first["window_end"]), (1.0, 2.0))
@@ -80,6 +82,7 @@ class AlignLoopTests(unittest.TestCase):
         self.assertEqual((result["units"][0]["start"], result["units"][0]["end"]), (1.2, 1.4))
         self.assertEqual((second["failure"], second["tokens"], result["units"][1]["status"]),
                          ("RuntimeError: boom", [], "text_only"))
+        self.assertEqual(errors, [(1, RuntimeError, "boom")])
 
 
 

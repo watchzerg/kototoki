@@ -45,6 +45,12 @@ class WindowGuardTests(unittest.TestCase):
         text, record = guard.apply(source, 1.0)  # 原文规范化 51 字 > 20，折叠后 7 字：只折叠
         self.assertEqual((text, record["rule"], record["action"]), ("まって、うっ…だめ。", "repeat-strict", "collapse"))
 
+    def test_cross_cluster_nfkc_returns_non_mutating_skip_record(self) -> None:
+        source = "\u1100\u1161"
+        text, record = guard.apply(source, 1.0)
+        self.assertEqual(text, source)
+        self.assertEqual(record, {"rule": "normalize", "action": "skip", "reason": "normalize_failed"})
+
 
 if __name__ == "__main__":
     unittest.main()

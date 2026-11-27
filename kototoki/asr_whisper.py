@@ -13,6 +13,7 @@ CT2 的 Linux wheel 不自带 CUDA 运行库，按 soname 复用 torch 已从 `s
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import importlib.metadata
 import math
@@ -86,13 +87,15 @@ class WhisperAsr:
                                  for name in ("faster-whisper", "ctranslate2", "torch", "numpy")},
         }
 
-    def transcribe(self, audio: Any, chunks: list[dict[str, Any]]
+    def transcribe(self, audio: Any, chunks: list[dict[str, Any]],
+                   on_error: Callable[[int, Exception], None] | None = None
                    ) -> tuple[list[dict[str, Any]], list[dict[str, Any] | None], list[tuple[int, str]]]:
         """逐窗独立解码 → (窗口段, 逐窗 trace, 失败窗口)。
 
         段与窗口一一对应，坐标照抄窗口（WAV 本地）。单窗解码抛 `RuntimeError`（CT2 的 CUDA 错误、
         显存不足等）时该窗 `text` 为空、trace 为 None，并以 `(窗口序号, 原因)` 列入失败窗口，
-        继续下一窗；是否已是 CUDA 粘性错误由 worker 壳在写产物前判定。
+        若传入 `on_error` 则同步回调 `(窗口序号, 异常)` 供调用方记录去重堆栈，然后继续下一窗；
+        是否已是 CUDA 粘性错误由 worker 壳在写产物前判定。
         """
         validate_windows(chunks, len(audio))
         segments: list[dict[str, Any]] = []
@@ -109,6 +112,8 @@ class WhisperAsr:
                 segments.append(segment)
                 traces.append(None)
                 failures.append((index, f"{type(error).__name__}: {error}"))
+                if on_error is not None:
+                    on_error(index, error)
                 continue
             segments.append({**segment, "text": result["text"], "avg_logprob": result["avg_logprob"]})
             traces.append({"tokens": result["tokens"], "prompt": result["prompt"], "kwargs": result["kwargs"],
