@@ -23,8 +23,8 @@ covers:
 目录内容：
 
 - `run.json`：只含该影片。配方、hash、seed、`names`（注入行 SHA256 与行数）、来源（`ja.srt` SHA256、场景 ID、cue ID 列表）、`sessions[]`（启动身份摘要、`server_session`、写入批次数、停止原因、基础设施失败与证据、缓存记录、墙钟）、`server_start_failures[]`、`resumed`、`completion`。
-- `batches.jsonl`：每完成一批追加一行并 fsync，随即重写 `run.json`（进程被强杀时 `sessions[]` 仍反映已写批次）。行含批次计划字段、译文（不出中文为 `null`）、请求与逐次尝试记录、所属 session；追问过的批次改带 `resolution`（各节点的状态、未解决的 cue 与请求记录，`nodes[0]` 是原批次；未翻译 cue 的原因与尝试次数）。续跑时末尾不完整的一行截掉，其余行须与批次计划一致（中间行损坏即报错），从第一个未写入的批次继续。
-- `nodes.jsonl`：节点结果；续跑时同样截掉不完整的末行，只取未完成批次的节点，行须属于批次计划、不重复、目标与深度与重算一致。
+- `batches.jsonl`：每完成一批追加一行并 fsync，随即重写 `run.json`（进程被强杀时 `sessions[]` 仍反映已写批次）。行含批次计划字段、译文（不出中文为 `null`）、请求与逐次尝试记录、所属 session；追问过的批次改带 `resolution`（各节点的状态、未解决的 cue 与请求记录，`nodes[0]` 是原批次；未翻译 cue 的原因与尝试次数）。续跑时末尾不完整或损坏的一行截掉并记 WARNING，其余行须与批次计划一致（中间行损坏即报错），从第一个未写入的批次继续。
+- `nodes.jsonl`：节点结果；续跑时同样截掉不完整或损坏的末行并记 WARNING，只取未完成批次的节点，行须属于批次计划、不重复、目标与深度与重算一致。
 - `scene.json`：全部批次完成后才写出（cue 位置、批次、全部译文、`resolution`、`untranslated_ids`、按节点计的请求／尝试与 token 统计）；部分完成的影片没有该文件。
 - `report.json`（`kototoki-translate-report-v2`）：完成时写出（零条目也写）：`completion`、计数、追问过的批次的节点摘要、未翻译 cue 清单。
 - `transport/session-NN/`：逐请求原始交换；`infra-failures/`：基础设施失败时该批次（或节点）的尝试记录。
@@ -34,15 +34,15 @@ covers:
 **日志**：logger `kototoki.translate.*`，写进运行日志（[运行日志](../run-logging-and-processes/run-log.md#运行日志)）。Strata 启停与核实由 `[strata]` 记（[Strata session](../strata-session.md)）。
 
 - INFO：session 起止（start 行带相对路径）；每批一行（cue 数、输出 token、tok/s、cache，取不到的省略；追问过的批次只有请求数与未翻译数）。编排的 done 行见[运行日志](../run-logging-and-processes/run-log.md#运行日志)。
-- WARNING：Strata 重启；节点有未解决的 cue；节点拆分；未翻译 cue（ID 与原因）；每次失败的尝试各一行 `[translate] batch <ID> attempt n/2 failed (<kind>): <错误首行>; seed, finish, tok, reply 字符数, exchange <交换目录>`，第二次尝试被接受时也留下第一次的失败。
-- ERROR：用尽重启放弃、`StrataRefused`、意外异常（批次已知时带批次 ID）。
-- HTTP 错误与 server error 的消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）。校验消息为固定文本（`Duplicate JSON key` 不带键名）。提示、译文与响应正文不进日志。
+- WARNING：Strata 重启（带相对路径与已知时的批次 ID）；停 Strata 前的意外异常（带相对路径、异常类型与已知时的批次 ID）；续跑截断 `batches.jsonl`／`nodes.jsonl` 末尾字节（记路径、截断字节数与原因）；节点有未解决的 cue 与节点拆分（仅在节点当次实际执行时记录，回放 `nodes.jsonl` 已有节点时不重复输出）；未翻译 cue（ID 与原因）；每次失败的尝试各一行 `[translate] batch <ID> attempt n/2 failed (<kind>): <错误首行>; seed, finish, tok, reply 字符数, exchange <交换目录>`，第二次尝试被接受时也留下第一次的失败。
+- ERROR：本子系统不另发 ERROR 行；用尽重启、`StrataRefused` 与不可用状态抛 `TranslateError`，意外异常原样上抛，统一由编排与 `[strata]` 各自记唯一一条 ERROR。
+- HTTP 错误与 server error 的消息只含状态码／kind 与正文长度，不嵌入响应正文（正文留在 `transport/…/response.raw`）；传输层错误保留异常类型名。校验消息为固定文本（`Duplicate JSON key` 不带键名）。提示、译文与响应正文不进日志。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/translate/generate.py`（`run_step`、按批次落盘、续跑、session 记录与日志；`translate_document` 拆为私有的 `_open_translation`（打开与核对 run）、`_register_session`（启动 Strata 并登记 session）、`_translate_pending`（批次循环）、`_run_session`（异常分流与收尾））；Strata 与客户端见 [Strata 服务与共享 session](../strata-session.md#代码与验证入口)。
   - `tests/core/test_translate.py`：伪服务／伪客户端：正常翻译全部 cue、第二次尝试用 seed＋1、注入行只进匹配的包、整批只起一个 Strata session、续跑从第一个未写批次继续并截掉写了一半的行、全部完成不启动 Strata、run 目录按 ja.srt、配方、seed 与名表分键、注入行变化另起 run 而其余条目不重译、OOM 重启为新 session、基础设施失败重启两次后放弃、ja.srt 变化用新目录并保留旧目录。
   - 测试精简（2026-11-22）后不再有测试覆盖：
-    - session 与日志：session 目录名为 UTC 时间戳加 pid、`cache_n` 每 session 只记一次、断连后重启续跑、意外异常记录并停 Strata、每批落盘先于调用结束；日志不含台词与 HTTP 响应正文、每批一行进度、重启 WARNING 与放弃 ERROR、失败尝试行的截断与路径。
+    - session 与日志：session 目录名为 UTC 时间戳加 pid、`cache_n` 每 session 只记一次、断连后重启续跑、意外异常记 WARNING 并停 Strata、每批落盘先于调用结束；日志不含台词与 HTTP 响应正文、每批一行进度、失败尝试行的截断与路径（重启带相对路径、不另发放弃 ERROR、截断与回放去重见 `tests/core/test_translate.py`）。
     - 失败与续跑：中间行损坏即拒绝、完整 run.json 下批次不全时失败而不启动 Strata、另一配方 hash 的 run 被拒、`StrataRefused` 与启动额度耗尽不重试且不等待、混合失败不标记不可用、显存轮询超时算基础设施失败、全空行回复对半拆、多出的 ID 被忽略并记录、长度停止算上限失败、空场景不写不请求、换 seed 用独立 run。
 - 真实模型验证与未验证项见[枢纽页](../translation-subsystem.md#代码与验证入口)。

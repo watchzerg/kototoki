@@ -184,14 +184,14 @@ class JobCase(unittest.TestCase):
     def _build_cues(self, align, options):
         return fake_cue_payload(1), SRT_JA
 
-    def _build_document(self, work_dir, document, session, seed):
+    def _build_document(self, work_dir, document, session, seed, *, relative=None):
         identifier = Path(work_dir).name
         if document.cues:  # 同真实模块：有 cue 才向共享 session 要模型（可能就在这里启动 Strata）
             if session is None:
                 raise AssertionError("a document with cues was built without a session")
             session.ensure_started()
         self.calls.append(f"names:{identifier}")
-        self.names_snapshots.append({"session": session is not None, "seed": seed})
+        self.names_snapshots.append({"session": session is not None, "seed": seed, "relative": relative})
         entries = [dict(entry) for entry in self.name_entries] if document.cues else []
         payload = {"schema": "name-table-v2", "prompt_version": "fake", "work_guess": None, "entries": entries,
                    "meta": {"seed": seed, "attempt": 1, "dropped_shape": [], "dropped_honorific": [{"ja": "x"}],
@@ -827,6 +827,48 @@ class RunLogTests(JobCase):
         self.assertIn("INFO     [srt] overwrote publish/a.ja-zh.srt", second_log)
         for secret in ("CORRUPT_CONTENT", "こんにちは", "你好"):
             self.assertNotIn(secret, second_log)
+
+    def test_strata_unavailable_omits_duplicate_traceback_while_unexpected_keeps_it(self) -> None:
+        # StrataRefused 在当次调用置位 session.unavailable：names 与 translate 的 FAILED 行不带重复 traceback；
+        # 未置 unavailable 的意外 RuntimeError 仍保留 traceback。
+        from kototoki import names, translate
+
+        self.make_inputs("a.mkv", "b.mkv")
+
+        seen_relatives: list[str | None] = []
+
+        def refuse_names(work_dir, document, session, seed, *, relative=None):
+            seen_relatives.append(relative)
+            session.unavailable = "another Strata launch is serving"
+            raise names.NamesError("Strata unavailable: another Strata launch is serving")
+
+        with mock.patch("kototoki.names.build_document", refuse_names):
+            summary1 = self.run_job()
+        self.assertEqual(seen_relatives, ["a.mkv", "b.mkv"])
+        self.assertEqual(summary1.failed, {"a.mkv": "names", "b.mkv": "names"})
+        log1 = self.run_logs()[0].read_text(encoding="utf-8")
+        self.assertIn("ERROR    [names] FAILED a.mkv", log1)
+        self.assertNotIn("Traceback (most recent call last):", log1)
+        self.run_logs()[0].unlink()
+
+        # 改走 unexpected RuntimeError（session.unavailable 为 None）：必须带 traceback
+        def boom_names(work_dir, document, session, seed, *, relative=None):
+            if relative == "a.mkv":
+                raise RuntimeError("unexpected names crash")
+            return self._build_document(work_dir, document, session, seed, relative=relative)
+
+        def refuse_translate(plan, session, *, relative):
+            session.unavailable = "another Strata launch is serving"
+            raise translate.TranslateError("Strata refused: another Strata launch is serving")
+
+        with mock.patch("kototoki.names.build_document", boom_names), \
+                mock.patch("kototoki.translate.translate_document", refuse_translate):
+            summary2 = self.run_job()
+        self.assertEqual(summary2.failed, {"a.mkv": "names", "b.mkv": "translate"})
+        log2 = self.run_logs()[0].read_text(encoding="utf-8")
+        self.assertIn("RuntimeError: unexpected names crash", log2)
+        self.assertEqual(log2.count("Traceback (most recent call last):"), 1)
+        self.assertIn("ERROR    [translate] FAILED b.mkv", log2)
 
 
 if __name__ == "__main__":

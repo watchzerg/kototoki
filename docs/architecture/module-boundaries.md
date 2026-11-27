@@ -114,7 +114,7 @@
 
 共享 session 的调用契约：
 
-- 编排持有 `strata.Session`，传给 `names.build_document(work_dir, document, session, seed)` 与 `translate_document(plan, session)`。
+- 编排持有 `strata.Session`，传给 `names.build_document(work_dir, document, session, seed, *, relative=None)` 与 `translate_document(plan, session, *, relative)`（`relative` 仅用于日志）。
 - 两阶段经 `ensure_started()` 取运行中的服务、经 `label` 与 `client()` 取 session 名与客户端，基础设施失败时 `stop()`；不碰 `ordinal`、`runtime_root`、`client_factory`。
 - `plan` 调用 `translate.plan(work_dir, document, name_table, config)` 取翻译身份与 `needs_model`；编排从 `TranslateResult` 读回退计数。
 - 翻译的同调用内重启与降级留在 `kototoki/translate/generate.py`，经 `stop()`／`ensure_started()` 重启；names 不做同调用内重启。

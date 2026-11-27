@@ -131,10 +131,11 @@ class BuildDocumentTests(Case):
 
     def test_first_attempt_fails_then_the_next_seed_succeeds(self) -> None:
         self.h.replies = [reply(finish="length"), reply("不是 JSON"), reply()]
-        with self.h.session() as session:
-            result = names.build_document(self.work, self.doc, session, 7)
+        with self.h.session() as session, self.assertLogs("kototoki.names", level="WARNING") as logs:
+            result = names.build_document(self.work, self.doc, session, 7, relative="S1/ep01.mkv")
         self.assertEqual((result.status, result.attempts, self.seeds()), ("ok", 3, [7, 8, 9]))
         self.assertEqual(result.payload["meta"]["seed"], 9)
+        self.assertTrue(all("S1/ep01.mkv" in r.getMessage() and "ValueError:" in r.getMessage() for r in logs.records))
 
     def test_five_failures_write_an_empty_table_with_exactly_five_requests(self) -> None:
         self.h.replies = [reply(finish="length")] * 2 + [reply("不是 JSON")] * 3 + [reply()]
@@ -162,7 +163,13 @@ class BuildDocumentTests(Case):
             with self.assertRaisesRegex(names.NamesError, r"^HTTP 500 \(oom\)") as caught, \
                     self.assertLogs("kototoki.names", level="WARNING") as logs:
                 names.build_document(self.work, self.doc, session, 7)
-            self.assertEqual(logs.records[-1].getMessage(), "[names] stopping Strata after HTTP 500 (oom)")
+            trace_dir = self.h.clients[-1]["trace_dir"]
+            body_len = len(self.h.error_raw) + len("HTTP Error 500: error")
+            self.assertEqual(
+                logs.records[-1].getMessage(),
+                f"[names] abc: stopping Strata after HTTP 500 (oom): response body {body_len} char(s); see {trace_dir}",
+            )
+            self.assertNotIn("out of memory", logs.records[-1].getMessage())
             self.assertIsNone(session.server)
             self.assertEqual(self.h.events, ["start:1", "stop:1"])
             self.assertNotIn("out of memory", str(caught.exception))  # 正文留在交换目录，不进消息
@@ -174,10 +181,25 @@ class BuildDocumentTests(Case):
             with self.assertRaisesRegex(ValueError, "Expected server JSON object"), \
                     self.assertLogs("kototoki.names", level="WARNING") as logs:
                 names.build_document(self.work, self.doc, session, 7)
-            self.assertEqual(logs.records[-1].getMessage(), "[names] stopping Strata after ValueError")
+            trace_dir = self.h.clients[-1]["trace_dir"]
+            self.assertEqual(
+                logs.records[-1].getMessage(),
+                f"[names] abc: stopping Strata after ValueError: Expected server JSON object; see {trace_dir}",
+            )
             self.assertIsNone(session.server)
             self.assertEqual(self.h.events, ["start:1", "stop:1"])
             self.assertIsNone(session.unavailable)
+
+    def test_count_tokens_unavailable_warning_includes_label_and_trace_dir(self) -> None:
+        self.h.count_result = http_error(404)
+        with self.h.session() as session, self.assertLogs("kototoki.names", level="WARNING") as logs:
+            result = names.build_document(self.work, self.doc, session, 7, relative="S1/ep01.mkv")
+        self.assertEqual(result.status, "ok")
+        trace_dir = self.h.clients[-1]["trace_dir"]
+        msg = logs.records[-1].getMessage()
+        self.assertIn("S1/ep01.mkv", msg)
+        self.assertIn("HTTPError:", msg)
+        self.assertIn(str(trace_dir), msg)
 
     def test_refused_strata_fails_this_and_every_later_document(self) -> None:
         self.h.start_failures = [StrataRefused("another Strata launch is serving")]

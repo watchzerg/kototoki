@@ -704,13 +704,14 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) 
             continue
         assert video.plan is not None
         document = documents[video.relative]
-        known = session.unavailable is not None  # 原因已由 `[strata]` ERROR 行记过：FAILED 行不再带 traceback
         try:
             result = names.build_document(video.work_dir, document, session if document.cues else None,
-                                          ctx.config.names.seed)
+                                          ctx.config.names.seed, relative=video.relative)
             artifacts.write_artifact(video.work_dir / artifacts.NAME_TABLE, video.plan.identities["names"],
                                      result.payload, reason=f"name-table.json not current for {video.relative}")
         except Exception as error:
+            # StrataRefused 或启动额度耗尽已由 `[strata]` 记过 ERROR：调完后若变为不可用则不再附重复 traceback
+            known = bool(document.cues) and isinstance(error, names.NamesError) and session.unavailable is not None
             ctx.fail(video, "names", error, traceback=not known)
             continue
         line = _names_line(video.relative, result)
@@ -746,11 +747,12 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
             continue
         tplan = video.translate_plan
         file_started = time.perf_counter()
-        known = session.unavailable is not None  # 同 names_batch
         try:
             result = translate.translate_document(tplan, session if tplan.needs_model else None,
                                                   relative=video.relative)
         except Exception as error:
+            # 同 names_batch：若本次或先前触发了 Strata 不可用，FAILED 行不再附重复 traceback
+            known = tplan.needs_model and isinstance(error, translate.TranslateError) and session.unavailable is not None
             ctx.fail(video, "translate", error, traceback=not known)
             continue
         results[video.relative] = _Translated(dict(result.translations), int(result.untranslated_count), tplan.relative)
