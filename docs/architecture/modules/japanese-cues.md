@@ -14,7 +14,7 @@ covers:
 
 负责双语字幕流水线（[日文 cue 交界](../collaborations/artifact-handoff.md#日文-cuestt-与翻译的交界)、[切分规则](../../behaviors/bilingual-subtitle-pipeline.md#切分规则)、[模块边界](../module-boundaries.md#产品包的责任边界)）中 STT 与翻译的交界：把 `align.json` 的字符级时间回填后切成日文字幕条目，产出 `ja-cues.json` 的 payload 与 `ja.srt` 文本。
 
-不负责：文件读写、身份与跳过判定（[产物契约](artifact-contract.md)，由编排器经 `write_artifact`／`srt.write_srt` 写出）、cue 规则的配置加载与默认值（票据 02 `config`）、翻译与合并（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+不负责：文件读写、身份与跳过判定（[产物契约](artifact-contract/layout-and-identity.md)，由编排器经 `write_artifact`／`srt.write_srt` 写出）、cue 规则的配置加载与默认值（票据 02 `config`）、翻译与合并（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
@@ -48,7 +48,7 @@ covers:
 - `payload`（`ja-cues.json` 的内容，身份由编排器包装）：
   - `cues[]`：`index`、`start_ms`、`end_ms`、`text`、`char_start/char_end`、`unit_start/unit_end`（一字符一 unit，与字符范围相同）、`time_sources` 计数、`backfilled_units`；
   - 全文 `time_sources` 计数；`backfilled_units`（回填 unit 的连续区间与来源）；`fallback_windows`（整窗回退的窗口序号）；`unrendered_chars`（不在任何 cue 内的字符数，有 cue 时为 0）。
-  - 编排写出时另在 payload 里加 `ja_srt_sha256`（写出的 `ja.srt` 的 SHA256），供阶段计划判定 `ja.srt` 是否仍是本阶段的输出；本模块不算它。
+  - 编排写出时另在 payload 里加 `ja_srt_sha256`（写出的 `ja.srt` 的 SHA256），当前性判定见[阶段计划](stage-plan.md)；本模块不算它。
 
 ## 实现设计
 

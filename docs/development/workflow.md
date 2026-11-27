@@ -6,7 +6,7 @@
 
 只面向 Ubuntu（x86_64、RTX 5080，[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。用户只装 mise，mise 统一承担工具（`mise.toml` 钉 `uv`、`mise.lock` 锁精确版本）、环境变量（`[env]` 与本机私有 `mise.local.toml`）与 task（`mise-tasks/uv/` + 根 `mise.toml`，[ADR-0041](../adr/0041-mise-tasks-and-env.md)）；解释器由 uv 按 `.python-version` 提供；工具分工与依赖变更规则的权威正文是 [Python 工具链](toolchain.md)，平台要求见 [Ubuntu 与 NVIDIA](ubuntu-nvidia.md)。
 
-- 根环境即产品环境：Python 3.14 + 统一 CUDA 12.8 推理栈（torch 2.11.0+cu128 等，版本见[技术选型](technology-stack.md#已选依赖)）。`mise run install`（`uv sync --locked`）与 `mise run fetch-models` 会改环境且可能联网，须先问用户。
+- 根环境即产品环境：Python 3.14 + 统一 CUDA 12.8 推理栈（torch 2.11.0+cu128 等，版本见[技术选型](technology-stack.md#已选依赖)）。`mise run install`（`uv sync --locked`）与 `mise run fetch-models` 会改环境且可能联网，先问的规则见 [AGENTS.md](../../AGENTS.md#重任务与环境)。
 - 环境变量：项目公共默认值（`PYTHONUTF8`、`HF_HUB_DISABLE_TELEMETRY`、`PYANNOTE_METRICS_ENABLED`）在 `mise.toml` 的 `[env]`；本机私有或敏感值（如门控模型下载用的 `HF_TOKEN`、可选的 `GATE_LOCK_FILE` 与 `STRATA_RUNTIME_DIR`）写进被 Git 忽略的 `mise.local.toml`。配置无模板与 hook，无需 `mise trust`。
 - 行尾统一为 LF：`.gitattributes` 的 `* text=auto eol=lf` 让仓库存 LF、任何平台检出也是 LF（优先于 `core.autocrlf`），`.editorconfig` 让编辑器新建 LF 文件；改文件不必再做字节级保护。
 - ffmpeg 是 apt 系统包，从 PATH 调用；模型在 `.local/models/`（清单锁 revision 与 SHA256），布局见[依赖布局与资产清单](dependencies.md)。
@@ -17,7 +17,7 @@
   `systemd-run --user --unit=kototoki-<名字> --same-dir --collect mise run subtitles <目录>`（`--same-dir` 沿用当前目录，`--collect` 失败后也清掉单元）。单元不继承当前 shell 的环境，PATH 取 user manager 的（`systemctl --user show-environment`），`/usr/bin/mise` 在系统 PATH 内，`mise run` 会自行注入 `[tools]` 与 `[env]`；`strata` 来自 `~/.local/bin`（本机 user manager PATH 已含）。
   - 看进度：产品自己的 `run-*.log`，或 `journalctl --user -u kototoki-<名字> -f`；看状态 `systemctl --user status kototoki-<名字>`。
   - 停止：`systemctl --user stop kototoki-<名字>`，整个 cgroup（编排器、worker、ffmpeg）一起收尾；Strata 服务由 `strata launch` 另起，不在其中，用 `strata launch --status` 核对。
-  - 不信任工具的"已停止"，用 `ps -p <pid>`／`pgrep -f <脚本名>` 核实真实进程；多步编排链每一步幂等（产物已在则跳过、加锁），不另起替代链；要改变后续行为时改被调用的子脚本或入口，不改正在运行的脚本文件。
+  - 不信任工具的"已停止"，按 [AGENTS.md](../../AGENTS.md#重任务与环境)的做法核实真实进程（`pgrep -f <脚本名>`）；多步编排链每一步幂等（产物已在则跳过、加锁），不另起替代链；要改变后续行为时改被调用的子脚本或入口，不改正在运行的脚本文件。
   - 交互调试可以用 tmux。
 - **worktree 没有 `.venv`**：在 worktree 里 `uv run`／`mise run test` 会试图新建环境（联网、改环境）。在 worktree 根目录用主仓库的解释器跑测试：`<主仓库>/.venv/bin/python -m unittest discover -s tests/core -t .`（`package = false`，`kototoki` 从 cwd 导入）。并行票据各用一个 worktree、文件集合不相交。
 - **核对 worktree 基底**：Agent 工具的 `isolation: worktree` 可能从落后的提交建 worktree（2026-10-19 因此在合回时覆盖了较新的改动）。开工前核对 `git log -1`，或自己用 `git worktree add --detach <path> HEAD`；合回用 `git diff <基底>` 出补丁、在主仓库 `git apply --3way`。
@@ -36,10 +36,10 @@ Inspect the real task in `mise.toml` or `mise-tasks/` before invoking anything. 
 | task | 当前实现 |
 | --- | --- |
 | `check-toolchain` | 聚合 `uv:check-toolchain`（`scripts/check_toolchain.py`）：核对 `mise.toml` 钉住的工具（uv）与 `.python-version` 一致；用 `uv run --no-project --no-env-file --no-python-downloads --offline`，不同步环境 |
-| `install` | 聚合 `uv:install`（`uv sync --locked`）。ffmpeg、Strata 等外部前置由用户安装，不归它。联网、改环境，须先问 |
-| `fetch-models` | `scripts/assets.py fetch-models`：按清单从 HF 固定 revision 下载缺失或不符的模型文件，门控模型取 `HF_TOKEN`（可配在 `mise.local.toml`）；几十 GB、联网，须先问 |
+| `install` | 聚合 `uv:install`（`uv sync --locked`）。ffmpeg、Strata 等外部前置由用户安装，不归它。联网、改环境，先问（见 AGENTS.md） |
+| `fetch-models` | `scripts/assets.py fetch-models`：按清单从 HF 固定 revision 下载缺失或不符的模型文件，门控模型取 `HF_TOKEN`（可配在 `mise.local.toml`）；几十 GB、联网，先问（见 AGENTS.md） |
 | `verify-assets` | `scripts/assets.py verify`：离线核对模型（大小、SHA256 经 size+mtime 缓存 `.local/cache/assets-verify.json`） |
-| `upgrade` | `mise-tasks/upgrade`：运行 `scripts/upgrade.py` 后依次执行 `test`、`test-full`、`verify-assets`；按[选版规则](dependencies.md#升级)升级 Python 依赖，报告写 `.local/upgrade/<UTC>/report.json`。联网、改环境，须先问；不跑 smoke |
+| `upgrade` | `mise-tasks/upgrade`：运行 `scripts/upgrade.py` 后依次执行 `test`、`test-full`、`verify-assets`；按[选版规则](dependencies.md#升级)升级 Python 依赖，报告写 `.local/upgrade/<UTC>/report.json`。联网、改环境，先问（见 AGENTS.md）；不跑 smoke |
 | `upgrade-check` | `scripts/upgrade.py --check`：只报告可升级项与被跳过的传递依赖主版本升级，不改文件；联网查询 PyPI |
 | `fmt`、`lint`、`typecheck` | 聚合 `uv:fmt`、`uv:lint`、`uv:typecheck`：项目尚未选定工具，按契约非零退出并说明原因；不在任何 gate 内 |
 | `check` | `compileall -q kototoki scripts tests`：Python 编译检查，暂代静态检查进 `gate-core` |

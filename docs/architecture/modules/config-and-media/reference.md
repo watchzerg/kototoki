@@ -10,7 +10,7 @@ covers:
 
 ## 定位与阅读
 
-`配置与媒体` 的子页：产品配置文件 `kototoki.toml` 的键、默认值与校验规则的参考。读取配置的代码与配方常量见[配置读取与配方](config-and-recipes.md)；各键在哪个阶段生效见对应模块页。入口 `python -m kototoki [kototoki.toml]`，省略参数时读当前目录的 `kototoki.toml`；仓库根的 `kototoki.toml.example` 列出全部键。
+`配置与媒体` 的子页：产品配置文件 `kototoki.toml` 的键、默认值与校验规则的参考。读取配置的代码与配方常量见[配置读取与校验](config-loading.md)与[配方常量与 recipe_hash](recipes.md)；各键在哪个阶段生效见对应模块页。入口 `python -m kototoki [kototoki.toml]`，省略参数时读当前目录的 `kototoki.toml`；仓库根的 `kototoki.toml.example` 列出全部键。
 
 ## 结构与默认值
 
@@ -84,7 +84,7 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 - 取值校验：`stt.engine` 只收 `w0`／`x0`／`cross`；`run.extract_workers` ≥ 1；`[translate] seed` 与 `[names] seed` 须满足 0 < seed < 2**31（Strata 不接受 0）。TOML 语法错误与文件读不到都报 `ConfigError`。`[cues]` 的数值范围（`max_chars` ≥ 1、`max_duration_s` > 0、其余时长 ≥ 0）不在读取时检查，由 ja-cues 阶段的 `cues.build_cues` 检查，不合法时该阶段报 `ValueError`。
 - 路径：用户写出的相对路径按配置文件所在目录解析；省略的键用默认值，其中相对路径按仓库根解析（配置文件放仓库外时默认模型目录与 ffmpeg 仍可用）。`[vad]`、`[asr.w0]`、`[asr.x0]`、`[align]` 的模型路径为相对路径时相对于 `paths.models_root`。
 - 启动检查（`__main__`，失败即退出码 2）：`input_dir` 必须是已存在的目录，且不得位于仓库内（`.local/` 除外）；`work_dir` 不得位于仓库内（`.local/` 除外），也不得位于 `input_dir` 内（含二者相同）。
-- 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`；破除残留锁只认环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效（配置里的开关是粘性的，每次都会自动破锁，因此不放配置文件）。翻译与建表的模型由 Strata 管理、端口固定 8080，没有对应键。
+- 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`；破除残留锁只认环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1`，只对本次运行生效（配置里的开关是粘性的，每次都会自动破锁，因此不放配置文件）。翻译与建表的模型与端口由 Strata 管理（见 [Strata session](../strata-session.md#当前行为规格)），没有对应键。
 
 ## 暴露与冻结的边界
 
@@ -93,14 +93,14 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 | 放配置文件 | 留在代码（`kototoki/recipes.py`、`kototoki/translate/recipes.py`、`kototoki/names/recipes.py`） |
 | --- | --- |
 | 所有路径、模型目录、二进制位置（GPU 锁路径除外） | VAD onset／offset、30 s 窗口与合并策略、设备 `cuda:0`、下混矩阵与重采样参数 |
-| extract 并发数、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳、复读守卫；x0：BF16、greedy、4096；cross：裁判阈值 −1.0、无长度项、打分批上限 16（配方 `CROSS`） |
+| extract 并发数、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳、复读守卫；x0：BF16、greedy、4096；cross：裁判阈值与打分批上限见 [cross 裁判](../stt-asr/cross-judge.md)（配方 `CROSS`） |
 | 输入扩展名、音轨语言偏好、是否用内嵌字幕 | MMS FP32、归一化、字符映射；内嵌字幕清洗规则（`EMBEDDED`） |
 | cue 显示规则（`[cues]`） | 翻译采样（0.7／0.8／20）、`dp10-cut` 切包与 `wide-context-v1` 邻文、`qwen-joint-v1` 提示、专名注入规则、模型与 Strata 身份核对、请求重试次数、失败分类、降级策略 |
 | 翻译 `seed`、专名表 `seed` | 建表提示、采样、JSON schema、`max_tokens` 16384、context 49152（提示预算 32256）、5 次尝试与重试条件、归一规则、模型与 Strata 身份（配方 `q3-names-v3`，ADR-0028）；产物 schema 版本 |
 
 ## 配置与产物身份
 
-只改配置文件里的项一般不会使已有 STT 产物失效；进身份的键如下（身份规则见[产物契约](../artifact-contract.md)与[阶段计划](../stage-plan.md)）：
+只改配置文件里的项一般不会使已有 STT 产物失效；进身份的键如下（身份规则见[产物契约](../artifact-contract/layout-and-identity.md)与[阶段计划](../stage-plan.md)）：
 
 - `[cues]` 全部键进 `ja-cues.json` 的身份：改了只重跑 ja-cues 及之后。
 - `[names] seed` 进 `name-table.json` 的身份；`[translate] seed` 进翻译身份与 run 目录键（`<配方名>__s<seed>__n<表sha12>`）。

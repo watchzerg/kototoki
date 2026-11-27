@@ -26,14 +26,17 @@
 | [研究索引](research/INDEX.md) | 比较、实验与验收的记录和适用条件：研究规则、按主题的现状、轮次登记与验收记录 |
 | [行为规格索引](behaviors/INDEX.md) | 用户可见的行为契约 |
 | [跨模块流程](architecture/collaborations.md) | 阶段链、产物交接与失败收敛怎样跨模块进行 |
-| [开发工作流](development/workflow.md)、[技术选型](development/technology-stack.md) | 怎么开发、构建和验证 |
+| [开发工作流](development/workflow.md) | 该跑哪个 mise task、各 gate 含哪些检查、长任务与 worktree 怎么启动、smoke 怎么运行 |
+| [技术选型](development/technology-stack.md) | Python、CUDA、torch、Strata 等运行时与已选依赖的版本与选型政策 |
 | [依赖布局与资产清单](development/dependencies.md) | 依赖放在哪、版本由谁锁定、哪个 recipe 安装或编译 |
 | [测试设计与验收](agents/testing.md) | 测试怎么写、归哪类、怎么验收 |
 | [测试分层合同](development/test-layers.md)、[本地验收环境](development/local-acceptance.md) | 测试各层的目录、入口与资源边界；真实环境验收的环境契约（`/prune-tests`、`/acceptance` 按路径读写，不改名不移动） |
 | [文档维护规则](agents/documentation.md) | 文档放哪、怎么同步 |
 | [翻译评估方法](agents/translation-evaluation.md) | 新的翻译对比用什么裁判、统计口径与对照规则 |
 | [批量运行与跑次记录](agents/production-runs.md)、[跑次索引](research/runs/INDEX.md) | 替用户跑产品批量时怎么跑、跑完记什么、问题怎么转票据；历次运行的记录 |
-| [tracker 约定](agents/issue-tracker.md)、[标签映射](agents/triage-labels.md)、[领域文档规则](agents/domain.md) | 工程 skills 的票据、标签与领域文档约定 |
+| [tracker 约定](agents/issue-tracker.md) | 用 `bd` 创建、读取、领取和关闭票据，spec、wayfinding 的写法 |
+| [标签映射](agents/triage-labels.md) | triage 的 canonical role 对应哪个 Beads label |
+| [领域文档规则](agents/domain.md) | 起名、写票据或提议时怎样使用 GLOSSARY 与 ADR，遇到冲突怎么处理 |
 
 按需创建的目录：`behaviors/`、`operations/`、`adr/`、`architecture/modules/`。创建条件见[文档维护规则](agents/documentation.md#权威归属与创建时机)。
 
@@ -43,7 +46,9 @@
 
 | 路径 | 目录索引 | 说明 |
 | --- | --- | --- |
-| [工具链](development/toolchain.md)、[Ubuntu 与 NVIDIA](development/ubuntu-nvidia.md)、[推理选型原则](development/inference-selection.md) | 本行；[开发工作流](development/workflow.md)摘要并链接 | 工具链、平台与推理选型的权威正文 |
+| [工具链](development/toolchain.md) | 本行；[开发工作流](development/workflow.md)摘要并链接 | mise 与 uv 的分工、依赖变更入口与 task 接口约定 |
+| [Ubuntu 与 NVIDIA](development/ubuntu-nvidia.md) | 本行；[开发工作流](development/workflow.md)摘要并链接 | 平台前提、子进程与路径写法、GPU 就绪核查与失败处理 |
+| [推理选型原则](development/inference-selection.md) | 本行；[开发工作流](development/workflow.md)摘要并链接 | 选择或对比 STT 引擎、模型、精度与对齐器时的约束与候选 |
 | `research/runs/` | [跑次索引](research/runs/INDEX.md) | 产品批量运行一次一篇的记录（[批量运行与跑次记录](agents/production-runs.md)） |
 | Beads（`bd`） | [tracker 约定](agents/issue-tracker.md) | 产品侧计划、票据与执行提示词；完工后关闭 |
 

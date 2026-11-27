@@ -30,7 +30,7 @@ ASR 的两个引擎（w0、x0）、可选的 `cross` 引擎、裁判与 w0 整�
 
 ## 当前行为规格
 
-**jobs 约定**（在协议的 `{"stage", "recipe_hash", "config", "files"}` 之上，协议见[产物契约](artifact-contract.md)）：
+**jobs 约定**（在协议的 `{"stage", "recipe_hash", "config", "files"}` 之上，协议见[产物契约](artifact-contract/worker-protocol.md)）：
 
 - `recipe_hash` 必须等于该 worker 写进身份的配方 hash（VAD、MMS 各一个，ASR 按引擎），否则启动失败。
 - `config.models`：`Config.models` 的同名键，路径字符串（`vad`、`w0`、`x0`、`align`）。
@@ -55,7 +55,7 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - `vad.json`：`schema_version`、`offset_s`、`input`（PCM SHA256、样本数、采样率、时长）、`chunks`（秒、成对整数 `start_sample/end_sample`、子段 `segments`）、`raw_intervals`、`speech_intervals`、`accounting`、`metadata`（设备、dtype、pyannote 窗口参数、包版本）、`stages`（`load_s` 为该 worker 进程的加载耗时，`inference_s` 为本文件）。窗口写出前经 `schema.validate_windows`。
 - `asr.json`：三种引擎同构，字段见 [STT ASR](stt-asr.md#当前行为规格)。
 - `align.json`：W0 `result.json` 的结构——`schema_version`、`engine`、`status`、`text`、`units`、`cues`（空）、`original_segments`、`chunks`、`failed_windows`（照抄 `asr.json`）、`alignment_records`、`derived_segments`、`offset_s`、`source_start_seconds`／`duration_seconds`／`source_end_seconds`、`input`、`metadata`、`stages`；不含 `asr_traces`。
-- `align.json` 的 `units[].start/end` 为 WAV 本地秒，不含 offset，offset 由日文 cue 加。写出前要求对齐全文等于 ASR 保留文本，并通过 `schema.validate_transcript` 与 `schema.validate_units`（每字符恰好一个 unit；有时间的 unit 落在源范围内）。
+- `align.json` 的 `units[].start/end` 为 WAV 本地秒，不含 offset，由[日文 cue](japanese-cues.md)加。写出前要求对齐全文等于 ASR 保留文本，并通过 `schema.validate_transcript` 与 `schema.validate_units`（每字符恰好一个 unit；有时间的 unit 落在源范围内）。
 
 **VAD**（`vad.PyannoteVad`）：
 

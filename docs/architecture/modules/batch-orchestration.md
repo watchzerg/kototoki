@@ -14,7 +14,7 @@ covers:
 不负责：
 
 - 阶段链、各阶段的期望身份与"下一个要跑的阶段"（[阶段计划](stage-plan.md)，编排只负责问）
-- 身份的组成与匹配规则（[产物契约](artifact-contract.md)）
+- 身份的组成与匹配规则（[产物契约](artifact-contract/layout-and-identity.md)）
 - 音轨与 WAV（[配置、配方与媒体提取](config-and-media.md)）
 - cue 切分（[日文 cue](japanese-cues.md)）
 - 推理（[STT worker](stt-workers.md)）

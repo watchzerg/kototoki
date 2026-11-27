@@ -8,7 +8,7 @@ covers:
 
 **内嵌日文字幕**（`job.use_embedded_subtitle`，在 probe／extract 的线程池里；选轨、抽取与清洗规则见[配置、配方与媒体提取](../config-and-media.md)）：
 
-- 跳过：由[阶段计划](../stage-plan.md)判定内嵌记录是否当前（`plan.embedded_current`：身份等于 `plan.embedded_identity(probe 身份, 流索引)`，且记下的 `ja_srt_sha256` 等于工作目录里 `ja.srt` 的 SHA256），当前即不再抽取。
+- 跳过：由[阶段计划](../stage-plan.md)判定内嵌记录是否当前（`plan.embedded_current`：身份等于 `plan.embedded_identity(probe 身份, 流索引)`，另核对 `ja_srt_sha256`，细则见阶段计划），当前即不再抽取。
 - 否则 `media.extract_subtitle` → `embedded.clean`；先删上次强杀留下的临时文件，再写 `ja.srt`，最后写 `ja-embedded.json`（流信息、清洗计数、`ja.srt` 的 SHA256）。
 - 不删 `ja-cues.json`：字幕轨改写 `ja.srt` 后它不再当前，以后改走 STT 时 cues 阶段自然重建；反过来，cue 阶段改写 `ja.srt` 后内嵌记录不再相符，下次走内嵌路径时重新抽取。
 - `probe.json` 不当前时写出，`extract` 为 null；以后该文件改走 STT 时照常提取并改写。
@@ -20,7 +20,7 @@ covers:
 
 - 模型文件 SHA256 由 `model_sha_lookup` 经 `gpu.verify_models`（`plan.model_files` 给出期望值，size+mtime 缓存与 worker 共用）按阶段每次运行最多核对一次；失败结果同样缓存，模型缺失或不符时需要该阶段核对的文件记失败。
 - `published.json`（审计记录）的 `sources` 即 `Plan.sources`（全部身份与 `no_speech`，含 `names`），另记 `translate_untranslated_cues`，不参与任何判定。
-- 用户手改 `name-table.json` 的 `entries`：改到会被注入的条目（`high` 的实体或其写法）即改变翻译身份的 `names_sha256`，但已发布的字幕不会自动重做——须先删掉该 `.ja-zh.srt`，再运行才重译（需要 Strata）；只改 medium／low 条目不触发任何重做。
+- 用户手改 `name-table.json` 的 `entries`：是否重译见[专名一致性](../name-consistency.md)；已发布的字幕不会自动重做。
 
 ## 代码与验证入口
 

@@ -40,10 +40,10 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 | task | 做什么 | 备注 |
 | --- | --- | --- |
-| `mise run install` | 只做 `uv sync --locked` | 联网、改环境，按 AGENTS 规定先问 |
-| `mise run fetch-models` | 只下载模型 | 几十 GB，不并入 install；先问 |
+| `mise run install` | 只做 `uv sync --locked` | 联网、改环境，先问（见 [AGENTS.md](../../AGENTS.md#重任务与环境)） |
+| `mise run fetch-models` | 只下载模型 | 几十 GB，不并入 install；先问（同上） |
 | `mise run verify-assets` | 离线核对已下载的模型与清单一致 | 用 `artifacts.verify_model` 的 size+mtime 缓存，快 |
-| `mise run upgrade` | 按下文[升级](#升级)规则把 Python 依赖升到最新稳定版，再跑 core、full 测试与 `verify-assets` | 联网、改环境，先问；`mise run upgrade-check` 只报告 |
+| `mise run upgrade` | 按下文[升级](#升级)规则把 Python 依赖升到最新稳定版，再跑 core、full 测试与 `verify-assets` | 联网、改环境，先问（同上）；`mise run upgrade-check` 只报告 |
 | `mise run build-<name>` | 需要编译时再按依赖单独建 | **不放进 `mise run install`**，也不建通用的 `compile` |
 
 编译不进 install：编译需要编译器／CUDA Toolkit，耗时长，失败模式与下载完全不同；install 应可重复、快速、只消费锁定结果。按"第二个使用者出现再抽象"，现在不建通用编译入口。产品当前没有需要编译的依赖。
@@ -78,7 +78,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 - 测试（core）：`tests/core/test_assets_manifest.py` 钉住 `kototoki/plan.py` 的模型文件 SHA256 表 == 清单。`scripts/assets.py` 的下载、SHA 不符清理、门控令牌与离线核对自 2026-11-22 测试精简后没有测试。
 - **外部前置：Strata**（产品翻译，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）：Strata 0.2 版本线（本机 0.2.13.1／build 0.1.59.1）用其安装器装好，`strata` 在 PATH 上（`~/.local/bin/strata`），状态与日志在 `~/.local/state/strata/`，翻译模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录；两者都**不在 `assets.toml` 里**，`install`／`fetch-models`／`verify-assets` 不管它们，由用户安装与维护。
 
-  产品启动翻译时按 ADR-0021「Q3 服务与运行顺序」核对版本线、端口 8080、run config 与上下文，不符即拒绝运行；0.2 线内升级 Strata 不改配方身份（实际版本只记进 `strata.json`，ADR-0034「Strata 版本」），换版本线或换模型须新决定。运行前须没有别的 Strata launch 在服务，且空闲显存 ≥14000 MiB。
+  产品启动翻译时按 ADR-0021「Q3 服务与运行顺序」核对版本线、run config 与上下文（端口与接入检查的细节见 Strata session），不符即拒绝运行；0.2 线内升级 Strata 不改配方身份（实际版本只记进 `strata.json`，ADR-0034「Strata 版本」），换版本线或换模型须新决定。启动前的显存、内存门槛与启动步骤见 [Strata session](../architecture/modules/strata-session.md#当前行为规格)。
 - 真实模型验证（Q2 首用 smoke）`mise run smoke translate_product`（`scripts/smoke/translate_product.py`）走 Strata 在产品翻译代码上跑合成句，是翻译的分钟级入口。
 
   2026-11-08 首用 smoke（`.local/smoke/20261108T104209Z/`）**通过**：合成 12 条、2 包，首次尝试全部接受（格式失败 0、交付失败 0、回退 0），`reasoning_content` 全空，推理自救／非有限 logits／重复截停 0，high 条目注入 1 行生效；Strata 加载 89 s，探测核对 0.2.12／build 0.1.58、DFlash2、kv int8、spec 4；整机显存峰值 16.1 GB、内存峰值 42.9 GiB；`--stop` 后 status 为空、空闲显存 14884 MiB。**每包约 25–31 s（均值 27.8 s，输出约 130 token）**，远慢于 v12 F1（MTP、32k）的约 3.2 s；冷启动后只有 2 包，原因未查明。

@@ -1,21 +1,20 @@
 ---
 covers:
   - kototoki/translate/__init__.py
-  - kototoki/merge.py
 ---
-# 翻译子系统与双语合并
+# 翻译子系统
 
 状态：current；权威决定：[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../../adr/0021-q3-strata-names-baseline.md)、[ADR-0025](../../adr/0025-product-package-boundaries.md)、[ADR-0008](../../adr/0008-no-multi-translation-selection.md)
 
 ## 定位与阅读
 
-负责双语字幕流水线中 `ja.srt → 译文` 与 `ja.srt + 译文 → ja-zh.srt` 两步：`dp10-cut` 切包与 Q2 请求、专名注入、按批次落盘与续跑、基础设施失败的重启、按条收下与追问、未翻译报告，以及中日两行合并。配方的完整定义见[决定定义：产品翻译](../../adr/CURRENT.md#产品翻译)；跨模块契约见[GPU 内部顺序与并发](../collaborations/stage-chain-and-scheduling.md#gpu-内部顺序与并发)、[产物交接](../collaborations/artifact-handoff.md)、[失败收敛](../collaborations/failure-convergence.md)。
+负责双语字幕流水线中 `ja.srt → 译文` 一步：`dp10-cut` 切包与 Q2 请求、专名注入、按批次落盘与续跑、基础设施失败的重启、按条收下与追问、未翻译报告；译文与 `ja.srt` 的中日两行合并见[双语合并子页](translation-subsystem/bilingual-merge.md)。配方的完整定义见[决定定义：产品翻译](../../adr/CURRENT.md#产品翻译)；跨模块契约见[GPU 内部顺序与并发](../collaborations/stage-chain-and-scheduling.md#gpu-内部顺序与并发)、[产物交接](../collaborations/artifact-handoff.md)、[失败收敛](../collaborations/failure-convergence.md)。
 
 不负责：
 
 - Strata 的启停、身份核对、共享 session 与本机客户端（[Strata 服务与共享 session](strata-session.md)）；
 - GPU 锁、子进程随编排器退出、`ja-zh.srt` 的写出与发布（[批次编排](batch-orchestration.md)；`zh.srt` 不发布，ADR-0007「发布」）；
-- 专名表的建表（[专名一致性](name-consistency.md)）；工作目录本身的位置（[产物契约](artifact-contract.md)）；任何时间换算。
+- 专名表的建表（[专名一致性](name-consistency.md)）；工作目录本身的位置（[产物契约](artifact-contract/layout-and-identity.md)）；任何时间换算。
 
 上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。本模块是 Q2 的产品移植，研究侧同名规则（归档 tag 中的 experiments/translation_v3/ 与 translation-srt-flow 模块页）已删除，本模块是唯一权威。
 
@@ -25,6 +24,7 @@ covers:
 | --- | --- |
 | [请求、失败分类与按条解决](translation-subsystem/requests-and-resolution.md) | 改切包、邻文、提示、专名注入、请求体与校验，或核对失败种类的处理与追问／拆分规则 |
 | [session、run 目录与日志](translation-subsystem/run-directory.md) | 改批次落盘、续跑、`run.json`／`batches.jsonl` 等 run 目录内容、session 记录或翻译日志 |
+| [双语合并](translation-subsystem/bilingual-merge.md) | 改 `kototoki.merge`：`ja-zh.srt` 的中上日下两行、换行替换、译文覆盖校验与 `IncompleteTranslationError` |
 
 ## 当前行为规格
 
@@ -45,8 +45,6 @@ covers:
 
 各规则的细节见上表子页。
 
-**合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格；译文为 `None` 的条目只有日文一行。译文须精确覆盖全部 cue（`None` 算覆盖，只在本层处理；缺失、多余、空串、含空行抛 `IncompleteTranslationError`；文字合法性的判定唯一出处在 `srt.subtitle_text_problem`，回复解析同样调用它）；零条目文档得到空串。
-
 ## 实现设计
 
 移植来源与取舍（研究代码已删除，产品实现是唯一权威）：
@@ -65,10 +63,9 @@ covers:
 
 ## 代码与验证入口
 
-- 代码：`kototoki/translate/__init__.py`（`plan`、`translate_document` 与导出）、`kototoki/merge.py`；其余模块见[请求子页](translation-subsystem/requests-and-resolution.md#代码与验证入口)与[运行目录子页](translation-subsystem/run-directory.md#代码与验证入口)。Strata 与客户端见 [Strata 服务与共享 session](strata-session.md#代码与验证入口)。
-- 测试（core，`mise run test`）：`tests/core/test_merge.py`：中上日下且保留头部、多行译文以空格连接、`None` 只输出日文一行、零条目得空串、缺失译文抛错。其余测试见子页。
-- 测试精简（2026-11-22）后不再有测试覆盖：`merge` 的译文与日文相同时两行照留、合并结果回解析条数、多出的译文与空串译文抛错、`None` 仍须其余 id 齐全且 id 已知。
-- 真实模型验证（占 GPU，须用户批准）：`mise run smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
+- 代码：`kototoki/translate/__init__.py`（`plan`、`translate_document` 与导出）；其余模块见[请求子页](translation-subsystem/requests-and-resolution.md#代码与验证入口)与[运行目录子页](translation-subsystem/run-directory.md#代码与验证入口)。Strata 与客户端见 [Strata 服务与共享 session](strata-session.md#代码与验证入口)。
+- 测试：见各子页；合并的测试见[双语合并子页](translation-subsystem/bilingual-merge.md#代码与验证入口)。
+- 真实模型验证（规则见[开发工作流](../../development/workflow.md)）：`mise run smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
 - 未验证：追问与拆分只经伪客户端，追问窗口下的译文质量无裁判证据；Strata 的请求不复现（同 seed 跨启动约半数 cue 不同，ADR-0021「未验证与已知限制」），重跑不保证同一译文；产品配方在产品里的质量没有独立裁判证据（沿用 ADR-0021「依据」的 v12 F1 证据）。
 
 ## 变更与决策来源

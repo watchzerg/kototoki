@@ -6,10 +6,10 @@
 
 从一批日语视频或音频批量生产中日双语 SRT（写在源文件旁），全部在本机 GPU 上运行（[行为规格](docs/behaviors/bilingual-subtitle-pipeline.md)、[ADR-0007](docs/adr/0007-bilingual-subtitle-pipeline-architecture.md)）。
 
-1. 环境：`mise run install`（`uv sync --locked` 建统一 CUDA 12.8 根环境；ffmpeg 用 `sudo apt install ffmpeg`，从 PATH 调用）；STT 模型放 `.local/models/`，缺失时 `mise run fetch-models` 按清单下载（几十 GB，门控 `HF_TOKEN` 可写进本机 `mise.local.toml`）；专名与翻译共用的 Strata（0.2 线，`strata` 在 PATH，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录）自行维护，启动时会核对版本线与配置；`mise run verify-assets` 离线核对。安装与下载均联网改环境，先问再跑。
+1. 环境：`mise run install`（`uv sync --locked` 建统一 CUDA 12.8 根环境；ffmpeg 用 `sudo apt install ffmpeg`，从 PATH 调用）；STT 模型放 `.local/models/`，缺失时 `mise run fetch-models` 按清单下载（几十 GB，门控 `HF_TOKEN` 可写进本机 `mise.local.toml`）；专名与翻译共用的 Strata 由用户自行安装维护，前置见[依赖布局](docs/development/dependencies.md)；`mise run verify-assets` 离线核对。安装与下载均联网改环境，先问的规则见 [AGENTS.md](AGENTS.md#重任务与环境)。
 
    ffmpeg 只用默认 swr 重采样，不要求 libsoxr，路径可在配置里改。模型的来源、revision 与 SHA256 以 [`assets.toml`](assets.toml) 为准，布局与升级步骤见[依赖布局与资产清单](docs/development/dependencies.md)。
-2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`（递归扫描视频与音频，扩展名见 `[input] extensions`；不得位于仓库内，`.local/` 除外，因为字幕写在源文件旁）；中间产物在 `paths.work_dir`（默认仓库内 `.local/work/`；不得位于输入目录内，也不得位于仓库内 `.local/` 以外）；`stt.engine` 默认 `w0`，可选 `x0`。全部键与默认值见[配置、配方与媒体提取](docs/architecture/modules/config-and-media.md)。
+2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`；全部键、默认值与启动检查见[配置参考](docs/architecture/modules/config-and-media/reference.md)。
 
    `[names]` 只有 `seed`：翻译前在 Strata 上用 Qwen3.8-Flash-Next 给每部影片建一张专名表（规则与基线 Q3 相同），翻译时把表里高置信的译法注入提示；建表必开，没有开关。`[translate]` 只有 `seed`（正整数）。模型与端口都由 Strata 管理。
 3. 运行：`uv run python -m kototoki kototoki.toml`（省略参数时读当前目录的 `kototoki.toml`）。这是加载全部模型的 GPU 重任务，运行期间持有 `.local/gpu.lock`。只想用默认配置处理一个目录时可跳过第 2 步，直接 `mise run subtitles <目录>`（相对路径按当前目录解析）：它把只含 `input_dir` 的配置写到 `.local/run-configs/` 再调用同一入口，退出码相同。
@@ -31,7 +31,7 @@
 
 ## 开发
 
-- 工具链：mise、uv；`mise tasks` 列出全部 task，命令、门禁与测试分层见[开发工作流](docs/development/workflow.md)。`mise run check` 做语法检查，`mise run test`、`mise run test-full` 跑离线的 core 与 full 测试（都不加载模型；定向筛选用 `mise run uv:test -k …`）；`mise run smoke`（真实模型验证）加载模型、独占 GPU，先问再跑。
+- 工具链：mise、uv；`mise tasks` 列出全部 task，命令、门禁与测试分层见[开发工作流](docs/development/workflow.md)。`mise run check` 做语法检查，`mise run test`、`mise run test-full` 跑离线的 core 与 full 测试（都不加载模型；定向筛选用 `mise run uv:test -k …`）；`mise run smoke`（真实模型验证）的运行规则见[开发工作流](docs/development/workflow.md#命令与门禁)。
 - 所有模型、私有音频、完整转写、生成的字幕与运行日志存于 Git 忽略的 `.local/`。
 - 文档从[文档索引](docs/INDEX.md)进入；agent 约束在 [AGENTS.md](AGENTS.md)。
 

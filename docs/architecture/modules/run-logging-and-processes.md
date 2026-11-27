@@ -24,7 +24,8 @@ covers:
 | 子页 | 何时读 |
 | --- | --- |
 | [运行日志](run-logging-and-processes/run-log.md) | 改日志目的地、行格式、级别、内容规则，或各阶段日志行时 |
-| [进程原语与 worker 子进程](run-logging-and-processes/processes-and-workers.md) | 改进程身份、锁文件、子进程随编排器退出，或 worker 的命令、环境、进度事件与崩溃重启时 |
+| [进程原语](run-logging-and-processes/process-primitives.md) | 改进程身份、锁文件（`ProcessLock`）或子进程随编排器退出（`contained`）时 |
+| [worker 子进程](run-logging-and-processes/worker-subprocess.md) | 改 worker 的命令、jobs、子进程环境、进度事件转日志或崩溃重启时 |
 
 ## 当前行为规格
 
@@ -36,11 +37,11 @@ covers:
 
 ## 接口与依赖
 
-`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contained`）、`kototoki.media` 与 `kototoki.strata`（`contained`）、`kototoki.workers.gpu`（`RunFormatter`）。
+`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract/worker-protocol.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contained`）、`kototoki.media` 与 `kototoki.strata`（`contained`）、`kototoki.workers.gpu`（`RunFormatter`）。
 
 ## 代码与验证入口
 
-代码与验证入口写在各子页末尾：[运行日志](run-logging-and-processes/run-log.md#代码与验证入口)、[进程原语与 worker 子进程](run-logging-and-processes/processes-and-workers.md#代码与验证入口)。
+代码与验证入口写在各子页末尾：[运行日志](run-logging-and-processes/run-log.md#代码与验证入口)、[进程原语](run-logging-and-processes/process-primitives.md#代码与验证入口)、[worker 子进程](run-logging-and-processes/worker-subprocess.md#代码与验证入口)。
 
 ## 变更与决策来源
 

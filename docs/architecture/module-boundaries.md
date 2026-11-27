@@ -22,7 +22,7 @@
 - 日文 cue 是时间轴上唯一加 offset 的地方，归[日文 cue](modules/japanese-cues.md)。
 - STT 推理、`cross` 引擎与 `kototoki/schema.py` 的校验归 [STT worker](modules/stt-workers.md)。`judge` 不导入推理模块，打分由调用方传入的 `WhisperAsr.score` 做；`guard` 只处理字符串，改写、trace 与把置空窗口记失败归 worker 壳，x0 不用守卫。
 - 阶段链、`ENGINE_PARTS`（唯一出处）、模型清单与各阶段期望身份归[阶段计划](modules/stage-plan.md)；translate 身份转问翻译子系统，是否已发布由编排按字幕文件是否存在判定。
-- 翻译配方与 `RECIPE_HASH`（只在 `kototoki/translate/recipes.py`）、注入规则、run 目录键、`needs_model`、按条追问与未翻译、合并归[翻译子系统](modules/translation-subsystem.md)。
+- 翻译配方与 `RECIPE_HASH`（只在 `kototoki/translate/recipes.py`）、注入规则、run 目录键、`needs_model`、按条追问与未翻译归[翻译子系统](modules/translation-subsystem.md)；双语合并归[双语合并](modules/translation-subsystem/bilingual-merge.md)。
 - 建表配方与 hash（只在 `kototoki/names/recipes.py`）、建表请求额度与 `name-table.json` 的内容归[专名一致性](modules/name-consistency.md)；文件由编排写，表的用法（注入哪些行）归翻译子系统。
 - 扫描、调度、锁、发布、子进程环境与运行日志归[批次编排](modules/batch-orchestration.md)；进程原语在基础层 `kototoki/procs.py`，日志行格式在 `kototoki/logs.py`。
 - 本机回环客户端 `LlamaClient`、`InfraFailure`、失败分类 `classify_failure`／`response_body` 归 `kototoki/local_client.py`；llama-server 进程生命周期不在产品里，`list_llama_servers` 在 `scripts/smoke/`。
@@ -72,33 +72,32 @@
 - 产品 STT 阶段之间串行。例外：`cross` 引擎的 asr worker 让 Whisper（CT2）与 Qwen（torch）同进程共驻到退出，运行时不按显存回退；translate、align 不与之共驻（[ADR-0003](../adr/0003-new-pyannote-baselines.md)）。
 - 产品只有一个服务进程 Strata，由共享 `strata.Session` 管理：
   - 整批一个，首次真正需要模型时才启动（names 或 translate），两阶段之间不停；没有影片需要模型时不启动。
-  - 启动前 `strata launch --status` 必须为空（不抢占别人的 launch），空闲显存达到 14000 MiB、可用内存达到 50 GiB。
-  - 结束、出错或编排被中断（`Session` 是上下文管理器）都执行 `strata launch --stop`，并核实 status 为空、显存回到 14000 MiB。
-  - 启动失败整批累计 3 次，或 `StrataRefused`，即置 `unavailable`；额度由 names 与翻译共用。
+  - 启动前核对没有别人的 launch、空闲显存与可用内存，启动失败的额度由 names 与翻译共用；门槛、额度与启动细节见 [Strata session](modules/strata-session.md#当前行为规格)。
+  - 结束、出错或编排被中断（`Session` 是上下文管理器）都停掉自己启动的 Strata 并核实释放。
   - 产品不启动 llama-server。产品进程被强杀时 Strata 可能留在后台，下次因 status 非空而拒绝，需手动 `strata launch --stop`。
 
 ## 产品包的责任边界
 
 双语字幕流水线按"谁有权做这个决定"划分，每项只有一个归属：
 
-- **时间轴**只在三处出现：媒体定零点；推理模块输出 WAV 本地坐标（`align.map_records`、`MmsAligner.align` 不收 offset）；日文 cue 给窗口边界、VAD 子段与 units 各加一次 offset。采用内嵌字幕的文件没有后两处：时间由 ffmpeg 按同一零点转出，`embedded.clean` 只排序、不改时间。编排、翻译、合并不做时间换算；翻译只读 `ja.srt` 相邻 cue 的停顿长短来切包与取邻文。
+- **时间轴**只在三处出现：媒体定零点；推理模块输出 WAV 本地坐标（`align.map_records`、`MmsAligner.align` 不收 offset）；日文 cue 加 offset（规则见[日文 cue](modules/japanese-cues.md)）。采用内嵌字幕的文件没有后两处：时间由 ffmpeg 按同一零点转出，`embedded.clean` 只排序、不改时间。编排、翻译、合并不做时间换算；翻译只读 `ja.srt` 相邻 cue 的停顿长短来切包与取邻文。
 - **跳过与替换**由产物契约的 `is_current` 判定，期望身份与"下一个要跑的阶段"由阶段计划给出，编排只负责问；推理模块永远不决定要不要跑。
 - **失败分三级，各归一层**，判定是 `protocol.classify_launch` 的纯函数规则，编排只循环与记账：
   - 窗口级 `failed_windows`：推理模块填、协议校验，不进对齐、cue 与翻译。
-  - 文件级：worker 报 `failed` 事件、退出码 1，编排继续下一文件。
-  - worker 进程级：退出码 2 带 `fatal`，该文件失败、从下一文件重启 worker；退出码 2 带 `startup_failed` 或既无 `started` 又无文件事件的异常退出（启动／加载模型原生崩溃），本阶段剩余文件全部失败、不重启；其余异常退出（或退出码 0／1 缺事件），最后一个有事件的文件之后那个（有 `started` 无文件事件时为首个）记 `WorkerCrashed`，从其后重启。
-  - 批次级：任何阶段撞 `.local/gpu.lock` 都以退出码 4 结束整批，不写逐文件 `failure.json`。
+  - 文件级：worker 报 `failed` 事件，编排继续下一文件。
+  - worker 进程级：按退出码与事件判定该文件失败、重启或本阶段整体失败，规则见[worker `--jobs` 协议与退出码](modules/artifact-contract/worker-protocol.md)。
+  - 批次级：撞 `.local/gpu.lock` 结束整批，规则见[批次编排运行时规则](modules/batch-orchestration/runtime-rules.md)。
 - **翻译与建表的基础设施失败**：
-  - 翻译子系统内部消化传输、OOM、server 错误与 Strata 起不来，最多重启 Strata 两次，受整批 3 次启动额度约束；再往上抛即该文件的文件级失败。
+  - 翻译子系统内部消化传输、OOM、server 错误与 Strata 起不来，最多重启 Strata 两次，受整批启动失败额度约束（[Strata session](modules/strata-session.md)）；再往上抛即该文件的文件级失败。
   - `StrataRefused`（身份不符、已有别的 launch、专家区退到 mmap）不重试，共享 `Session` 置为不可用，本批其余需要模型的影片在 names 与 translate 都直接失败。
   - 批次终态失败（两次尝试都失败）在子系统内按 10→5→1 降级，单条仍失败保留日文。
-  - 建表的传输、HTTP、OOM 与意外异常停掉 Strata，是该文件 names 阶段的文件级失败（下一部需要模型的影片再启动，计入整批 3 次）。
+  - 建表的传输、HTTP、OOM 与意外异常停掉 Strata，是该文件 names 阶段的文件级失败（下一部需要模型的影片再启动，计入整批启动失败额度，见 [Strata session](modules/strata-session.md)）。
   - 建表终态失败（5 次都不合格、超预算）只写空表、不算失败（翻译照常，不注入）。发布没有专名替换，因而没有替换失败。
 - **发布**只有编排能做：`ja-zh.srt` 写一份副本到工作目录 → 原子写到源文件旁（临时文件建在目标目录内，不跨卷移动）→ `record_published`。源文件旁已有同名字幕的文件在扫描阶段即跳过，不进任何阶段。
 - **锁**全归编排：`<work_dir>/<目标目录键>/lock` 与 `.local/gpu.lock`；翻译子系统、`names` 与 `strata.Session` 都不取锁。翻译按 `needs_model` 决定是否取 GPU 锁也由编排判断。
 - **身份**：
   - 各阶段 `recipe_hash` 归 `recipes.py`，翻译配方 hash 归 `translate/recipes.py`，建表配方 hash 归 `names/recipes.py`，模型 SHA256 经产物契约的缓存。
-  - 翻译身份 = `{ja_srt_sha256, recipe_hash, seed, names_sha256}`；`names_sha256` 是注入行的哈希：手改会被注入的条目即换身份、重译，只改 medium／low 条目不会。
+  - 翻译身份 = `{ja_srt_sha256, recipe_hash, seed, names_sha256}`；手改专名表后是否重译见[专名一致性](modules/name-consistency.md)。
   - 每个阶段期望身份的组成只在 `plan.py` 写一次，worker 壳与编排消费不复制；没有模块把绝对路径写进身份。
 - **子进程环境**归编排：`PYTHONUTF8=1`、离线变量、共用 `HF_HOME`／`TORCH_HOME=<work_dir>/cache/` 由编排传入，worker 不自行设置 PATH 或 `LD_LIBRARY_PATH`。
 - **日志**目的地与格式只归编排（`kototoki/logs.py` 的格式；`gpu.main` 只把 worker 日志按同一格式写到 stderr，由编排存档）。

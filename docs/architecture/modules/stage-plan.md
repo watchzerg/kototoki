@@ -12,7 +12,7 @@ covers:
 
 编排（[批次编排](batch-orchestration.md)）与三个 worker 壳（[STT worker](stt-workers.md)）都从这里取身份：壳把它写进产物，编排用它核对产物是否当前。
 
-不负责：身份的组成规则与匹配本身（[产物契约](artifact-contract.md)的 `derived_identity`／`is_current`）；配方常量与 `recipe_hash` 的取值（[配置、配方与媒体提取](config-and-media.md)）；翻译阶段的 run 目录与身份（[翻译子系统](translation-subsystem.md)的 `translate.plan`）；比对产物内容、写文件、加载模型。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md#产品包的责任边界)。
+不负责：身份的组成规则与匹配本身（[产物契约](artifact-contract/layout-and-identity.md)的 `derived_identity`／`is_current`）；配方常量与 `recipe_hash` 的取值（[配置、配方与媒体提取](config-and-media.md)）；翻译阶段的 run 目录与身份（[翻译子系统](translation-subsystem.md)的 `translate.plan`）；比对产物内容、写文件、加载模型。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md#产品包的责任边界)。
 
 ## 当前行为规格
 
@@ -50,7 +50,7 @@ probe ─► 内嵌日文字幕（CPU，编排写 ja.srt 与 ja-embedded.json）
 - `MEDIA` 含下混、未标注布局时的声道数映射与音轨选择规则（含语言别名表），这些规则一变 `probe.json` 即不当前、重抽音频；PCM 不变时 vad 及下游身份不变。
 - `ja-cues.json` 是否当前另要求 payload 记下的 `ja_srt_sha256` 等于工作目录里 `ja.srt` 的 SHA256（`ja.srt` 缺失、被手改或被内嵌路径改写即不当前、cues 重跑）；没有该字段的 `ja-cues.json` 同样不当前。这一步与 `embedded_current` 共用辅助函数 `_current_with_ja_srt`。
 - `name-table.json` 的模型名与 Strata 身份在建表配方里，不进身份；表不当前即需要建表。
-- 表中会被注入的条目一改，`names_sha256` 变、翻译身份变、重新翻译；`names` 阶段自己的身份不变（表仍当前，不重建）。计划把整个 `TranslatePlan` 带在 `Plan.translate` 上。
+- 手改专名表后的重译规则见[专名一致性](name-consistency.md)；`names` 阶段自己的身份不变（表仍当前，不重建）。计划把整个 `TranslatePlan` 带在 `Plan.translate` 上。
 
 **cross 的 asr 身份**（[ADR-0003](../../adr/0003-new-pyannote-baselines.md)）：
 

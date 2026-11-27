@@ -17,7 +17,7 @@ covers:
 **run 目录与续跑**：键只由 `plan` 决定（`batching.source_key` 给出 `srt-<sha12>`，即场景 ID）。
 
 - `ja.srt` 变化换 `srt-<sha12>`；配方名、seed 或注入行变化换子目录；旧目录都保留。
-- 手改 `name-table.json` 里会被注入的条目（`confidence: high` 的实体或其 `forms`）即换 `names_sha12`、重译该片；只改 medium／low 不会。
+- 手改 `name-table.json` 后是否换 `names_sha12`、重译该片，见[专名一致性](../name-consistency.md)。
 - 配方内容变了而名字未变（hash 不符）不自动另开目录，`plan` 拒绝并提示删除该目录。
 
 目录内容：

@@ -75,7 +75,7 @@ covers:
 ## 实现设计
 
 - 只有 Strata 这一个后端实现，不抽后端协议。服务进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
-- `strata` 从 PATH 调用（安装器放在 `~/.local/bin/strata`）。
+- `strata` 从 PATH 调用（安装器放在 `~/.local/bin/strata`）；安装与外部前置见[依赖布局与资产清单](../../development/dependencies.md)。
 - `probe` 改编自研究侧 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数，起草方式改读服务日志。
 - Strata 身份常量（`MODEL`、`STRATA_SERIES`、`STRATA_LAUNCH`、`STRATA_RESOLVED`）只在这里定义，翻译配方 `q3-translate-v1` 与建表配方 `q3-names-v3` 的运行时身份取 `STRATA_LAUNCH` 与 `STRATA_RESOLVED`（版本线只在接入检查里用）。
 - `Session` 的状态（`server`、`ordinal`、`start_failures`、`unavailable`、`runtime_root`）归它自己；`runtime_root` 在构造时按 UTC 时间戳与 pid 定下。
@@ -100,7 +100,7 @@ covers:
     - 测试精简（2026-11-22）后不再有测试覆盖：未就绪、两个 launch、启动命令失败与加载中被中断仍 `--stop`；停止未确认与显存未释放的记录；等内存与内存不足警告；`mmap` 或未确认锁定时停掉并拒绝；`expert_arena`、`available_ram_gib` 与 `--status` 的解析；显存等待的告警日志；成功启动不限次、一次失败后成功、`client()` 的 trace 目录、`label` 跟随启动序号；旧 `translate/strata.py` 已不存在的检查。
   - `tests/core/test_local_client.py`：OOM 消息识别、`classify_failure` 与 `response_body`、`chat_completion` 的端点与 `chat-NN` trace、非回环 URL 被拒。其余（无标签请求的序号目录、研究专用方法不在产品客户端、旧 `llama_server` 模块已不存在）不再有测试覆盖。
   - 使用者侧的启动失败、被拒与重启见 `tests/core/test_translate.py`、`tests/core/test_names_session.py`，整批只启动一次见 `tests/core/test_job.py`（精简后 `test_job.py` 只剩共享 session 的阶段顺序与 names 表身份变化重译）。
-- 真实运行：经 `mise run smoke translate_product`、`mise run smoke names_product`（占 GPU，须用户批准，不属于任何 gate），见[翻译子系统](translation-subsystem.md#代码与验证入口)与[专名一致性](name-consistency.md#代码与验证入口)。
+- 真实运行：经 `mise run smoke translate_product`、`mise run smoke names_product`（占 GPU，须用户批准，规则见[开发工作流](../../development/workflow.md)），见[翻译子系统](translation-subsystem.md#代码与验证入口)与[专名一致性](name-consistency.md#代码与验证入口)。
 - 未验证：强杀后残留 launch 被拒绝的真实运行。已知限制：空闲显存等满 120 s 仍低于 14000 MiB（桌面程序占用较多）即启动失败；可用内存不足 50 GiB 时专家区可能退到 mmap，启动被拒绝，须先关掉部分程序；50 到 51 GiB 之间没有实测过。
 
 ## 变更与决策来源
