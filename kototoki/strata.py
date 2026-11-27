@@ -167,7 +167,13 @@ def http_get(url: str, timeout: float = 30.0) -> dict[str, Any]:
 
 def running(cli: Callable[..., str]) -> list[dict[str, Any]]:
     """`strata launch --status` 里正在服务的 launch（JSON 在第一行；0.2.12 之后还会打印一行给人看的文字）。"""
-    return list(json.loads(cli(*STATUS_ARGS).strip().splitlines()[0]).get("running") or [])
+    lines = cli(*STATUS_ARGS).strip().splitlines()
+    if not lines:
+        raise ValueError("empty output from strata launch --status")
+    data = json.loads(lines[0])
+    if not isinstance(data, dict):
+        raise ValueError("expected JSON object from strata launch --status")
+    return list(data.get("running") or [])
 
 
 def _arg(args: list[str], flag: str) -> str | None:

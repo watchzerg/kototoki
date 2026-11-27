@@ -186,6 +186,23 @@ class StrataServerTests(unittest.TestCase):
         self.assertIsNone(self.fake.state)
         self.assertEqual(self.pids, [4242, None])
 
+    def test_empty_status_output_raises_infra_failure(self) -> None:
+        def empty_cli(*args: str, timeout: float = 120.0) -> str:
+            self.fake.commands.append(args)
+            if args == S.STATUS_ARGS:
+                return "   \n"
+            return self.fake.cli(*args, timeout=timeout)
+
+        server = StrataServer(self.root, on_pid=self.pids.append, cli=empty_cli, get=self.fake.get,
+                              free_vram=self.fake.free_vram, available_ram=self.fake.available_ram,
+                              sleep=lambda s: None, clock=lambda: self.now[0], log_dir=self.root / "logs",
+                              engine_log_dir=self.root / "launch-logs")
+        with self.assertRaisesRegex(InfraFailure, "strata launch --status failed"):
+            with server:
+                self.fail("must not enter")
+        self.assertEqual(self.verbs(), [])
+        self.assertEqual(self.pids, [])
+
 
 class WaitForFreeVramTests(unittest.TestCase):
     """空闲显存轮询（ADR-0025 起从 `llama_server.py` 并入本模块；测试随之从 `test_llama_server.py` 搬来）。"""
