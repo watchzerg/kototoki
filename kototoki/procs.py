@@ -10,11 +10,29 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from kototoki import artifacts
+
+logger = logging.getLogger(__name__)
+
+
+def _format_error(exc: BaseException) -> str:
+    """将底层异常压成单行 `<类型>: <首行消息>`（截到 200 字符），供锁诊断与告警日志复用。"""
+    first = (str(exc).splitlines() or [""])[0][:200]
+    return f"{type(exc).__name__}: {first}" if first else type(exc).__name__
+
+
+def _describe_stale(stale: Mapping[str, Any]) -> str:
+    """将已删除的残留锁字典压缩为单行可读摘要，保留 pid 与其余定位字段。"""
+    owner = stale.get("pid")
+    parts = [f"pid {owner}" if type(owner) is int else "no owner pid"]
+    parts += [f"{key}={value}" for key, value in stale.items()
+              if key not in ("pid", "replaced_stale_lock") and value is not None]
+    return ", ".join(parts)
 
 
 class LockError(RuntimeError):
@@ -84,15 +102,22 @@ class ProcessLock:
         self.held = False
 
     def read(self) -> dict[str, Any] | None:
-        if not self.path.exists():
-            return None
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
-            return {"unparseable": True}
-        return data if isinstance(data, dict) else {"unparseable": True}
+            text = self.path.read_text(encoding="utf-8-sig")
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            return {"unparseable": True, "error": _format_error(exc)}
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            return {"unparseable": True, "error": _format_error(exc)}
+        if not isinstance(data, dict):
+            return {"unparseable": True, "error": f"expected JSON object, got {type(data).__name__}"}
+        return data
 
     def acquire(self, *, break_stale: bool = False) -> None:
+        self.stale = None
         current = self.read()
         if current is not None:
             # 空的或无法解析的锁文件（持有者刚创建就被杀）没有 pid，与死 pid 同等对待：默认拒绝，`break_stale` 时替换。
@@ -100,7 +125,12 @@ class ProcessLock:
             if owner is not None and self.alive(owner, current.get("pid_created")):
                 raise LockError(f"{self.kind} {self.path} held by live pid {owner}; not starting. Do not kill it.")
             if not break_stale:
-                origin = f"from dead pid {owner}" if owner is not None else "with no owner pid (empty or unparseable)"
+                if owner is not None:
+                    origin = f"from dead pid {owner}"
+                elif detail := current.get("error"):
+                    origin = f"with no owner pid ({detail})"
+                else:
+                    origin = "with no owner pid (empty or unparseable)"
                 raise LockError(f"Stale {self.kind} {self.path} {origin}; "
                                 f"set KOTOTOKI_BREAK_STALE_LOCK=1 for one run to remove it")
             self.stale = current
@@ -108,23 +138,51 @@ class ProcessLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError as exc:
-            raise LockError(f"{self.kind} {self.path} was taken concurrently") from exc
+        except OSError as exc:
+            if self.stale is not None:
+                stale_info = _describe_stale(self.stale)
+                detail = _format_error(exc)
+                logger.warning("[lock] removed stale %s %s (%s), but creating new lock failed: %s",
+                               self.kind, self.path, stale_info, detail)
+                raise LockError(f"Failed to acquire {self.kind} {self.path} after removing stale lock "
+                                f"({stale_info}): {detail}") from exc
+            if isinstance(exc, FileExistsError):
+                raise LockError(f"{self.kind} {self.path} was taken concurrently") from exc
+            raise
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump({"pid": self.pid, "pid_created": self.created, **self.info, "owner": "kototoki",
                        "created_at_utc": artifacts.utc_now(), "replaced_stale_lock": self.stale}, stream)
         self.held = True
 
+    def _read_owned(self, action: str) -> dict[str, Any] | None:
+        current = self.read()
+        if current is None:
+            logger.warning("[lock] skipping %s of %s %s: lock file missing", action, self.kind, self.path)
+            return None
+        if current.get("unparseable"):
+            logger.warning("[lock] skipping %s of %s %s: %s",
+                           action, self.kind, self.path, current.get("error", "unparseable lock"))
+            return None
+        if current.get("pid") != self.pid or current.get("pid_created") != self.created:
+            logger.warning("[lock] skipping %s of %s %s: owner mismatch (found pid=%r, pid_created=%r; "
+                           "expected pid=%r, pid_created=%r)",
+                           action, self.kind, self.path,
+                           current.get("pid"), current.get("pid_created"), self.pid, self.created)
+            return None
+        return current
+
     def update(self, **fields: Any) -> None:
-        if self.held:
-            current = self.read() or {}
-            if current.get("pid") == self.pid:
-                artifacts.atomic_write_json(self.path, current | fields)
+        if not self.held:
+            return
+        current = self._read_owned("update")
+        if current is not None:
+            artifacts.atomic_write_json(self.path, current | fields)
 
     def release(self) -> None:
         if not self.held:
             return
-        current = self.read()
-        if current and current.get("pid") == self.pid and current.get("pid_created") == self.created:
-            self.path.unlink()
-        self.held = False
+        try:
+            if self._read_owned("release") is not None:
+                self.path.unlink()
+        finally:
+            self.held = False
