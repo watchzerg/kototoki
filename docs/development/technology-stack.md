@@ -7,7 +7,7 @@
 - Python 3.14（`.python-version` 写 `3.14`，补丁版本由 uv 决定；`pyproject.toml` 要求 `>=3.14,<3.15`；2026-11-20 由 3.13 升级，[ADR-0036](../adr/0036-python-3-14.md)）；根项目即产品项目 `kototoki`，`[tool.uv] package = false` 不打包，`environments` 只解析 `sys_platform == 'linux'`（[ADR-0034](../adr/0034-ubuntu-only-platform.md)）。
 - 项目 `mise.toml` 统一承担工具（只固定 `uv = "0.13"`，`mise.lock` 锁精确版本）、环境变量（`[env]` 与本机 `mise.local.toml`）与 task（`mise-tasks/uv/` + 根 `mise.toml`），不再使用 just，也无需 `mise trust`（[ADR-0034「工具链分层」](../adr/0034-ubuntu-only-platform.md#工具链分层)、[ADR-0041](../adr/0041-mise-tasks-and-env.md)）。
 - uv 管理解释器、根环境与 `uv.lock`，用默认布局：解释器在 uv 共享目录，依赖在 `.venv/`。
-- 产品推理在根环境（统一 CUDA 12.8）中运行；产品翻译（2026-11-08 起，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）与专名建表（2026-11-09 起，[ADR-0028](../adr/0028-names-accept-empty-table.md)）都用独立安装的 Strata 0.2 版本线（本机 0.2.13.1／build 0.1.59.1，`strata` 在 PATH 上，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录），由产品用 `strata launch --no-tui --model iq3_s`／`--stop` 自动启停、整批一个 session；
+- 产品推理在根环境（统一 CUDA 12.8）中运行；产品翻译（2026-11-08 起，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）与专名建表（2026-11-09 起，[ADR-0028](../adr/0028-names-accept-empty-table.md)）都用独立安装的 Strata 0.2 版本线（版本线、PATH 与模型等外部前置见[依赖布局与资产清单](dependencies.md)），由产品用 `strata launch --no-tui --model iq3_s`／`--stop` 自动启停、整批一个 session；
 
   它是外部前置，不在 `assets.toml` 里，由用户维护（见[依赖布局](dependencies.md)）。
 

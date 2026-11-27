@@ -72,9 +72,8 @@
 - 产品 STT 阶段之间串行。例外：`cross` 引擎的 asr worker 让 Whisper（CT2）与 Qwen（torch）同进程共驻到退出，运行时不按显存回退；translate、align 不与之共驻（[ADR-0003](../adr/0003-new-pyannote-baselines.md)）。
 - 产品只有一个服务进程 Strata，由共享 `strata.Session` 管理：
   - 整批一个，首次真正需要模型时才启动（names 或 translate），两阶段之间不停；没有影片需要模型时不启动。
-  - 启动前 `strata launch --status` 必须为空（不抢占别人的 launch），空闲显存达到 14000 MiB、可用内存达到 50 GiB。
-  - 结束、出错或编排被中断（`Session` 是上下文管理器）都执行 `strata launch --stop`，并核实 status 为空、显存回到 14000 MiB。
-  - 启动失败整批累计 3 次，或 `StrataRefused`，即置 `unavailable`；额度由 names 与翻译共用。
+  - 启动前核对没有别人的 launch、空闲显存与可用内存，启动失败的额度由 names 与翻译共用；门槛、额度与启动细节见 [Strata session](modules/strata-session.md#当前行为规格)。
+  - 结束、出错或编排被中断（`Session` 是上下文管理器）都停掉自己启动的 Strata 并核实释放。
   - 产品不启动 llama-server。产品进程被强杀时 Strata 可能留在后台，下次因 status 非空而拒绝，需手动 `strata launch --stop`。
 
 ## 产品包的责任边界
