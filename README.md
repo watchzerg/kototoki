@@ -6,7 +6,7 @@
 
 从一批日语视频或音频批量生产中日双语 SRT（写在源文件旁），全部在本机 GPU 上运行（[行为规格](docs/behaviors/bilingual-subtitle-pipeline.md)、[ADR-0007](docs/adr/0007-bilingual-subtitle-pipeline-architecture.md)）。
 
-1. 环境：`mise run install`（`uv sync --locked` 建统一 CUDA 12.8 根环境；ffmpeg 用 `sudo apt install ffmpeg`，从 PATH 调用）；STT 模型放 `.local/models/`，缺失时 `mise run fetch-models` 按清单下载（几十 GB，门控 `HF_TOKEN` 可写进本机 `mise.local.toml`）；专名与翻译共用的 Strata（0.2 线，`strata` 在 PATH，模型 `qwen3.8-flash-next-iq3_s` 在 Strata 数据目录）自行维护，启动时会核对版本线与配置；`mise run verify-assets` 离线核对。安装与下载均联网改环境，先问的规则见 [AGENTS.md](AGENTS.md#重任务与环境)。
+1. 环境：`mise run install`（`uv sync --locked` 建统一 CUDA 12.8 根环境；ffmpeg 用 `sudo apt install ffmpeg`，从 PATH 调用）；STT 模型放 `.local/models/`，缺失时 `mise run fetch-models` 按清单下载（几十 GB，门控 `HF_TOKEN` 可写进本机 `mise.local.toml`）；专名与翻译共用的 Strata 由用户自行安装维护，前置见[依赖布局](docs/development/dependencies.md)；`mise run verify-assets` 离线核对。安装与下载均联网改环境，先问的规则见 [AGENTS.md](AGENTS.md#重任务与环境)。
 
    ffmpeg 只用默认 swr 重采样，不要求 libsoxr，路径可在配置里改。模型的来源、revision 与 SHA256 以 [`assets.toml`](assets.toml) 为准，布局与升级步骤见[依赖布局与资产清单](docs/development/dependencies.md)。
 2. 配置：复制 `kototoki.toml.example` 为 `kototoki.toml`，至少填 `paths.input_dir`；全部键、默认值与启动检查见[配置参考](docs/architecture/modules/config-and-media/reference.md)。

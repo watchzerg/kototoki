@@ -14,7 +14,7 @@ covers:
 - `load` 只解析路径，不看文件系统；`input_dir` 存在性与位置、`work_dir` 位置由 `__main__` 的 `check_input_dir`／`check_work_dir` 检查（[批次编排](../batch-orchestration.md)）。
 - 不可配置：GPU 锁固定为仓库内 `.local/gpu.lock`（`Config.gpu_lock`）；`Config.break_stale_lock` 只在环境变量 `KOTOTOKI_BREAK_STALE_LOCK=1` 时为真。
 - `[input] use_embedded_subtitles` 不进任何产物身份：走哪条路径由产物本身体现。
-- 翻译与建表只有 `seed`；模型由 Strata 管理、端口固定 8080，没有 `model`／`port` 键；建表的提示、采样、schema 与归一规则在 `kototoki/names/recipes.py`，不是配置项。
+- 翻译与建表只有 `seed`；模型与端口由 Strata 管理（见 [Strata session](../strata-session.md#当前行为规格)），没有 `model`／`port` 键；建表的提示、采样、schema 与归一规则在 `kototoki/names/recipes.py`，不是配置项。
 
 ## 代码与验证入口
 

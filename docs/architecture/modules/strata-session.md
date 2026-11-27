@@ -75,7 +75,7 @@ covers:
 ## 实现设计
 
 - 只有 Strata 这一个后端实现，不抽后端协议。服务进程不由本模块持有：`launch` 返回后它在后台运行，`--stop` 才卸载。
-- `strata` 从 PATH 调用（安装器放在 `~/.local/bin/strata`）。
+- `strata` 从 PATH 调用；安装与外部前置见[依赖布局与资产清单](../../development/dependencies.md)。
 - `probe` 改编自研究侧 `archive/2026-11-18-pre-research-restructure:experiments/translation_v3/strata.py::probe` 的 `"default"` 分支：不检查 preset 名、不限制并发数，起草方式改读服务日志。
 - Strata 身份常量（`MODEL`、`STRATA_SERIES`、`STRATA_LAUNCH`、`STRATA_RESOLVED`）只在这里定义，翻译配方 `q3-translate-v1` 与建表配方 `q3-names-v3` 的运行时身份取 `STRATA_LAUNCH` 与 `STRATA_RESOLVED`（版本线只在接入检查里用）。
 - `Session` 的状态（`server`、`ordinal`、`start_failures`、`unavailable`、`runtime_root`）归它自己；`runtime_root` 在构造时按 UTC 时间戳与 pid 定下。

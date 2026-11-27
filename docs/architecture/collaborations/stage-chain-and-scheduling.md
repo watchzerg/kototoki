@@ -57,7 +57,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 - GPU 阶段严格串行，由 `.local/gpu.lock` 保护；只有编排器获取它：在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；names 只在有文件的 `ja.srt` 有 cue 时、translate 只在有文件需要模型时才取锁，Strata 在第一次请求模型时启动。锁文件内容与残留锁规则见[批次编排][orch-spec]与[运行日志与进程][run-proc]。
 - 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`，已被占用则退出码 3。任何阶段撞 GPU 锁都是进程级冲突：整批以退出码 4 结束、不写逐文件 `failure.json`，已完成的产物保留，可续跑（ADR-0025）。
 - 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立，并发只会争抢算力与显存。
-- names 与 translate 共用编排持有的一个 Strata session（[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)「Strata session」）：第一次真正需要模型时启动，两阶段之间不停，整批结束、出错或中断时 `strata launch --stop`。启动前核对没有别人的 launch、空闲显存足够、身份符合 ADR-0021「Q3 服务与运行顺序」；Strata 被拒绝（`StrataRefused`）或整批启动失败累计 `MAX_START_FAILURES`（3）次后 session 不可用，本批其余需要模型的影片在两个阶段都直接失败。见[专名一致性][names]、[翻译子系统][tr]。
+- names 与 translate 共用编排持有的一个 Strata session（[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)「Strata session」）：第一次真正需要模型时启动，两阶段之间不停，整批结束、出错或中断时 `strata launch --stop`。启动前的核对与失败额度见 [Strata session](../modules/strata-session.md#当前行为规格)。见[专名一致性][names]、[翻译子系统][tr]。
 
 ## 进程、环境与依赖
 

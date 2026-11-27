@@ -33,7 +33,7 @@ covers:
 4. 计划：CPU 阶段之后对每个文件调用一次 `plan.next_stage`，从 vad 起（采用内嵌字幕的文件从 names 起）逐阶段核对产物身份，得到第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`names`／`translate`）或终态 `publish`（无语音）；没有 `done` 状态——是否已发布由扫描按源文件旁的字幕判定。
 5. vad → asr → align：计划落在本阶段的文件组成一批，交给一个 worker 子进程；没有文件需要 GPU 时不取 GPU 锁。worker 结束后对每个文件 `plan.advance`：产物缺失或身份不符即记该阶段失败（`ArtifactMissing`），否则推进到下一个需要运行的阶段。
 6. ja-cues（进程内，`build_ja_cues`）：`cues.build_cues(align, [cues] 规则)`，写 `ja.srt` 后写 `ja-cues.json`（payload 另记 `ja.srt` 的 SHA256 `ja_srt_sha256`，供阶段计划核对 `ja.srt` 的新鲜度），随后 `plan.advance`；三件套日志行见[日文 cue](../japanese-cues.md#当前行为规格)。
-7. 共享 Strata session：进入 names 之前建一个 `strata.Session(config, on_server_pid=写 GPU 锁)`，包住 names 与 translate 两个阶段；正常结束、出错或被中断都 `strata launch --stop` 并核实显存释放，之后才放 GPU 锁。Strata 在第一次真正请求模型时才启动，两阶段之间不停；两阶段都不需要模型时整批不启动。启动失败整批累计 `strata.MAX_START_FAILURES`（3）次或被拒绝（`StrataRefused`）后 session 不可用，此后两阶段需要模型的文件直接失败。
+7. 共享 Strata session：进入 names 之前建一个 `strata.Session(config, on_server_pid=写 GPU 锁)`，包住 names 与 translate 两个阶段；正常结束、出错或被中断都 `strata launch --stop` 并核实显存释放，之后才放 GPU 锁。Strata 在第一次真正请求模型时才启动，两阶段之间不停；两阶段都不需要模型时整批不启动。启动失败的额度与不可用后的处理见 [Strata session](../strata-session.md#当前行为规格)。
 8. names（进程内，恒在链上，`names_batch`）：
    - 读每个文件的 `ja.srt`，读出错记该文件 `names` 阶段失败；只有某个文件有 cue 时才取 GPU 锁。
    - 有 cue 的文件把共享 session 传给 `names.build_document`（零条目文件传 `None`），随后由编排 `write_artifact(name-table.json, plan.identities["names"], payload)`。
