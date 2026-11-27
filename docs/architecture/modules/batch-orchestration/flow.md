@@ -53,7 +53,7 @@ covers:
 
 - 代码：
   - `kototoki/__main__.py`（`main`、`check_input_dir`、`check_work_dir`）。
-  - `kototoki/job.py`（`run`、`_run`（按序调用 `_scan_stage`、`_extract_stage`、`_plan_stage`、`_gpu_stages`、`cues_batch`、`_model_stages`、`_publish_stage`、`_check_all_published`）、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`speech_gate`、`advance_or_fail`、`build_ja_cues`、`cues_batch`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。
+  - `kototoki/job.py`（`run`、`_run`（按序调用各 `_*_stage`）、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`speech_gate`、`advance_or_fail`、`build_ja_cues`、`cues_batch`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。
   - `kototoki/logs.py`、`kototoki/procs.py`、`kototoki/workers/protocol.py` 与 worker 启动见[运行日志与进程原语](../run-logging-and-processes.md)。
 - 测试（core，`mise run test`）：
   - `tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`（经 `plan` 取身份）、属性 patch 的专名、翻译与 Strata 函数（`merge` 用真的）、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖主路径：
