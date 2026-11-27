@@ -420,6 +420,169 @@ SESSION_ENGINE_KEYS = ("candidate", "strata", "cold_load_seconds", "free_vram_mi
                        "available_ram_gib_before_start")
 
 
+@dataclass
+class _Translation:
+    """一次 `translate_document` 的共享状态：计划、已打开的 run、批次与已完成／已记录的行。"""
+    plan: TranslatePlan
+    session: Session | None
+    relative: str
+    scene: Scene
+    run: dict[str, Any]
+    batches: list[Batch]
+    done: dict[int, dict[str, Any]]
+    recorded: dict[int, dict[str, dict[str, Any]]]
+
+    @property
+    def root(self) -> Path:
+        return self.plan.run_dir
+
+    def record(self, row: dict[str, Any]) -> None:
+        _append_line(self.root / NODES, row)
+        self.recorded.setdefault(row["parent_index"], {})[row["batch_id"]] = row
+
+
+@dataclass
+class _SessionState:
+    """一次 Strata session 的进度：`entry` 是写入 `run.json` 的 session 记录，`current` 是正在翻译的批次（意外异常行带它的 ID）。"""
+    started: float
+    entry: dict[str, Any] | None = None
+    current: Batch | None = None
+
+
+def _translate_empty(plan: TranslatePlan, run: dict[str, Any]) -> TranslateResult:
+    """零条目文档：直接记为完成，不请求模型。"""
+    root = plan.run_dir
+    run["completion"] = {"state": "complete", "batches_total": 0, "batches_complete": 0, "cues_total": 0,
+                         "restarts_last_call": 0}
+    atomic_write_json(root / "run.json", run)
+    report = resolve.build_report([], run["completion"])
+    atomic_write_json(root / REPORT, report)
+    return TranslateResult({}, 0, report)
+
+
+def _open_translation(plan: TranslatePlan, session: Session | None, relative: str) -> _Translation | TranslateResult:
+    """打开并核对 run 目录；零条目文档直接返回结果，计划不需要模型而批次仍缺时抛 `TranslateError`。"""
+    document, root, seed = plan.document, plan.run_dir, plan.identity["seed"]
+    scene = scene_from_document(document)
+    run = _open_run(root, seed, plan.names, document, scene)
+    if not scene.cues:
+        return _translate_empty(plan, run)
+    batches = build_batches(scene)
+    done = _read_batches(root, batches)
+    recorded = _read_nodes(root, batches, done)
+    if len(done) < len(batches) and (session is None or not plan.needs_model):
+        raise TranslateError(f"{root} is recorded as complete but {len(batches) - len(done)} batch(es) are missing "
+                             f"from {BATCHES}; delete the run directory to translate again")
+    return _Translation(plan, session, relative, scene, run, batches, done, recorded)
+
+
+def _register_session(tr: _Translation, state: _SessionState) -> tuple[dict[str, Any], Any]:
+    """启动 Strata，把 session 记录登记进 `run.json`，返回记录与本 session 的客户端。"""
+    session, root = tr.session, tr.root
+    server = session.ensure_started()
+    state.entry = entry = {
+        "index": len(tr.run["sessions"]) + 1, "server_session": session.label, "started_at_utc": utc_now(),
+        "engine": {key: server.identity.get(key) for key in SESSION_ENGINE_KEYS},
+        "pending_at_start": len(tr.batches) - len(tr.done), "batches_written": 0,
+        "stop_reason": None, "infra_failure": None}
+    tr.run["sessions"].append(entry)
+    atomic_write_json(root / "run.json", tr.run)
+    log.info("[translate] session %d start %s (%s): %d of %d batch(es) pending", entry["index"], tr.relative,
+             entry["server_session"], entry["pending_at_start"], len(tr.batches))
+    client = session.client(root / "transport" / f"session-{entry['index']:02d}", timeout=CLIENT_TIMEOUT_SECONDS)
+    return entry, client
+
+
+def _translate_pending(tr: _Translation, state: _SessionState, entry: dict[str, Any], client: Any,
+                       cache_state: dict[str, Any]) -> None:
+    """按序翻译尚未完成的批次，每批追加 `batches.jsonl` 并刷新 `run.json`。"""
+    plan, root, number = tr.plan, tr.root, entry["index"]
+
+    def attempt(node: Batch) -> dict[str, Any]:
+        try:
+            return (translate_batch(client, tr.scene, node, plan.names, plan.identity["seed"], cache_state,
+                                    plan.work_dir.parent) | {"session": number})
+        except StepFailed as exc:
+            if exc.kind in INFRA_KINDS:
+                raise
+            assert exc.record is not None
+            return exc.record | {"error_kind": exc.kind, "error": str(exc)[:2000], "session": number}
+
+    for batch in tr.batches:
+        if batch.index in tr.done:
+            continue
+        state.current = batch
+        row = resolve.translate_resolving(tr.scene, batch, attempt, tr.recorded.setdefault(batch.index, {}),
+                                          tr.record)
+        row = row | {"session": number}
+        _append_line(root / BATCHES, row)
+        tr.done[batch.index] = row
+        log.info("%s", _batch_line(row, len(tr.batches)))
+        entry["batches_written"] += 1
+        entry["wall_seconds"] = time.perf_counter() - state.started
+        atomic_write_json(root / "run.json", tr.run)  # 进程被强杀时 sessions[] 仍反映已写批次
+
+
+def _record_infra_failure(tr: _Translation, state: _SessionState, exc: StepFailed | InfraFailure) -> str:
+    """基础设施失败：把失败写进 run 记录（有证据则落盘），返回失败类别。"""
+    kind = exc.kind if isinstance(exc, StepFailed) else "server_start"
+    failure = {"kind": kind, "error": str(exc)[:2000], "at_utc": utc_now()}
+    entry = state.entry
+    if entry is None:
+        tr.run["server_start_failures"].append(failure)
+    else:
+        if isinstance(exc, StepFailed) and exc.record is not None:
+            evidence = tr.root / "infra-failures" / f"{exc.record['batch_id']}--session-{entry['index']:02d}.json"
+            atomic_write_json(evidence, exc.record)
+            failure["evidence"] = evidence.relative_to(tr.root).as_posix()
+        entry.update(stop_reason=kind, infra_failure=failure)
+    return kind
+
+
+def _run_session(tr: _Translation, restarts: int) -> int:
+    """一轮 Strata session：启动、翻译待办批次，按异常类型分流；基础设施失败时停 server 并返回加一后的重启数。"""
+    session = tr.session
+    state = _SessionState(started=time.perf_counter())
+    if session.unavailable is not None:
+        # 原因由 `Session` 写：启动额度耗尽（"failed to start N times … (start budget exhausted)"）或被拒（身份不符等）。
+        raise TranslateError(f"Strata is unavailable for the rest of this batch: {session.unavailable}")
+    try:
+        entry, client = _register_session(tr, state)
+        _translate_pending(tr, state, entry, client, _cache_state(session))
+    except (StepFailed, InfraFailure) as exc:
+        kind = _record_infra_failure(tr, state, exc)
+        session.stop()
+        restarts += 1
+        if restarts > MAX_RESTARTS:
+            log.error("[translate] giving up after %d Strata restart(s): %s: %s", MAX_RESTARTS, kind, _first_line(exc))
+            raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} Strata restarts "
+                                 f"({kind}): {exc}") from exc
+        log.warning("[translate] Strata restart %d/%d: %s: %s", restarts, MAX_RESTARTS, kind, _first_line(exc))
+    except StrataRefused as exc:
+        # 身份不符或已有别的 launch 在服务：重启无济于事；`Session` 已置 unavailable，本批其余需要模型的影片也不再尝试。
+        session.stop()
+        log.error("[translate] Strata refused: %s", _first_line(exc))
+        raise TranslateError(f"Strata refused: {exc}") from exc
+    except Exception as exc:
+        # 意外异常（非 JSON 响应、写盘失败等）：记录后停掉可能不健康的 server，原样上抛给编排器。
+        if state.entry is not None:
+            state.entry["stop_reason"] = f"session_error: {type(exc).__name__}: {exc}"[:2000]
+        # traceback 由编排器的 ctx.fail 记一次，这里不再附 exc_info，避免运行日志里出现两份。
+        log.error("[translate] unexpected %s during translation%s; stopping Strata", type(exc).__name__,
+                  f" (batch {state.current.batch_id})" if state.current is not None else "")
+        session.stop()
+        raise
+    finally:
+        entry = state.entry
+        if entry is not None:
+            entry.update(ended_at_utc=utc_now(), wall_seconds=time.perf_counter() - state.started,
+                         cache_reset=dict(_cache_state(session)))
+            log.info("[translate] session %d end: %d batch(es) written in %.1fs", entry["index"],
+                     entry["batches_written"], entry["wall_seconds"])
+        _finish(tr.root, tr.run, tr.batches, tr.done, restarts)
+    return restarts
+
+
 def translate_document(plan: TranslatePlan, session: Session | None, *, relative: str) -> TranslateResult:
     """按计划翻译一部影片的 `ja.srt`，返回 cue id → 译文（不出中文的 cue 为 None）；零条目文档不请求模型。`relative` 是输入目录内的相对路径，
     只进 session start 日志行，让多集批次里的批次与告警能归到某一集。
@@ -429,114 +592,14 @@ def translate_document(plan: TranslatePlan, session: Session | None, *, relative
     `TranslateError`，不会在没有 GPU 锁的情况下启动 Strata。没解决的 cue 按 `resolve` 追问，未翻译条数进
     `untranslated_count`，`report` 即写入 `report.json` 的内容。基础设施失败用尽重启抛 `TranslateError`（证据留在 run 目录）。
     """
-    document, root, seed = plan.document, plan.run_dir, plan.identity["seed"]
-    scene = scene_from_document(document)
-    run = _open_run(root, seed, plan.names, document, scene)
-    if not scene.cues:
-        run["completion"] = {"state": "complete", "batches_total": 0, "batches_complete": 0, "cues_total": 0,
-                             "restarts_last_call": 0}
-        atomic_write_json(root / "run.json", run)
-        report = resolve.build_report([], run["completion"])
-        atomic_write_json(root / REPORT, report)
-        return TranslateResult({}, 0, report)  # 零条目
-    batches = build_batches(scene)
-    done = _read_batches(root, batches)
-    recorded = _read_nodes(root, batches, done)
-    if len(done) < len(batches) and (session is None or not plan.needs_model):
-        raise TranslateError(f"{root} is recorded as complete but {len(batches) - len(done)} batch(es) are missing "
-                             f"from {BATCHES}; delete the run directory to translate again")
-
-    def record(row: dict[str, Any]) -> None:
-        _append_line(root / NODES, row)
-        recorded.setdefault(row["parent_index"], {})[row["batch_id"]] = row
+    tr = _open_translation(plan, session, relative)
+    if isinstance(tr, TranslateResult):
+        return tr  # 零条目
     restarts = 0
-    while len(done) < len(batches):
-        entry: dict[str, Any] | None = None
-        current: Batch | None = None  # 正在翻译的批次（意外异常行带它的 ID）
-        started = time.perf_counter()
-        if session.unavailable is not None:
-            # 原因由 `Session` 写：启动额度耗尽（"failed to start N times … (start budget exhausted)"）或被拒（身份不符等）。
-            raise TranslateError(f"Strata is unavailable for the rest of this batch: {session.unavailable}")
-        try:
-            server = session.ensure_started()
-            cache_state = _cache_state(session)
-            entry = {"index": len(run["sessions"]) + 1, "server_session": session.label, "started_at_utc": utc_now(),
-                     "engine": {key: server.identity.get(key) for key in SESSION_ENGINE_KEYS},
-                     "pending_at_start": len(batches) - len(done), "batches_written": 0,
-                     "stop_reason": None, "infra_failure": None}
-            run["sessions"].append(entry)
-            atomic_write_json(root / "run.json", run)
-            log.info("[translate] session %d start %s (%s): %d of %d batch(es) pending", entry["index"], relative,
-                     entry["server_session"], entry["pending_at_start"], len(batches))
-            client = session.client(root / "transport" / f"session-{entry['index']:02d}",
-                                    timeout=CLIENT_TIMEOUT_SECONDS)
-            number = entry["index"]
-
-            def attempt(node: Batch) -> dict[str, Any]:
-                try:
-                    return (translate_batch(client, scene, node, plan.names, seed, cache_state, plan.work_dir.parent)
-                            | {"session": number})
-                except StepFailed as exc:
-                    if exc.kind in INFRA_KINDS:
-                        raise
-                    assert exc.record is not None
-                    return exc.record | {"error_kind": exc.kind, "error": str(exc)[:2000], "session": number}
-
-            for batch in batches:
-                if batch.index in done:
-                    continue
-                current = batch
-                row = resolve.translate_resolving(scene, batch, attempt, recorded.setdefault(batch.index, {}),
-                                                  record)
-                row = row | {"session": number}
-                _append_line(root / BATCHES, row)
-                done[batch.index] = row
-                log.info("%s", _batch_line(row, len(batches)))
-                entry["batches_written"] += 1
-                entry["wall_seconds"] = time.perf_counter() - started
-                atomic_write_json(root / "run.json", run)  # 进程被强杀时 sessions[] 仍反映已写批次
-        except (StepFailed, InfraFailure) as exc:
-            kind = exc.kind if isinstance(exc, StepFailed) else "server_start"
-            failure = {"kind": kind, "error": str(exc)[:2000], "at_utc": utc_now()}
-            if entry is None:
-                run["server_start_failures"].append(failure)
-            else:
-                if isinstance(exc, StepFailed) and exc.record is not None:
-                    evidence = root / "infra-failures" / f"{exc.record['batch_id']}--session-{entry['index']:02d}.json"
-                    atomic_write_json(evidence, exc.record)
-                    failure["evidence"] = evidence.relative_to(root).as_posix()
-                entry.update(stop_reason=kind, infra_failure=failure)
-            session.stop()
-            restarts += 1
-            if restarts > MAX_RESTARTS:
-                log.error("[translate] giving up after %d Strata restart(s): %s: %s", MAX_RESTARTS, kind,
-                          _first_line(exc))
-                raise TranslateError(f"Infrastructure failure persisted after {MAX_RESTARTS} Strata restarts "
-                                     f"({kind}): {exc}") from exc
-            log.warning("[translate] Strata restart %d/%d: %s: %s", restarts, MAX_RESTARTS, kind, _first_line(exc))
-        except StrataRefused as exc:
-            # 身份不符或已有别的 launch 在服务：重启无济于事；`Session` 已置 unavailable，本批其余需要模型的影片也不再尝试。
-            session.stop()
-            log.error("[translate] Strata refused: %s", _first_line(exc))
-            raise TranslateError(f"Strata refused: {exc}") from exc
-        except Exception as exc:
-            # 意外异常（非 JSON 响应、写盘失败等）：记录后停掉可能不健康的 server，原样上抛给编排器。
-            if entry is not None:
-                entry["stop_reason"] = f"session_error: {type(exc).__name__}: {exc}"[:2000]
-            # traceback 由编排器的 ctx.fail 记一次，这里不再附 exc_info，避免运行日志里出现两份。
-            log.error("[translate] unexpected %s during translation%s; stopping Strata", type(exc).__name__,
-                      f" (batch {current.batch_id})" if current is not None else "")
-            session.stop()
-            raise
-        finally:
-            if entry is not None:
-                entry.update(ended_at_utc=utc_now(), wall_seconds=time.perf_counter() - started,
-                             cache_reset=dict(_cache_state(session)))
-                log.info("[translate] session %d end: %d batch(es) written in %.1fs", entry["index"],
-                         entry["batches_written"], entry["wall_seconds"])
-            _finish(root, run, batches, done, restarts)
-    completion = _finish(root, run, batches, done, restarts)
-    translations = _write_scene(root, scene, batches, done)
-    report = resolve.build_report([done[index] for index in range(len(batches))], completion)
-    atomic_write_json(root / REPORT, report)
+    while len(tr.done) < len(tr.batches):
+        restarts = _run_session(tr, restarts)
+    completion = _finish(tr.root, tr.run, tr.batches, tr.done, restarts)
+    translations = _write_scene(tr.root, tr.scene, tr.batches, tr.done)
+    report = resolve.build_report([tr.done[index] for index in range(len(tr.batches))], completion)
+    atomic_write_json(tr.root / REPORT, report)
     return TranslateResult(translations, report["counts"]["untranslated_cues"], report)

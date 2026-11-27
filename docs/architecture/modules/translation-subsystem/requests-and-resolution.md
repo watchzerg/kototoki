@@ -21,7 +21,7 @@ covers:
 - **校验**（`recipes.parse_translation`）：严格 JSON（重复键拒绝）、恰好一个 `translations` 对象，否则抛 `ValueError`；再按条判：非空且无空行的收下，其余记为 `missing`／`empty`／`blank_line`；多出的 ID（记数 `extra_ids`）与顺序不看。
 - 每个 Strata session 首个 completion 的 `cache_n` 只记录，不据此判失败；输入 token 超过 Q1 预算（12224）只记 `over_q1_budget`，不判失败。
 
-**失败分类**（`generate.run_step` 与 `translate_document`）：
+**失败分类**（`generate.run_step` 与 `translate_document` 的 session 循环（私有 `_run_session`））：
 
 | 种类 | 来源 | 处理 |
 | --- | --- | --- |
