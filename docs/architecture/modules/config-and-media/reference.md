@@ -10,7 +10,7 @@ covers:
 
 ## 定位与阅读
 
-`配置与媒体` 的子页：产品配置文件 `kototoki.toml` 的键、默认值与校验规则的参考。读取配置的代码与配方常量见[配置读取与配方](config-and-recipes.md)；各键在哪个阶段生效见对应模块页。入口 `python -m kototoki [kototoki.toml]`，省略参数时读当前目录的 `kototoki.toml`；仓库根的 `kototoki.toml.example` 列出全部键。
+`配置与媒体` 的子页：产品配置文件 `kototoki.toml` 的键、默认值与校验规则的参考。读取配置的代码与配方常量见[配置读取与校验](config-loading.md)与[配方常量与 recipe_hash](recipes.md)；各键在哪个阶段生效见对应模块页。入口 `python -m kototoki [kototoki.toml]`，省略参数时读当前目录的 `kototoki.toml`；仓库根的 `kototoki.toml.example` 列出全部键。
 
 ## 结构与默认值
 

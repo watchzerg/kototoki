@@ -1,24 +1,11 @@
 ---
 covers:
-  - kototoki/procs.py
-  - kototoki/workers/protocol.py
   - kototoki/job.py
+  - kototoki/workers/protocol.py
 ---
-# 运行日志与进程原语子页：进程原语与 worker 子进程
+# 运行日志与进程原语子页：worker 子进程
 
-`运行日志与进程原语` 的子页：进程存活与身份、子进程随编排器退出、O_EXCL 锁文件，以及 GPU worker 子进程的命令、环境、进度事件与崩溃重启。
-
-## 进程原语
-
-- **进程身份**：`pid_alive(pid)`（`os.kill(pid, 0)`；`PermissionError` 即别的用户的进程，视为存在；非整数或非正 pid 视为不存在）；`process_created(pid)` 取进程启动时间（`/proc/<pid>/stat` 第 22 个字段，开机以来的 clock tick；不可得时为 None）；`process_matches(pid, created)` 要求进程存活，且记录了启动时间时仍是同一进程（防 pid 复用）。
-- **子进程随编排器退出**（[ADR-0034](../../../adr/0034-ubuntu-only-platform.md#子进程与长任务)）：`contained(command)` 在命令前加 `setpriv --pdeathsig KILL --`。创建子进程的线程一退出（含编排器被 SIGKILL），内核就向子进程发 SIGKILL；调用方因此在同一线程里等子进程结束。不用 `preexec_fn`（提取线程池在，多线程下不安全）。GPU worker 与 Strata CLI 另传 `start_new_session=True`，Ctrl+C 只到编排器、由它回收；ffmpeg 留在前台进程组，Ctrl+C 让它立即退出。Strata 服务是 CLI 再 fork 出的，不继承 PDEATHSIG，靠 `--stop` 收尾。
-- **锁文件**（`ProcessLock(path, kind, info)`）：
-  - `acquire` 用 O_EXCL 创建锁文件，写入 `pid`、`pid_created`、调用方的 `info`、`owner: "kototoki"`、`created_at_utc` 与 `replaced_stale_lock`。
-  - 已有锁文件时：持有者存活（`process_matches`）即抛 `LockError`，从不抢占存活的持有者；没有 `pid_created` 的外部锁只按 pid 判断。
-  - 残留锁（死 pid，或空的／无法解析的／pid 不是整数的锁文件）默认抛 `LockError`，消息提示 `KOTOTOKI_BREAK_STALE_LOCK=1`；`acquire(break_stale=True)` 时删除残留锁再创建，旧内容记入 `replaced_stale_lock`。
-  - 并发创建撞上即抛 `LockError`。
-  - `update(**fields)` 只在持有且锁文件仍属本进程时原子改写；`release()` 只删 pid 与创建时间都与本进程相同的锁。
-  - 编排经 `update` 往 GPU 锁写附加字段：worker 运行期间 `worker_pid`／`worker_stage`（`Popen.pid`，`setpriv` exec 后即 worker 本身）；Strata 运行期间 `server_pid`（由共享 `strata.Session` 的 `on_server_pid` 回调提供：ready 后写入、停止后清空；pid 取自 `strata launch --status`，缺失时不记）。
+`运行日志、进程原语与 worker 子进程` 的子页：GPU worker 子进程的命令、环境、进度事件与崩溃重启。
 
 ## worker 子进程
 
@@ -45,14 +32,11 @@ covers:
 
 ## 代码与验证入口
 
-- 代码：`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contained`、`ProcessLock`、`LockError`）；worker 启动在 `kototoki/job.py`（`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
+- 代码：worker 启动在 `kototoki/job.py`（`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
 - 测试（core，`mise run test`）：
   - `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离、`fatal` 以退出码 2 停止；`classify_launch` 的部分失败（不重启）、`fatal`（从下一文件重启）、无 `started` 启动崩溃（不重启）与 `started` 后／已处理文件后崩溃归咎；`failed_windows` 清空窗口文字并记录。
-  - `tests/core/test_procs.py`：存活持有者永不被抢占；死持有者的残留锁默认拒绝、`break_stale` 才替换并记录旧锁；`release` 只删自己的锁；`process_created`／`process_matches` 以启动时间识别 pid 复用。
   - `tests/core/test_job.py` 的 `LockTests`（GPU 锁冲突时保留 CPU 阶段产物）与 `IsolationTests`（单文件崩溃隔离并按文件重启 worker、启动期崩溃整批失败且不重启、非 JSON stdout 转发到 stderr 日志）。
-  - 测试精简（2026-11-22）后不再有测试覆盖：
-    - 进程原语：锁内容、空锁与不可解析的锁、无 `pid_created` 的外部锁按 pid 判断、非整数 pid、并发创建报锁错误、`update` 只改自己的锁、含空格与括号的 comm 解析、无效 pid 无身份、`contained` 的 `setpriv` 前缀。
+  - 测试精简（2026-11-22）后不再有测试覆盖（协议与编排侧）：
     - 协议：`jobs` 文件往返与畸形输入、全部完成退出 0 且每文件一行 UTF-8、启动失败退出码 2、`run_worker` 只加载一次、`classify_launch` 的 `startup_failed`、退出码 1 缺事件、全部已报告后崩溃无嫌疑、无待处理 id 的事件被忽略、`fail_window` 与 `validate` 的拒绝。
     - 编排侧：`startup_failed` 事件不重启、退出码 1 缺事件按崩溃重启、读 worker 输出时中断回收 worker、各类锁冲突与残留锁、空锁破除、锁内 pid 记录。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。
-- 未验证（Linux）：整批运行中强杀编排器后 GPU worker 释放显存的真实路径（Windows 时期的[最终验收](../../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)只作历史）。

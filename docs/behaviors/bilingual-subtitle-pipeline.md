@@ -58,7 +58,7 @@ merge 阶段写一份副本到工作目录 `publish/`，再原子写到源文件
 
 ### 切分规则
 
-日文 cue 的键与默认值见[配置参考][cfg]；规则顺序、无时间字符的回填（`time_source`）、毫秒取整见[日文 cue][cues]。cue 为什么是翻译输入见[产物交接][handoff-cue]。双语合并把中文内的换行替换为空格，保证 `ja-zh.srt` 每条恰好两行（未翻译的 cue 只有日文一行；[翻译子系统与双语合并][tr]）。
+日文 cue 的键与默认值见[配置参考][cfg]；规则顺序、无时间字符的回填（`time_source`）、毫秒取整见[日文 cue][cues]。cue 为什么是翻译输入见[产物交接][handoff-cue]。双语合并把中文内的换行替换为空格，保证 `ja-zh.srt` 每条恰好两行（未翻译的 cue 只有日文一行；[双语合并][merge]）。
 
 ### 专名表可人工校对
 
@@ -91,7 +91,7 @@ merge 阶段写一份副本到工作目录 `publish/`，再原子写到源文件
 - [配置、配方与媒体提取][media]、[配置参考][cfg]：配置键、音轨与 WAV、内嵌字幕抽取与清洗。
 - [STT worker][stt]、[STT ASR](../architecture/modules/stt-asr.md)：VAD、转写与强制对齐。
 - [日文 cue][cues]：把字符时间切成日文字幕条目。
-- [Strata 服务与共享 session](../architecture/modules/strata-session.md)、[专名一致性][names]、[翻译子系统与双语合并][tr]：建表、翻译与中日两行合并。
+- [Strata 服务与共享 session](../architecture/modules/strata-session.md)、[专名一致性][names]、[翻译子系统][tr]、[双语合并][merge]：建表、翻译与中日两行合并。
 - [运行日志与进程][run]：运行日志、锁文件与子进程。
 
 ### 拆出的内容
@@ -136,6 +136,7 @@ merge 阶段写一份副本到工作目录 `publish/`，再原子写到源文件
 [cues]: ../architecture/modules/japanese-cues.md
 [names]: ../architecture/modules/name-consistency.md
 [tr]: ../architecture/modules/translation-subsystem.md
+[merge]: ../architecture/modules/translation-subsystem/bilingual-merge.md
 [orch]: ../architecture/modules/batch-orchestration.md
 [plan]: ../architecture/modules/stage-plan.md
 [art]: ../architecture/modules/artifact-contract/layout-and-identity.md
