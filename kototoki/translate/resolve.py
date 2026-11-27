@@ -78,20 +78,20 @@ def translate_resolving(scene: Scene, batch: Batch, attempt: Callable[[Batch], d
     不含 `translations` 的行，基础设施失败直接抛出。`recorded` 是本批次已在节点日志里的节点（batch_id → 行），
     `record(row)` 追加一个节点结果。
     """
-    def run(node: Batch, depth: int) -> dict[str, Any]:
+    def run(node: Batch, depth: int) -> tuple[dict[str, Any], bool]:
         row = recorded.get(node.batch_id)
         if row is not None:
             if row.get("target_ids") != list(node.target_ids) or row.get("depth") != depth:
                 raise ValueError(f"Node journal row {node.batch_id} does not match the resolution plan")
-            return row
+            return row, False
         row = attempt(node)
         if depth == 0 and "translations" in row and not row["unresolved"]:
-            return row
+            return row, True
         row = {**row, "parent_index": batch.index, "depth": depth}
         record(row)
-        return row
+        return row, True
 
-    first = run(batch, 0)
+    first, first_fresh = run(batch, 0)
     if "translations" in first and not first["unresolved"]:
         return {key: value for key, value in first.items() if key != "unresolved"}
     translations: dict[str, str | None] = {}
@@ -99,7 +99,7 @@ def translate_resolving(scene: Scene, batch: Batch, attempt: Callable[[Batch], d
     untranslated: list[dict[str, Any]] = []
 
     def solve(node: Batch, depth: int) -> None:
-        row = first if depth == 0 else run(node, depth)
+        row, fresh = (first, first_fresh) if depth == 0 else run(node, depth)
         accepted = "translations" in row
         unresolved: dict[str, str] = row.get("unresolved") or {}
         nodes.append({"batch_id": node.batch_id, "depth": depth, "target_ids": list(node.target_ids),
@@ -110,14 +110,15 @@ def translate_resolving(scene: Scene, batch: Batch, attempt: Callable[[Batch], d
         if accepted:
             translations.update(row["translations"])
             kids = runs(scene, node, unresolved)
-            if kids:
+            if kids and fresh:
                 log.warning("[translate] batch %s: %d cue(s) unresolved (%s); asking again in %d sub-batch(es)",
                             node.batch_id, len(unresolved), reason_counts(unresolved), len(kids))
         else:
             kids = halves(scene, node)
             if kids:
-                log.warning("[translate] batch %s failed (%s); splitting into %d sub-batch(es)", node.batch_id,
-                            row["error_kind"], len(kids))
+                if fresh:
+                    log.warning("[translate] batch %s failed (%s); splitting into %d sub-batch(es)", node.batch_id,
+                                row["error_kind"], len(kids))
             else:
                 cue = node.target_ids[0]
                 translations[cue] = None

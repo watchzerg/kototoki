@@ -19,7 +19,7 @@ covers:
   - worker 壳在子进程里，由 `workers/gpu.main` 用同一 `RunFormatter` 写 stderr（[STT worker](../stt-workers.md)）。
 - **级别**：
   - INFO：进度、计数与耗时——每阶段 start／逐文件 done／end、worker 启动（`pid` 与文件数）与 stdout 进度事件、清理既有残留临时文件或既有 `failure.json`（仅确实删除时记对象与原因）、覆盖既有阶段产物／字幕文件／解码日志／派生 WAV（仅确实覆盖时记对象与原因，首次新建不记）、建表每部一行、翻译每批一行、发布行、结尾汇总。
-  - WARNING：流程继续但应看一眼的事——`ffmpeg=unavailable` 诊断、大小仍在变化或扫描 `stat()` 失败、既有产物无法读取或解析、发布期发现字幕已出现而不覆盖、媒体告警（含 `ffprobe` 与字幕抽取退出码 0 时的非空 `stderr`，由编排在主线程逐条记，续跑跳过 extract 时照样出现）、worker stderr 告警或非零退出（单次启动最多一条合并 `see <stderr>` 指针）、建表终态失败写空表、等显存超过 30 s、Strata 重启／追问与拆分／未翻译。
+  - WARNING：流程继续但应看一眼的事——`ffmpeg=unavailable` 诊断、大小仍在变化或扫描 `stat()` 失败、既有产物无法读取或解析、发布期发现字幕已出现而不覆盖、媒体告警（含 `ffprobe` 与字幕抽取退出码 0 时的非空 `stderr`，由编排在主线程逐条记，续跑跳过 extract 时照样出现）、worker stderr 告警或非零退出（单次启动最多一条合并 `see <stderr>` 指针）、建表终态失败写空表、等显存超过 30 s、Strata 重启／停服前意外异常／续跑截断 JSONL／追问与拆分（回放不重打）／未翻译。
   - ERROR：文件级与进程级失败，另含 Strata 不可用（被拒绝或启动额度用尽，整批一次）与停止未核实。DEBUG 不用。
 - **行格式**（`kototoki/logs.py` 的 `LOG_FORMAT`／`LOG_DATEFMT`）：UTC 墙钟、自本次 `run` 起的相对秒（单调时钟，格式化时取：系统时钟被校正时不跳变；时间戳仍是墙钟，会随校正跳）、定宽级别、消息；非 `kototoki` logger 的消息前加 `[<logger 名首段>]`（如 `[transformers]`）。消息沿用 `[stage]` 前缀与 start／done／end／FAILED 词汇。例：
 
@@ -29,7 +29,7 @@ covers:
   2026-10-18 13:05:02Z [  3531.0s] ERROR    [translate] FAILED S1/ep01.mkv (work_id=0123456789ab): TranslateError
   ```
 
-  文件级失败的 ERROR 行带 `(work_id=<id>)` 与异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；不带 traceback 的 FAILED 行（同类失败已记过、Strata 不可用之后、worker 崩溃或启动失败）改为 `<类型>: <异常消息首行>`（截到 200 字符），例 `[publish] FAILED S1/ep02.mkv (work_id=0123456789ab): OSError: [Errno 28] No space left on device`。失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`，没有 traceback 也没有消息。
+  文件级失败的 ERROR 行带 `(work_id=<id>)` 与异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；不带 traceback 的 FAILED 行（同类失败已记过、Strata 因被拒或启动额度用尽而不可用——含触发该状态的当次影片、worker 崩溃或启动失败）改为 `<类型>: <异常消息首行>`（截到 200 字符），例 `[publish] FAILED S1/ep02.mkv (work_id=0123456789ab): OSError: [Errno 28] No space left on device`。失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`，没有 traceback 也没有消息。
 - **文件**：
   - `<work root>/run-<UTC戳>.log` 与控制台逐行相同，是权威副本。控制台流的编码取决于调用方，产品不改（batch-run-fixes 06.5）。
   - `<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时先写一条分隔行（`--- [<stage>] launch pid=<pid> utc=<UTC> files=<n> ---`，重启时先换行），再追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后只读本次新增部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，并与非零退出码合并为运行日志中最多一条 `WARNING ... see <stderr>`（含退出码 1 无告警的裸崩溃，以及退出码 2 带告警的致命/启动失败）。非本格式的行（裸 traceback、tqdm 残行与 torch glog 行）不计入告警计数。
@@ -38,10 +38,10 @@ covers:
   1. 转写、cue 与窗口文字、译文、专名表条目与 `work_guess`、提示词、grammar、模型响应正文不进任何日志；失败窗口只记序号与 reason。
   2. 带 traceback 的失败行只记异常类型，traceback 随后：源码行加末行的 `<类型>: <异常消息>`（消息可能含文件路径，不含转写；校验消息是固定文本，如 `Duplicate JSON key` 不带键名）；异常消息不做通用截断。把异常首行嵌进一行日志的地方都截到 200 字符：
      - 不带 traceback 的 FAILED 行（`job._Context.fail`）
-     - 翻译的批次尝试失败行、Strata 重启行、放弃行与 `Strata refused` 行（`kototoki/translate/generate.py`）
+     - 翻译的批次尝试失败行与 Strata 重启行（`kototoki/translate/generate.py`）
      - `[strata] start failed` 与 `unavailable` 行（`kototoki/strata.py`）
-     - names 的尝试失败行（`kototoki/names/table.py`）与 `count_tokens` 不可用行（`kototoki/names/__init__.py`，`build.prompt_check` 仍记 300 字符）。。
-     - 翻译子系统的"意外异常"行不带 traceback，由编排的 FAILED 行带。
+     - names 的尝试失败行（`kototoki/names/table.py`）、`count_tokens` 不可用行与停 Strata 前告警（`kototoki/names/__init__.py`，`build.prompt_check` 仍记 300 字符）
+     - 翻译子系统的"意外异常"行记为 WARNING（不带 traceback），唯一一条 ERROR 与 traceback 由编排的 FAILED 行带。
   3. 文件名用输入目录内相对路径，可附 `work_id` 以便与工作目录及 worker `stderr.log` 关联；只有锁与日志文件的指向、`[run] start` 行的配置文件与输入目录写绝对路径。
   4. 一事一行、每阶段三件套、结尾汇总：各阶段（extract、vad、asr、align、cues、names、translate）的 end 行统一为 `[x] end: N done, M failed, T.Ts`，发布行为 `[publish] done <相对路径>…`；`[scan]` 汇总行的 to process、with subtitles、unstable、failed 相加等于总数。秒数写 `12.3s`（无空格），MiB、GiB、tok 带空格。翻译批次行带输出 token 数、tok/s 与 cache（取不到的字段省略）。
   5. 告警是级别不是措辞：消息里不写 `WARNING`。
@@ -60,6 +60,6 @@ covers:
 - 代码：`kototoki/logs.py`（`LOG_FORMAT`、`LOG_DATEFMT`、`RunFormatter`）；挂接在 `kototoki/job.py`（`_run_logging`、`QUIET_ENV`、`child_env`）。
 - 测试（core，`mise run test`）：
   - `tests/core/test_job.py` 的 `InvariantTests` 断言转写、译文与专名文字不进运行日志与 worker stderr 日志。
-  - `tests/core/test_job.py` 的 `RunLogTests` 覆盖编排统一日志出口：启动与锁释放未捕获异常落入 `run-*.log`、跨进程 `work_id`/`pid` 与 `stderr.log` 分隔行关联、未知进度事件 `id` 回退保留原 `id`、退出码 1/2 合并单条 `WARNING` 指针、`ffmpeg=unavailable` 诊断、媒体 `stderr` 告警、既有产物读错 `WARNING` 与覆盖 `INFO` 审计。
+  - `tests/core/test_job.py` 的 `RunLogTests` 覆盖编排统一日志出口：启动与锁释放未捕获异常落入 `run-*.log`、跨进程 `work_id`/`pid` 与 `stderr.log` 分隔行关联、未知进度事件 `id` 回退保留原 `id`、退出码 1/2 合并单条 `WARNING` 指针、`ffmpeg=unavailable` 诊断、媒体 `stderr` 告警、既有产物读错 `WARNING`、覆盖 `INFO` 审计，以及 Strata 不可用免重复 traceback。
 - 仍未由离线日志测试覆盖：行格式与墙钟跳变下的相对秒、`KeyboardInterrupt` 无 traceback、同失败去重 traceback 细粒度断言、破残留锁与 `warnings.warn` 进日志、第三方 logger 前缀、handler 复原及各阶段数值字段与媒体告警。
 - 测试（full，`mise run test-full`）：没有覆盖运行日志的用例（`tests/full/test_media_ffmpeg.py` 不再断言补入告警）。

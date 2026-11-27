@@ -28,7 +28,7 @@ covers:
 | `oom`、`server`、`server_error`、`server_start` | HTTP 正文为 OOM 文本／其他 HTTP 错误、连接失败或超时、响应带 `error`、Strata 起不来（`InfraFailure`） | 停掉 Strata，同一次调用内启动新 session 重做 |
 | `context`、`limit`、`parse`、`unresolved` | 超出 context、`finish_reason == "length"`、空回复、结构校验失败、一条都没收下 | 该次尝试失败；两次都失败即节点终态（下节），不重启 |
 | `StrataRefused` | 见 [Strata 服务与共享 session](../strata-session.md#当前行为规格) | 不重试 |
-| 其他异常 | 非 JSON 响应、写盘失败等 | 记 `stop_reason = session_error: …`，停掉 Strata，原样上抛 |
+| 其他异常 | 非 JSON 响应、写盘失败等 | 记 `stop_reason = session_error: …` 并记 WARNING（带相对路径与已知时的批次 ID），停掉 Strata，原样上抛 |
 
 - 基础设施失败同一次调用内最多重启 2 次（`generate.MAX_RESTARTS`），仍失败抛 `TranslateError`。`oom`、`server` 与 `context` 不做第二次尝试。
 - 启动失败的额度归 `Session`（整批累计 3 次即不可用）；本子系统只在每轮开始时读 `session.unavailable`：非空即抛 `TranslateError`，消息带其原因。
@@ -39,7 +39,7 @@ covers:
 - 收下至少 1 条即结束（`accepted`，有未解决时 `partial`）；未解决的 cue 按最大连续段成为子节点 `父ID.1`…（`runs`）。
 - 两次都失败：多于 1 条对半拆成 `父ID.a`／`.b`（`halves`）；单条则译文为 `None`（不出中文），原因取最后一次的按条类别或失败种类。
 - 子节点的邻文、注入同原批次，seed 从原 seed 起。
-- 首个请求即全收的批次不写节点日志；其余节点一出结果即追加到 `nodes.jsonl`，重启后已记录的不再请求。批次完成写成 `batches.jsonl` 一行（带 `resolution`）。未翻译对该配方 hash、seed 与注入行是终态；要重试须改 `[translate] seed`；要重做已发布的文件须先删掉其 `.ja-zh.srt`。
+- 首个请求即全收的批次不写节点日志；其余节点一出结果即追加到 `nodes.jsonl`，重启后已记录的不再请求（回放已有节点时不重打追问与拆分 WARNING）。批次完成写成 `batches.jsonl` 一行（带 `resolution`）。未翻译对该配方 hash、seed 与注入行是终态；要重试须改 `[translate] seed`；要重做已发布的文件须先删掉其 `.ja-zh.srt`。
 - 按条取第一个合格译文、不比较尝试，不是"翻译多次再挑选"（ADR-0008）。
 
 ## 代码与验证入口
