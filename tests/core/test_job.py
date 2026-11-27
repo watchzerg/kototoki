@@ -28,6 +28,7 @@ from kototoki import __main__ as cli
 from kototoki import artifacts, job, media
 from kototoki.config import ConfigError, load
 from kototoki.merge import merge as real_merge
+from kototoki.procs import ProcessLock
 from tests.fake_worker import FAKE_MODELS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -436,8 +437,11 @@ class IsolationTests(JobCase):
         self.assertNotIn("warning/error line(s)", console.getvalue())
         (stderr_log,) = self.work_root.glob("run-*-vad.stderr.log")
         raw = stderr_log.read_bytes()
+        header, rest = raw.split(b"\n", 1)
+        self.assertRegex(header.decode("utf-8"),
+                         r"^--- \[vad\] launch pid=\d+ utc=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z files=1 ---$")
         self.assertEqual(
-            raw,
+            rest,
             b"[stdout] 2026-10-18 12:00:00Z [    1.0s] WARNING  from stdout\n"
             b"[stdout] [1, 2]\n"
             b"[stdout] \xff bad utf8\n"
@@ -632,6 +636,147 @@ class InvariantTests(JobCase):
         for bad in (REPO_ROOT / "work", REPO_ROOT, self.input / "work", self.input):
             with self.subTest(work_dir=bad), self.assertRaises(ConfigError):
                 cli.check_work_dir(self.with_paths(work_dir=bad))
+
+
+class RunLogTests(JobCase):
+    """编排统一日志出口（`job.run`）：L4 启动/收尾异常进日志、跨进程关联与未知事件回退、退出码 1/2 指针合并。"""
+
+    def run_logs(self) -> list[Path]:
+        return sorted(self.work_root.glob("run-*[0-9]Z.log"))
+
+    def warning_lines(self, text: str) -> list[str]:
+        return [m[2] for line in text.splitlines() if (m := LOG_LINE.match(line)) and m[1] == "WARNING"]
+
+    def test_uncaught_startup_and_lock_release_errors_reach_run_log(self) -> None:
+        # 启动初始化（record_input）在取工作锁后失败：异常进 run-*.log 且释放工作根锁
+        with mock.patch("kototoki.job.artifacts.record_input", side_effect=OSError("disk full")), \
+                self.assertRaisesRegex(OSError, "disk full"):
+            self.run_job()
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+        (first_log,) = self.run_logs()
+        first_text = first_log.read_text(encoding="utf-8")
+        self.assertIn("ERROR    [run] ABORTED: OSError", first_text)
+        self.assertIn("OSError: disk full", first_text)
+        self.assertIn("[summary]", first_text)
+        first_log.unlink()
+
+        # 收尾释放锁（GPU 锁与工作根锁）抛错：均记入 run-*.log，且 GPU 锁释放失败时工作根锁仍继续释放
+        self.make_inputs("a.mkv")
+        real_release = ProcessLock.release
+
+        def flaky_release(lock: ProcessLock) -> None:
+            real_release(lock)
+            if lock.kind == "GPU lock":
+                raise OSError("gpu lock unlink boom")
+            if lock.kind == "work directory lock":
+                raise OSError("work lock unlink boom")
+
+        with mock.patch("kototoki.job._gpu_stages", side_effect=RuntimeError("gpu boom")), \
+                mock.patch.object(ProcessLock, "release", flaky_release), \
+                self.assertRaisesRegex(OSError, "work lock unlink boom"):
+            self.run_job()
+        self.assertFalse((self.work_root / artifacts.LOCK).exists())
+        (second_log,) = self.run_logs()
+        second_text = second_log.read_text(encoding="utf-8")
+        self.assertIn("ERROR    [run] ABORTED: RuntimeError", second_text)
+        self.assertIn("ERROR    [run] ABORTED: OSError", second_text)
+        self.assertIn("gpu lock unlink boom", second_text)
+        self.assertIn("work lock unlink boom", second_text)
+
+    def test_cross_process_correlation_and_unknown_event_id_fallback(self) -> None:
+        # 未知进度事件 id 回退保留原 id；worker 启动 pid 与文件数、重启分隔行及 work_id 双向可关联
+        self.make_inputs("a.mkv", "b.mkv")
+        self.plan({"asr": {"a.mkv": "crash"}})
+        # 在 vad 阶段注入一条未知 id 进度事件，其余阶段走 fake_worker（asr 含一次重启）
+        inject = (
+            "import json, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import fake_worker\n"
+            "if sys.argv[2] == 'vad':\n"
+            "    sys.stdout.buffer.write(json.dumps({'event': 'done', 'id': 'ghost-id', 'windows': 7}).encode() + b'\\n')\n"
+            "    sys.stdout.buffer.flush()\n"
+            "sys.exit(fake_worker.main(['fake_worker.py', sys.argv[2], '--jobs', sys.argv[3]]))\n"
+        )
+        summary = job.run(
+            self.config,
+            worker_command=lambda stage, jobs: [sys.executable, "-c", inject, str(FAKE_WORKER.parent), stage, str(jobs)],
+            sleep=lambda _: None,
+            console=io.StringIO(),
+        )
+        self.assertEqual(summary.failed, {"a.mkv": "asr"})
+        self.assertEqual(summary.published, ["b.mkv"])
+        (run_log,) = self.run_logs()
+        run_text = run_log.read_text(encoding="utf-8")
+        a_id, b_id = self.ids("a.mkv", "b.mkv")
+        # 未知 id 保留原样、不被丢弃
+        self.assertRegex(run_text, r"\[vad\] done .*ghost-id.*windows=7")
+        # 进度与失败行带 work_id
+        self.assertRegex(run_text, rf"\[vad\] done a\.mkv: .*work_id={a_id}")
+        self.assertRegex(run_text, rf"ERROR\s+\[asr\] FAILED a\.mkv \(work_id={a_id}\): WorkerCrashed")
+        # 两次 asr 启动的 pid 均同时出现在 run-*.log 与 run-*-asr.stderr.log 的分隔行中
+        asr_launches = self.launches("asr")
+        self.assertEqual(len(asr_launches), 2)
+        (asr_stderr,) = self.work_root.glob("run-*-asr.stderr.log")
+        asr_err_text = asr_stderr.read_text(encoding="utf-8")
+        for launch in asr_launches:
+            pid = launch["pid"]
+            self.assertRegex(run_text, rf"\[asr\] worker launched: pid={pid}, {len(launch['ids'])} file\(s\)")
+            self.assertTrue(
+                any(re.match(rf"^--- \[asr\] launch pid={pid} utc=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z files={len(launch['ids'])} ---$", ln)
+                    for ln in asr_err_text.splitlines()),
+                f"missing launch separator for pid={pid} in {asr_err_text!r}",
+            )
+
+    def test_exit_code_1_and_2_emit_at_most_one_stderr_pointer(self) -> None:
+        # vad：退出码 1 且 stderr 无结构化告警（裸崩溃）→ 仍给 1 条 see stderr 指针；
+        # asr：退出码 2 且 stderr 有 1 条结构化 ERROR → 合并为唯一 1 条 see stderr 指针，不重复两条。
+        self.make_inputs("a.mkv")
+        bare_exit_1 = (
+            "import json, sys\n"
+            "sys.stdout.buffer.write(json.dumps({'event': 'started'}).encode() + b'\\n')\n"
+            "sys.stdout.buffer.flush()\n"
+            "sys.stderr.write('Traceback (most recent call last):\\nRuntimeError: bare crash\\n')\n"
+            "sys.exit(1)\n"
+        )
+        console1 = io.StringIO()
+        summary1 = job.run(
+            self.config,
+            worker_command=lambda stage, jobs: [sys.executable, "-c", bare_exit_1],
+            sleep=lambda _: None,
+            console=console1,
+        )
+        self.assertEqual(summary1.failed, {"a.mkv": "vad"})
+        vad_warnings = [w for w in self.warning_lines(console1.getvalue()) if w.startswith("[vad] ")]
+        self.assertEqual(len(vad_warnings), 1)
+        self.assertRegex(vad_warnings[0], r"worker exited with code 1.*see run-.*-vad\.stderr\.log")
+
+        # 第二次：加入 b.mkv，vad 正常完成，asr 以退出码 2 退出且 stderr 带一条标准格式 ERROR
+        self.make_inputs("b.mkv")
+        self.plan({})
+        exit_2_with_problem = (
+            "import json, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import fake_worker\n"
+            "if sys.argv[2] == 'asr':\n"
+            "    sys.stderr.write('2026-11-27 00:00:00Z [     0.1s] ERROR    [asr] startup failed: RuntimeError\\n')\n"
+            "    sys.stderr.flush()\n"
+            "    sys.stdout.buffer.write(json.dumps({'event': 'startup_failed', 'error_type': 'RuntimeError'}).encode() + b'\\n')\n"
+            "    sys.stdout.buffer.flush()\n"
+            "    sys.exit(2)\n"
+            "sys.exit(fake_worker.main(['fake_worker.py', sys.argv[2], '--jobs', sys.argv[3]]))\n"
+        )
+        console2 = io.StringIO()
+        summary2 = job.run(
+            self.config,
+            worker_command=lambda stage, jobs: [sys.executable, "-c", exit_2_with_problem,
+                                                str(FAKE_WORKER.parent), stage, str(jobs)],
+            sleep=lambda _: None,
+            console=console2,
+        )
+        self.assertEqual(summary2.failed, {"a.mkv": "asr", "b.mkv": "asr"})
+        asr_warnings = [w for w in self.warning_lines(console2.getvalue()) if w.startswith("[asr] ")]
+        self.assertEqual(len(asr_warnings), 1)
+        self.assertRegex(asr_warnings[0], r"code 2.*1 warning/error line\(s\).*see run-.*-asr\.stderr\.log")
 
 
 if __name__ == "__main__":

@@ -20,14 +20,14 @@ covers:
 
 **流程**（阶段 × 整批）：
 
-1. 取工作根 `<work_dir>/<input_dir 末段名>-<sha12>/lock`（`procs.ProcessLock`，锁信息含 `input_dir`；`artifacts.work_root`），写 `input.json`（失败时释放工作根锁再抛出）。此后的 ffmpeg、worker 与 Strata CLI 子进程都经 `procs.contained` 启动，编排器以任何方式退出都随之结束；Strata 服务本身由 `strata launch` 在后台启动，不受此约束，靠 `Session` 退出时的 `--stop` 收尾。
-2. 扫描：递归列出扩展名（大小写不敏感，`[input] extensions`）匹配的文件，按相对路径排序；两次采样（间隔 `stable_check_s`）大小不变才处理，否则本次跳过。
+1. 取工作根 `<work_dir>/<input_dir 末段名>-<sha12>/lock`（`procs.ProcessLock`，锁信息含 `input_dir`；`artifacts.work_root`）后立即进入 `_run_logging` 上下文，再写 `input.json` 并跑批；任何启动初始化、运行主体或锁释放未捕获异常均先记入运行日志再原样抛出，两把锁在 `finally` 释放（若 `_run_logging` 自身打开失败，外层仍释放工作根锁）。此后的 ffmpeg、worker 与 Strata CLI 子进程都经 `procs.contained` 启动，编排器以任何方式退出都随之结束；Strata 服务本身由 `strata launch` 在后台启动，不受此约束，靠 `Session` 退出时的 `--stop` 收尾。
+2. 扫描：递归列出扩展名（大小写不敏感，`[input] extensions`）匹配的文件，按相对路径排序；两次采样（间隔 `stable_check_s`）大小不变才处理，区分大小变化与 `stat()` `OSError`（后者记 `WARNING` 含异常类型与消息），两者均计入 `Summary.unstable` 并在本次跳过。
    - 源文件旁已有 `<主名>.ja-zh.srt`（`final_srt_path`，只看文件名，不论来源）的文件记入 `Summary.existing` 并跳过，不登记工作目录、不 probe、不进任何阶段，也不动残留的 `failure.json`。
    - 否则登记 `<work root>/<id>`；`register_work_dir` 抛异常（`index.json` 损坏、短 id 碰撞）只记该文件 `scan` 失败，没有工作目录因而不写 `failure.json`，整批继续。
    - 同目录主名相同、扩展名不同的文件（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕路径，按相对路径顺序后出现的那个记 `scan` 失败（`FinalPathCollision`，写 `failure.json`）；路径比较区分大小写。
 3. probe／extract：线程池（`extract_workers`）对每个文件跑 ffprobe（每次都跑，得到输入文件身份）。
    - `[input] use_embedded_subtitles` 开着且 `media.select_subtitle` 选出可用的日文文本字幕轨时先走"内嵌日文字幕"（见下）；采用后该文件不提取音频。
-   - 否则（或字幕轨不可用时）`probe.json` 身份匹配且 `audio-16k.wav` 在时跳过 extract；不然先删除工作目录里上次强杀留下的 `.*.partial*` 与 `.*.tmp`（`clean_leftovers`），再 extract 并写 `probe.json`（probe payload 加 `extract` 记录，含 PCM SHA256）。
+   - 否则（或字幕轨不可用时）`probe.json` 身份匹配且 `audio-16k.wav` 在时跳过 extract；不然先删除工作目录里上次强杀留下的 `.*.partial*` 与 `.*.tmp`（`clean_leftovers`，仅在确实删除了文件时记 INFO 含对象与原因），再 extract 并写 `probe.json`（probe payload 加 `extract` 记录，含 PCM SHA256）。
    - 每个成功的文件先把 `Probe.warnings` 与 `Extract.warnings`（跳过 extract 时取 `probe.json` 记下的）逐条记为 WARNING，再记补偿告警（`compensation_warnings`：`net_padding_s` 绝对值或 swr 报告的丢弃样本折算超过 `COMPENSATION_WARN_S = 0.1` s 时各一行，跳过 extract 时同样由 `probe.json` 算出），最后记 `done`。
    - Ctrl+C（任何 `BaseException`）时 `shutdown(cancel_futures=True)`：排队中的文件不再提取；正在跑的 ffmpeg 在前台进程组里同样收到 Ctrl+C 而退出，等它们结束后沿 `finally` 释放两把锁。
 4. 计划：CPU 阶段之后对每个文件调用一次 `plan.next_stage`，从 vad 起（采用内嵌字幕的文件从 names 起）逐阶段核对产物身份，得到第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`names`／`translate`）或终态 `publish`（无语音）；没有 `done` 状态——是否已发布由扫描按源文件旁的字幕判定。
@@ -44,8 +44,8 @@ covers:
    - 需要模型的文件把共享 session 传给 `translate_document(plan, session)`；不需要模型的文件（零条目、或 run 已完成而只是源文件旁的字幕被删）传 `None`。
    - 撞 GPU 锁同 names；Strata 被拒绝（已有别的 launch、身份不符、专家区退到 mmap）时共享 session 置为不可用（可能已在 names 阶段置位），其余需要模型的文件直接失败；单文件异常记该文件失败并继续。
 10. 发布（`publish`）：`ja-zh.srt` 文本是翻译结果与 `ja.srt` 按 cue 合并（`merge.merge`，没有专名替换；零 cue 为空文本）。
-    - 先查源文件旁是否已出现同名字幕（运行期间由用户或别的工具写入）：有则不覆盖，记入 `existing` 并告警。
-    - 否则写副本到 `<work root>/<id>/publish/`（保留）→ `write_srt` 原子写到源文件旁（临时文件在目标目录内，不跨卷）→ 成功后 `record_published`（审计）→ 删除该文件的 `failure.json`。
+    - 先查源文件旁是否已出现同名字幕（运行期间由用户或别的工具写入）：有则不覆盖，记入 `existing` 并告警，且若工作目录存在既有 `failure.json` 则删除并记 INFO。
+    - 否则写副本到 `<work root>/<id>/publish/`（保留）→ `write_srt` 原子写到源文件旁（临时文件在目标目录内，不跨卷）→ 成功后 `record_published`（审计）→ 删除该文件既有的 `failure.json`（仅确实存在并删除时记 INFO）。
     - `ja.srt` 留在工作目录，不发布 `zh.srt`。发布日志行在有未翻译 cue（字幕里只有日文一行）时追加 `, N untranslated cue(s)`。
     - 收尾不变量：未失败的文件此时必须已在 `published`（含无语音）或 `existing` 里，否则记 `publish` 失败（`NotPublished`）。
 
@@ -60,10 +60,10 @@ covers:
     - `ScanTests`：扫描过滤与排序、字幕发布在源文件旁、同目录同名主干的后一文件失败、大小采样决定稳定性、源文件旁已有字幕则跳过。
     - `StageTests`／`IsolationTests`／`ResumeTests`：整批按阶段顺序再翻译、发布；崩溃文件隔离且 worker 为后续文件重启；无语音发布空字幕并跳过后续阶段；中断后续跑只补缺失阶段；字幕被删后不取 GPU 锁而重新发布。
     - `LockTests`：GPU 锁冲突时保留 CPU 阶段产物。`InvariantTests`：转写、译文与专名文字不进日志与 stderr 文件；禁止导入清单；输入与工作目录检查。
-  - 同文件的 `NamesTests`（换表身份后在同一 session 上重译）、`EmbeddedSubtitleTests`（开关关掉走 STT、不可用字幕轨带 WARNING 回退）；它们的细节分别见[专名一致性](../name-consistency.md#代码与验证入口)与[内嵌字幕](../config-and-media/embedded-subtitles.md#代码与验证入口)。
+  - 同文件的 `NamesTests`（换表身份后在同一 session 上重译）、`EmbeddedSubtitleTests`（开关关掉走 STT、不可用字幕轨带 WARNING 回退）与 `RunLogTests`（取工作锁后初始化与锁释放未捕获异常落入运行日志、跨进程 `work_id`/`pid` 关联与未知事件 `id` 回退、退出码 1/2 指针合并去重）；它们的细节分别见[专名一致性](../name-consistency.md#代码与验证入口)、[内嵌字幕](../config-and-media/embedded-subtitles.md#代码与验证入口)与[运行日志](../run-logging-and-processes/run-log.md#代码与验证入口)。
   - 测试精简（2026-11-22）后不再有测试覆盖：
     - 扫描与发布：`register_work_dir` 异常与早失败释放工作根锁、`stable_files` 单元、续跑后全部跳过、发布期出现字幕不覆盖、发布不跨目录移动、发布失败不写审计记录、`published.json` 内容、工作根按输入目录键控。
     - 阶段与失败：子进程环境、`fatal`／启动失败／退出码 1 缺事件的重启规则、读 worker 输出时中断回收 worker、无人处理的文件在发布失败、模型核对按阶段缓存、extract 失败与期间中断、临时文件清理、翻译失败隔离、`next_stage`／`advance` 调用次数、`media` hash 变而 PCM 不变时下游仍当前。
     - 锁：工作根锁冲突、names／translate 阶段 GPU 锁冲突为进程级、残留锁与空锁的破除、锁内 pid 记录、用法与配置错误退出码 2。
-    - Strata 与翻译：共享 session 只启动一次并在翻译后停止、`StrataRefused`、中断时停止并释放锁、零 cue 文档不取锁与 session、建表失败与坏表的处理；内嵌字幕：跳过 extract 与 GPU 阶段、纯内嵌批次只为 Strata 取锁、续跑复用、两条路径互不复用 `ja.srt`；`RunLogTests` 全部删除（见[运行日志与进程原语](../run-logging-and-processes.md#代码与验证入口)）。
+    - Strata 与翻译：共享 session 只启动一次并在翻译后停止、`StrataRefused`、中断时停止并释放锁、零 cue 文档不取锁与 session、建表失败与坏表的处理；内嵌字幕：跳过 extract 与 GPU 阶段、纯内嵌批次只为 Strata 取锁、续跑复用、两条路径互不复用 `ja.srt`（统一运行日志出口已由 `RunLogTests` 覆盖，其余细节见[运行日志](../run-logging-and-processes/run-log.md#代码与验证入口)）。
 - 未验证：被中断时 Strata 停止与显存核实的真实路径；names 阶段 x0 输出、其他作品与失败路径的真实运行；路径碰撞只经离线测试；中断取消提取、临时文件清理、空锁破除、补偿告警现无自动测试；内嵌字幕路径只用合成片段测过 SubRip 一种。

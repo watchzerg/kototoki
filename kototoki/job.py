@@ -145,11 +145,13 @@ def _run_logging(path: Path, console: TextIO | None = None) -> Iterator[None]:
 
 
 def _stale_line(lock: ProcessLock) -> str:
-    """破除残留锁的告警行：旧锁的 pid，以及它记下的 worker 阶段与 Strata 服务 pid（有才写）。"""
+    """破除残留锁的告警行：旧锁的 pid，以及它记下的 worker 阶段、Strata 服务 pid 与读锁错误（有才写）。"""
     stale = lock.stale or {}
     owner = stale.get("pid")
     parts = [f"pid {owner}" if type(owner) is int else "no owner pid"]
     parts += [f"{key} {stale[key]}" for key in ("worker_stage", "server_pid") if stale.get(key) is not None]
+    if error := stale.get("error"):
+        parts.append(str(error))
     return f"[lock] replaced stale {lock.kind} ({', '.join(parts)})"
 
 
@@ -217,11 +219,17 @@ def scan(input_dir: Path, extensions: Iterable[str]) -> list[tuple[str, Path]]:
     return sorted(found)
 
 
-def _size(path: Path) -> int | None:
+def _size(path: Path) -> tuple[int | None, OSError | None]:
     try:
-        return path.stat().st_size
-    except OSError:
-        return None
+        return path.stat().st_size, None
+    except OSError as error:
+        return None, error
+
+
+def _format_error(exc: BaseException) -> str:
+    """将底层异常压成单行 `<类型>: <首行消息>`（截到 200 字符），供扫描日志复用。"""
+    first = (str(exc).splitlines() or [""])[0][:200]
+    return f"{type(exc).__name__}: {first}" if first else type(exc).__name__
 
 
 def stable_files(files: list[tuple[str, Path]], interval_s: float,
@@ -232,9 +240,22 @@ def stable_files(files: list[tuple[str, Path]], interval_s: float,
         sleep(interval_s)
     stable, unstable = [], []
     for rel, path in files:
-        size = _size(path)
-        (stable if size is not None and size == first[rel] else unstable).append((rel, path))
-    return stable, [rel for rel, _ in unstable]
+        size1, err1 = first[rel]
+        if err1 is not None:
+            logger.warning(f"[scan] {rel}: stat failed ({_format_error(err1)}), skipped this run")
+            unstable.append(rel)
+            continue
+        size2, err2 = _size(path)
+        if err2 is not None:
+            logger.warning(f"[scan] {rel}: stat failed ({_format_error(err2)}), skipped this run")
+            unstable.append(rel)
+            continue
+        if size2 == size1:
+            stable.append((rel, path))
+        else:
+            logger.warning(f"[scan] {rel}: size still changing, skipped this run")
+            unstable.append(rel)
+    return stable, unstable
 
 
 # --- 模型核对 -------------------------------------------------------------------------------------
@@ -277,11 +298,21 @@ def compensation_warnings(compensation: Mapping[str, Any], sample_rate: int | No
     return warnings
 
 
-def clean_leftovers(work_dir: Path) -> None:
+def clean_leftovers(work_dir: Path, *, label: str | None = None) -> None:
     """删除上次被强杀留下的临时文件：ffmpeg 的 `.*.partial*` 与原子写的 `.*.tmp`（输出目录锁保证无并发）。"""
+    work_dir = Path(work_dir)
+    removed: list[str] = []
     for pattern in (".*.partial*", ".*.tmp"):
-        for path in Path(work_dir).glob(pattern):
-            path.unlink(missing_ok=True)
+        for path in sorted(work_dir.glob(pattern)):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            removed.append(path.name)
+    if removed:
+        target = label or work_dir.name
+        logger.info(f"[extract] removed leftover temp file(s) for {target}: {', '.join(removed)} "
+                    "(cleanup before extract)")
 
 
 def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str, Any]) -> str | None:
@@ -305,7 +336,7 @@ def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str,
         if not text:
             return f"no usable cue among {stats['source_cues']}"
         work.mkdir(parents=True, exist_ok=True)
-        clean_leftovers(work)
+        clean_leftovers(work, label=f"{video.relative} (work_id={work.name})")
         srt.write_srt(text, ja_path)
         artifacts.write_artifact(record_path, identity, {"stream": dict(stream), **stats,
                                                          "ja_srt_sha256": artifacts.sha256_file(ja_path)})
@@ -346,7 +377,7 @@ def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
             video.reused_wav = True
             return (fallback + video.probe.warnings + tuple(record["warnings"])
                     + tuple(compensation_warnings(record["compensation"], video.probe.audio.sample_rate)))
-    clean_leftovers(video.work_dir)
+    clean_leftovers(video.work_dir, label=f"{video.relative} (work_id={video.work_dir.name})")
     result = media.extract(video.path, video.work_dir, video.probe, config)
     artifacts.write_artifact(path, video.probe_identity, {**video.probe.payload(), "extract": result.payload()})
     video.pcm_sha256 = result.pcm_sha256
@@ -405,7 +436,7 @@ class _Context:
             kind = _failure_kind(stage, cause)
             traceback = kind not in self.traced
             self.traced.add(kind)
-        line = f"[{stage}] FAILED {video.relative}" + (f": {error_type}" if error_type else "")
+        line = f"[{stage}] FAILED {video.relative} (work_id={video.work_dir.name})" + (f": {error_type}" if error_type else "")
         if error is not None and not traceback and (message := str(error).strip()):
             line += f": {message.splitlines()[0][:200]}"
         logger.error(line, exc_info=error if traceback else None)
@@ -440,6 +471,12 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
                                    stderr=stderr, stdin=subprocess.DEVNULL, env=child_env(config), cwd=REPO_ROOT,
                                    start_new_session=True)
         try:
+            prefix = b"\n" if offset > 0 else b""
+            sep = (f"--- [{stage}] launch pid={process.pid} "
+                   f"utc={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} files={len(batch)} ---\n")
+            stderr.write(prefix + sep.encode("utf-8"))
+            stderr.flush()
+            logger.info(f"[{stage}] worker launched: pid={process.pid}, {len(batch)} file(s)")
             ctx.gpu_lock.update(worker_pid=process.pid, worker_stage=stage)
             assert process.stdout is not None
             with process.stdout:
@@ -453,9 +490,12 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
     with stderr_path.open("rb") as stream:
         stream.seek(offset)
         problems = _count_stderr_problems(stream.read())
-    if problems:
+    if problems and code:
+        logger.warning(f"[{stage}] worker exited with code {code} ({problems} warning/error line(s)), "
+                       f"see {stderr_path.name}")
+    elif problems:
         logger.warning(f"[{stage}] {problems} warning/error line(s), see {stderr_path.name}")
-    if code not in (0, 1):  # 裸 traceback、原生崩溃不计数：退出码异常时固定给出指针
+    elif code:  # 裸 traceback、原生崩溃不计数（含退出码 1 未写结构化日志）：非零退出码一律给出指针
         logger.warning(f"[{stage}] worker exited with code {code}, see {stderr_path.name}")
     return code, events
 
@@ -484,9 +524,19 @@ def _read_events(ctx: _Context, stage: str, stdout: Iterable[bytes],
         if progress is None:
             continue
         name, counts = progress
-        video = by_id.get(event.get("id"))
-        line = f"[{stage}] {name} {video.relative if video else ''}".rstrip()
-        logger.info(line + (f": {' '.join(f'{key}={value}' for key, value in counts.items())}" if counts else ""))
+        event_id = event.get("id")
+        video = by_id.get(event_id) if isinstance(event_id, str) else None
+        if video is not None:
+            target = video.relative
+            fields = [*(f"{key}={value}" for key, value in counts.items()), f"work_id={video.work_dir.name}"]
+        else:
+            if event_id is None:
+                target = ""
+            else:
+                target = f"unknown_id={event_id if event_id != '' else repr(event_id)}"
+            fields = [f"{key}={value}" for key, value in counts.items()]
+        line = f"[{stage}] {name} {target}".rstrip()
+        logger.info(line + (f": {' '.join(fields)}" if fields else ""))
     return events
 
 
@@ -686,6 +736,17 @@ def translate_batch(ctx: _Context, batch: list[VideoFile],
     return results
 
 
+def _remove_failure_record(video: VideoFile, reason: str) -> None:
+    """若工作目录存在上次遗留的 `failure.json`，删除并记 `INFO` 审计行；不存在时静默跳过。"""
+    path = video.work_dir / artifacts.FAILURE
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    logger.info(f"[publish] removed {artifacts.FAILURE} for {video.relative} "
+                f"(work_id={video.work_dir.name}): {reason}")
+
+
 def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, untranslated: int) -> bool:
     """双语字幕写一份到工作目录 `publish/`（副本）→ 原子写到源文件旁 → `record_published`（审计）；成功后删 failure.json。
 
@@ -694,7 +755,7 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, untr
     """
     if video.final.exists():
         ctx.summary.existing.append(video.relative)
-        (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
+        _remove_failure_record(video, f"skipped publish ({video.final.name} already exists)")
         logger.warning(f"[publish] {video.relative}: {video.final.name} appeared during the run, not overwritten")
         return False
     assert video.plan is not None
@@ -702,7 +763,7 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, untr
     srt.write_srt(text, video.final)
     artifacts.record_published(video.work_dir, video.final, artifacts.sha256_file(video.final),
                                video.plan.sources | {"translate_untranslated_cues": untranslated}, translate_dir)
-    (video.work_dir / artifacts.FAILURE).unlink(missing_ok=True)
+    _remove_failure_record(video, "publish succeeded")
     ctx.summary.published.append(video.relative)
     if video.embedded is not None:
         ctx.summary.embedded.append(video.relative)
@@ -713,6 +774,28 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, untr
 
 
 # --- 入口 ---------------------------------------------------------------------------------------
+
+def _log_aborted(error: BaseException) -> None:
+    logger.error(f"[run] ABORTED: {type(error).__name__}",
+                 exc_info=None if isinstance(error, KeyboardInterrupt) else error)
+
+
+def _cleanup_run(summary: Summary, gpu_lock: ProcessLock | None, work_lock: ProcessLock) -> None:
+    """运行日志上下文内写汇总并依次释放 GPU 锁与工作根锁；任何异常先记 ERROR 再原样抛出。"""
+    try:
+        _log_summary(summary)
+        if gpu_lock is not None:
+            gpu_lock.release()
+    except BaseException as error:
+        _log_aborted(error)
+        raise
+    finally:
+        try:
+            work_lock.release()
+        except BaseException as error:
+            _log_aborted(error)
+            raise
+
 
 def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = worker_command,
         sleep: Callable[[float], None] = time.sleep, console: TextIO | None = None) -> Summary:
@@ -725,28 +808,35 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
         work_lock.acquire(break_stale=config.break_stale_lock)
     except LockError as error:
         raise WorkLocked(str(error)) from error
+    summary = Summary()
+    work_released = False
     try:
-        artifacts.record_input(root, input_dir)
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"input_dir": str(input_dir)})
-        ctx = _Context(config, Summary(), root, stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
         with _run_logging(root / f"run-{stamp}.log", console):
-            logger.info(f"[run] start: config={config.source} input={input_dir} engine={config.engine} "
-                        f"ffmpeg={media.ffmpeg_version(config.paths.ffmpeg)}")
-            if work_lock.stale is not None:
-                logger.warning(_stale_line(work_lock))
+            gpu_lock: ProcessLock | None = None
+            stale_logged = False
             try:
+                artifacts.record_input(root, input_dir)
+                gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"input_dir": str(input_dir)})
+                ctx = _Context(config, summary, root, stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
+                logger.info(f"[run] start: config={config.source} input={input_dir} engine={config.engine} "
+                            f"ffmpeg={media.ffmpeg_version(config.paths.ffmpeg)}")
+                if work_lock.stale is not None:
+                    logger.warning(_stale_line(work_lock))
+                    stale_logged = True
                 _run(ctx)
-            except BaseException as error:  # Ctrl+C、GpuLocked、Strata 启停异常等：日志收尾后原样抛出
-                logger.error(f"[run] ABORTED: {type(error).__name__}",
-                             exc_info=None if isinstance(error, KeyboardInterrupt) else error)
+            except BaseException as error:  # Ctrl+C、GpuLocked、Strata 启停异常、初始化异常等：日志收尾后原样抛出
+                if work_lock.stale is not None and not stale_logged:
+                    logger.warning(_stale_line(work_lock))
+                _log_aborted(error)
                 raise
             finally:
-                _log_summary(ctx.summary)
-                gpu_lock.release()
+                work_released = True
+                _cleanup_run(summary, gpu_lock, work_lock)
     finally:
-        work_lock.release()
-    return ctx.summary
+        if not work_released:
+            work_lock.release()
+    return summary
 
 
 def _live(ctx: _Context) -> list[VideoFile]:
@@ -775,8 +865,6 @@ def _scan_stage(ctx: _Context) -> None:
     found = scan(input_dir, config.input.extensions)
     summary.total = len(found)
     stable, summary.unstable = stable_files(found, config.run.stable_check_s, ctx.sleep)
-    for rel in summary.unstable:
-        logger.warning(f"[scan] {rel}: size still changing, skipped this run")
     claimed: dict[Path, str] = {}  # 双语字幕路径 → 先占用它的相对路径
     for rel, path in stable:
         final = artifacts.final_srt_path(input_dir, rel)
