@@ -56,7 +56,7 @@ def synthetic_srt() -> str:
     for number, text in enumerate(SENTENCES, 1):
         entries.append((start, start + CUE_S, text))
         start += CUE_S + (PAUSE_S if number == PAUSE_AFTER else GAP_S)
-    return srt.format_srt(entries)
+    return srt.format_srt_ms([(srt.milliseconds(s), srt.milliseconds(e), t) for s, e, t in entries])
 
 
 def write_config(root: Path) -> config.Config:
