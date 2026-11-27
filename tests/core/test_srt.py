@@ -3,7 +3,7 @@
 import math
 import unittest
 
-from kototoki.srt import IncompleteTranslationError, format_srt, milliseconds, parse_srt, render_srt
+from kototoki.srt import IncompleteTranslationError, format_srt_ms, milliseconds, parse_srt, render_srt
 
 TWO_CUES = "1\n00:00:01,000 --> 00:00:02,500\nこんにちは\n\n2\n00:00:03,000 --> 00:00:04,000\nさようなら\n"
 
@@ -22,7 +22,7 @@ class TimeTests(unittest.TestCase):
 
 class FormatTests(unittest.TestCase):
     def test_numbering_and_time_lines(self):
-        text = format_srt([(0.0, 1.5, "一"), (3723.004, 3724, "二\n行")])
+        text = format_srt_ms([(0, 1500, "一"), (milliseconds(3723.004), 3724000, "二\n行")])
         self.assertEqual(
             text,
             "1\n00:00:00,000 --> 00:00:01,500\n一\n\n2\n01:02:03,004 --> 01:02:04,000\n二\n行\n",

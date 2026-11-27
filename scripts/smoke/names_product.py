@@ -58,7 +58,7 @@ def synthetic_srt() -> str:
     for ja in LINES:
         entries.append((start, start + CUE_S, ja))
         start += CUE_S + GAP_S
-    return srt.format_srt(entries)
+    return srt.format_srt_ms([(srt.milliseconds(s), srt.milliseconds(e), t) for s, e, t in entries])
 
 
 def write_config(root: Path) -> config.Config:
