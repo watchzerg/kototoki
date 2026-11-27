@@ -82,7 +82,7 @@ covers:
 - 解析与渲染复制自 `archive/2026-11-18-pre-research-restructure:experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。读取容忍 UTF-8 BOM。
 - `format_srt_ms([(start_ms, end_ms, text), ...])` 从 1 编号写出整数毫秒条目；时长非正即报错。日文 cue 与内嵌字幕清洗都用它。
 - 秒到毫秒由调用方先用 `milliseconds` 取整：`floor(x*1000+0.5)`，不用 `round`。
-- 字幕文字规则（非空、无空白行）唯一出处是 `subtitle_text_problem`；写出、解析、译文核对与翻译回复解析都调用它，各自只映射本处既有的消息或 reason。
+- 字幕文字规则唯一出处 `subtitle_text_problem`，含翻译回复解析在内共用。
 - 时间行四段到整数毫秒是 `time_parts_ms`，解析与内嵌字幕清洗共用；毫秒格式化只有 `srt` 一处实现。
 - `write_srt(text, path)` 原子写出；是否允许覆盖现有文件由调用方按发布规则判定。
 
