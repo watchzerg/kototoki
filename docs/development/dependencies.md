@@ -40,10 +40,10 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
 
 | task | 做什么 | 备注 |
 | --- | --- | --- |
-| `mise run install` | 只做 `uv sync --locked` | 联网、改环境，按 AGENTS 规定先问 |
-| `mise run fetch-models` | 只下载模型 | 几十 GB，不并入 install；先问 |
+| `mise run install` | 只做 `uv sync --locked` | 联网、改环境，先问（见 [AGENTS.md](../../AGENTS.md#重任务与环境)） |
+| `mise run fetch-models` | 只下载模型 | 几十 GB，不并入 install；先问（同上） |
 | `mise run verify-assets` | 离线核对已下载的模型与清单一致 | 用 `artifacts.verify_model` 的 size+mtime 缓存，快 |
-| `mise run upgrade` | 按下文[升级](#升级)规则把 Python 依赖升到最新稳定版，再跑 core、full 测试与 `verify-assets` | 联网、改环境，先问；`mise run upgrade-check` 只报告 |
+| `mise run upgrade` | 按下文[升级](#升级)规则把 Python 依赖升到最新稳定版，再跑 core、full 测试与 `verify-assets` | 联网、改环境，先问（同上）；`mise run upgrade-check` 只报告 |
 | `mise run build-<name>` | 需要编译时再按依赖单独建 | **不放进 `mise run install`**，也不建通用的 `compile` |
 
 编译不进 install：编译需要编译器／CUDA Toolkit，耗时长，失败模式与下载完全不同；install 应可重复、快速、只消费锁定结果。按"第二个使用者出现再抽象"，现在不建通用编译入口。产品当前没有需要编译的依赖。
