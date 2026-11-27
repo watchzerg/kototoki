@@ -28,7 +28,7 @@ covers:
 - 成功时 payload 为 `name-table-v2`：`work_guess`、`entries[]`、`meta`（实际 seed 与尝试序号、`dropped_shape`／`dropped_honorific`／`dropped_ja_shape`、`prompt_tokens`／`completion_tokens`、秒数）、`build`（`status`、`reason`，以及 `build_document` 补上的 `prompt_check`——`count_tokens` 或 `skipped (<错误>)`——与 `over_budget_by_usage`）。
 - **请求体**（`table._request_body`）：`messages`、采样 temperature 0.7／top_p 0.8／top_k 20／`min_p` 0／`presence_penalty` 1.5、`seed`、`max_tokens` 16384、`chat_template_kwargs.enable_thinking: false`、非流式、`model`；无 `response_format`。除 `max_tokens`（v13 为 8192，ADR-0028「输出上限与提示预算」）外与研究侧 v13 `NamesClient.chat` 逐字节相同。`seed` 由配置保证为正整数。
 - **`count_tokens` 退路**：该端点返回 HTTP／传输错误或响应形状不符（没有整数 `input_tokens`）时，该影片内不再预检、计数按 0，运行日志一行 WARNING；每部影片一个客户端，下一部重新尝试该端点。此时只记录回复的 `usage.prompt_tokens`，超预算只在 `build.over_budget_by_usage` 标记、不失败；不得因此放宽预算。
-- 传输层失败（`HTTPError`、`URLError`、连接错误、超时）：`session.stop()` 停掉 Strata（下一部需要模型的影片再启动），抛 `NamesError`。HTTP 错误的消息只带状态码、分类（`oom`／`server_error`）与正文长度，正文留在交换目录。
+- 传输层失败（`HTTPError`、`URLError`、连接错误、超时）：`session.stop()` 停掉 Strata（下一部需要模型的影片再启动），抛 `NamesError`。HTTP 错误的消息只带状态码、分类（`oom`／`server_error`）与正文长度，正文留在交换目录。其余意外异常（如非 JSON 响应 `ValueError`）同样停掉 Strata 并原样上抛给编排器（同翻译路径）。
 - `ensure_started()` 抛 `StrataRefused`（含共享 session 已不可用）或 `InfraFailure`（启动失败）时包成 `NamesError`。共享 session 不可用后，本批其余有 cue 的影片直接 `NamesError`，翻译阶段同样直接失败（[共享 session](strata-session.md#当前行为规格)）。
 
 **失败与降级**：
@@ -52,7 +52,7 @@ covers:
 - 每部一行 `[names] done <相对路径>: E entries (D dropped), P prompt tok, C completion tok, T.Ts`，第 2 次及以后的尝试才成功时追加 `, attempt n/5`（上限取包顶层导出的 `ATTEMPTS`）；零条目为 `no cues, empty table`；终态失败为 WARNING `build failed (<原因>), empty table`。
 - 每次不合格的尝试（回复被截断、非 JSON、`entries` 不是列表）在该行之前各记一行 WARNING `[names] attempt n/5 failed (seed S): <错误首行>; finish …, C completion tok, reply N char(s)`（来自 `kototoki.names.table`）。
 - `count_tokens` 不可用时一行 WARNING。
-- 传输失败、HTTP 错误或 OOM 停掉 Strata 前一行 WARNING `[names] stopping Strata after <HTTP 状态 (类别) | 传输异常类型>`（来自包顶层）。
+- 传输失败、HTTP 错误、OOM 或意外异常停掉 Strata 前一行 WARNING `[names] stopping Strata after <HTTP 状态 (类别) | 异常类型>`（来自包顶层）。
 - Strata 不可用之后其余影片的 FAILED 行不带 traceback（原因已由 `[strata]` ERROR 行记过一次），行尾带异常消息首行。
 - 条目文字、`work_guess`、提示与回复正文不进日志，只在工作目录。
 

@@ -111,6 +111,11 @@ def build_document(work_dir: Path, document: SourceDocument, session: Session | 
         log.warning("[names] stopping Strata after %s", type(exc).__name__)
         session.stop()
         raise NamesError(f"transport failure: {type(exc).__name__}: {exc}") from exc
+    except Exception as exc:
+        # 意外异常（非 JSON 响应、响应缺字段等）：停掉可能不健康的 Strata，原样上抛给编排器（同 translate）。
+        log.warning("[names] stopping Strata after %s", type(exc).__name__)
+        session.stop()
+        raise
     # 预算检查的方式与"按 usage 看是否超预算"记进 build 块（计数不可用时提示仍照常发送，只记录、不失败）。
     prompt_tokens = result.payload["meta"].get("prompt_tokens")
     result.payload["build"].update(
