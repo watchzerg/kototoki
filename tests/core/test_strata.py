@@ -11,13 +11,12 @@ import tempfile
 from typing import Any
 import unittest
 
-from types import SimpleNamespace
-
 from kototoki import artifacts
 from kototoki import strata as S
 from kototoki.artifacts import read_json
 from kototoki.local_client import InfraFailure
-from kototoki.strata import Session, StrataRefused, StrataServer, wait_for_free_vram
+from kototoki.strata import StrataRefused, StrataServer, wait_for_free_vram
+from tests.core.strata_fakes import StrataHarness
 
 # Strata 默认启动真实写下的参数形状（0.2.12 Windows 与 0.2.13.1 Linux 相同）：总带 `--mtp <权重目录>`，DFlash2 不在 run config 里（2026-11-08 smoke）。
 DEFAULT_ARGS = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--mtp", "/opt/strata/mtp/rt", "--max-context", "131072",
@@ -227,69 +226,39 @@ class SessionTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=self.root / "work", input_dir=self.root / "in"))
-        self.events: list[str] = []
-        self.pids: list[int | None] = []
-        self.refuse_on: set[int] = set()   # 这些序号的启动被拒绝（StrataRefused）
-        self.infra_on: set[int] = set()    # 这些序号的启动失败（InfraFailure，服务已自行停掉）
-        self.servers: list[Any] = []
+        self.h = StrataHarness(self.root)
 
-    def factory(self, runtime_dir: Path, on_pid: Any) -> Any:
-        tests = self
-        number = len(self.servers) + 1
-
-        class FakeServer:
-            url = "http://127.0.0.1:8080"
-            identity = {"candidate": S.MODEL}
-
-            def __enter__(self) -> "FakeServer":
-                tests.events.append(f"start:{number}:{runtime_dir.name}")
-                if number in tests.refuse_on:
-                    on_pid(None)
-                    raise StrataRefused(f"refused {number}")
-                if number in tests.infra_on:
-                    on_pid(None)
-                    raise InfraFailure(f"launch {number} exploded")
-                on_pid(1000 + number)
-                return self
-
-            def __exit__(self, *exc: Any) -> None:
-                tests.events.append(f"stop:{number}")
-                on_pid(None)
-
-        server = FakeServer()
-        self.servers.append(server)
-        return server
-
-    def session(self) -> Session:
-        return Session(self.config, on_server_pid=self.pids.append, server_factory=self.factory)
+    def runtime_names(self) -> list[str]:
+        return [server.runtime_dir.name for server in self.h.servers]
 
     def test_starts_once_and_is_reused_across_stages(self) -> None:
-        with self.session() as session:
+        with self.h.session() as session:
             self.assertIsNone(session.server)
             first = session.ensure_started()   # names 阶段
             second = session.ensure_started()  # 翻译阶段
             self.assertIs(first, second)
             self.assertEqual(session.label, f"{session.runtime_root.name}/session-01")
-        self.assertEqual(self.events, ["start:1:session-01", "stop:1"])
-        self.assertEqual(self.pids, [1001, None])
+        self.assertEqual(self.h.events, ["start:1", "stop:1"])
+        self.assertEqual(self.runtime_names(), ["session-01"])
+        self.assertEqual(self.h.pids, [1001, None])
         self.assertEqual(session.runtime_root.parent,
                          artifacts.work_root(self.root / "work", self.root / "in") / S.SESSIONS_DIR)
 
     def test_stop_then_restart_is_a_new_session(self) -> None:
-        session = self.session()
+        session = self.h.session()
         session.ensure_started()
         session.stop()
         session.stop()  # 幂等
         session.ensure_started()
         self.assertEqual(session.label, f"{session.runtime_root.name}/session-02")
-        self.assertEqual(self.events, ["start:1:session-01", "stop:1", "start:2:session-02"])
+        self.assertEqual(self.h.events, ["start:1", "stop:1", "start:2"])
+        self.assertEqual(self.runtime_names(), ["session-01", "session-02"])
         session.stop()
-        self.assertEqual(self.pids, [1001, None, 1002, None])
+        self.assertEqual(self.h.pids, [1001, None, 1002, None])
 
     def test_repeated_start_failures_make_the_batch_unavailable(self) -> None:
-        self.infra_on = {1, 2, 3, 4}
-        session = self.session()
+        self.h.start_failures = [InfraFailure(f"launch {n} exploded") for n in range(1, 5)]
+        session = self.h.session()
         with self.assertLogs("kototoki.strata", level="WARNING") as logs:
             for _ in range(S.MAX_START_FAILURES - 1):
                 with self.assertRaises(InfraFailure):
@@ -309,13 +278,14 @@ class SessionTests(unittest.TestCase):
                       f"launch {S.MAX_START_FAILURES} exploded", session.unavailable)
         with self.assertRaisesRegex(StrataRefused, "unavailable for the rest of this batch"):
             session.ensure_started()
-        self.assertEqual(self.events, ["start:1:session-01", "start:2:session-02", "start:3:session-03"])  # 第 4 次没有碰工厂
+        self.assertEqual(self.h.events, ["start:1", "start:2", "start:3"])  # 第 4 次没有碰工厂
+        self.assertEqual(self.runtime_names(), ["session-01", "session-02", "session-03"])
         self.assertIsNone(session.server)
-        self.assertEqual(self.pids, [None, None, None])
+        self.assertEqual(self.h.pids, [None, None, None])
 
     def test_refused_start_marks_the_batch_unavailable(self) -> None:
-        self.refuse_on = {1}
-        with self.session() as session, self.assertLogs("kototoki.strata", level="WARNING") as logs:
+        self.h.start_failures = [StrataRefused("refused 1")]
+        with self.h.session() as session, self.assertLogs("kototoki.strata", level="WARNING") as logs:
             with self.assertRaisesRegex(StrataRefused, "refused 1"):
                 session.ensure_started()
             self.assertEqual(session.unavailable, "refused 1")
@@ -324,8 +294,8 @@ class SessionTests(unittest.TestCase):
                 session.ensure_started()
         self.assertEqual([(r.levelname, r.getMessage()) for r in logs.records],
                          [("ERROR", "[strata] unavailable for the rest of this batch: refused 1")])  # 只记一次
-        self.assertEqual(self.events, ["start:1:session-01"])  # 被拒的服务已自行停掉，不再 stop
-        self.assertEqual(self.pids, [None])
+        self.assertEqual(self.h.events, ["start:1"])  # 被拒的服务已自行停掉，不再 stop
+        self.assertEqual(self.h.pids, [None])
 
 
 if __name__ == "__main__":

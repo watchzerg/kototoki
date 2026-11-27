@@ -1,8 +1,8 @@
 """`kototoki.names` 对编排器的接口：`build_document` 在共享 Strata session 上建表、错误映射，以及请求体与 seed 序列的
 sha256 钉子（取自研究侧 v13 `NamesClient`＋`build_one`，基线 Q3 的 `names-strata-v4`）。
 
-共享 session 用真实的 `kototoki.strata.Session`，Strata 服务与 HTTP 客户端是假实现（`server_factory`／`client_factory`
-接缝），不起 Strata、不加载模型。
+共享 session 用真实的 `kototoki.strata.Session`，Strata 服务（共享的 `tests/core/strata_fakes.py`）与 HTTP 客户端（`client_factory`）是假实现
+（`server_factory`／`client_factory` 接缝），不起 Strata、不加载模型。
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from kototoki import names
 from kototoki.names import table
 from kototoki.srt import parse_srt
 from kototoki.strata import MODEL, Session, StrataRefused
+from tests.core.strata_fakes import StrataHarness
 
 SRT = "1\n00:00:01,000 --> 00:00:02,000\nシロウが来た\n\n2\n00:00:03,000 --> 00:00:04,000\nシロウだ\n"
 REPLY = {"work_guess": None, "entries": [{
@@ -37,30 +38,6 @@ def http_error(code: int = 500) -> HTTPError:
     error = HTTPError("http://127.0.0.1:8080/x", code, "error", {}, io.BytesIO(b""))
     error.close()  # 产品的 LocalClient 读完正文即关；伪造的错误同样先关，code 与 str 不受影响
     return error
-
-
-class FakeServer:
-    """伪 Strata 服务：`__enter__` 按 harness 的安排成功、拒绝或启动失败。"""
-
-    url = "http://127.0.0.1:8080"
-    identity = {"candidate": MODEL}
-
-    def __init__(self, harness: "Harness", runtime_dir: Path, on_pid) -> None:
-        self.harness, self.runtime_dir, self.on_pid = harness, runtime_dir, on_pid
-        self.number = len(harness.servers) + 1
-
-    def __enter__(self) -> "FakeServer":
-        failure = self.harness.start_failures.pop(0) if self.harness.start_failures else None
-        if failure is not None:
-            self.on_pid(None)
-            raise failure
-        self.on_pid(1000 + self.number)
-        self.harness.events.append(f"start:{self.number}")
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.harness.events.append(f"stop:{self.number}")
-        self.on_pid(None)
 
 
 class FakeClient:
@@ -93,32 +70,21 @@ class FakeClient:
         return item
 
 
-class Harness:
+class Harness(StrataHarness):
     def __init__(self, root: Path) -> None:
-        self.root = root
-        self.servers: list[FakeServer] = []
+        super().__init__(root)
         self.clients: list[dict[str, Any]] = []
         self.bodies: list[str] = []         # 发出的建表请求体（JSON 文本）
         self.count_bodies: list[str] = []   # 发出的 count_tokens 请求体（JSON 文本）
-        self.events: list[str] = []
-        self.pids: list[int | None] = []
-        self.start_failures: list[Exception | None] = []
         self.replies: list[Any] = [reply()]
         self.error_raw: str | None = None
         self.count_result: Any = None       # None：正常计数；Exception：抛出；dict：原样返回
-        self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=root / "work", input_dir=root / "in"))
 
     def session(self) -> Session:
-        def server_factory(runtime_dir: Path, on_pid) -> FakeServer:
-            server = FakeServer(self, runtime_dir, on_pid)
-            self.servers.append(server)
-            return server
-
         def client_factory(url: str, *, timeout: float, trace_dir: Path) -> FakeClient:
             return FakeClient(self, url, timeout, trace_dir)
 
-        return Session(self.config, on_server_pid=self.pids.append, server_factory=server_factory,
-                       client_factory=client_factory)
+        return super().session(client_factory)
 
 
 class Case(unittest.TestCase):
@@ -148,7 +114,7 @@ class BuildDocumentTests(Case):
         self.assertEqual(result.payload["build"],
                          {"status": "ok", "reason": None, "prompt_check": "count_tokens", "over_budget_by_usage": False})
         (client,) = self.h.clients
-        self.assertEqual((client["url"], client["timeout"]), ("http://127.0.0.1:8080", 1800.0))
+        self.assertEqual((client["url"], client["timeout"]), ("http://127.0.0.1:8080/#1", 1800.0))
         # 交换目录布局不变：`<work_dir>/names/transport/<UTC戳>-<pid>/session-NN`（即 `session.label`）
         self.assertEqual(client["trace_dir"],
                          self.work / "names" / "transport" / session.runtime_root.name / "session-01")
