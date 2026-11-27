@@ -12,7 +12,7 @@
 - **小模型例外**：体积很小、可在 CPU 运行的产品模型可以进 full，每个须用户单独批准，批准记录写在本节下方。CPU 测试走的是另一条设备路径（产品 VAD 设备固定为 `cuda:0`，ADR-0007），不能当作 GPU 路径的证据。当前唯一候选是产品 VAD 用的 pyannote segmentation-3.0（`pytorch_model.bin` 约 5.9 MB），尚未批准。
   - 已批准：无。
 
-真实模型调用不称为测试，称为**真实模型验证**：入口 `mise run smoke`，持有 `.local/gpu.lock`，每次运行须用户批准，不属于任何 gate。
+真实模型调用不称为测试，称为**真实模型验证**：入口 `mise run smoke`，运行规则（不属于任何 gate、须用户批准、持有 GPU 锁）见[开发工作流](../development/workflow.md#命令与门禁)。
 
 目录、task 与资源细节见[测试分层合同](../development/test-layers.md#分层与资源边界)。
 
