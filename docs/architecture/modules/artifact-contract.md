@@ -93,7 +93,9 @@ covers:
 
 ### 协议读侧
 
-同一模块，编排使用。纯函数 `classify_launch(ids, exit_code, events) -> LaunchOutcome` 用本模块自己的退出码常量与事件名解释一次 worker 启动。`LaunchOutcome`（冻结 dataclass）含：已报 `failed` 的 id（`failed`）、崩溃文件（`crashed`）、崩溃文件是否报了 `fatal`（`fatal`）、启动失败原因（`startup_failed`）与剩余待跑 id（`remaining`）。规则：
+同一模块，编排使用。纯函数 `classify_launch(ids, exit_code, events) -> LaunchOutcome` 解释一次 worker 启动，`LaunchOutcome` 含 `failed`、`crashed`、`fatal`、`startup_failed`、`remaining` 与 `error_types`（报了 `failed`／`fatal` 的 id → worker 的 `error_type`）；`progress_event(event)` 判定事件是否转发成进度行并给出 `done` 的数值计数。事件名只在本模块出现。
+
+规则：
 
 - 退出码 0／1 只有在每个待跑 id 都有事件时才算正常结束（退出码 1 也是 Python 未捕获异常的退出码）。
 - 否则有 `startup_failed` 即启动失败；既无 `started` 又无已报告的待跑文件事件（加载模型期间原生崩溃），同样按启动失败处理（`exited with code <n>`），剩余全部失败、不重启。
@@ -108,7 +110,7 @@ covers:
 
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
 - `tests/core/test_artifacts.py`：`work_id` 为含扩展名相对路径的 SHA12、最终字幕路径在源文件旁并镜像子目录、不同输入目录得到不同工作根；视频身份忽略位置而随大小、mtime 与 probe 变化；`is_current` 匹配与失效；失败记录列出已有阶段产物；模型哈希缓存命中则不重算；原子写失败时目标不变且无临时文件。
-- `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败、`fatal`、启动期无 `started` 崩溃（不重启）与 `started` 后崩溃归咎；`failed_windows` 清空窗口文字并记录。
+- `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败与 `error_type` 传递、`progress_event`、`fatal`、启动期无 `started` 崩溃（不重启）与 `started` 后崩溃归咎；`failed_windows` 清空窗口文字并记录。
 - `tests/core/test_srt.py`：毫秒取整为四舍五入而非银行家舍入、编号与时间行格式、畸形输入被严格解析拒绝、渲染保留编号与时间行与多行文字、译文不完整时抛出带报告的错误。
 - 测试精简（2026-11-22）后不再有测试覆盖：
   - 产物：`register` 写索引与幂等、越界路径与短 id 碰撞的拒绝、`input_key` 的构成、`record_input`、`derived_identity` 要求摘要、原地替换、损坏或外来产物不当前、`offset_s` 强制、交叉审计产物在阶段链外、内嵌与 names 产物在失败记录里、模型哈希的 size／mtime 重算与期望值核对、`published.json` 仅审计内容与摘要必填、UTF-8 无 BOM 与 LF。

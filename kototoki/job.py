@@ -53,7 +53,7 @@ from kototoki.plan import GPU_STAGES, JA_SRT, ModelSha, Plan, PlanError
 from kototoki.procs import LockError, ProcessLock, contained
 from kototoki.translate import TranslatePlan
 from kototoki.workers import gpu
-from kototoki.workers.protocol import FileJob, Jobs, classify_launch, write_jobs
+from kototoki.workers.protocol import FileJob, Jobs, classify_launch, progress_event, write_jobs
 
 EXIT_OK = 0
 EXIT_FAILED = 1           # 有文件在某阶段失败；其余文件照常发布
@@ -480,14 +480,13 @@ def _read_events(ctx: _Context, stage: str, stdout: Iterable[bytes],
             _forward_stdout(stderr, raw)
             continue
         events.append(event)
-        name = event.get("event")
-        if name in ("started", "failed", "fatal", "startup_failed"):  # started 只标加载完成；失败由 run_gpu_stage 记行
+        progress = progress_event(event)
+        if progress is None:
             continue
+        name, counts = progress
         video = by_id.get(event.get("id"))
         line = f"[{stage}] {name} {video.relative if video else ''}".rstrip()
-        counts = [f"{key}={value}" for key, value in event.items() if key not in ("event", "id")
-                  and isinstance(value, (int, float)) and not isinstance(value, bool)]
-        logger.info(line + (f": {' '.join(counts)}" if name == "done" and counts else ""))
+        logger.info(line + (f": {' '.join(f'{key}={value}' for key, value in counts.items())}" if counts else ""))
     return events
 
 
@@ -500,10 +499,8 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
     while pending:
         code, events = _launch(ctx, stage, pending)
         outcome = classify_launch([video.work_dir.name for video in pending], code, events)
-        reported = {event.get("id"): str(event.get("error_type")) for event in events
-                    if event.get("event") in ("failed", "fatal")}
         for identifier in outcome.failed:
-            ctx.fail(by_id[identifier], stage, error_type=reported[identifier])
+            ctx.fail(by_id[identifier], stage, error_type=outcome.error_types[identifier])
         if outcome.startup_failed is not None:
             # 模型加载失败与文件无关：本阶段剩余文件全部失败，不逐个重启；原因一行，逐文件行不带 traceback。
             logger.error(f"[{stage}] worker startup failed: {outcome.startup_failed}")
@@ -513,7 +510,7 @@ def run_gpu_stage(ctx: _Context, stage: str, batch: list[VideoFile]) -> None:
             break
         if outcome.crashed is not None:
             if outcome.fatal:
-                ctx.fail(by_id[outcome.crashed], stage, error_type=reported[outcome.crashed])
+                ctx.fail(by_id[outcome.crashed], stage, error_type=outcome.error_types[outcome.crashed])
             else:
                 ctx.fail(by_id[outcome.crashed], stage, WorkerCrashed(f"{stage} worker exited with code {code}"),
                          traceback=False)

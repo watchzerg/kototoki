@@ -15,7 +15,7 @@ worker 加载一次模型后先在 stdout 打一行 `started` 进度，再逐文
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 from pathlib import Path
@@ -148,6 +148,7 @@ class LaunchOutcome:
     fatal: bool                    # 崩溃文件报告了 `fatal`（`failure.json` 已由 worker 写出）
     startup_failed: str | None     # 启动失败原因（`startup_failed` 的 `error_type` 或 `exited with code <n>`）；有它即剩余全部失败、不重启
     remaining: tuple[str, ...]     # 需要重启 worker 继续跑的 id，按待跑顺序
+    error_types: Mapping[str, str] = field(default_factory=dict)  # `failed` 的 id 与 `fatal` 的崩溃文件 id → worker 报告的 `error_type`
 
 
 def classify_launch(ids: Sequence[str], exit_code: int, events: Sequence[Mapping[str, Any]]) -> LaunchOutcome:
@@ -160,22 +161,39 @@ def classify_launch(ids: Sequence[str], exit_code: int, events: Sequence[Mapping
     """
     reported = {event.get("id"): event.get("event") for event in events}
     failed = tuple(i for i in ids if reported.get(i) == "failed")
+    error_types = {event.get("id"): str(event.get("error_type")) for event in events
+                   if event.get("event") in ("failed", "fatal")}
     if exit_code in (EXIT_OK, EXIT_PARTIAL) and all(i in reported for i in ids):
-        return LaunchOutcome(failed, None, False, None, ())
+        return LaunchOutcome(failed, None, False, None, (), error_types)
     startup = next((event for event in events if event.get("event") == "startup_failed"), None)
     if startup is not None:
-        return LaunchOutcome(failed, None, False, str(startup.get("error_type")), ())
+        return LaunchOutcome(failed, None, False, str(startup.get("error_type")), (), error_types)
     position = {i: at for at, i in enumerate(ids)}
     started = any(event.get("event") == "started" for event in events)
     handled = [position[i] for i in reported if i in position]
     if not started and not handled:
-        return LaunchOutcome(failed, None, False, f"exited with code {exit_code}", ())
+        return LaunchOutcome(failed, None, False, f"exited with code {exit_code}", (), error_types)
     culprit_at = (max(handled) + 1) if handled else 0
     fatal = next((event.get("id") for event in events if event.get("event") == "fatal"), None)
     if fatal in position:
         culprit_at = position[fatal]
     crashed = ids[culprit_at] if culprit_at < len(ids) else None
-    return LaunchOutcome(failed, crashed, crashed is not None and crashed == fatal, None, tuple(ids[culprit_at + 1:]))
+    return LaunchOutcome(failed, crashed, crashed is not None and crashed == fatal, None, tuple(ids[culprit_at + 1:]),
+                         error_types)
+
+
+def progress_event(event: Mapping[str, Any]) -> tuple[str, dict[str, int | float]] | None:
+    """这个事件要不要转发成进度日志行：返回 `(事件名, 附带计数)`，不转发返回 None。
+
+    `started` 只标加载完成，`failed`／`fatal`／`startup_failed` 由编排按 `classify_launch` 的结果记失败，都不转发。
+    只有 `done` 附带计数：事件里除 `event`、`id` 之外的数值字段（不含 bool），字段名与顺序照事件原样。
+    """
+    name = event.get("event")
+    if name in ("started", "failed", "fatal", "startup_failed"):
+        return None
+    counts = {key: value for key, value in event.items() if key not in ("event", "id")
+              and isinstance(value, (int, float)) and not isinstance(value, bool)} if name == "done" else {}
+    return name, counts
 
 
 # --- ASR 失败窗口（w0／x0 共用） ------------------------------------------------------------
