@@ -100,7 +100,7 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 
 ## 配置与产物身份
 
-只改配置文件里的项一般不会使已有 STT 产物失效；进身份的键如下（身份规则见[产物契约](../artifact-contract.md)与[阶段计划](../stage-plan.md)）：
+只改配置文件里的项一般不会使已有 STT 产物失效；进身份的键如下（身份规则见[产物契约](../artifact-contract/layout-and-identity.md)与[阶段计划](../stage-plan.md)）：
 
 - `[cues]` 全部键进 `ja-cues.json` 的身份：改了只重跑 ja-cues 及之后。
 - `[names] seed` 进 `name-table.json` 的身份；`[translate] seed` 进翻译身份与 run 目录键（`<配方名>__s<seed>__n<表sha12>`）。

@@ -14,7 +14,7 @@ covers:
 
 负责双语字幕流水线（[日文 cue 交界](../collaborations/artifact-handoff.md#日文-cuestt-与翻译的交界)、[切分规则](../../behaviors/bilingual-subtitle-pipeline.md#切分规则)、[模块边界](../module-boundaries.md#产品包的责任边界)）中 STT 与翻译的交界：把 `align.json` 的字符级时间回填后切成日文字幕条目，产出 `ja-cues.json` 的 payload 与 `ja.srt` 文本。
 
-不负责：文件读写、身份与跳过判定（[产物契约](artifact-contract.md)，由编排器经 `write_artifact`／`srt.write_srt` 写出）、cue 规则的配置加载与默认值（票据 02 `config`）、翻译与合并（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
+不负责：文件读写、身份与跳过判定（[产物契约](artifact-contract/layout-and-identity.md)，由编排器经 `write_artifact`／`srt.write_srt` 写出）、cue 规则的配置加载与默认值（票据 02 `config`）、翻译与合并（票据 05）。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
 ## 当前行为规格
 
