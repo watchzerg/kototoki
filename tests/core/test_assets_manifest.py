@@ -6,10 +6,16 @@
 
 from __future__ import annotations
 
+import importlib.util
 import tomllib
 import unittest
+from urllib.request import Request
 
 from kototoki import config, plan
+
+_ASSETS_SPEC = importlib.util.spec_from_file_location("assets_script", config.REPO_ROOT / "scripts" / "assets.py")
+assets_script = importlib.util.module_from_spec(_ASSETS_SPEC)
+_ASSETS_SPEC.loader.exec_module(assets_script)
 
 with (config.REPO_ROOT / "assets.toml").open("rb") as _stream:
     MANIFEST = tomllib.load(_stream)
@@ -26,6 +32,28 @@ class ModelConstantsTests(unittest.TestCase):
         self.assertEqual(shas("faster-whisper-large-v3"), plan.W0_FILES)
         self.assertEqual(shas("qwen3-asr-1.7b-hf"), plan.X0_FILES)
         self.assertEqual(shas("mms-1b-all"), plan.MMS_FILES)
+
+
+class RedirectAuthTests(unittest.TestCase):
+    def _redirect(self, old_url: str, new_url: str) -> Request:
+        handler = assets_script._SafeRedirectHandler()
+        req = Request(old_url, headers={"Authorization": "Bearer secret", "User-Agent": "test"})
+        redirected = handler.redirect_request(req, None, 302, "Found", {}, new_url)
+        self.assertIsNotNone(redirected)
+        return redirected
+
+    def test_cross_host_and_scheme_downgrade_strip_authorization(self) -> None:
+        for new_url in ("https://cdn-lfs.example.com/file?sig=1", "http://huggingface.co/repo/file"):
+            with self.subTest(new_url=new_url):
+                redirected = self._redirect("https://huggingface.co/repo/resolve/rev/file", new_url)
+                self.assertFalse(redirected.has_header("Authorization"))
+                self.assertEqual(redirected.get_header("User-agent"), "test")
+
+    def test_same_origin_preserves_authorization(self) -> None:
+        for new_url in ("https://huggingface.co/other/path", "https://huggingface.co:443/other/path"):
+            with self.subTest(new_url=new_url):
+                redirected = self._redirect("https://huggingface.co/repo/resolve/rev/file", new_url)
+                self.assertEqual(redirected.get_header("Authorization"), "Bearer secret")
 
 
 if __name__ == "__main__":

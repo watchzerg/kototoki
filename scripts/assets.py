@@ -20,7 +20,8 @@ from pathlib import Path, PurePosixPath
 import sys
 import tomllib
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -72,15 +73,33 @@ def check_files(base: Path, files: Mapping[str, Mapping[str, Any]], cache: Path)
     return problems
 
 
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    default_port = {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), parts.port or default_port
+
+
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    """跨主机或换协议重定向时剥离 Authorization，避免把 HF_TOKEN 交给第三方 CDN 或被预签名 URL 拒收。"""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and _origin(req.full_url) != _origin(redirected.full_url):
+            redirected.remove_header("Authorization")
+        return redirected
+
+
 def download(url: str, target: Path, sha256: str, *, headers: Mapping[str, str] | None = None) -> Path:
     """下载到 `<target>.partial`，边下边算 SHA256；一致才改名为 `target`，不一致删掉临时文件并报错。"""
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".partial")
     digest = hashlib.sha256()
+    opener = build_opener(_SafeRedirectHandler())
     print(f"download {url}", flush=True)
     try:
-        with urlopen(Request(url, headers=dict(headers or {}))) as response, partial.open("wb") as stream:
+        with opener.open(Request(url, headers=dict(headers or {}))) as response, partial.open("wb") as stream:
             while chunk := response.read(CHUNK):
                 digest.update(chunk)
                 stream.write(chunk)

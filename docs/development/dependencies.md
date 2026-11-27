@@ -74,7 +74,7 @@ gated = true                         # 可选：须用有权限账户的 HF_TOKE
   - 产品用到的四个模型目录（默认引擎 `cross` 四个都用）：`pyannote-segmentation-3.0`（门控）、`faster-whisper-large-v3`、`qwen3-asr-1.7b-hf`、`mms-1b-all`。
   - `hy-mt2-30b-a3b-apex-i-compact` 的条目已于 2026-11-08 删除（产品翻译不再用它，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)）；研究侧 H0 仍用 `.local/models/translation/` 下已有的文件，路径由各 demo 自己管理，不在清单里。
 - llama.cpp 工具与 `qwen3.8-27b-ud-iq3_s` 模型条目已于 2026-11-18 删除（[ADR-0033](../adr/0033-ffmpeg-branch-lock.md)）。
-- `scripts/assets.py`：`fetch-models`、`verify` 两个子命令；下载先写 `.partial` 并边下边算 SHA256，一致才改名；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
+- `scripts/assets.py`：`fetch-models`、`verify` 两个子命令；下载先写 `.partial` 并边下边算 SHA256，一致才改名，跨主机或换协议重定向时剥离 `Authorization`；一项失败不阻断其余各项，退出码 1。recipe 与命令表见[开发工作流](workflow.md#命令与门禁)。
 - 测试（core）：`tests/core/test_assets_manifest.py` 钉住 `kototoki/plan.py` 的模型文件 SHA256 表 == 清单。`scripts/assets.py` 的下载、SHA 不符清理、门控令牌与离线核对自 2026-11-22 测试精简后没有测试。
 - **外部前置：Strata**（产品翻译，[ADR-0029](../adr/0029-translate-per-cue-resolution.md)、[ADR-0021](../adr/0021-q3-strata-names-baseline.md)）：Strata 0.2 版本线（本机 0.2.13.1／build 0.1.59.1）用其安装器装好，`strata` 在 PATH 上（`~/.local/bin/strata`），状态与日志在 `~/.local/state/strata/`，翻译模型 `qwen3.8-flash-next-iq3_s` 在 Strata 自己的数据目录；两者都**不在 `assets.toml` 里**，`install`／`fetch-models`／`verify-assets` 不管它们，由用户安装与维护。
 
