@@ -123,14 +123,14 @@ ASR 与对齐壳读上游产物时重验其 `identity.upstream["audio-16k.wav"]`
 - `tests/core/test_stt_workers.py`（伪推理对象）：
   - vad 壳写出的身份等于 `plan.vad_identity`，坐标与 `stages` 如实；asr 壳身份链到 vad 且逐窗文字、`failed_windows` 正确；失败窗口置空并记录；复读窗口被折叠并写 trace 与 WARNING（日志不含文字）；vad 对应另一份音频则整文件失败。
   - align 壳的链产出能被 `cues.build_cues` 消费；对齐改文字则整文件失败。
-  - CUDA 守卫：坏 CUDA 下出错或成功都退出码 2 且不写产物（`CudaGuardTest`）；`gpu.verify_models` 核对并缓存文件 sha256。
+  - CUDA 守卫：坏 CUDA 出错或成功均退出码 2 且不写产物；`gpu.verify_models` 核对并缓存 sha256；`gpu.read_wav` 归一化 PCM16 为 float32 并算 PCM sha256。
   - 壳导入不加载推理库。
   - ASR 与 `cross` 的用例见 [STT ASR](stt-asr/cross-judge.md#代码与验证入口)。
 - 测试精简（2026-11-22）后不再有测试覆盖：
   - vad：`chunk_intervals` 的取整、越界裁剪与计数、窗口外区间丢弃、内部静音记账、非法区间与样本数、输出过窗口 schema；`validate_audio` 的形状与 dtype。
   - align：torchaudio 最小版本、模型字典过滤（含 transformers 5 的分隔符）、小写展开报错、数值作用域的设置与恢复、`sample_window` 的各种拒绝；`map_records` 的 `offset` 与缺记录保留文字。
   - schema：多数拒绝分支、1 ms 容差、采样率常量只在 recipes 定义。
-  - 壳：身份不自有、非法窗口使文件失败、配方与引擎启动校验、`main` 读 jobs、日志去向与启动失败的 traceback、`read_wav`、模型文件清单、`gpu.file_processor` 的一次 CUDA 检查、logger 名、TF32 告警过滤；整链 `align.json`、`ja-cues.json`、`ja.srt` 的字节 sha256 钉子已删除。
+  - 壳：身份不自有、非法窗口使文件失败、配方与引擎启动校验、`main` 读 jobs、日志去向与启动失败的 traceback、模型文件清单、`gpu.file_processor` 的一次 CUDA 检查、logger 名、TF32 告警过滤；整链 `align.json`、`ja-cues.json`、`ja.srt` 的字节 sha256 钉子已删除。
 - 真实模型路径由小批量 `mise run subtitles` 验证；对照研究期冻结窗口的门禁已随 ADR-0034 删除，不再与 W0／X0 demo 逐 token 比对。
 - 未验证：真实的 CUDA 粘性错误与窗口级 OOM 只用伪对象验证了分级逻辑；多文件 jobs 只有离线测试；TF32 告警过滤后真实 vad 运行不再有告警计数行，尚未经真实运行核对。
 

@@ -65,6 +65,14 @@ class RunTests(ProtocolCase):
         self.assertEqual(self.events()[-1], {"event": "fatal", "id": "b", "error_type": "FatalWorkerError"})
         self.assertTrue((self.root / "b" / artifacts.FAILURE).exists())
 
+    def test_run_worker_emits_started_before_file_events(self) -> None:
+        jobs_path = self.root / "jobs.json"
+        p.write_jobs(jobs_path, self.jobs("a", "b"))
+        self.assertEqual(p.run_worker(jobs_path, lambda jobs: (lambda job: None), stream=self.stream), p.EXIT_OK)
+        self.assertEqual(self.events(),
+                         [{"event": "started"}, {"event": "done", "id": "a"}, {"event": "done", "id": "b"}])
+
+
 class ClassifyLaunchTests(unittest.TestCase):
     IDS = ("a", "b", "c", "d")
 
@@ -86,6 +94,14 @@ class ClassifyLaunchTests(unittest.TestCase):
     def test_crash_blames_the_id_after_the_last_handled_one(self) -> None:
         events = [*self.done("a"), {"event": "failed", "id": "b", "error_type": "ValueError"}]
         self.assertEqual(p.classify_launch(self.IDS, 3, events), p.LaunchOutcome(("b",), "c", False, None, ("d",)))
+
+    def test_crash_before_started_is_startup_failure_without_restart(self) -> None:
+        self.assertEqual(p.classify_launch(self.IDS, 3, []),
+                         p.LaunchOutcome((), None, False, "exited with code 3", ()))
+
+    def test_crash_after_started_without_file_events_blames_first_id(self) -> None:
+        self.assertEqual(p.classify_launch(self.IDS, 3, [{"event": "started"}]),
+                         p.LaunchOutcome((), "a", False, None, ("b", "c", "d")))
 
 
 class FailedWindowTests(unittest.TestCase):

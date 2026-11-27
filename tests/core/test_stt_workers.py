@@ -398,6 +398,14 @@ class GpuHelpersTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             gpu.verify_models({"m": (model, "0" * 64)}, cache)
 
+    def test_read_wav_normalizes_pcm16_to_float32_with_sha256(self):
+        wav = self.root / "audio.wav"
+        expected_sha256 = write_wav(wav, np.array([-32768, 0, 32767], dtype="<i2"))
+        waveform, pcm_sha256 = gpu.read_wav(wav)
+        self.assertEqual(waveform.dtype, np.float32)
+        np.testing.assert_array_equal(waveform, np.array([-1.0, 0.0, 32767 / 32768.0], dtype=np.float32))
+        self.assertEqual(pcm_sha256, expected_sha256)
+
 
 class ImportBoundaryTest(unittest.TestCase):
     def test_worker_shells_import_without_inference_libraries(self):

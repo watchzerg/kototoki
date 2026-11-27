@@ -42,7 +42,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, TextIO
+from typing import Any, BinaryIO, TextIO
 import warnings
 
 from kototoki import artifacts, cues, embedded, media, merge, names, plan, recipes, srt, strata, translate
@@ -443,7 +443,7 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
             ctx.gpu_lock.update(worker_pid=process.pid, worker_stage=stage)
             assert process.stdout is not None
             with process.stdout:
-                events = _read_events(ctx, stage, process.stdout, by_id)
+                events = _read_events(ctx, stage, process.stdout, by_id, stderr)
             code = process.wait()
         finally:
             if process.returncode is None:  # 读 stdout 时抛异常（Ctrl+C、写日志失败）：先回收 worker，再向上抛
@@ -460,19 +460,28 @@ def _launch(ctx: _Context, stage: str, batch: list[VideoFile]) -> tuple[int, lis
     return code, events
 
 
+def _forward_stdout(stderr: BinaryIO | None, raw: bytes) -> None:
+    """将 worker stdout 的非空非 JSON 行加 `[stdout] ` 前缀转发到 stderr 日志，避免静默丢失与误计告警。"""
+    if stderr is not None and raw.strip():
+        stderr.write(b"[stdout] " + raw + (b"" if raw.endswith(b"\n") else b"\n"))
+        stderr.flush()
+
+
 def _read_events(ctx: _Context, stage: str, stdout: Iterable[bytes],
-                 by_id: Mapping[str, VideoFile]) -> list[dict[str, Any]]:
+                 by_id: Mapping[str, VideoFile], stderr: BinaryIO | None = None) -> list[dict[str, Any]]:
     events = []
     for raw in stdout:
         try:
             event = json.loads(raw.decode("utf-8"))
         except ValueError:
+            _forward_stdout(stderr, raw)
             continue
         if not isinstance(event, dict):
+            _forward_stdout(stderr, raw)
             continue
         events.append(event)
         name = event.get("event")
-        if name in ("failed", "fatal", "startup_failed"):  # 由 run_gpu_stage 记成带类型的 FAILED 行
+        if name in ("started", "failed", "fatal", "startup_failed"):  # started 只标加载完成；失败由 run_gpu_stage 记行
             continue
         video = by_id.get(event.get("id"))
         line = f"[{stage}] {name} {video.relative if video else ''}".rstrip()

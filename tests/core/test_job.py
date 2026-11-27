@@ -374,6 +374,22 @@ class IsolationTests(JobCase):
         self.assertEqual((failure["stage"], failure["error_type"]), ("asr", "WorkerCrashed"))
         self.assertFalse(self.final("f2.mkv").exists())
 
+    def test_startup_crash_fails_batch_without_restart(self) -> None:
+        self.make_inputs(*FOUR)
+        self.plan({"asr": {"__startup__": "crash"}})
+        console = io.StringIO()
+        summary = self.run_job(console=console)
+        self.assertEqual(summary.failed, dict.fromkeys(FOUR, "asr"))
+        self.assertEqual((summary.published, summary.exit_code), ([], 1))
+        self.assertEqual([e["ids"] for e in self.launches("asr")], [self.ids(*FOUR)])
+        self.assertEqual(self.launches("align"), [])
+        self.assertNotIn("[vad] started", console.getvalue())
+        for rel in FOUR:
+            failure = self.failure(rel)
+            self.assertEqual((failure["stage"], failure["error_type"]), ("asr", "WorkerCrashed"))
+            self.assertIn("exited with code 3", failure["message"])
+            self.assertFalse(self.final(rel).exists())
+
     def test_no_speech_publishes_empty_subtitle_and_skips_later_stages(self) -> None:
         self.make_inputs("a.mkv", "b.mkv", "c.mkv")
         self.plan({"vad": {"b.mkv": "empty"}})
@@ -391,6 +407,43 @@ class IsolationTests(JobCase):
         again = self.run_job()
         self.assertEqual((again.existing, again.published), (["a.mkv", "b.mkv", "c.mkv"], []))
         self.assertEqual(len(self.launches()), launches)
+
+    def test_non_json_stdout_forwarded_to_stderr(self) -> None:
+        # stdout 的非 JSON／非 dict 行与无换行尾行按 `[stdout] ` 转发到 stderr 日志，空行忽略，后续事件仍解析且不误计告警。
+        self.make_inputs("a.mkv")
+        self.plan({"vad": {"a.mkv": "empty"}})
+        script = (
+            "import sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import fake_worker\n"
+            "out = sys.stdout.buffer\n"
+            "out.write(b'2026-10-18 12:00:00Z [    1.0s] WARNING  from stdout\\n   \\n\\n[1, 2]\\n\\xff bad utf8\\n')\n"
+            "out.flush()\n"
+            "code = fake_worker.main(['fake_worker.py', sys.argv[2], '--jobs', sys.argv[3]])\n"
+            "out.write(b'trailing no newline')\n"
+            "out.flush()\n"
+            "sys.exit(code)\n"
+        )
+        console = io.StringIO()
+        summary = job.run(
+            self.config,
+            worker_command=lambda stage, jobs: [sys.executable, "-c", script, str(FAKE_WORKER.parent), stage, str(jobs)],
+            sleep=lambda _: None,
+            console=console,
+        )
+        self.assertEqual((summary.published, summary.failed), (["a.mkv"], {}))
+        self.assertIn("[vad] done a.mkv: windows=1", console.getvalue())
+        self.assertNotIn("warning/error line(s)", console.getvalue())
+        (stderr_log,) = self.work_root.glob("run-*-vad.stderr.log")
+        raw = stderr_log.read_bytes()
+        self.assertEqual(
+            raw,
+            b"[stdout] 2026-10-18 12:00:00Z [    1.0s] WARNING  from stdout\n"
+            b"[stdout] [1, 2]\n"
+            b"[stdout] \xff bad utf8\n"
+            b"[stdout] trailing no newline\n",
+        )
+        self.assertEqual(job._count_stderr_problems(raw), 0)
 
 
 class ResumeTests(JobCase):

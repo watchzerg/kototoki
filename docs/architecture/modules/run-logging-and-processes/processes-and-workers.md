@@ -26,10 +26,10 @@ covers:
 
 - jobs 按 [STT worker](../stt-workers.md) 的约定：`recipe_hash` 为 `plan.recipe_hash(stage, engine=…)`，`config` 为 `{"engine", "models": plan.worker_models(config), "model_cache"}`，`inputs` 按 `plan.STAGE_INPUTS`（vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）；worker 用 `plan` 的身份函数写入身份，编排用同一函数核对。
 - 子进程环境（`child_env`）：当前环境加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<work_dir>/cache/`，以及关进度条的 `QUIET_ENV`。
-- stdout 逐行读进度 JSON，stderr 追加到 `<work root>/run-<时间戳>-<stage>.stderr.log`。进度事件进运行日志的方式：
+- stdout 逐行读进度 JSON，stderr 追加到 `<work root>/run-<时间戳>-<stage>.stderr.log`；stdout 上无法按 UTF-8 JSON 解析或不是 JSON 对象的非空行（缺结尾换行时补换行）加 `[stdout] ` 前缀转发到同一 stderr 日志（不静默丢弃，前缀使其不触发告警计数）。进度事件进运行日志的方式：
   - `done`：INFO `[stage] done <相对路径>`，事件里除 `event`、`id` 之外的数值字段按事件自身的字段名以 `key=value` 追加，例 `[align] done S1/ep01.mkv: windows=195 failed_alignment_windows=1 text_only_units=417`（不建映射表）。
-  - `failed`／`fatal`／`startup_failed` 不单独记行：`run_gpu_stage` 把事件的 `error_type` 交给 `ctx.fail`，失败只记一行 ERROR `[stage] FAILED <相对路径>: <类型>`（无 traceback，`failure.json` 已由 worker 写出）。
-  - 启动失败先记一行 ERROR `[stage] worker startup failed: <类型>`，随后逐文件的 FAILED 行不带 traceback（`WorkerCrashed: <stage> worker startup failed: <类型>`）。
+  - `started`／`failed`／`fatal`／`startup_failed` 不单独记行：`started` 只标加载完成，失败由 `run_gpu_stage` 把原因交给 `ctx.fail`、只记一行 ERROR `[stage] FAILED <相对路径>: <类型>`（无 traceback）。
+  - 启动失败先记一行 ERROR `[stage] worker startup failed: <原因>`，随后逐文件的 FAILED 行不带 traceback（`WorkerCrashed: <stage> worker startup failed: <原因>`）。
   - 退出码不是 0 或 1 时固定记 WARNING `[stage] worker exited with code <n>, see <stderr 文件名>`，与告警计数行互不替代：裸 traceback 与原生崩溃不按本格式、不计数，靠这一行指向。
 - 同一类失败在多个文件的 FAILED 行里只在第一次带 traceback（batch-run-fixes 06.3）。类别 = 阶段 + 异常类型 + 抛出位置（最内层帧的文件与行号，`job._failure_kind`）；`PlanError` 包着缓存异常时按被包的异常算（如模型核对失败）。每个文件各抛一个新异常对象（如发布时同一处 `OSError`）也只带一次；同类型但抛出位置不同的算新的一类。
 
@@ -37,21 +37,21 @@ covers:
 
 - 报告 `failed` 的文件记该阶段失败（`failure.json` 已由 worker 写出）。
 - 退出码 0／1 且每个待跑 id 都有事件：正常结束，其余按产物核对。有待跑 id 没有事件时不算正常结束（退出码 1 也是 Python 未捕获异常的退出码），按下面的崩溃规则处理。
-- 有 `startup_failed` 事件（模型加载失败，与文件无关）：本阶段剩余文件全部失败，不重启。
+- 有 `startup_failed` 事件，或既无 `started` 又无文件事件的异常退出（模型加载／启动期间原生崩溃，与文件无关）：本阶段剩余文件全部失败，不重启。
 - 有 `fatal` 事件：该文件失败，从下一文件重启 worker。
-- 其他异常退出：最后一个有事件的文件之后的第一个文件即正在处理的文件，编排写 `failure.json`（`WorkerCrashed`）并从其后文件重启。
+- 其他异常退出：最后一个有事件的文件之后的第一个文件（有 `started` 而无文件事件时为首个文件）即正在处理的文件，编排写 `failure.json`（`WorkerCrashed`）并从其后文件重启。
 - `_launch` 读 worker stdout 期间抛异常（Ctrl+C、写日志失败）时，先 kill 并 wait 仍在运行的 worker，再向上抛；之后 `run` 的 `finally` 才释放 GPU 锁。
 
 ## 代码与验证入口
 
 - 代码：`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contained`、`ProcessLock`、`LockError`）；worker 启动在 `kototoki/job.py`（`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
 - 测试（core，`mise run test`）：
-  - `tests/core/test_protocol.py`：`run_worker` 单文件失败隔离、`fatal` 以退出码 2 停止；`classify_launch` 的部分失败（不重启）、`fatal`（从下一文件重启）、无事件崩溃归咎于最后已处理 id 之后的文件；`failed_windows` 清空窗口文字并记录。
+  - `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离、`fatal` 以退出码 2 停止；`classify_launch` 的部分失败（不重启）、`fatal`（从下一文件重启）、无 `started` 启动崩溃（不重启）与 `started` 后／已处理文件后崩溃归咎；`failed_windows` 清空窗口文字并记录。
   - `tests/core/test_procs.py`：存活持有者永不被抢占；死持有者的残留锁默认拒绝、`break_stale` 才替换并记录旧锁；`release` 只删自己的锁；`process_created`／`process_matches` 以启动时间识别 pid 复用。
-  - `tests/core/test_job.py` 的 `LockTests`（GPU 锁冲突时保留 CPU 阶段产物）与 `IsolationTests`（崩溃文件隔离并按文件重启 worker）。
+  - `tests/core/test_job.py` 的 `LockTests`（GPU 锁冲突时保留 CPU 阶段产物）与 `IsolationTests`（单文件崩溃隔离并按文件重启 worker、启动期崩溃整批失败且不重启、非 JSON stdout 转发到 stderr 日志）。
   - 测试精简（2026-11-22）后不再有测试覆盖：
     - 进程原语：锁内容、空锁与不可解析的锁、无 `pid_created` 的外部锁按 pid 判断、非整数 pid、并发创建报锁错误、`update` 只改自己的锁、含空格与括号的 comm 解析、无效 pid 无身份、`contained` 的 `setpriv` 前缀。
     - 协议：`jobs` 文件往返与畸形输入、全部完成退出 0 且每文件一行 UTF-8、启动失败退出码 2、`run_worker` 只加载一次、`classify_launch` 的 `startup_failed`、退出码 1 缺事件、全部已报告后崩溃无嫌疑、无待处理 id 的事件被忽略、`fail_window` 与 `validate` 的拒绝。
-    - 编排侧：`startup_failed` 不重启、退出码 1 缺事件按崩溃重启、读 worker 输出时中断回收 worker、各类锁冲突与残留锁、空锁破除、锁内 pid 记录。
+    - 编排侧：`startup_failed` 事件不重启、退出码 1 缺事件按崩溃重启、读 worker 输出时中断回收 worker、各类锁冲突与残留锁、空锁破除、锁内 pid 记录。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。
 - 未验证（Linux）：整批运行中强杀编排器后 GPU worker 释放显存的真实路径（Windows 时期的[最终验收](../../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)只作历史）。

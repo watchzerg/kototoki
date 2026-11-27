@@ -44,9 +44,9 @@ covers:
 **worker 协议**（`kototoki/workers/protocol.py`）：
 
 - `--jobs <path>` 指向 `{"stage", "recipe_hash", "config", "files": [{"id", "work_dir", "inputs": {name: path}}]}`，键集合严格、id 唯一（`parse_jobs`／`read_jobs`／`write_jobs`）。
-- `run_worker` 读 jobs、调用一次 `start(jobs)` 加载模型并得到逐文件处理函数；`run_jobs` 逐文件处理，结果由 worker 写进各自工作目录。
-- 每个文件结束在 stdout 打一行 UTF-8 JSON（`done`／`failed`／`fatal`／`startup_failed`），只含 id、事件、异常类型与计数，不含窗口文字。
-- 退出码：0 全部完成；1 有文件失败（该文件写 `failure.json`，继续下一文件）；2 启动失败（`startup_failed`，不重启）或 `FatalWorkerError`（`fatal`：CUDA 粘性错误等，当前文件写 `failure.json` 后立即退出，编排器从下一文件重启）。
+- `run_worker` 读 jobs、调用一次 `start(jobs)` 加载模型，成功后向 stdout 打 `started` 事件，再由 `run_jobs` 逐文件处理；结果由 worker 写进各自工作目录。
+- stdout 打 UTF-8 JSON 进度行：`started`（模型加载完成、处理首个文件前）与 `done`／`failed`／`fatal`／`startup_failed`，只含事件、id、异常类型与计数，不含窗口文字。
+- 退出码：0 全部完成；1 有文件失败（该文件写 `failure.json`，继续下一文件）；2 启动失败（`startup_failed`，不重启）或 `FatalWorkerError`（`fatal`：CUDA 粘性错误等，当前文件写 `failure.json` 后立即退出，编排器从下一文件重启）；未发出 `started` 与任何文件事件前的异常退出同样视为启动失败、不重启。
 
 **失败窗口**（w0／x0／cross 共用）：
 
@@ -93,11 +93,11 @@ covers:
 
 ### 协议读侧
 
-同一模块，编排使用。纯函数 `classify_launch(ids, exit_code, events) -> LaunchOutcome` 用本模块自己的退出码常量与事件名解释一次 worker 启动。`LaunchOutcome`（冻结 dataclass）含：已报 `failed` 的 id（`failed`）、崩溃文件（`crashed`）、崩溃文件是否报了 `fatal`（`fatal`）、启动失败的 `error_type`（`startup_failed`）与剩余待跑 id（`remaining`）。规则：
+同一模块，编排使用。纯函数 `classify_launch(ids, exit_code, events) -> LaunchOutcome` 用本模块自己的退出码常量与事件名解释一次 worker 启动。`LaunchOutcome`（冻结 dataclass）含：已报 `failed` 的 id（`failed`）、崩溃文件（`crashed`）、崩溃文件是否报了 `fatal`（`fatal`）、启动失败原因（`startup_failed`）与剩余待跑 id（`remaining`）。规则：
 
 - 退出码 0／1 只有在每个待跑 id 都有事件时才算正常结束（退出码 1 也是 Python 未捕获异常的退出码）。
-- 否则有 `startup_failed` 即启动失败，剩余全部失败、不重启。
-- 否则有 `fatal` 即该 id 为崩溃文件，从其后重启；再否则最后一个有事件的 id 之后的那个 id 是崩溃文件，从其后重启。
+- 否则有 `startup_failed` 即启动失败；既无 `started` 又无已报告的待跑文件事件（加载模型期间原生崩溃），同样按启动失败处理（`exited with code <n>`），剩余全部失败、不重启。
+- 否则有 `fatal` 即该 id 为崩溃文件，从其后重启；再否则最后一个有事件的 id 之后的那个 id（有 `started` 而无文件事件时为首个 id）是崩溃文件，从其后重启。
 - 编排的 `run_gpu_stage` 只循环与记失败，不用字面量解释协议。
 
 ## 接口与依赖
@@ -108,7 +108,7 @@ covers:
 
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
 - `tests/core/test_artifacts.py`：`work_id` 为含扩展名相对路径的 SHA12、最终字幕路径在源文件旁并镜像子目录、不同输入目录得到不同工作根；视频身份忽略位置而随大小、mtime 与 probe 变化；`is_current` 匹配与失效；失败记录列出已有阶段产物；模型哈希缓存命中则不重算；原子写失败时目标不变且无临时文件。
-- `tests/core/test_protocol.py`：`run_worker` 单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败、`fatal`、无事件崩溃；`failed_windows` 清空窗口文字并记录。
+- `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败、`fatal`、启动期无 `started` 崩溃（不重启）与 `started` 后崩溃归咎；`failed_windows` 清空窗口文字并记录。
 - `tests/core/test_srt.py`：毫秒取整为四舍五入而非银行家舍入、编号与时间行格式、畸形输入被严格解析拒绝、渲染保留编号与时间行与多行文字、译文不完整时抛出带报告的错误。
 - 测试精简（2026-11-22）后不再有测试覆盖：
   - 产物：`register` 写索引与幂等、越界路径与短 id 碰撞的拒绝、`input_key` 的构成、`record_input`、`derived_identity` 要求摘要、原地替换、损坏或外来产物不当前、`offset_s` 强制、交叉审计产物在阶段链外、内嵌与 names 产物在失败记录里、模型哈希的 size／mtime 重算与期望值核对、`published.json` 仅审计内容与摘要必填、UTF-8 无 BOM 与 LF。

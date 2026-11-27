@@ -84,7 +84,11 @@ def read_wav(path: Path) -> tuple[Any, str]:
         pcm = source.readframes(frames)
     if len(pcm) != frames * 2:
         raise ValueError("Model input WAV is truncated")
-    return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0, hashlib.sha256(pcm).hexdigest()
+    digest = hashlib.sha256(pcm).hexdigest()
+    waveform = np.frombuffer(pcm, dtype="<i2").astype(np.float32)
+    del pcm  # 先释放 PCM 缓冲再原地归一化，避免长音频同时留两份 float32 波形
+    waveform /= 32768.0
+    return waveform, digest
 
 
 def verify_models(files: Mapping[str, tuple[Path, str]], cache_path: Path) -> dict[str, str]:

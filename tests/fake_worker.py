@@ -5,7 +5,8 @@ PCM SHA256 与真 worker 一样由 `gpu.read_wav` 从 `audio-16k.wav` 算出。
 
 环境变量：
 - `KOTOTOKI_FAKE_PLAN`：JSON `{stage: {相对路径或 work id: 动作}}`，缺省动作 `ok`。
-  动作：`ok`、`crash`（写产物前 `os._exit(3)`）、`empty`（仅 vad：无语音）。
+  动作：`ok`、`crash`（写产物前 `os._exit(3)`）、`empty`（仅 vad：无语音）；
+  特殊键 `"__startup__": "crash"` 模拟加载模型期间原生崩溃（在 `start` 返回前 `os._exit(3)`）。
 - `KOTOTOKI_FAKE_LOG`：每行一条 JSON 记录——`launch`（pid、文件 id）与 `file`（逐文件）。
 """
 
@@ -41,11 +42,13 @@ def main(argv: list[str]) -> int:
     plan_path = os.environ.get("KOTOTOKI_FAKE_PLAN")
     actions_by_stage = json.loads(Path(plan_path).read_text(encoding="utf-8")) if plan_path and Path(plan_path).is_file() else {}
     by_key = actions_by_stage.get(stage, {})
-    actions = {**by_key, **{artifacts.work_id(key): action for key, action in by_key.items()}}
+    actions = {**by_key, **{artifacts.work_id(key): action for key, action in by_key.items() if key != "__startup__"}}
 
     def start(jobs):
         ids = [file.id for file in jobs.files]
         append_log({"kind": "launch", "stage": stage, "pid": os.getpid(), "ids": ids})
+        if by_key.get("__startup__") == "crash":
+            os._exit(3)
 
         def process(job):
             action = actions.get(job.id, "ok")

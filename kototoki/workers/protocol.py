@@ -5,11 +5,11 @@
     {"stage": "vad", "recipe_hash": "<sha256>", "config": {...配置快照...},
      "files": [{"id": "<work id>", "work_dir": "<.work/<id>>", "inputs": {"wav": "<path>", ...}}]}
 
-worker 加载一次模型后逐文件处理，每个文件的结果由 worker 自己写进该文件的 `work_dir`
+worker 加载一次模型后先在 stdout 打一行 `started` 进度，再逐文件处理，每个文件的结果由 worker 自己写进该文件的 `work_dir`
 （增量落盘），处理完一个文件即在 stdout 打一行 UTF-8 JSON 进度。单文件异常写该文件的
 `failure.json` 并继续下一个；启动失败或 `FatalWorkerError`（如 CUDA 粘性错误，后续文件必然失败）
-立即以退出码 2 结束，由编排器从下一文件重启。异常同时以 `error`（带 traceback）记到 stderr 日志。
-编排器读退出码与进度行只经 `classify_launch`，不自己解释字面量。
+立即以退出码 2 结束，由编排器从下一文件重启（`started` 之前的异常退出也按启动失败处理、不重启）。
+异常同时以 `error`（带 traceback）记到 stderr 日志。编排器读退出码与进度行只经 `classify_launch`，不自己解释字面量。
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def run_jobs(jobs: Jobs, process: Callable[[FileJob], Mapping[str, Any] | None],
 
 def run_worker(jobs_path: Path, start: Callable[[Jobs], Callable[[FileJob], Mapping[str, Any] | None]], *,
                stream: BinaryIO | None = None) -> int:
-    """worker 主循环：读 jobs、`start` 加载一次模型并返回逐文件处理函数；启动阶段任何异常返回 2。"""
+    """worker 主循环：读 jobs、`start` 加载一次模型后发出 `started`，再逐文件处理；启动阶段任何异常返回 2。"""
     stage = "worker"  # 读 jobs 失败时还不知道阶段
     try:
         jobs = read_jobs(jobs_path)
@@ -134,6 +134,7 @@ def run_worker(jobs_path: Path, start: Callable[[Jobs], Callable[[FileJob], Mapp
         logger.error("[%s] startup failed: %s", stage, type(error).__name__, exc_info=error)
         emit_progress({"event": "startup_failed", "error_type": type(error).__name__, "message": str(error)}, stream)
         return EXIT_FATAL
+    emit_progress({"event": "started"}, stream)
     return run_jobs(jobs, process, stream=stream)
 
 
@@ -145,7 +146,7 @@ class LaunchOutcome:
     failed: tuple[str, ...]        # 报告了 `failed` 的 id（`failure.json` 已由 worker 写出），按待跑顺序
     crashed: str | None            # 崩溃文件：worker 退出时正在处理的 id；正常结束或启动失败时为 None
     fatal: bool                    # 崩溃文件报告了 `fatal`（`failure.json` 已由 worker 写出）
-    startup_failed: str | None     # `startup_failed` 事件的 `error_type`；有它即本阶段剩余文件全部失败、不重启
+    startup_failed: str | None     # 启动失败原因（`startup_failed` 的 `error_type` 或 `exited with code <n>`）；有它即剩余全部失败、不重启
     remaining: tuple[str, ...]     # 需要重启 worker 继续跑的 id，按待跑顺序
 
 
@@ -153,8 +154,9 @@ def classify_launch(ids: Sequence[str], exit_code: int, events: Sequence[Mapping
     """按本模块的退出码与事件名解释一次 worker 启动；`ids` 为本次启动的待跑 id（jobs 的顺序）。
 
     退出码 0／1 且每个待跑 id 都有事件：正常结束。退出码 1 也是 Python 未捕获异常的退出码，所以有 id 缺事件时
-    不算正常结束，与其他异常退出同样处理：有 `startup_failed` 即启动失败；有 `fatal` 即该 id 为崩溃文件；否则最后
-    一个有事件的 id 之后的那个 id 是崩溃文件。崩溃文件之后的 id 需要重启 worker 继续跑。
+    不算正常结束，与其他异常退出同样处理：有 `startup_failed` 即启动失败；既无 `started` 又无已报告的文件事件
+    （加载模型期间原生崩溃）同样按启动失败处理（`exited with code <n>`，不重启）；有 `fatal` 即该 id 为崩溃文件；
+    否则最后一个有事件的 id 之后的那个 id 是崩溃文件（有 `started` 而无文件事件时归咎首个 id）。崩溃文件之后的 id 需要重启 worker。
     """
     reported = {event.get("id"): event.get("event") for event in events}
     failed = tuple(i for i in ids if reported.get(i) == "failed")
@@ -164,7 +166,10 @@ def classify_launch(ids: Sequence[str], exit_code: int, events: Sequence[Mapping
     if startup is not None:
         return LaunchOutcome(failed, None, False, str(startup.get("error_type")), ())
     position = {i: at for at, i in enumerate(ids)}
+    started = any(event.get("event") == "started" for event in events)
     handled = [position[i] for i in reported if i in position]
+    if not started and not handled:
+        return LaunchOutcome(failed, None, False, f"exited with code {exit_code}", ())
     culprit_at = (max(handled) + 1) if handled else 0
     fatal = next((event.get("id") for event in events if event.get("event") == "fatal"), None)
     if fatal in position:
