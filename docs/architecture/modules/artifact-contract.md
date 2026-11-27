@@ -79,10 +79,10 @@ covers:
 
 **SRT**（`kototoki/srt.py`）：
 
-- 解析与渲染复制自 `archive/2026-11-18-pre-research-restructure:experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字行报错），但空白输入解析为零条目、零条目渲染为空串。读取容忍 UTF-8 BOM。
+- 解析与渲染复制自 `experiments/translation_flow/srt.py`，严格性不变（重复编号、坏时间行、非正时长、空文字报错），但空白输入解析为零条目、零条目渲染为空串。读取容忍 UTF-8 BOM。
 - `format_srt([(start_s, end_s, text), ...])` 从 1 编号写出；秒到毫秒用 `floor(x*1000+0.5)`（`milliseconds`），不用 `round`；取整后时长非正即报错。
 - 整数毫秒入口 `format_srt_ms([(start_ms, end_ms, text), ...])`：时间已是整数毫秒的条目直接渲染，不经秒（`format_srt` 取整后也走它），日文 cue 与内嵌字幕清洗都用它。
-- 字幕文字规则（非空、归一换行后无空白行，否则会拆断 SRT 块）唯一出处是 `subtitle_text_problem(text)`，返回 `None`／`"empty"`／`"blank_line"`；`write_srt` 前的文字检查、`parse_srt`、`validate_translations` 与翻译配方的回复解析（`translate/recipes.parse_translation`）都调用它，各处只把类别映射成本处既有的错误消息或 reason，不另写换行归一化或空白行判断。
+- 字幕文字规则唯一出处 `subtitle_text_problem`，含翻译回复解析在内共用。
 - 时间行四段到整数毫秒是 `time_parts_ms`，解析与内嵌字幕清洗共用；毫秒格式化只有 `srt` 一处实现。
 - `write_srt` 原子写出、拒绝覆盖源文件。
 
@@ -110,10 +110,10 @@ covers:
 - 代码：`kototoki/artifacts.py`、`kototoki/workers/protocol.py`、`kototoki/srt.py`。
 - `tests/core/test_artifacts.py`：`work_id` 为含扩展名相对路径的 SHA12、最终字幕路径在源文件旁并镜像子目录、不同输入目录得到不同工作根；视频身份忽略位置而随大小、mtime 与 probe 变化；`is_current` 匹配与失效；失败记录列出已有阶段产物；模型哈希缓存命中则不重算；原子写失败时目标不变且无临时文件。
 - `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离与 `fatal` 退出码 2；`classify_launch` 的部分失败、`fatal`、启动期无 `started` 崩溃（不重启）与 `started` 后崩溃归咎；`failed_windows` 清空窗口文字并记录。
-- `tests/core/test_srt.py`：毫秒取整为四舍五入而非银行家舍入、编号与时间行格式、畸形输入被严格解析拒绝、渲染保留编号与时间行与多行文字、译文不完整时抛出带报告的错误。
+- `tests/core/test_srt.py`：毫秒取整为四舍五入而非银行家舍入、编号与时间行格式、畸形输入被严格解析拒绝、渲染保留编号与时间行与多行文字、译文不完整时抛带报告的错误。
 - 测试精简（2026-11-22）后不再有测试覆盖：
   - 产物：`register` 写索引与幂等、越界路径与短 id 碰撞的拒绝、`input_key` 的构成、`record_input`、`derived_identity` 要求摘要、原地替换、损坏或外来产物不当前、`offset_s` 强制、交叉审计产物在阶段链外、内嵌与 names 产物在失败记录里、模型哈希的 size／mtime 重算与期望值核对、`published.json` 仅审计内容与摘要必填、UTF-8 无 BOM 与 LF。
-  - 协议与 SRT：jobs 解析、畸形 jobs 与不一致记录的 `validate`、`startup_failed` 与退出码 1 缺事件、空 SRT、`srt_time` 拒绝负数、非正取整时长、空行文字、CRLF 归一、SHA 校验与 BOM 容忍、`write_srt` 拒绝覆盖源文件。
+  - 协议与 SRT：jobs 解析、畸形 jobs 与不一致记录的 `validate`、`startup_failed` 与退出码 1 缺事件、空 SRT、`srt_time` 拒绝负数、非正取整时长、空行文字、CRLF 归一、SHA 校验、BOM 容忍、`write_srt` 拒绝覆盖源文件。
 - worker 协议、身份跳过与发布已由真实 worker 在[两部整片验收](../../research/acceptance/bilingual-pipeline-fullfilm-2026-10-14.md)中使用。
 
 ## 变更与决策来源
