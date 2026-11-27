@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import sys
 
@@ -21,13 +22,13 @@ CONFIG_DIR = REPO / ".local" / "run-configs"
 
 
 def write_config(input_dir: Path, config_dir: Path | None = None) -> Path:
-    """写只含 `input_dir` 的配置；路径用正斜杠写入 TOML 基本字符串（Windows 路径不含双引号）。"""
+    """写只含 `input_dir` 的配置；路径按 TOML 基本字符串转义写入。"""
     config_dir = CONFIG_DIR if config_dir is None else config_dir
     target = input_dir.resolve()
     digest = hashlib.sha256(str(target).encode("utf-8")).hexdigest()[:12]
     path = config_dir / f"{target.name or 'root'}-{digest}.toml"
     config_dir.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'[paths]\ninput_dir = "{target.as_posix()}"\n', encoding="utf-8")
+    path.write_text(f"[paths]\ninput_dir = {json.dumps(target.as_posix(), ensure_ascii=False)}\n", encoding="utf-8")
     return path
 
 

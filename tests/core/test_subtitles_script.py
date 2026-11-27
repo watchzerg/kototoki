@@ -31,6 +31,12 @@ class SubtitlesScriptCase(unittest.TestCase):
         (argv,), _ = entry.call_args
         self.assertEqual(config.load(Path(argv[0]), environ={}).paths.input_dir, self.input_dir.resolve())
 
+    def test_write_config_escapes_quotes_and_backslashes(self) -> None:
+        tricky = self.root / 'アニメ "第1期"\\特番'
+        tricky.mkdir()
+        path = subtitles.write_config(tricky, config_dir=self.config_dir)
+        self.assertEqual(config.load(path, environ={}).paths.input_dir, tricky.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()
