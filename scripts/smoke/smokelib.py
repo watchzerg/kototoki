@@ -70,6 +70,9 @@ class Timer:
 def list_llama_servers() -> list[int]:
     """正在运行的 `llama-server` 的 pid。ADR-0025 起产品已不起 llama-server，只有 smoke 用它核实全程没有 llama-server。"""
     result = subprocess.run(["pgrep", "-x", "llama-server"], capture_output=True, text=True, check=False)
+    if result.returncode > 1:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"pgrep failed with exit code {result.returncode}: {detail}")
     return [int(pid) for pid in result.stdout.split()]
 
 

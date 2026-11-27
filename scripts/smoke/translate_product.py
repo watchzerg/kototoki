@@ -19,6 +19,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import traceback
 from typing import Any
 
 import smokelib
@@ -120,6 +121,7 @@ def main() -> int:
         with strata.Session(cfg) as session:
             translated = translate.translate_document(plan, session, relative="smoke")
     except Exception as error:  # 记录失败类别后照常写结果
+        traceback.print_exc(file=sys.stderr)
         failures.append(f"{type(error).__name__}: {str(error)[:500]}")
     timer.mark("translate")
 

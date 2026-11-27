@@ -54,8 +54,15 @@ def run_one(index: int, total: int, name: str, out: Path, env: dict[str, str]) -
     print(f"=== [{index}/{total}] {name} start {utc_now()}", flush=True)
     command = [sys.executable, "-X", "utf8", str(HERE / f"{name}.py"), "--out", str(out)]
     with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(command, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, encoding="utf-8", errors="replace")
+        try:
+            process = subprocess.Popen(command, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, encoding="utf-8", errors="replace")
+        except OSError as error:
+            message = f"startup failed ({type(error).__name__}: {error}) for command: {command!r}\n"
+            log.write(message)
+            log.flush()
+            print(f"[{name}] {message}", end="", file=sys.stderr, flush=True)
+            raise
         try:
             assert process.stdout is not None
             for line in process.stdout:

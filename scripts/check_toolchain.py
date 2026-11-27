@@ -12,23 +12,42 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def tool_version(command: str) -> str | None:
+def probe_tool(command: str) -> tuple[str | None, str]:
+    """返回 `(版本号, 失败说明)`；找到并解析出版本时失败说明为空串。"""
     try:
-        result = subprocess.run([command, "--version"], capture_output=True, text=True, check=False)
-    except OSError:
-        return None
+        result = subprocess.run(
+            [command, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except FileNotFoundError:
+        return None, "not on PATH"
+    except OSError as error:
+        return None, f"{type(error).__name__}: {error}"
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        suffix = f" ({detail})" if detail else ""
+        return None, f"exit {result.returncode}{suffix}"
     match = re.search(r"\d+\.\d+\.\d+", result.stdout)
-    return match.group(0) if match else None
+    if not match:
+        preview = result.stdout.strip().splitlines()[0][:120] if result.stdout.strip() else "<empty>"
+        return None, f"unparseable version output: {preview!r}"
+    return match.group(0), ""
 
 
 def main() -> int:
     errors: list[str] = []
     pins = tomllib.loads((ROOT / "mise.toml").read_text(encoding="utf-8"))["tools"]
     for tool, expected in pins.items():
-        actual = tool_version(tool)
+        actual, detail = probe_tool(tool)
         # mise.toml 可只写到次版本（如 0.13），按版本段前缀匹配。
-        if actual is None or not f"{actual}.".startswith(f"{expected}."):
-            errors.append(f"{tool}: mise.toml pins {expected}, found {actual or 'not on PATH'}")
+        if actual is None:
+            errors.append(f"{tool}: mise.toml pins {expected}, {detail}")
+        elif not f"{actual}.".startswith(f"{expected}."):
+            errors.append(f"{tool}: mise.toml pins {expected}, found {actual}")
     expected_python = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
     actual_python = ".".join(map(str, sys.version_info[:3]))
     # `.python-version` 写到次版本（如 3.13），补丁版本由 uv 决定。
