@@ -138,5 +138,5 @@ merge 阶段写一份副本到工作目录 `publish/`，再原子写到源文件
 [tr]: ../architecture/modules/translation-subsystem.md
 [orch]: ../architecture/modules/batch-orchestration.md
 [plan]: ../architecture/modules/stage-plan.md
-[art]: ../architecture/modules/artifact-contract.md
+[art]: ../architecture/modules/artifact-contract/layout-and-identity.md
 [run]: ../architecture/modules/run-logging-and-processes.md

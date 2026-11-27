@@ -31,13 +31,13 @@
 | --- | --- |
 | 改配置键、默认值或校验 | [配置参考](modules/config-and-media/reference.md) → [配置、配方与媒体提取](modules/config-and-media.md) |
 | 改音轨选择、WAV 派生或内嵌字幕路径 | [配置、配方与媒体提取](modules/config-and-media.md) |
-| 改 VAD 分窗、对齐或 worker 的 jobs 约定 | [STT worker](modules/stt-workers.md) → [产物契约](modules/artifact-contract.md) |
+| 改 VAD 分窗、对齐或 worker 的 jobs 约定 | [STT worker](modules/stt-workers.md) → [worker `--jobs` 协议与退出码](modules/artifact-contract/worker-protocol.md) |
 | 改 w0／x0 转写、cross 裁判或整窗守卫 | [STT ASR](modules/stt-asr.md) |
 | 改日文 cue 的切分与显示规则 | [日文 cue](modules/japanese-cues.md) |
 | 改翻译配方、失败路径或双语合并 | [翻译子系统与双语合并](modules/translation-subsystem.md) |
 | 改专名建表 | [专名一致性](modules/name-consistency.md) |
 | 改 Strata 起停、显存检查或 session | [Strata 服务与共享 session](modules/strata-session.md) |
-| 加阶段、改产物身份或跳过判定 | [阶段计划](modules/stage-plan.md) → [产物契约](modules/artifact-contract.md) |
+| 加阶段、改产物身份或跳过判定 | [阶段计划](modules/stage-plan.md) → [工作目录布局与产物身份](modules/artifact-contract/layout-and-identity.md) |
 | 改调度、续跑、锁或发布 | [批次编排](modules/batch-orchestration.md) |
 | 改日志、进程锁或 worker 启动 | [运行日志、进程原语与 worker 子进程](modules/run-logging-and-processes.md) |
 | 跨模块改动、移动或改名产品符号 | [模块边界](module-boundaries.md) → [跨模块流程](collaborations.md) |
@@ -87,7 +87,7 @@ flowchart TB
 ## 系统不变量
 
 - 产品入口：工作目录 `work_dir` 按产物身份续跑与原地替换；最终只发布源文件旁的 `ja-zh.srt`，已存在即跳过、没有覆盖开关。目录位置的限制见[批次编排](modules/batch-orchestration.md)。
-- 产品产物的跳过与续跑只看产物身份（上游 SHA256、配方 hash、模型 SHA256，不含绝对路径）。见[产物契约](modules/artifact-contract.md)。
+- 产品产物的跳过与续跑只看产物身份（上游 SHA256、配方 hash、模型 SHA256，不含绝对路径）。见[工作目录布局与产物身份](modules/artifact-contract/layout-and-identity.md)。
 - ASR 与 MMS 只在 CUDA 上运行，失败不回退 CPU；产品 VAD 固定 `cuda:0`。见 [STT worker](modules/stt-workers.md)。
 - 识别全文的每个字符在 `units` 中恰好出现一次；缺时间的字符保留为 `text_only`，不删除、不伪造时间。
 - 识别窗口以 VAD 产物的源坐标为准，ASR 与 MMS 用同一组整数样本坐标裁剪。见 [STT worker](modules/stt-workers.md)。

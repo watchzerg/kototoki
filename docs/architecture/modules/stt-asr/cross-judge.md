@@ -37,7 +37,7 @@ covers:
 
 - `asr.json`：`engine` 为 `"cross"`，`original_segments` 取 w0 的段结构、文字换成合并文本，`asr_traces` 取 w0 的 trace，`failed_windows` 为 w0 的失败窗口。
 - `metadata` 为 `{w0, x0, judge}`（两路适配器的 metadata，与裁判配方 id、margin、批上限、文本形式、文件级计数）；`stages` 含 `load_s`、`load_w0_s`、`load_x0_s`、`inference_w0_s`、`inference_x0_s`、`score_s`。
-- 三个审计产物写在同一工作目录，不参与 `is_current`（见[产物契约](../artifact-contract.md)）：
+- 三个审计产物写在同一工作目录，不参与 `is_current`（见[产物契约](../artifact-contract/layout-and-identity.md)）：
   - `asr-w0.json`／`asr-x0.json`：各自完整的 `asr.json` 结构，`engine` 分别为 `w0`／`x0`，身份按单引擎计算（只含该路模型文件），可直接离线评分。
   - `asr-judge.json`：身份同 cross 的 `asr.json`；`offset_s`（照抄 `vad.json`）、`windows`、`summary`。
   - `windows` 每窗口：`index`、`identical`、`text_form`、`guard`、`w0_text`、`x0_text`、逐区间的 `w`／`x`／`kind`／`score_w`／`score_x`／`d`／`switched`、`decision`（`identical`／`judged`／`w0_failed`／`x0_failed`／`score_error`）。

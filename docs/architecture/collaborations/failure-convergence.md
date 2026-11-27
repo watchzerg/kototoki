@@ -4,7 +4,7 @@
 
 ## 窗口级：ASR 失败窗口
 
-w0／x0／cross 同一表示：x0 生成触顶、w0 整窗守卫置空（复读折叠后仍命中、语速 > 20 字/秒、整窗是已知幻听句；[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)），都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker](../modules/stt-workers.md)、[产物契约](../modules/artifact-contract.md)）。
+w0／x0／cross 同一表示：x0 生成触顶、w0 整窗守卫置空（复读折叠后仍命中、语速 > 20 字/秒、整窗是已知幻听句；[ADR-0030](../../adr/0030-asr-window-plausibility-guard.md)），都只把该窗 `text` 置空、原因与原文记入 `failed_windows`，不进对齐、cue 与翻译，不让整部影片失败（[STT worker](../modules/stt-workers.md)、[产物契约](../modules/artifact-contract/worker-protocol.md)）。
 
 ## 调用级：Strata 基础设施失败与批次终态
 

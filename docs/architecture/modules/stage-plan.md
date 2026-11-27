@@ -12,7 +12,7 @@ covers:
 
 编排（[批次编排](batch-orchestration.md)）与三个 worker 壳（[STT worker](stt-workers.md)）都从这里取身份：壳把它写进产物，编排用它核对产物是否当前。
 
-不负责：身份的组成规则与匹配本身（[产物契约](artifact-contract.md)的 `derived_identity`／`is_current`）；配方常量与 `recipe_hash` 的取值（[配置、配方与媒体提取](config-and-media.md)）；翻译阶段的 run 目录与身份（[翻译子系统](translation-subsystem.md)的 `translate.plan`）；比对产物内容、写文件、加载模型。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md#产品包的责任边界)。
+不负责：身份的组成规则与匹配本身（[产物契约](artifact-contract/layout-and-identity.md)的 `derived_identity`／`is_current`）；配方常量与 `recipe_hash` 的取值（[配置、配方与媒体提取](config-and-media.md)）；翻译阶段的 run 目录与身份（[翻译子系统](translation-subsystem.md)的 `translate.plan`）；比对产物内容、写文件、加载模型。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md#产品包的责任边界)。
 
 ## 当前行为规格
 

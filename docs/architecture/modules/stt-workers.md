@@ -30,7 +30,7 @@ ASR 的两个引擎（w0、x0）、可选的 `cross` 引擎、裁判与 w0 整�
 
 ## 当前行为规格
 
-**jobs 约定**（在协议的 `{"stage", "recipe_hash", "config", "files"}` 之上，协议见[产物契约](artifact-contract.md)）：
+**jobs 约定**（在协议的 `{"stage", "recipe_hash", "config", "files"}` 之上，协议见[产物契约](artifact-contract/worker-protocol.md)）：
 
 - `recipe_hash` 必须等于该 worker 写进身份的配方 hash（VAD、MMS 各一个，ASR 按引擎），否则启动失败。
 - `config.models`：`Config.models` 的同名键，路径字符串（`vad`、`w0`、`x0`、`align`）。

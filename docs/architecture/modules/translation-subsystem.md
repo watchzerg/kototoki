@@ -15,7 +15,7 @@ covers:
 
 - Strata 的启停、身份核对、共享 session 与本机客户端（[Strata 服务与共享 session](strata-session.md)）；
 - GPU 锁、子进程随编排器退出、`ja-zh.srt` 的写出与发布（[批次编排](batch-orchestration.md)；`zh.srt` 不发布，ADR-0007「发布」）；
-- 专名表的建表（[专名一致性](name-consistency.md)）；工作目录本身的位置（[产物契约](artifact-contract.md)）；任何时间换算。
+- 专名表的建表（[专名一致性](name-consistency.md)）；工作目录本身的位置（[产物契约](artifact-contract/layout-and-identity.md)）；任何时间换算。
 
 上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。本模块是 Q2 的产品移植，研究侧同名规则（归档 tag 中的 experiments/translation_v3/ 与 translation-srt-flow 模块页）已删除，本模块是唯一权威。
 

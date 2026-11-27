@@ -36,7 +36,7 @@ covers:
 
 ## 接口与依赖
 
-`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contained`）、`kototoki.media` 与 `kototoki.strata`（`contained`）、`kototoki.workers.gpu`（`RunFormatter`）。
+`workers/protocol` 的 jobs 读写与 `classify_launch` 是编排与 worker 之间的协议（[产物契约](artifact-contract/worker-protocol.md)、[STT worker](stt-workers.md)）。`logs` 只依赖标准库；`procs` 只依赖标准库与基础层 `artifacts`（锁内容的时间戳与原子改写）。二者属基础层，与流水线无关。使用方：`kototoki.job`（`RunFormatter`、`ProcessLock`、`LockError`、`contained`）、`kototoki.media` 与 `kototoki.strata`（`contained`）、`kototoki.workers.gpu`（`RunFormatter`）。
 
 ## 代码与验证入口
 

@@ -36,5 +36,5 @@
 
 逐条翻译日文 cue，每条中文直接继承那条日文的编号与时间，双语合并只是拼接；翻译 ASR 窗口的整段日文需要把中文切回各句时间，没有可靠方法（[ADR-0007](../../adr/0007-bilingual-subtitle-pipeline-architecture.md)）。因此**cue 切分质量同时决定日文字幕可读性与翻译上下文**。切分规则见[日文 cue](../modules/japanese-cues.md) 与[切分规则](../../behaviors/bilingual-subtitle-pipeline.md#切分规则)。
 
-[art]: ../modules/artifact-contract.md
+[art]: ../modules/artifact-contract/layout-and-identity.md
 [plan]: ../modules/stage-plan.md
