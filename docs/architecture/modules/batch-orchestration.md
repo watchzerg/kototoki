@@ -41,7 +41,7 @@ covers:
 
 ## 接口与依赖
 
-导入基础层的 `artifacts`、`config`、`srt`、`logs`、`procs`（`ProcessLock`、`LockError`、`contained`）、`workers.protocol`（jobs 读写与 `classify_launch`），以及 `media`、`cues`、`embedded`、[阶段计划](stage-plan.md)的 `plan` 与 `workers.gpu`（只用 `verify_models`，导入时不加载推理库），不导入 worker 壳。
+导入基础层的 `artifacts`、`config`、`srt`、`logs`、`procs`（`ProcessLock`、`LockError`、`contained`）、`workers.protocol`（jobs 读写、`classify_launch` 及其 `error_types`、`progress_event`；`job` 不含 worker 事件名字面量），以及 `media`、`cues`、`embedded`、[阶段计划](stage-plan.md)的 `plan` 与 `workers.gpu`（只用 `verify_models`，导入时不加载推理库），不导入 worker 壳。
 
 以普通导入使用四个子系统（都不导入 `plan`、`job`，不加载 torch，测试以属性 patch 替换，如 `mock.patch("kototoki.translate.translate_document")`）：
 

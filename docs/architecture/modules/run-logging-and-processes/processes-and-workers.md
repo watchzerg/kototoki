@@ -27,6 +27,7 @@ covers:
 - jobs 按 [STT worker](../stt-workers.md) 的约定：`recipe_hash` 为 `plan.recipe_hash(stage, engine=…)`，`config` 为 `{"engine", "models": plan.worker_models(config), "model_cache"}`，`inputs` 按 `plan.STAGE_INPUTS`（vad `{wav}`、asr `{wav, vad}`、align `{wav, asr}`）；worker 用 `plan` 的身份函数写入身份，编排用同一函数核对。
 - 子进程环境（`child_env`）：当前环境加 `PYTHONUTF8=1`、`HF_HUB_OFFLINE`／`TRANSFORMERS_OFFLINE`／`HF_DATASETS_OFFLINE`／`HF_HUB_DISABLE_TELEMETRY=1`、`PYANNOTE_METRICS_ENABLED=0`、`HF_HOME`＝`TORCH_HOME`＝`<work_dir>/cache/`，以及关进度条的 `QUIET_ENV`。
 - stdout 逐行读进度 JSON，stderr 追加到 `<work root>/run-<时间戳>-<stage>.stderr.log`；stdout 上无法按 UTF-8 JSON 解析或不是 JSON 对象的非空行（缺结尾换行时补换行）加 `[stdout] ` 前缀转发到同一 stderr 日志（不静默丢弃，前缀使其不触发告警计数）。进度事件进运行日志的方式：
+  - 哪些事件转发、附带哪些计数由 `protocol.progress_event` 判定，`job` 不含事件名字面量。
   - `done`：INFO `[stage] done <相对路径>`，事件里除 `event`、`id` 之外的数值字段按事件自身的字段名以 `key=value` 追加，例 `[align] done S1/ep01.mkv: windows=195 failed_alignment_windows=1 text_only_units=417`（不建映射表）。
   - `started`／`failed`／`fatal`／`startup_failed` 不单独记行：`started` 只标加载完成，失败由 `run_gpu_stage` 把原因交给 `ctx.fail`、只记一行 ERROR `[stage] FAILED <相对路径>: <类型>`（无 traceback）。
   - 启动失败先记一行 ERROR `[stage] worker startup failed: <原因>`，随后逐文件的 FAILED 行不带 traceback（`WorkerCrashed: <stage> worker startup failed: <原因>`）。
@@ -35,7 +36,7 @@ covers:
 
 **崩溃与重启**（`job.run_gpu_stage`，按文件计）：每次启动 worker 后，`run_gpu_stage` 把待跑 id、退出码与进度事件交给 `protocol.classify_launch(ids, exit_code, events) -> LaunchOutcome`（规则见[产物契约](../artifact-contract.md)），自己只做循环与 `ctx.fail`：
 
-- 报告 `failed` 的文件记该阶段失败（`failure.json` 已由 worker 写出）。
+- 报告 `failed` 的文件记该阶段失败（`failure.json` 已由 worker 写出），失败类型取 `LaunchOutcome.error_types`；`fatal` 的崩溃文件同理。
 - 退出码 0／1 且每个待跑 id 都有事件：正常结束，其余按产物核对。有待跑 id 没有事件时不算正常结束（退出码 1 也是 Python 未捕获异常的退出码），按下面的崩溃规则处理。
 - 有 `startup_failed` 事件，或既无 `started` 又无文件事件的异常退出（模型加载／启动期间原生崩溃，与文件无关）：本阶段剩余文件全部失败，不重启。
 - 有 `fatal` 事件：该文件失败，从下一文件重启 worker。

@@ -84,16 +84,16 @@ class ClassifyLaunchTests(unittest.TestCase):
         events = [*self.done("a"), {"event": "failed", "id": "b", "error_type": "ValueError"}, *self.done("c"),
                   {"event": "failed", "id": "d", "error_type": "ValueError"}]
         self.assertEqual(p.classify_launch(self.IDS, p.EXIT_PARTIAL, events),
-                         p.LaunchOutcome(("b", "d"), None, False, None, ()))
+                         p.LaunchOutcome(("b", "d"), None, False, None, (), {"b": "ValueError", "d": "ValueError"}))
 
     def test_fatal_marks_that_id_and_restarts_after_it(self) -> None:
         events = [*self.done("a"), {"event": "fatal", "id": "b", "error_type": "FatalWorkerError"}]
         self.assertEqual(p.classify_launch(self.IDS, p.EXIT_FATAL, events),
-                         p.LaunchOutcome((), "b", True, None, ("c", "d")))
+                         p.LaunchOutcome((), "b", True, None, ("c", "d"), {"b": "FatalWorkerError"}))
 
     def test_crash_blames_the_id_after_the_last_handled_one(self) -> None:
         events = [*self.done("a"), {"event": "failed", "id": "b", "error_type": "ValueError"}]
-        self.assertEqual(p.classify_launch(self.IDS, 3, events), p.LaunchOutcome(("b",), "c", False, None, ("d",)))
+        self.assertEqual(p.classify_launch(self.IDS, 3, events), p.LaunchOutcome(("b",), "c", False, None, ("d",), {"b": "ValueError"}))
 
     def test_crash_before_started_is_startup_failure_without_restart(self) -> None:
         self.assertEqual(p.classify_launch(self.IDS, 3, []),
@@ -102,6 +102,19 @@ class ClassifyLaunchTests(unittest.TestCase):
     def test_crash_after_started_without_file_events_blames_first_id(self) -> None:
         self.assertEqual(p.classify_launch(self.IDS, 3, [{"event": "started"}]),
                          p.LaunchOutcome((), "a", False, None, ("b", "c", "d")))
+
+
+class ProgressEventTests(unittest.TestCase):
+    def test_lifecycle_events_are_not_forwarded(self) -> None:
+        for name in ("started", "failed", "fatal", "startup_failed"):
+            self.assertIsNone(p.progress_event({"event": name, "id": "a", "error_type": "ValueError"}), name)
+
+    def test_done_carries_numeric_counts_but_not_bools_or_text(self) -> None:
+        event = {"event": "done", "id": "a", "windows": 3, "ratio": 0.5, "ok": True, "stage": "asr"}
+        self.assertEqual(p.progress_event(event), ("done", {"windows": 3, "ratio": 0.5}))
+
+    def test_other_events_are_forwarded_without_counts(self) -> None:
+        self.assertEqual(p.progress_event({"event": "tick", "id": "a", "n": 1}), ("tick", {}))
 
 
 class FailedWindowTests(unittest.TestCase):
