@@ -80,7 +80,7 @@
 
 双语字幕流水线按"谁有权做这个决定"划分，每项只有一个归属：
 
-- **时间轴**只在三处出现：媒体定零点；推理模块输出 WAV 本地坐标（`align.map_records`、`MmsAligner.align` 不收 offset）；日文 cue 给窗口边界、VAD 子段与 units 各加一次 offset。采用内嵌字幕的文件没有后两处：时间由 ffmpeg 按同一零点转出，`embedded.clean` 只排序、不改时间。编排、翻译、合并不做时间换算；翻译只读 `ja.srt` 相邻 cue 的停顿长短来切包与取邻文。
+- **时间轴**只在三处出现：媒体定零点；推理模块输出 WAV 本地坐标（`align.map_records`、`MmsAligner.align` 不收 offset）；日文 cue 加 offset（规则见[日文 cue](modules/japanese-cues.md)）。采用内嵌字幕的文件没有后两处：时间由 ffmpeg 按同一零点转出，`embedded.clean` 只排序、不改时间。编排、翻译、合并不做时间换算；翻译只读 `ja.srt` 相邻 cue 的停顿长短来切包与取邻文。
 - **跳过与替换**由产物契约的 `is_current` 判定，期望身份与"下一个要跑的阶段"由阶段计划给出，编排只负责问；推理模块永远不决定要不要跑。
 - **失败分三级，各归一层**，判定是 `protocol.classify_launch` 的纯函数规则，编排只循环与记账：
   - 窗口级 `failed_windows`：推理模块填、协议校验，不进对齐、cue 与翻译。
@@ -97,7 +97,7 @@
 - **锁**全归编排：`<work_dir>/<目标目录键>/lock` 与 `.local/gpu.lock`；翻译子系统、`names` 与 `strata.Session` 都不取锁。翻译按 `needs_model` 决定是否取 GPU 锁也由编排判断。
 - **身份**：
   - 各阶段 `recipe_hash` 归 `recipes.py`，翻译配方 hash 归 `translate/recipes.py`，建表配方 hash 归 `names/recipes.py`，模型 SHA256 经产物契约的缓存。
-  - 翻译身份 = `{ja_srt_sha256, recipe_hash, seed, names_sha256}`；`names_sha256` 是注入行的哈希：手改会被注入的条目即换身份、重译，只改 medium／low 条目不会。
+  - 翻译身份 = `{ja_srt_sha256, recipe_hash, seed, names_sha256}`；手改专名表后是否重译见[专名一致性](modules/name-consistency.md)。
   - 每个阶段期望身份的组成只在 `plan.py` 写一次，worker 壳与编排消费不复制；没有模块把绝对路径写进身份。
 - **子进程环境**归编排：`PYTHONUTF8=1`、离线变量、共用 `HF_HOME`／`TORCH_HOME=<work_dir>/cache/` 由编排传入，worker 不自行设置 PATH 或 `LD_LIBRARY_PATH`。
 - **日志**目的地与格式只归编排（`kototoki/logs.py` 的格式；`gpu.main` 只把 worker 日志按同一格式写到 stderr，由编排存档）。

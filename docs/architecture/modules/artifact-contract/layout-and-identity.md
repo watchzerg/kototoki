@@ -18,7 +18,7 @@ covers:
 - 相对路径不得是绝对路径、为空或含 `..`。
 - 产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`JA_EMBEDDED`、`NAME_TABLE`、`PUBLISHED`、`FAILURE` 等）；`STAGE_ARTIFACTS` 是阶段产物清单。翻译 run 目录的键归翻译子系统（`translate.plan`），本模块不拼它。
 
-**坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）。`align.json` 的 `units[].start/end` 也是 WAV 本地秒、不含 offset；offset 只由日文 cue 加一次，`ja-cues.json` 与 SRT 的 cue 时间是最终 SRT 时间。
+**坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）。`align.json` 的 `units[].start/end` 也是 WAV 本地秒、不含 offset；offset 在哪一步加见[日文 cue](../japanese-cues.md)。
 
 **身份**：JSON 产物顶层为 `{"identity": ..., **payload}`。
 
@@ -49,7 +49,7 @@ covers:
 - payload：`stream`（所用字幕流的索引、编码、语言、default、forced）、清洗计数（`source_cues`、`cues`、`dropped_*`）、`ja_srt_sha256`。
 - 这类文件的 `probe.json` 里 `extract` 为 null（没有提取音频），工作目录里没有 `audio-16k.wav`、`vad.json`、`asr.json`、`align.json`、`ja-cues.json`。
 
-**`ja_srt_sha256`**：`ja-cues.json` 与 `ja-embedded.json` 的 payload 都记写出的 `ja.srt` 的 SHA256；阶段计划据此判定 `ja.srt` 是否仍是该路径的输出（`is_current` 只比身份）。两条路径因此不靠删文件互相隔离：一条路径改写 `ja.srt` 后另一条路径的记录不再当前。
+**`ja_srt_sha256`**：`ja-cues.json` 与 `ja-embedded.json` 的 payload 都记写出的 `ja.srt` 的 SHA256；当前性判定见[阶段计划](../stage-plan.md)。
 
 ## 实现设计
 

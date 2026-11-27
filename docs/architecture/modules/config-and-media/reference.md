@@ -93,7 +93,7 @@ seed = 20261019                         # 0 < seed < 2**31；改 seed 即重建�
 | 放配置文件 | 留在代码（`kototoki/recipes.py`、`kototoki/translate/recipes.py`、`kototoki/names/recipes.py`） |
 | --- | --- |
 | 所有路径、模型目录、二进制位置（GPU 锁路径除外） | VAD onset／offset、30 s 窗口与合并策略、设备 `cuda:0`、下混矩阵与重采样参数 |
-| extract 并发数、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳、复读守卫；x0：BF16、greedy、4096；cross：裁判阈值 −1.0、无长度项、打分批上限 16（配方 `CROSS`） |
+| extract 并发数、文件稳定性采样间隔 | w0：beam 5、FP16、日语、无前文、无时间戳、复读守卫；x0：BF16、greedy、4096；cross：裁判阈值与打分批上限见 [cross 裁判](../stt-asr/cross-judge.md)（配方 `CROSS`） |
 | 输入扩展名、音轨语言偏好、是否用内嵌字幕 | MMS FP32、归一化、字符映射；内嵌字幕清洗规则（`EMBEDDED`） |
 | cue 显示规则（`[cues]`） | 翻译采样（0.7／0.8／20）、`dp10-cut` 切包与 `wide-context-v1` 邻文、`qwen-joint-v1` 提示、专名注入规则、模型与 Strata 身份核对、请求重试次数、失败分类、降级策略 |
 | 翻译 `seed`、专名表 `seed` | 建表提示、采样、JSON schema、`max_tokens` 16384、context 49152（提示预算 32256）、5 次尝试与重试条件、归一规则、模型与 Strata 身份（配方 `q3-names-v3`，ADR-0028）；产物 schema 版本 |
