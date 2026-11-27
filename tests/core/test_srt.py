@@ -3,7 +3,7 @@
 import math
 import unittest
 
-from kototoki.srt import IncompleteTranslationError, format_srt_ms, milliseconds, parse_srt, render_srt
+from kototoki.srt import IncompleteTranslationError, format_srt_ms, milliseconds, parse_srt, render_srt, subtitle_text_problem
 
 TWO_CUES = "1\n00:00:01,000 --> 00:00:02,500\nこんにちは\n\n2\n00:00:03,000 --> 00:00:04,000\nさようなら\n"
 
@@ -39,6 +39,17 @@ class ParseStrictnessTests(unittest.TestCase):
         }.items():
             with self.subTest(name), self.assertRaises(ValueError):
                 parse_srt(text)
+
+
+class SubtitleTextProblemTests(unittest.TestCase):
+    def test_classifies_text(self):
+        for text, expected in {
+            "你好": None, "一\n二": None, "一\r\n二": None,
+            "": "empty", "  \n ": "empty", None: "empty", 3: "empty",
+            "一\n\n二": "blank_line", "一\r\n \r\n二": "blank_line", "一\r\r二": "blank_line",
+        }.items():
+            with self.subTest(text=text):
+                self.assertEqual(subtitle_text_problem(text), expected)
 
 
 class RenderTests(unittest.TestCase):

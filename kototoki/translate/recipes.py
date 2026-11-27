@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from kototoki.artifacts import object_hash, sha256_bytes
+from kototoki.srt import subtitle_text_problem
 from kototoki.strata import MODEL, STRATA_LAUNCH, STRATA_RESOLVED
 
 RECIPE_NAME = "q3-translate-v1"
@@ -178,10 +179,8 @@ def parse_translation(text: str, ids: list[str]) -> Parsed:
         value = result.get(key)
         if key not in result:
             unresolved[key] = "missing"
-        elif not isinstance(value, str) or not value.strip():
-            unresolved[key] = "empty"
-        elif any(not line.strip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
-            unresolved[key] = "blank_line"
+        elif (problem := subtitle_text_problem(value)) is not None:
+            unresolved[key] = problem
         else:
             accepted[key] = value
     return Parsed(accepted, unresolved, len(set(result) - set(ids)))

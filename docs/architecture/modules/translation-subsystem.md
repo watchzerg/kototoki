@@ -45,7 +45,7 @@ covers:
 
 各规则的细节见上表子页。
 
-**合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格；译文为 `None` 的条目只有日文一行。译文须精确覆盖全部 cue（`None` 算覆盖，只在本层处理；缺失、多余、空串、含空行抛 `IncompleteTranslationError`）；零条目文档得到空串。
+**合并**（`kototoki.merge.merge(ja_document, zh_translations) -> srt_text`）：纯函数；沿用日文 cue 的编号与时间行，每条两行，中文在上、日文在下；中文与日文内的换行都替换为空格；译文为 `None` 的条目只有日文一行。译文须精确覆盖全部 cue（`None` 算覆盖，只在本层处理；缺失、多余、空串、含空行抛 `IncompleteTranslationError`；文字合法性的判定唯一出处在 `srt.subtitle_text_problem`，回复解析同样调用它）；零条目文档得到空串。
 
 ## 实现设计
 
