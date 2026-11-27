@@ -12,7 +12,7 @@ import random
 import unittest
 
 from kototoki.artifacts import object_hash
-from kototoki.srt import format_srt, parse_srt
+from kototoki.srt import format_srt_ms, milliseconds, parse_srt
 from kototoki.translate import RECIPE_HASH
 from kototoki.translate import recipes as R
 from kototoki.translate.batching import Cue, Scene, build_batches, gap_pack_cuts, scene_from_document, silence
@@ -23,7 +23,7 @@ SEED = 20261008
 
 def document(n: int):
     """相邻停顿 0.5 s 的均匀场景。"""
-    return parse_srt(format_srt([(i * 2.0, i * 2.0 + 1.5, f"台詞{i}ですね") for i in range(n)]))
+    return parse_srt(format_srt_ms([(milliseconds(i * 2.0), milliseconds(i * 2.0 + 1.5), f"台詞{i}ですね") for i in range(n)]))
 
 
 def scene_from_gaps(gaps: list[float | None], name: str = "S") -> Scene:
