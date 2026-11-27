@@ -27,7 +27,7 @@ covers:
    - 同目录主名相同、扩展名不同的文件（如 `ep01.mkv` 与 `ep01.mp3`）争用同一份字幕路径，按相对路径顺序后出现的那个记 `scan` 失败（`FinalPathCollision`，写 `failure.json`）；路径比较区分大小写。
 3. probe／extract：线程池（`extract_workers`）对每个文件跑 ffprobe（每次都跑，得到输入文件身份）。
    - `[input] use_embedded_subtitles` 开着且 `media.select_subtitle` 选出可用的日文文本字幕轨时先走"内嵌日文字幕"（见下）；采用后该文件不提取音频。
-   - 否则（或字幕轨不可用时）`probe.json` 身份匹配且 `audio-16k.wav` 在时跳过 extract；不然先删除工作目录里上次强杀留下的 `.*.partial*` 与 `.*.tmp`（`clean_leftovers`，仅在确实删除了文件时记 INFO 含对象与原因），再 extract 并写 `probe.json`（probe payload 加 `extract` 记录，含 PCM SHA256）。
+   - 否则（或字幕轨不可用时）`probe.json` 身份匹配且 `audio-16k.wav` 在时跳过 extract；不然先删除工作目录里上次强杀留下的 `.*.partial*` 与 `.*.tmp`（`clean_leftovers`，仅在确实删除了文件时记 INFO 含对象与原因），再 extract 并写 `probe.json`（probe payload 加 `extract` 记录，含 PCM SHA256）；覆盖既有 `extract.log`、`audio-16k.wav` 或 `probe.json` 时按原因记 INFO 审计（extract 替换 `extract.log` 后失败时同样记录）。
    - 每个成功的文件先把 `Probe.warnings` 与 `Extract.warnings`（跳过 extract 时取 `probe.json` 记下的）逐条记为 WARNING，再记补偿告警（`compensation_warnings`：`net_padding_s` 绝对值或 swr 报告的丢弃样本折算超过 `COMPENSATION_WARN_S = 0.1` s 时各一行，跳过 extract 时同样由 `probe.json` 算出），最后记 `done`。
    - Ctrl+C（任何 `BaseException`）时 `shutdown(cancel_futures=True)`：排队中的文件不再提取；正在跑的 ffmpeg 在前台进程组里同样收到 Ctrl+C 而退出，等它们结束后沿 `finally` 释放两把锁。
 4. 计划：CPU 阶段之后对每个文件调用一次 `plan.next_stage`，从 vad 起（采用内嵌字幕的文件从 names 起）逐阶段核对产物身份，得到第一个需要运行的阶段（`vad`／`asr`／`align`／`cues`／`names`／`translate`）或终态 `publish`（无语音）；没有 `done` 状态——是否已发布由扫描按源文件旁的字幕判定。

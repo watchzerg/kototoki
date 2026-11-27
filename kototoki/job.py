@@ -175,6 +175,8 @@ class VideoFile:
     embedded: dict[str, Any] | None = None  # 采用内嵌日文字幕时 `ja-embedded.json` 的身份（此时不提取音频）
     embedded_note: str = ""       # 采用内嵌字幕时的日志说明（流索引、编码、条数）
     reused_wav: bool = False      # 本次运行复用了已有的派生 WAV（`probe.json` 当前，跳过 extract）
+    extract_overwritten: tuple[str, ...] = ()  # 本次 extract 原子替换覆盖了哪些既有文件
+    extract_reason: str = ""      # 触发重新提取的原因（供覆盖审计日志）
     plan: Plan | None = None      # CPU 阶段之后由阶段计划模块给出，某阶段跑完后推进
     failed: str | None = None     # 本次运行中失败的阶段
 
@@ -315,7 +317,8 @@ def clean_leftovers(work_dir: Path, *, label: str | None = None) -> None:
                     "(cleanup before extract)")
 
 
-def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str, Any]) -> str | None:
+def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str, Any],
+                          *, warnings: list[str] | None = None) -> str | None:
     """采用内嵌日文字幕轨 `stream`（ADR-0024）：抽取、清洗，写 `ja.srt` 与 `ja-embedded.json`，置 `video.embedded`。
 
     返回 None 即已采用；否则是不可用的原因（ffmpeg 抽取失败、清洗后零条目），调用方回到 STT 链。
@@ -330,20 +333,24 @@ def use_embedded_subtitle(config: Config, video: VideoFile, stream: Mapping[str,
     cue_count = artifacts.read_json(record_path)["cues"] if plan.embedded_current(work, identity) else None
     if cue_count is None:
         try:
-            text, stats = embedded.clean(media.extract_subtitle(video.path, int(stream["index"]), config.paths.ffmpeg))
+            extracted = media.extract_subtitle(video.path, int(stream["index"]), config.paths.ffmpeg,
+                                               warnings=warnings)
+            text, stats = embedded.clean(extracted)
         except (media.MediaError, ValueError) as error:
             return f"{type(error).__name__}: {(str(error).splitlines() or [''])[0]}"
         if not text:
             return f"no usable cue among {stats['source_cues']}"
         work.mkdir(parents=True, exist_ok=True)
         clean_leftovers(work, label=f"{video.relative} (work_id={work.name})")
-        srt.write_srt(text, ja_path)
+        srt.write_srt(text, ja_path, reason=f"embedded subtitle extraction for {video.relative}")
         artifacts.write_artifact(record_path, identity, {"stream": dict(stream), **stats,
-                                                         "ja_srt_sha256": artifacts.sha256_file(ja_path)})
+                                                         "ja_srt_sha256": artifacts.sha256_file(ja_path)},
+                                 reason=f"embedded subtitle record not current for {video.relative}")
         cue_count = stats["cues"]
     probe_path = work / artifacts.PROBE
     if not artifacts.is_current(probe_path, video.probe_identity):  # 没有提取音频：`extract` 为 null
-        artifacts.write_artifact(probe_path, video.probe_identity, {**video.probe.payload(), "extract": None})
+        artifacts.write_artifact(probe_path, video.probe_identity, {**video.probe.payload(), "extract": None},
+                                 reason=f"probe.json not current (embedded subtitle) for {video.relative}")
     video.embedded = identity
     video.embedded_note = f"embedded subtitle stream {stream['index']} ({stream['codec_name']}), {cue_count} cue(s)"
     return None
@@ -353,7 +360,7 @@ def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
     """ffprobe 每次都跑（<1 s）以得到视频身份；`probe.json` 当前且 WAV 在时跳过 extract。
 
     `[input] use_embedded_subtitles` 开着且有可用的日文文本字幕轨时先试 `use_embedded_subtitle`：采用后不提取音频，
-    只返回选轨告警（音轨告警与该文件无关）；不可用时加一条告警，照常提取音频走 STT。
+    只返回选轨告警与 ffprobe/抽轨进程的 stderr 告警（音轨告警与该文件无关）；不可用时加一条告警，照常提取音频走 STT。
     `probe.json` 在 extract 完成后写出，内容为 probe payload 加 `extract` 记录（PCM SHA256 等）。
     返回 probe 与 extract 的告警（跳过 extract 时取 `probe.json` 里记下的）以及补偿告警，由调用方写进运行日志。
     """
@@ -363,23 +370,43 @@ def probe_and_extract(config: Config, video: VideoFile) -> tuple[str, ...]:
     if config.input.use_embedded_subtitles:
         stream, notes = media.select_subtitle(video.probe.subtitles, config.input.audio_language)
         if stream is not None:
-            reason = use_embedded_subtitle(config, video, stream)
+            sub_warnings: list[str] = []
+            reason = use_embedded_subtitle(config, video, stream, warnings=sub_warnings)
             if reason is None:
-                return tuple(notes)
-            fallback = (*notes, f"Embedded subtitle stream {stream['index']} is unusable ({reason}); "
-                                "falling back to speech recognition")
+                return (*notes, *video.probe.ffprobe_warnings, *sub_warnings)
+            fallback = (*notes, *sub_warnings,
+                        f"Embedded subtitle stream {stream['index']} is unusable ({reason}); "
+                        "falling back to speech recognition")
     path = video.work_dir / artifacts.PROBE
+    wav_path = video.work_dir / artifacts.AUDIO_16K
+    probe_existed = path.exists()
+    probe_current = artifacts.is_current(path, video.probe_identity)
     # `extract` 为 null 的 `probe.json` 是采用内嵌字幕时写的，没有 WAV 记录
-    if artifacts.is_current(path, video.probe_identity) and (video.work_dir / artifacts.AUDIO_16K).is_file():
-        record = artifacts.read_json(path)["extract"]
+    if probe_current and wav_path.is_file():
+        record = artifacts.read_json(path).get("extract")
         if record is not None:
             video.pcm_sha256 = record["pcm_sha256"]
             video.reused_wav = True
             return (fallback + video.probe.warnings + tuple(record["warnings"])
                     + tuple(compensation_warnings(record["compensation"], video.probe.audio.sample_rate)))
+    if not probe_existed:
+        extract_reason = "probe.json missing"
+    elif not probe_current:
+        extract_reason = "probe.json not current"
+    elif not wav_path.is_file():
+        extract_reason = "audio-16k.wav missing"
+    else:
+        extract_reason = "re-extracting audio (previous probe.json had no extract record)"
+    video.extract_reason = extract_reason
     clean_leftovers(video.work_dir, label=f"{video.relative} (work_id={video.work_dir.name})")
-    result = media.extract(video.path, video.work_dir, video.probe, config)
-    artifacts.write_artifact(path, video.probe_identity, {**video.probe.payload(), "extract": result.payload()})
+    try:
+        result = media.extract(video.path, video.work_dir, video.probe, config)
+    except media.MediaError as error:
+        video.extract_overwritten = error.overwritten
+        raise
+    video.extract_overwritten = result.overwritten
+    artifacts.write_artifact(path, video.probe_identity, {**video.probe.payload(), "extract": result.payload()},
+                             reason=f"{extract_reason} for {video.relative}")
     video.pcm_sha256 = result.pcm_sha256
     return (fallback + video.probe.warnings + result.warnings
             + tuple(compensation_warnings(result.compensation, video.probe.audio.sample_rate)))
@@ -606,10 +633,11 @@ def build_ja_cues(config: Config, video: VideoFile) -> Mapping[str, Any]:
     align = artifacts.read_json(video.work_dir / artifacts.ALIGN)
     payload, text = cues.build_cues(align, asdict(config.cues))
     ja_path = video.work_dir / JA_SRT
-    srt.write_srt(text, ja_path)
+    srt.write_srt(text, ja_path, reason=f"cues stage output for {video.relative}")
     assert video.plan is not None
     artifacts.write_artifact(video.work_dir / artifacts.JA_CUES, video.plan.identities["ja_cues"],
-                             {**payload, "ja_srt_sha256": artifacts.sha256_file(ja_path)})
+                             {**payload, "ja_srt_sha256": artifacts.sha256_file(ja_path)},
+                             reason=f"ja-cues.json not current for {video.relative}")
     return payload
 
 
@@ -681,7 +709,7 @@ def names_batch(ctx: _Context, batch: list[VideoFile], session: strata.Session) 
             result = names.build_document(video.work_dir, document, session if document.cues else None,
                                           ctx.config.names.seed)
             artifacts.write_artifact(video.work_dir / artifacts.NAME_TABLE, video.plan.identities["names"],
-                                     result.payload)
+                                     result.payload, reason=f"name-table.json not current for {video.relative}")
         except Exception as error:
             ctx.fail(video, "names", error, traceback=not known)
             continue
@@ -759,8 +787,9 @@ def publish(ctx: _Context, video: VideoFile, text: str, translate_dir: str, untr
         logger.warning(f"[publish] {video.relative}: {video.final.name} appeared during the run, not overwritten")
         return False
     assert video.plan is not None
-    srt.write_srt(text, video.work_dir / PUBLISH_DIR / video.final.name)
-    srt.write_srt(text, video.final)
+    srt.write_srt(text, video.work_dir / PUBLISH_DIR / video.final.name,
+                  reason=f"republishing {video.relative} (work_id={video.work_dir.name})")
+    srt.write_srt(text, video.final, reason=f"publishing {video.relative}")
     artifacts.record_published(video.work_dir, video.final, artifacts.sha256_file(video.final),
                                video.plan.sources | {"translate_untranslated_cues": untranslated}, translate_dir)
     _remove_failure_record(video, "publish succeeded")
@@ -819,8 +848,11 @@ def run(config: Config, *, worker_command: Callable[[str, Path], list[str]] = wo
                 artifacts.record_input(root, input_dir)
                 gpu_lock = ProcessLock(config.gpu_lock, "GPU lock", {"input_dir": str(input_dir)})
                 ctx = _Context(config, summary, root, stamp, worker_command, gpu_lock, sleep, model_sha_lookup(config))
+                ffmpeg, ffmpeg_diag = media.probe_ffmpeg_version(config.paths.ffmpeg)
                 logger.info(f"[run] start: config={config.source} input={input_dir} engine={config.engine} "
-                            f"ffmpeg={media.ffmpeg_version(config.paths.ffmpeg)}")
+                            f"ffmpeg={ffmpeg}")
+                if ffmpeg == "unavailable" and ffmpeg_diag:
+                    logger.warning(f"[run] ffmpeg unavailable: {ffmpeg_diag}")
                 if work_lock.stale is not None:
                     logger.warning(_stale_line(work_lock))
                     stale_logged = True
@@ -899,6 +931,9 @@ def _extract_stage(ctx: _Context) -> None:
             futures = {pool.submit(probe_and_extract, ctx.config, video): video for video in ctx.files}
             for future in concurrent.futures.as_completed(futures):
                 video = futures[future]
+                if video.extract_overwritten:
+                    logger.info(f"[extract] overwrote {', '.join(video.extract_overwritten)} for {video.relative} "
+                                f"(work_id={video.work_dir.name}): {video.extract_reason}")
                 if future.exception() is not None:
                     ctx.fail(video, "extract", future.exception())
                     continue

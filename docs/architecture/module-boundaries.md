@@ -101,7 +101,7 @@
   - 每个阶段期望身份的组成只在 `plan.py` 写一次，worker 壳与编排消费不复制；没有模块把绝对路径写进身份。
 - **子进程环境**归编排：`PYTHONUTF8=1`、离线变量、共用 `HF_HOME`／`TORCH_HOME=<work_dir>/cache/` 由编排传入，worker 不自行设置 PATH 或 `LD_LIBRARY_PATH`。
 - **日志**目的地与格式只归编排（`kototoki/logs.py` 的格式；`gpu.main` 只把 worker 日志按同一格式写到 stderr，由编排存档）。
-  - 产品模块经各自 `kototoki.*` logger 发进度与告警：`job`、`translate.*`、`strata`（前缀 `[strata]`）、`names.table`（不合格的尝试）、worker 壳；`names` 包顶层只发 `count_tokens` 不可用与停 Strata 前的两条 WARNING，建表结果行由编排写。
+  - 产品模块经各自 `kototoki.*` logger 发进度与告警：`job`、`translate.*`、`strata`（前缀 `[strata]`）、`names.table`（不合格的尝试）、`artifacts`（损坏产物 WARNING 与覆盖 INFO）、`srt`（覆盖 INFO）、worker 壳；`names` 包顶层只发 `count_tokens` 不可用与停 Strata 前的两条 WARNING，建表结果行由编排写。
   - 推理模块不发日志、不打印；转写、译文、提示与模型响应正文不进任何日志。细则见[批次编排](modules/batch-orchestration.md)。
 
 ### 接缝

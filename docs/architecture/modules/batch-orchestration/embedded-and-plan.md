@@ -12,7 +12,7 @@ covers:
 - 否则 `media.extract_subtitle` → `embedded.clean`；先删上次强杀留下的临时文件，再写 `ja.srt`，最后写 `ja-embedded.json`（流信息、清洗计数、`ja.srt` 的 SHA256）。
 - 不删 `ja-cues.json`：字幕轨改写 `ja.srt` 后它不再当前，以后改走 STT 时 cues 阶段自然重建；反过来，cue 阶段改写 `ja.srt` 后内嵌记录不再相符，下次走内嵌路径时重新抽取。
 - `probe.json` 不当前时写出，`extract` 为 null；以后该文件改走 STT 时照常提取并改写。
-- 采用后 `VideoFile.embedded` 记该身份，计划从 names 起；日志行为 `[extract] done <相对路径>: embedded subtitle stream N (<codec>), M cue(s), skipping speech recognition`，只把选轨告警记为 WARNING，音轨告警不记。发布行加 ` (embedded subtitles)`，`Summary.embedded` 列出这些文件，汇总行给出个数。
+- 采用后 `VideoFile.embedded` 记该身份，计划从 names 起；日志行为 `[extract] done <相对路径>: embedded subtitle stream N (<codec>), M cue(s), skipping speech recognition`，只把选轨告警与 `ffprobe`／字幕抽取的零退出码非空 `stderr` 记为 WARNING，音轨告警不记。发布行加 ` (embedded subtitles)`，`Summary.embedded` 列出这些文件，汇总行给出个数。
 - 不可用（抽取失败，或清洗后零条目）：不写任何内嵌产物，记 WARNING `[extract] <相对路径>: Embedded subtitle stream N is unusable (<原因>); falling back to speech recognition`，该文件照常提取音频走 STT；不算失败、不缓存，下次运行再试。
 - 字幕文字不进日志。整批都是这类文件时没有 GPU worker，GPU 锁到 names 需要模型时才取。
 

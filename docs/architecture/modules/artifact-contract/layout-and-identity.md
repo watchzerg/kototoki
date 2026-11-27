@@ -24,7 +24,7 @@ covers:
 
 - 输入文件身份（`video_identity`，视频与音频同用）= 相对路径＋大小＋`mtime_ns`＋ffprobe 指纹；指纹只取流的 `index`／`codec_name`／`channels`／`channel_layout`／`sample_rate`／`start_time`／`duration` 与容器 `duration`，`filename` 与 `tags` 不参与。
 - 派生身份（`derived_identity`）= 上游 SHA256（按名）＋配方 hash＋模型文件 SHA256（按名）＋影响输出的配置键；上游、配方、模型三处只接受 64 位小写十六进制摘要，因此绝对路径进不了这三处。
-- `is_current(path, expected)`：文件存在、可解析、`identity` 与期望（经 JSON 规范化）完全相同才为真；损坏或不匹配即为假，调用方重算后用 `write_artifact` 原地原子替换。
+- `is_current(path, expected)`：文件存在、可解析、`identity` 与期望（经 JSON 规范化）完全相同才为真。文件缺失（`FileNotFoundError`）静默返回假；既有产物读或解析失败（`(OSError, ValueError)`）经标准库 `logging` 记 `WARNING`（含文件名／`work_id` 与异常摘要，不泄露文件内容）再返回假；身份不匹配亦为假。重算后用 `write_artifact(..., reason=...)` 原地原子替换，覆盖既有文件时记 `INFO`（对象与原因，首次新建不记）。
 - 模型文件 SHA256（`verify_model`）：首次完整计算并与期望比对，写入 `<work_dir>/cache/model-verification.json`（键为解析后的路径，记录 size 与 `mtime_ns`）；之后 size+mtime 不变即复用，不重算；不匹配报错且不入缓存。
 
 **失败与发布**：
@@ -60,6 +60,6 @@ covers:
 ## 代码与验证入口
 
 - 代码：`kototoki/artifacts.py`。
-- `tests/core/test_artifacts.py`：`work_id` 为含扩展名相对路径的 SHA12、最终字幕路径在源文件旁并镜像子目录、不同输入目录得到不同工作根；视频身份忽略位置而随大小、mtime 与 probe 变化；`is_current` 匹配与失效；失败记录列出已有阶段产物；模型哈希缓存命中则不重算；原子写失败时目标不变且无临时文件。
+- `tests/core/test_artifacts.py`：`work_id` 为含扩展名相对路径的 SHA12、最终字幕路径在源文件旁并镜像子目录、不同输入目录得到不同工作根；视频身份忽略位置而随大小、mtime 与 probe 变化；`is_current` 匹配、失效与损坏产物 `WARNING`；`write_artifact` 覆盖 `INFO` 审计；失败记录列出已有阶段产物；模型哈希缓存命中则不重算；原子写失败时目标不变且无临时文件。
 - 测试精简（2026-11-22）后不再有测试覆盖：
   - 产物：`register` 写索引与幂等、越界路径与短 id 碰撞的拒绝、`input_key` 的构成、`record_input`、`derived_identity` 要求摘要、原地替换、损坏或外来产物不当前、`offset_s` 强制、交叉审计产物在阶段链外、内嵌与 names 产物在失败记录里、模型哈希的 size／mtime 重算与期望值核对、`published.json` 仅审计内容与摘要必填、UTF-8 无 BOM 与 LF。

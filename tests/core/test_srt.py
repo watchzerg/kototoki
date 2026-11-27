@@ -1,9 +1,20 @@
 """kototoki.srt 的离线测试：毫秒取整、格式化、严格解析、按译文渲染。"""
 
+import logging
 import math
+from pathlib import Path
+import tempfile
 import unittest
 
-from kototoki.srt import IncompleteTranslationError, format_srt_ms, milliseconds, parse_srt, render_srt, subtitle_text_problem
+from kototoki.srt import (
+    IncompleteTranslationError,
+    format_srt_ms,
+    milliseconds,
+    parse_srt,
+    render_srt,
+    subtitle_text_problem,
+    write_srt,
+)
 
 TWO_CUES = "1\n00:00:01,000 --> 00:00:02,500\nこんにちは\n\n2\n00:00:03,000 --> 00:00:04,000\nさようなら\n"
 
@@ -72,6 +83,21 @@ class RenderTests(unittest.TestCase):
                 render_srt(self.document, mapping)
             self.assertEqual(ctx.exception.report[key], expected)
             self.assertEqual(ctx.exception.report["status"], "partial")
+
+
+class WriteSrtTests(unittest.TestCase):
+    def test_write_srt_logs_info_only_when_overwriting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "work123" / "ja.srt"
+            with self.assertNoLogs("kototoki.srt", logging.INFO):
+                write_srt(TWO_CUES, path)
+            with self.assertLogs("kototoki.srt", logging.INFO) as logs:
+                write_srt(TWO_CUES, path, reason="rebuilding ja.srt")
+            self.assertEqual(len(logs.output), 1)
+            self.assertIn("work123/ja.srt", logs.output[0])
+            self.assertIn("rebuilding ja.srt", logs.output[0])
+            self.assertNotIn("こんにちは", logs.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()

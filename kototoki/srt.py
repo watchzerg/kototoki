@@ -13,12 +13,20 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
+import logging
 import math
 from pathlib import Path
 import re
 from typing import Any, Literal
 
 from kototoki.artifacts import atomic_write_text
+
+logger = logging.getLogger(__name__)
+
+
+def _srt_label(path: Path) -> str:
+    """用 `<parent>/<name>` 标识字幕文件，兼顾目录语境且避免暴露宿主绝对路径。"""
+    return f"{path.parent.name}/{path.name}" if path.parent.name else path.name
 
 _TIME = re.compile(
     r"^(\d{2,}):([0-5]\d):([0-5]\d),(\d{3})[ \t]+-->[ \t]+"
@@ -192,6 +200,10 @@ def render_srt(document: SourceDocument, translations: Mapping[str, str]) -> str
     return "\n\n".join(blocks) + "\n" if blocks else ""
 
 
-def write_srt(text: str, path: Path | str) -> None:
-    """原子写出 UTF-8 无 BOM。是否允许覆盖现有文件由调用方按发布规则判定。"""
-    atomic_write_text(Path(path).resolve(), text)
+def write_srt(text: str, path: Path | str, *, reason: str | None = None) -> None:
+    """原子写出 UTF-8 无 BOM；覆盖既有字幕文件时记 `INFO` 审计日志，首次新建不记。"""
+    target = Path(path).resolve()
+    existed = target.exists()
+    atomic_write_text(target, text)
+    if existed:
+        logger.info("[srt] overwrote %s (%s)", _srt_label(target), reason or "replacing existing subtitle")

@@ -74,12 +74,14 @@ class JobCase(unittest.TestCase):
         # 媒体、cue 构建：假实现，并记录调用。
         self.probed: list[str] = []
         self.extracted: list[str] = []
+        self.probe_warnings: dict[str, tuple[str, ...]] = {}
         self.subtitles: dict[str, tuple[dict, ...]] = {}   # rel → 伪 probe 给出的字幕流清单
         self.subtitle_text: dict[str, object] = {}         # rel → 伪抽轨给出的 SRT 文本，或要抛的异常
+        self.subtitle_warnings: dict[str, tuple[str, ...]] = {}
         self.subtitle_extracted: list[str] = []
         if self.FAKE_MEDIA:
             self.enterContext(mock.patch("kototoki.job.media.probe", side_effect=self._probe))
-            self.enterContext(mock.patch("kototoki.job.media.ffmpeg_version", return_value="n0.0-fake"))
+            self.enterContext(mock.patch("kototoki.job.media.probe_ffmpeg_version", return_value=("n0.0-fake", None)))
             self.enterContext(mock.patch("kototoki.job.media.extract", side_effect=self._extract))
             self.enterContext(mock.patch("kototoki.job.media.extract_subtitle", side_effect=self._extract_subtitle))
         self.enterContext(mock.patch("kototoki.job.cues.build_cues", side_effect=self._build_cues))
@@ -140,17 +142,23 @@ class JobCase(unittest.TestCase):
         return Path(path).relative_to(self.input).as_posix()
 
     def _probe(self, path: Path, config) -> media.Probe:
-        self.probed.append(self._rel(path))
+        rel = self._rel(path)
+        self.probed.append(rel)
         track = media.AudioTrack(index=0, codec_name="aac", channels=2, channel_layout="stereo", sample_rate=48000,
                                  language="jpn", default=True, comment=False, start_time=0.0, duration=10.0)
+        ffprobe_warnings = self.probe_warnings.get(rel, ())
         return media.Probe(
             ffprobe={"streams": [{"index": 0, "codec_name": "aac"}], "format": {"duration": "10"}},
             audio=track, audio_tracks=(track,), has_video=True, duration_s=10.0, duration_source="stream.duration",
-            container_start_time=0.0, subtitles=self.subtitles.get(self._rel(path), ()), warnings=())
+            container_start_time=0.0, subtitles=self.subtitles.get(rel, ()), warnings=ffprobe_warnings,
+            ffprobe_warnings=ffprobe_warnings)
 
-    def _extract_subtitle(self, path: Path, index: int, ffmpeg: Path) -> str:
+    def _extract_subtitle(self, path: Path, index: int, ffmpeg: Path,
+                          *, warnings: list[str] | None = None) -> str:
         rel = self._rel(path)
         self.subtitle_extracted.append(rel)
+        if warnings is not None:
+            warnings.extend(self.subtitle_warnings.get(rel, ()))
         text = self.subtitle_text.get(rel, SRT_JA)
         if isinstance(text, Exception):
             raise text
@@ -160,6 +168,7 @@ class JobCase(unittest.TestCase):
         rel = self._rel(path)
         self.extracted.append(rel)
         wav = Path(work_dir) / artifacts.AUDIO_16K
+        wav_existed = wav.exists()
         pcm = hashlib.sha256(rel.encode()).digest()  # 每个文件不同的 16 个样本；伪 worker 从 WAV 重算同一 SHA
         with wave.open(str(wav), "wb") as stream:
             stream.setnchannels(1)
@@ -169,7 +178,8 @@ class JobCase(unittest.TestCase):
         return media.Extract(
             wav=wav, log=Path(work_dir) / artifacts.EXTRACT_LOG, sample_rate=16000, samples=len(pcm) // 2,
             pcm_sha256=hashlib.sha256(pcm).hexdigest(), decoded_duration_s=10.0, duration_s=10.0, offset_s=0.0,
-            pan="", compensation={}, warnings=())
+            pan="", compensation={}, warnings=(),
+            overwritten=(artifacts.AUDIO_16K,) if wav_existed else ())
 
     def _build_cues(self, align, options):
         return fake_cue_payload(1), SRT_JA
@@ -777,6 +787,46 @@ class RunLogTests(JobCase):
         asr_warnings = [w for w in self.warning_lines(console2.getvalue()) if w.startswith("[asr] ")]
         self.assertEqual(len(asr_warnings), 1)
         self.assertRegex(asr_warnings[0], r"code 2.*1 warning/error line\(s\).*see run-.*-asr\.stderr\.log")
+
+    def test_ffmpeg_diag_media_warnings_corrupt_artifact_and_overwrite_audit(self) -> None:
+        # 1) ffmpeg=unavailable 在 [run] start 后紧跟诊断 WARNING；ffprobe/抽轨 0 退出码 stderr 告警进运行日志；首次新建无覆盖日志
+        self.make_inputs("a.mkv", "sub.mkv")
+        self.subtitles["sub.mkv"] = JPN_SRT_TRACK
+        self.subtitle_text["sub.mkv"] = SRT_JA
+        self.probe_warnings["a.mkv"] = ("ffprobe reported stderr despite exit 0: minor header issue",)
+        self.probe_warnings["sub.mkv"] = ("ffprobe reported stderr despite exit 0: sub header note",)
+        self.subtitle_warnings["sub.mkv"] = ("ffmpeg subtitle extraction reported stderr despite exit 0: sub track note",)
+        with mock.patch("kototoki.job.media.probe_ffmpeg_version",
+                        return_value=("unavailable", "failed to execute /bad/ffmpeg (FileNotFoundError: missing)")):
+            summary1 = self.run_job()
+        self.assertEqual(sorted(summary1.published), ["a.mkv", "sub.mkv"])
+        first_log = self.run_logs()[0].read_text(encoding="utf-8")
+        lines = first_log.splitlines()
+        start_idx = next(i for i, ln in enumerate(lines) if "[run] start:" in ln)
+        self.assertIn("ffmpeg=unavailable", lines[start_idx])
+        self.assertIn("WARNING", lines[start_idx + 1])
+        self.assertIn("/bad/ffmpeg", lines[start_idx + 1])
+        self.assertIn("FileNotFoundError", lines[start_idx + 1])
+        self.assertIn("[extract] a.mkv: ffprobe reported stderr despite exit 0: minor header issue", first_log)
+        self.assertIn("[extract] sub.mkv: ffprobe reported stderr despite exit 0: sub header note", first_log)
+        self.assertIn("[extract] sub.mkv: ffmpeg subtitle extraction reported stderr despite exit 0: sub track note",
+                      first_log)
+        self.assertNotIn("overwrote", first_log)
+
+        # 2) 损坏 probe.json + 重跑覆盖既有产物与音频：is_current 记 WARNING，覆盖阶段产物/WAV/publish SRT 记 INFO，且不泄露正文
+        self.run_logs()[0].unlink()
+        self.final("a.mkv").unlink()
+        (self.work_dir("a.mkv") / artifacts.PROBE).write_text("{CORRUPT_CONTENT", encoding="utf-8")
+        summary2 = self.run_job()
+        self.assertEqual(summary2.published, ["a.mkv"])
+        second_log = self.run_logs()[0].read_text(encoding="utf-8")
+        self.assertIn("WARNING  [artifacts] failed to read", second_log)
+        self.assertIn("probe.json", second_log)
+        self.assertIn("INFO     [artifacts] overwrote", second_log)
+        self.assertIn("INFO     [extract] overwrote audio-16k.wav for a.mkv", second_log)
+        self.assertIn("INFO     [srt] overwrote publish/a.ja-zh.srt", second_log)
+        for secret in ("CORRUPT_CONTENT", "こんにちは", "你好"):
+            self.assertNotIn(secret, second_log)
 
 
 if __name__ == "__main__":
