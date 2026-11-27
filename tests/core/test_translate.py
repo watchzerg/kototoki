@@ -18,6 +18,7 @@ from kototoki.strata import Session
 from kototoki.translate import RECIPE_HASH, TranslateError, TranslatePlan, translate_document
 from kototoki.translate import plan as translate_plan
 from kototoki.translate import recipes as R
+from tests.core.strata_fakes import FakeServer, StrataHarness
 
 SEED = 7
 EMPTY_TABLE: dict[str, Any] = {"entries": []}
@@ -43,27 +44,6 @@ def table(*rows: tuple[str, str, str]) -> dict[str, Any]:
     """(confidence, ja, zh) → 最小的 `name-table.json` 内容（每行一个实体、一个写法）。"""
     return {"entries": [{"entity_ja": ja, "kind": "person", "confidence": c, "zh": zh, "forms": [{"ja": ja, "zh": zh}],
                          "zh_variants": [], "evidence": []} for c, ja, zh in rows]}
-
-
-class FakeServer:
-    def __init__(self, harness: "Harness", runtime_dir: Path, number: int, on_pid):
-        self.harness, self.runtime_dir, self.number, self.on_pid = harness, runtime_dir, number, on_pid
-        self.pid = 1000 + number
-        self.url = f"http://127.0.0.1:8080/#{number}"
-        self.identity = {"candidate": R.MODEL, "strata": {"drafting": "dflash2"}, "cold_load_seconds": 1.0}
-        self.completions = 0
-
-    def __enter__(self) -> "FakeServer":
-        failure = self.harness.start_failures.pop(0) if self.harness.start_failures else None
-        if failure is not None:
-            failure()
-        self.on_pid(self.pid)
-        self.harness.events.append(f"start:{self.number}")
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.on_pid(None)
-        self.harness.events.append(f"stop:{self.number}")
 
 
 class FakeClient:
@@ -120,14 +100,11 @@ class FakeClient:
         return reply(json.dumps({"translations": texts}, ensure_ascii=False))
 
 
-class Harness:
+class Harness(StrataHarness):
     def __init__(self, root: Path):
-        self.root = root
-        self.events: list[str] = []
-        self.pids: list[int | None] = []
+        super().__init__(root)
         self.requests: list[dict[str, Any]] = []
         self.plans: list[dict[int, Any]] = []  # 依次分给每个新客户端
-        self.start_failures: list[Any] = []    # 依次用于每次服务启动；None 表示正常
         self.poison: set[str] = set()
         self.empty: dict[str, int] = {}        # cue id → 还要回空串的次数
         self.drop: dict[str, int] = {}         # cue id → 还要漏掉的次数
@@ -135,22 +112,14 @@ class Harness:
         self.warm_cache = False                # True：服务的首个请求也报 cache_n 5（前缀缓存未清空）
         self.trace_dirs: list[Path] = []       # 依次给每个新客户端的 trace 目录
         self.table: dict[str, Any] = EMPTY_TABLE
-        self.servers: dict[str, FakeServer] = {}
-        self.config = SimpleNamespace(paths=SimpleNamespace(work_dir=root / "work", input_dir=root / "in"),
-                                      translate=SimpleNamespace(seed=SEED))
+        self.config.translate = SimpleNamespace(seed=SEED)
 
     def session(self) -> Session:
-        def server_factory(runtime_dir: Path, on_pid) -> FakeServer:
-            server = FakeServer(self, runtime_dir, len(self.servers) + 1, on_pid)
-            self.servers[server.url] = server
-            return server
-
         def client_factory(url: str, *, timeout: float, trace_dir: Path) -> FakeClient:
             self.trace_dirs.append(trace_dir)
-            return FakeClient(self.servers[url], self.plans.pop(0) if self.plans else {})
+            return FakeClient(self.server_at(url), self.plans.pop(0) if self.plans else {})
 
-        return Session(self.config, on_server_pid=self.pids.append, server_factory=server_factory,
-                       client_factory=client_factory)
+        return super().session(client_factory)
 
     work_dir = property(lambda self: self.root / "work/abc")
 

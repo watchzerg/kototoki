@@ -122,7 +122,7 @@
 
 单一实现、不做后端协议或抽象层：`StrataServer`（产品只有 Strata 一个推理后端）、媒体 ↔ ffmpeg、VAD 与对齐后端、配置来源、SRT 写出器。换模型时改配方常量与实现，不改接口。在只有一个适配器的位置新建接缝，须先在本节写明第二个使用者。
 
-内部接缝只供各自模块的测试使用、不属对外接口：`strata.Session(server_factory=..., client_factory=...)` 换伪服务与伪客户端（`client_factory` 只经 `Session.client()` 使用）；`protocol.run_worker` 的 `start` 回调；`artifacts.replace_with_retry` 的 `replace`。
+内部接缝只供各自模块的测试使用、不属对外接口：`strata.Session(server_factory=..., client_factory=...)` 换伪服务与伪客户端（`client_factory` 只经 `Session.client()` 使用；伪服务与装配只有 `tests/core/strata_fakes.py` 一份）；`protocol.run_worker` 的 `start` 回调；`artifacts.replace_with_retry` 的 `replace`。
 
 测试穿过与调用方相同的接缝：
 

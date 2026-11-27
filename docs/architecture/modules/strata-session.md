@@ -84,7 +84,7 @@ covers:
 ## 接口与依赖
 
 - 使用者（names、翻译）只经 `ensure_started()`、`stop()`、`label`、`client()`、`unavailable` 使用 `Session`，不碰 `ordinal`、`runtime_root`、`client_factory`。翻译还读服务对象的 `identity`（`candidate`、`strata`、`cold_load_seconds`、启动前空闲显存与可用内存）写进 `run.json`。
-- 内部接缝只供测试：`Session(server_factory=..., client_factory=...)`（伪服务须有 `url`、`identity` 与上下文管理器协议；伪客户端只经 `client()` 生效）；`StrataServer` 的 `cli`、`get`、`free_vram`、`available_ram`、`sleep`、`clock`、`log_dir`、`engine_log_dir`。
+- 内部接缝只供测试：`Session(server_factory=..., client_factory=...)`（伪服务须有 `url`、`identity` 与上下文管理器协议；伪客户端只经 `client()` 生效；伪服务与 `Session` 装配在测试里只有一份，`tests/core/strata_fakes.py`，翻译、names session、strata session 三个套件共用，伪客户端由各套件自备）；`StrataServer` 的 `cli`、`get`、`free_vram`、`available_ram`、`sleep`、`clock`、`log_dir`、`engine_log_dir`。
 - 依赖：`kototoki/strata.py` 依赖标准库、`kototoki.artifacts`、`kototoki.config`（只用工作根位置）与 `kototoki.local_client`；`kototoki/local_client.py` 只依赖标准库。两者都不导入 names、翻译、torch 与研究代码。
 - 研究代码可以直接导入本模块（[ADR-0031](../../adr/0031-research-layout-and-lightweight-records.md) R5）。
 - 外部依赖：Strata CLI、本机 8080 服务、`nvidia-smi`。
