@@ -8,7 +8,7 @@ w0／x0／cross 同一表示：x0 生成触顶、w0 整窗守卫置空（复读�
 
 ## 调用级：Strata 基础设施失败与批次终态
 
-ADR-0029「基础设施失败」：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、结构校验失败、超出 context、一条都没收下是该次尝试失败，两次都失败即节点终态，进入拆分；`StrataRefused` 不重试；被拒绝或整批启动失败累计 3 次后，本批其余需要模型的影片直接失败（[Strata session](../modules/strata-session.md)）。
+ADR-0029「基础设施失败」：OOM、服务崩溃／断开、传输错误、Strata 起不来属基础设施失败，同一调用内重启 Strata，最多 2 次；生成触顶、结构校验失败、超出 context、一条都没收下是该次尝试失败，两次都失败即节点终态，进入拆分；`StrataRefused` 不重试；被拒绝或整批启动失败累计达额度后，本批其余需要模型的影片直接失败（额度见 [Strata session](../modules/strata-session.md)）。
 
 ## cue 级：按条解决
 

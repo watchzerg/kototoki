@@ -4,7 +4,7 @@ covers:
 ---
 # 产物契约子页：工作目录布局与产物身份
 
-产物契约 的子页：工作目录布局与最终字幕路径、产物身份与跳过／替换、失败与发布记录、各类审计与专名／内嵌产物、原子写。改 `kototoki/artifacts.py` 或核对某个产物文件的位置与身份时读本页。上级：[产物契约](../artifact-contract.md)。
+`产物契约` 的子页：工作目录布局与最终字幕路径、产物身份与跳过／替换、失败与发布记录、各类审计与专名／内嵌产物、原子写。改 `kototoki/artifacts.py` 或核对某个产物文件的位置与身份时读本页。上级：[产物契约](../artifact-contract.md)。
 
 ## 行为规格
 
@@ -18,7 +18,7 @@ covers:
 - 相对路径不得是绝对路径、为空或含 `..`。
 - 产物文件名是模块常量（`PROBE`、`AUDIO_16K`、`VAD`、`ASR`、`ALIGN`、`JA_CUES`、`JA_EMBEDDED`、`NAME_TABLE`、`PUBLISHED`、`FAILURE` 等）；`STAGE_ARTIFACTS` 是阶段产物清单。翻译 run 目录的键归翻译子系统（`translate.plan`），本模块不拼它。
 
-**坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）。`align.json` 的 `units[].start/end` 也是 WAV 本地秒、不含 offset；offset 在哪一步加见[日文 cue](../japanese-cues.md)。
+**坐标约定**：`vad.json`、`asr.json`、`align.json` 的窗口、段、对齐记录为 WAV 本地秒／整数样本，顶层必须有有限数值 `offset_s`（产品恒为 0，`write_artifact` 对这三个文件名强制检查）。`align.json` 的 `units[].start/end` 也是 WAV 本地秒、不含 offset；offset 在哪一步加见[日文 cue](../japanese-cues.md)；`ja-cues.json` 与 SRT 的 cue 时间即最终 SRT 时间。
 
 **身份**：JSON 产物顶层为 `{"identity": ..., **payload}`。
 

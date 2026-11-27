@@ -5,7 +5,7 @@ covers:
 ---
 # 运行日志与进程原语子页：worker 子进程
 
-`运行日志、进程原语与 worker 子进程` 的子页：GPU worker 子进程的命令、环境、进度事件与崩溃重启。
+`运行日志、进程原语与 worker 子进程` 的子页：GPU worker 子进程的命令、环境、进度事件与崩溃重启。上级：[运行日志、进程原语与 worker 子进程](../run-logging-and-processes.md)。
 
 ## worker 子进程
 
@@ -24,17 +24,13 @@ covers:
 **崩溃与重启**（`job.run_gpu_stage`，按文件计）：每次启动 worker 后，`run_gpu_stage` 把待跑 id、退出码与进度事件交给 `protocol.classify_launch(ids, exit_code, events) -> LaunchOutcome`（规则见[产物契约](../artifact-contract/worker-protocol.md)），自己只做循环与 `ctx.fail`：
 
 - 报告 `failed` 的文件记该阶段失败（`failure.json` 已由 worker 写出），失败类型取 `LaunchOutcome.error_types`；`fatal` 的崩溃文件同理。
-- 正常结束的判定见协议规则，其余按产物核对。
-- 启动失败、`fatal` 与其他异常退出的判定与重启规则以[协议规则](../artifact-contract/worker-protocol.md)为准：`run_gpu_stage` 按 `LaunchOutcome` 记失败，并写 `failure.json`（`WorkerCrashed`）。
+- 正常结束、启动失败、`fatal` 与其他异常退出的判定与重启规则以[协议规则](../artifact-contract/worker-protocol.md)为准：`run_gpu_stage` 按 `LaunchOutcome` 记失败，并写 `failure.json`（`WorkerCrashed`）。
 - `_launch` 读 worker stdout 期间抛异常（Ctrl+C、写日志失败）时，先 kill 并 wait 仍在运行的 worker，再向上抛；之后 `run` 的 `finally` 才释放 GPU 锁。
 
 ## 代码与验证入口
 
 - 代码：worker 启动在 `kototoki/job.py`（`worker_command`、`_launch`、`run_gpu_stage`）；`kototoki/workers/protocol.py`（`classify_launch`）。
 - 测试（core，`mise run test`）：
-  - `tests/core/test_protocol.py`：`run_worker` 先发 `started` 再逐文件处理、单文件失败隔离、`fatal` 以退出码 2 停止；`classify_launch` 的部分失败（不重启）、`fatal`（从下一文件重启）、无 `started` 启动崩溃（不重启）与 `started` 后／已处理文件后崩溃归咎；`failed_windows` 清空窗口文字并记录。
   - `tests/core/test_job.py` 的 `LockTests`（GPU 锁冲突时保留 CPU 阶段产物）与 `IsolationTests`（单文件崩溃隔离并按文件重启 worker、启动期崩溃整批失败且不重启、非 JSON stdout 转发到 stderr 日志）。
-  - 测试精简（2026-11-22）后不再有测试覆盖（协议与编排侧）：
-    - 协议：`jobs` 文件往返与畸形输入、全部完成退出 0 且每文件一行 UTF-8、启动失败退出码 2、`run_worker` 只加载一次、`classify_launch` 的 `startup_failed`、退出码 1 缺事件、全部已报告后崩溃无嫌疑、无待处理 id 的事件被忽略、`fail_window` 与 `validate` 的拒绝。
-    - 编排侧：`startup_failed` 事件不重启、退出码 1 缺事件按崩溃重启、读 worker 输出时中断回收 worker、各类锁冲突与残留锁、空锁破除、锁内 pid 记录。
+  - 测试精简（2026-11-22）后不再有测试覆盖（编排侧）：`startup_failed` 事件不重启、退出码 1 缺事件按崩溃重启、读 worker 输出时中断回收 worker、各类锁冲突与残留锁、空锁破除、锁内 pid 记录。
 - 未验证：worker 退出码 2（CUDA 粘性错误）与按文件重启的真实路径。

@@ -4,7 +4,7 @@ covers:
 ---
 # 配置与媒体子页：配方常量与 recipe_hash
 
-`配置与媒体` 的子页：各配方常量与 `recipe_hash`、cross 引擎配方、下混常量与 `MEDIA` 覆盖范围。`Config` 的读取与校验见[配置读取与校验](config-loading.md)。
+`配置、配方与媒体` 的子页：各配方常量与 `recipe_hash`、cross 引擎配方、下混常量与 `MEDIA` 覆盖范围。上级：[配置、配方与媒体](../config-and-media.md)。`Config` 的读取与校验见[配置读取与校验](config-loading.md)。
 
 **配方**（`kototoki/recipes.py`）：`MEDIA`、`VAD`、`W0`、`X0`、`CROSS`、`MMS`、`CUES`、`EMBEDDED` 八个字典；`recipe_hash(recipe)` 是其规范 JSON 的 SHA256（`artifacts.object_hash`），供产物身份的 `recipe_hash` 字段使用。值取自已验证的 demo（来源写在各节注释）。
 

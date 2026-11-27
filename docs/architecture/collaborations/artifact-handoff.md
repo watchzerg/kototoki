@@ -27,7 +27,7 @@
 交接规则：
 
 - **每个产物带输入身份与配方 hash**；身份匹配即跳过，不匹配时原地原子替换（`translate/` 按键另开目录，旧目录保留）。身份的组成规则在[产物契约][art]，各阶段的期望身份在[阶段计划][plan]。
-- **坐标系**：`vad.json`、`asr.json`、`align.json` 用 WAV 本地坐标，offset 只在 ja-cues 阶段加一次，cue 时间即最终 SRT 时间（完整约定见[产物契约][art]）。
+- **坐标系**：`vad.json`、`asr.json`、`align.json` 用 WAV 本地坐标，offset 的加法见[日文 cue](../modules/japanese-cues.md)（身份与坐标约定见[产物契约][art]）。
 - 发布、产物保留、专名表人工校对与日志规则是用户可见行为，见[中日双语字幕批量生产流水线](../../behaviors/bilingual-subtitle-pipeline.md#操作与可观察结果)。
 
 ## 日文 cue：STT 与翻译的交界

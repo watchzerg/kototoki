@@ -88,10 +88,10 @@
   - worker 进程级：按退出码与事件判定该文件失败、重启或本阶段整体失败，规则见[worker `--jobs` 协议与退出码](modules/artifact-contract/worker-protocol.md)。
   - 批次级：撞 `.local/gpu.lock` 结束整批，规则见[批次编排运行时规则](modules/batch-orchestration/runtime-rules.md)。
 - **翻译与建表的基础设施失败**：
-  - 翻译子系统内部消化传输、OOM、server 错误与 Strata 起不来，最多重启 Strata 两次，受整批 3 次启动额度约束；再往上抛即该文件的文件级失败。
+  - 翻译子系统内部消化传输、OOM、server 错误与 Strata 起不来，最多重启 Strata 两次，受整批启动失败额度约束（[Strata session](modules/strata-session.md)）；再往上抛即该文件的文件级失败。
   - `StrataRefused`（身份不符、已有别的 launch、专家区退到 mmap）不重试，共享 `Session` 置为不可用，本批其余需要模型的影片在 names 与 translate 都直接失败。
   - 批次终态失败（两次尝试都失败）在子系统内按 10→5→1 降级，单条仍失败保留日文。
-  - 建表的传输、HTTP、OOM 与意外异常停掉 Strata，是该文件 names 阶段的文件级失败（下一部需要模型的影片再启动，计入整批 3 次）。
+  - 建表的传输、HTTP、OOM 与意外异常停掉 Strata，是该文件 names 阶段的文件级失败（下一部需要模型的影片再启动，计入整批启动失败额度，见 [Strata session](modules/strata-session.md)）。
   - 建表终态失败（5 次都不合格、超预算）只写空表、不算失败（翻译照常，不注入）。发布没有专名替换，因而没有替换失败。
 - **发布**只有编排能做：`ja-zh.srt` 写一份副本到工作目录 → 原子写到源文件旁（临时文件建在目标目录内，不跨卷移动）→ `record_published`。源文件旁已有同名字幕的文件在扫描阶段即跳过，不进任何阶段。
 - **锁**全归编排：`<work_dir>/<目标目录键>/lock` 与 `.local/gpu.lock`；翻译子系统、`names` 与 `strata.Session` 都不取锁。翻译按 `needs_model` 决定是否取 GPU 锁也由编排判断。

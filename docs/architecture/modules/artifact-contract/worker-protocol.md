@@ -4,7 +4,7 @@ covers:
 ---
 # 产物契约子页：worker --jobs 协议与退出码
 
-产物契约 的子页：编排器与 GPU worker 之间的 `--jobs` 协议、进度事件、退出码、启动判定（读侧）与失败窗口表示。改 `kototoki/workers/protocol.py` 或核对 worker 退出码与重启判定时读本页。上级：[产物契约](../artifact-contract.md)。
+`产物契约` 的子页：编排器与 GPU worker 之间的 `--jobs` 协议、进度事件、退出码、启动判定（读侧）与失败窗口表示。改 `kototoki/workers/protocol.py` 或核对 worker 退出码与重启判定时读本页。上级：[产物契约](../artifact-contract.md)。
 
 ## 行为规格
 

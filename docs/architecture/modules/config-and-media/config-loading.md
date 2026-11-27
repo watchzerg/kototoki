@@ -4,7 +4,7 @@ covers:
 ---
 # 配置与媒体子页：配置读取与校验
 
-`配置与媒体` 的子页：`Config` 的读取行为。配方常量与 `recipe_hash` 见[配方常量与 recipe_hash](recipes.md)。
+`配置、配方与媒体` 的子页：`Config` 的读取行为。上级：[配置、配方与媒体](../config-and-media.md)。配方常量与 `recipe_hash` 见[配方常量与 recipe_hash](recipes.md)。
 
 **配置**（`kototoki/config.py`，`load(path, *, environ=os.environ) -> Config`）：`tomllib` 读取，缺省键取 `config.DEFAULTS`，返回全部路径已解析为绝对路径的冻结数据类。键表、默认值与逐键校验见[配置参考](reference.md)；本页只写读取行为。
 

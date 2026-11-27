@@ -4,7 +4,7 @@ covers:
 ---
 # 产物契约子页：SRT 解析与渲染
 
-产物契约 的子页：SRT 的严格解析、渲染、毫秒取整与字幕文字规则。改 `kototoki/srt.py` 或核对 SRT 读写口径时读本页。上级：[产物契约](../artifact-contract.md)。
+`产物契约` 的子页：SRT 的严格解析、渲染、毫秒取整与字幕文字规则。改 `kototoki/srt.py` 或核对 SRT 读写口径时读本页。上级：[产物契约](../artifact-contract.md)。
 
 ## 行为规格
 

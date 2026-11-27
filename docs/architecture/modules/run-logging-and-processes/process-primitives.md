@@ -4,7 +4,7 @@ covers:
 ---
 # 运行日志与进程原语子页：进程原语
 
-`运行日志、进程原语与 worker 子进程` 的子页：进程存活与身份、子进程随编排器退出、O_EXCL 锁文件。
+`运行日志、进程原语与 worker 子进程` 的子页：进程存活与身份、子进程随编排器退出、O_EXCL 锁文件。上级：[运行日志、进程原语与 worker 子进程](../run-logging-and-processes.md)。
 
 ## 进程原语
 
@@ -23,7 +23,6 @@ covers:
 - 代码：`kototoki/procs.py`（`pid_alive`、`process_created`、`process_matches`、`contained`、`ProcessLock`、`LockError`）。
 - 测试（core，`mise run test`）：
   - `tests/core/test_procs.py`：存活持有者永不被抢占；死持有者的残留锁默认拒绝、`break_stale` 才替换并记录旧锁；`release` 只删自己的锁；`process_created`／`process_matches` 以启动时间识别 pid 复用。
-  - `tests/core/test_job.py` 的 `LockTests`（GPU 锁冲突时保留 CPU 阶段产物）与 `IsolationTests`（单文件崩溃隔离并按文件重启 worker、启动期崩溃整批失败且不重启、非 JSON stdout 转发到 stderr 日志）。
   - 测试精简（2026-11-22）后不再有测试覆盖（进程原语部分）：
     - 进程原语：锁内容、空锁与不可解析的锁、无 `pid_created` 的外部锁按 pid 判断、非整数 pid、并发创建报锁错误、`update` 只改自己的锁、含空格与括号的 comm 解析、无效 pid 无身份、`contained` 的 `setpriv` 前缀。
 - 未验证（Linux）：整批运行中强杀编排器后 GPU worker 释放显存的真实路径（Windows 时期的[最终验收](../../../research/acceptance/bilingual-pipeline-final-acceptance-2026-10-15.md)只作历史）。

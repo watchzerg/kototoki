@@ -45,7 +45,6 @@ covers:
 
 各规则的细节见上表子页。
 
-
 ## 实现设计
 
 移植来源与取舍（研究代码已删除，产品实现是唯一权威）：
@@ -66,7 +65,7 @@ covers:
 
 - 代码：`kototoki/translate/__init__.py`（`plan`、`translate_document` 与导出）；其余模块见[请求子页](translation-subsystem/requests-and-resolution.md#代码与验证入口)与[运行目录子页](translation-subsystem/run-directory.md#代码与验证入口)。Strata 与客户端见 [Strata 服务与共享 session](strata-session.md#代码与验证入口)。
 - 测试：见各子页；合并的测试见[双语合并子页](translation-subsystem/bilingual-merge.md#代码与验证入口)。
-- 真实模型验证（占 GPU，须用户批准）：`mise run smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
+- 真实模型验证（规则见[开发工作流](../../development/workflow.md)）：`mise run smoke translate_product`（`scripts/smoke/translate_product.py`）。运行记录：Q2 首用 smoke 与整片（含 mmap 诊断）（`archive/2026-11-18-pre-research-restructure:docs/research/acceptance/2026-11-11-module-page-history-translation-names.md`）；与建表共用 session 的整片见 `archive/2026-11-18-pre-research-restructure:docs/plans/product-names-on-strata.md` §7。
 - 未验证：追问与拆分只经伪客户端，追问窗口下的译文质量无裁判证据；Strata 的请求不复现（同 seed 跨启动约半数 cue 不同，ADR-0021「未验证与已知限制」），重跑不保证同一译文；产品配方在产品里的质量没有独立裁判证据（沿用 ADR-0021「依据」的 v12 F1 证据）。
 
 ## 变更与决策来源
