@@ -13,7 +13,7 @@ import unittest
 from urllib.error import HTTPError
 
 from kototoki.artifacts import read_json
-from kototoki.srt import format_srt, parse_srt
+from kototoki.srt import format_srt_ms, milliseconds, parse_srt
 from kototoki.strata import Session
 from kototoki.translate import RECIPE_HASH, TranslateError, TranslatePlan, translate_document
 from kototoki.translate import plan as translate_plan
@@ -37,7 +37,7 @@ def document(n: int, word: str = "台詞"):
     批次机制。切包与邻文规则本身见 `test_translate_recipes`。"""
     def start(i: int) -> float:
         return i * 2.0 + (i // 10) * 20.0
-    return parse_srt(format_srt([(start(i), start(i) + 1.5, f"{word}{i}ですね") for i in range(n)]))
+    return parse_srt(format_srt_ms([(milliseconds(start(i)), milliseconds(start(i) + 1.5), f"{word}{i}ですね") for i in range(n)]))
 
 
 def table(*rows: tuple[str, str, str]) -> dict[str, Any]:
@@ -187,8 +187,8 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual([a["status"] for a in row["request"]["attempts"]], ["failed", "accepted"])
 
     def test_injected_rows_reach_the_system_message_of_matching_packs_only(self) -> None:
-        doc = parse_srt(format_srt([(0.0, 1.0, "セイバー、行くぞ"), (1.5, 2.5, "はい"), (30.0, 31.0, "士郎！"),
-                                    *[(40.0 + i * 2, 41.0 + i * 2, f"台詞{i}") for i in range(12)]]))
+        doc = parse_srt(format_srt_ms([(0, 1000, "セイバー、行くぞ"), (1500, 2500, "はい"), (30000, 31000, "士郎！"),
+                                       *[(40000 + i * 2000, 41000 + i * 2000, f"台詞{i}") for i in range(12)]]))
         self.h.table = table(("high", "セイバー", "Saber"), ("medium", "士郎", "士郎"), ("high", "凛", "凛"))
         result = self.h.translate(doc)
         self.assertEqual(len(result.translations), len(doc.cues))

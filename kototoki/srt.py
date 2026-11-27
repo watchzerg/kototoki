@@ -43,7 +43,6 @@ class SourceDocument:
     source_sha256: str
     cues: tuple[SourceCue, ...]
     encoding: str
-    source_path: str | None = None
 
 
 def milliseconds(seconds: float) -> int:
@@ -126,12 +125,7 @@ def read_srt(path: Path | str, *, encoding: str = "utf-8-sig") -> SourceDocument
     source = Path(path).resolve()
     raw = source.read_bytes()
     parsed = parse_srt(raw.decode(encoding), source_sha256=hashlib.sha256(raw).hexdigest(), encoding=encoding)
-    return SourceDocument(parsed.source_sha256, parsed.cues, encoding, str(source))
-
-
-def format_srt(entries: Sequence[tuple[float, float, str]]) -> str:
-    """把 (start_s, end_s, text) 序列写成 SRT 文本，编号从 1 起；零条目得到空串。秒按 `milliseconds` 取整。"""
-    return format_srt_ms([(milliseconds(start_s), milliseconds(end_s), text) for start_s, end_s, text in entries])
+    return SourceDocument(parsed.source_sha256, parsed.cues, encoding)
 
 
 def format_srt_ms(entries: Sequence[tuple[int, int, str]]) -> str:
@@ -185,9 +179,6 @@ def render_srt(document: SourceDocument, translations: Mapping[str, str]) -> str
     return "\n\n".join(blocks) + "\n" if blocks else ""
 
 
-def write_srt(text: str, path: Path | str, *, source: SourceDocument | None = None) -> None:
-    """原子写出 UTF-8 无 BOM；拒绝覆盖 `source` 本身。是否允许覆盖其他现有文件由调用方按发布规则判定。"""
-    output = Path(path).resolve()
-    if source is not None and source.source_path and output == Path(source.source_path).resolve():
-        raise ValueError("Output must not replace the source SRT")
-    atomic_write_text(output, text)
+def write_srt(text: str, path: Path | str) -> None:
+    """原子写出 UTF-8 无 BOM。是否允许覆盖现有文件由调用方按发布规则判定。"""
+    atomic_write_text(Path(path).resolve(), text)

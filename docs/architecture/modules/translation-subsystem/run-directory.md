@@ -40,7 +40,7 @@ covers:
 
 ## 代码与验证入口
 
-- 代码：`kototoki/translate/generate.py`（`run_step`、按批次落盘、续跑、session 记录与日志）；Strata 与客户端见 [Strata 服务与共享 session](../strata-session.md#代码与验证入口)。
+- 代码：`kototoki/translate/generate.py`（`run_step`、按批次落盘、续跑、session 记录与日志；`translate_document` 拆为私有的 `_open_translation`（打开与核对 run）、`_register_session`（启动 Strata 并登记 session）、`_translate_pending`（批次循环）、`_run_session`（异常分流与收尾））；Strata 与客户端见 [Strata 服务与共享 session](../strata-session.md#代码与验证入口)。
   - `tests/core/test_translate.py`：伪服务／伪客户端：正常翻译全部 cue、第二次尝试用 seed＋1、注入行只进匹配的包、整批只起一个 Strata session、续跑从第一个未写批次继续并截掉写了一半的行、全部完成不启动 Strata、run 目录按 ja.srt、配方、seed 与名表分键、注入行变化另起 run 而其余条目不重译、OOM 重启为新 session、基础设施失败重启两次后放弃、ja.srt 变化用新目录并保留旧目录。
   - 测试精简（2026-11-22）后不再有测试覆盖：
     - session 与日志：session 目录名为 UTC 时间戳加 pid、`cache_n` 每 session 只记一次、断连后重启续跑、意外异常记录并停 Strata、每批落盘先于调用结束；日志不含台词与 HTTP 响应正文、每批一行进度、重启 WARNING 与放弃 ERROR、失败尝试行的截断与路径。
