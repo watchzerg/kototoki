@@ -84,9 +84,9 @@
 - **跳过与替换**由产物契约的 `is_current` 判定，期望身份与"下一个要跑的阶段"由阶段计划给出，编排只负责问；推理模块永远不决定要不要跑。
 - **失败分三级，各归一层**，判定是 `protocol.classify_launch` 的纯函数规则，编排只循环与记账：
   - 窗口级 `failed_windows`：推理模块填、协议校验，不进对齐、cue 与翻译。
-  - 文件级：worker 报 `failed` 事件、退出码 1，编排继续下一文件。
-  - worker 进程级：退出码 2 带 `fatal`，该文件失败、从下一文件重启 worker；退出码 2 带 `startup_failed` 或既无 `started` 又无文件事件的异常退出（启动／加载模型原生崩溃），本阶段剩余文件全部失败、不重启；其余异常退出（或退出码 0／1 缺事件），最后一个有事件的文件之后那个（有 `started` 无文件事件时为首个）记 `WorkerCrashed`，从其后重启。
-  - 批次级：任何阶段撞 `.local/gpu.lock` 都以退出码 4 结束整批，不写逐文件 `failure.json`。
+  - 文件级：worker 报 `failed` 事件，编排继续下一文件。
+  - worker 进程级：按退出码与事件判定该文件失败、重启或本阶段整体失败，规则见[worker `--jobs` 协议与退出码](modules/artifact-contract/worker-protocol.md)。
+  - 批次级：撞 `.local/gpu.lock` 结束整批，规则见[批次编排运行时规则](modules/batch-orchestration/runtime-rules.md)。
 - **翻译与建表的基础设施失败**：
   - 翻译子系统内部消化传输、OOM、server 错误与 Strata 起不来，最多重启 Strata 两次，受整批 3 次启动额度约束；再往上抛即该文件的文件级失败。
   - `StrataRefused`（身份不符、已有别的 launch、专家区退到 mmap）不重试，共享 `Session` 置为不可用，本批其余需要模型的影片在 names 与 translate 都直接失败。

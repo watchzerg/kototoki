@@ -24,10 +24,8 @@ covers:
 **崩溃与重启**（`job.run_gpu_stage`，按文件计）：每次启动 worker 后，`run_gpu_stage` 把待跑 id、退出码与进度事件交给 `protocol.classify_launch(ids, exit_code, events) -> LaunchOutcome`（规则见[产物契约](../artifact-contract/worker-protocol.md)），自己只做循环与 `ctx.fail`：
 
 - 报告 `failed` 的文件记该阶段失败（`failure.json` 已由 worker 写出），失败类型取 `LaunchOutcome.error_types`；`fatal` 的崩溃文件同理。
-- 退出码 0／1 且每个待跑 id 都有事件：正常结束，其余按产物核对。有待跑 id 没有事件时不算正常结束（退出码 1 也是 Python 未捕获异常的退出码），按下面的崩溃规则处理。
-- 有 `startup_failed` 事件，或既无 `started` 又无文件事件的异常退出（模型加载／启动期间原生崩溃，与文件无关）：本阶段剩余文件全部失败，不重启。
-- 有 `fatal` 事件：该文件失败，从下一文件重启 worker。
-- 其他异常退出：最后一个有事件的文件之后的第一个文件（有 `started` 而无文件事件时为首个文件）即正在处理的文件，编排写 `failure.json`（`WorkerCrashed`）并从其后文件重启。
+- 正常结束的判定见协议规则，其余按产物核对。
+- 启动失败、`fatal` 与其他异常退出的判定与重启规则以[协议规则](../artifact-contract/worker-protocol.md)为准：`run_gpu_stage` 按 `LaunchOutcome` 记失败，并写 `failure.json`（`WorkerCrashed`）。
 - `_launch` 读 worker stdout 期间抛异常（Ctrl+C、写日志失败）时，先 kill 并 wait 仍在运行的 worker，再向上抛；之后 `run` 的 `finally` 才释放 GPU 锁。
 
 ## 代码与验证入口

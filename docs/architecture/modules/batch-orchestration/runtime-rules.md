@@ -16,7 +16,7 @@ covers:
 
 - GPU 锁是 `config.gpu_lock`（仓库内 `.local/gpu.lock`），第一个需要 GPU 的阶段前获取，持有到翻译结束；names 阶段只在有文件的 `ja.srt` 有 cue 时才取，翻译阶段只在有文件 `needs_model` 时才取（全部 run 已完成或零条目时整批不占 GPU）。
 - 锁文件记录编排器 pid 与创建时间，以及运行中的 worker 与 Strata 服务的 pid。
-- 两把锁都是持有者存活即拒绝、残留锁默认拒绝，`KOTOTOKI_BREAK_STALE_LOCK=1` 时移除残留锁；GPU 锁取不到时抛 `GpuLocked`、整批退出码 4（见入口）。
+- 两把锁都是持有者存活即拒绝、残留锁默认拒绝，`KOTOTOKI_BREAK_STALE_LOCK=1` 时移除残留锁；GPU 锁取不到时抛 `GpuLocked`，整批以退出码 4 结束：任何阶段——vad、asr、align、names、translate——需要 GPU 锁而撞上都如此，不写逐文件 `failure.json`；已完成的 CPU 产物保留，可续跑；同批的零条目文件也等到下一次运行再发布。
 
 **`failure.json` 清理**：该文件本次成功发布后、以及发布期发现源文件旁已有同名字幕而按已存在跳过时删除；重跑时不看 `failure.json`，只按产物身份决定从哪个阶段继续，新的失败覆盖旧记录。
 

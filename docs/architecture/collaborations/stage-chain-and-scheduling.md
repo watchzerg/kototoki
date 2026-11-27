@@ -46,7 +46,7 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 
 - **CPU 阶段（probe、extract、ja-cues、merge）与 GPU 阶段分开**：extract 用线程池（`[run] extract_workers`）先跑完整批，GPU 阶段再开始，不做流式投喂。
 - **GPU 阶段按"阶段 × 整批"推进**：加载 VAD → 跑完本批 → 卸载；ASR、MMS 同理；然后启动 Strata → 为本批全部 `ja.srt` 建专名表 → 不停，翻译本批全部 SRT → `strata launch --stop`。产品只有 Strata 一个服务进程，不起 llama-server；没有批次切分参数。
-- 每个 GPU 阶段在**独立子进程**中执行（一个阶段一个子进程）：进程退出即释放显存，崩溃不拖垮编排器。worker 逐文件增量写结果；单文件异常记失败并继续（退出码 1）；启动失败（`startup_failed`）或 CUDA 粘性错误退出码 2，启动失败时本阶段剩余文件全部失败、不重启；worker 异常退出时编排器把正在处理的文件记该阶段失败，再为其后的文件重启 worker，重启按文件计。编排器本身不加载模型、不 import torch（[进程模型](#进程模型)）。细节见[批次编排][orch]。
+- 每个 GPU 阶段在**独立子进程**中执行（一个阶段一个子进程）：进程退出即释放显存，崩溃不拖垮编排器。worker 逐文件增量写结果；单文件异常记失败并继续；退出码、启动失败与按文件重启的规则见[worker `--jobs` 协议与退出码](../modules/artifact-contract/worker-protocol.md)。编排器本身不加载模型、不 import torch（[进程模型](#进程模型)）。细节见[批次编排][orch]。
 
 ### 为什么这样选
 
@@ -54,8 +54,8 @@ probe ──► 抽轨＋清洗（CPU，写 ja.srt 与 ja-embedded.json）──
 
 ### GPU 内部顺序与并发
 
-- GPU 阶段严格串行，由 `.local/gpu.lock` 保护；只有编排器获取它：在第一个有文件要跑的 GPU 阶段前获取，持有到翻译结束；names 只在有文件的 `ja.srt` 有 cue 时、translate 只在有文件需要模型时才取锁，Strata 在第一次请求模型时启动。锁文件内容与残留锁规则见[批次编排][orch-spec]与[运行日志与进程][run-proc]。
-- 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`，已被占用则退出码 3。任何阶段撞 GPU 锁都是进程级冲突：整批以退出码 4 结束、不写逐文件 `failure.json`，已完成的产物保留，可续跑（ADR-0025）。
+- GPU 阶段严格串行，由 `.local/gpu.lock` 保护；只有编排器获取它：取放时机、锁文件内容与残留锁规则见[批次编排运行时规则](../modules/batch-orchestration/runtime-rules.md)与[运行日志与进程][run-proc]；Strata 在第一次请求模型时启动。
+- 同一 `input_dir` 同时只允许一个编排器：启动即取 `<work root>/lock`，已被占用则退出码 3。撞 GPU 锁是进程级冲突，整批结束但可续跑（规则见[批次编排运行时规则](../modules/batch-orchestration/runtime-rules.md)，ADR-0025）。
 - 不在 GPU 阶段内做多文件并发：W0 契约是 batch 1、逐窗独立，并发只会争抢算力与显存。
 - names 与 translate 共用编排持有的一个 Strata session（[ADR-0029](../../adr/0029-translate-per-cue-resolution.md)「Strata session」）：第一次真正需要模型时启动，两阶段之间不停，整批结束、出错或中断时 `strata launch --stop`。启动前的核对与失败额度见 [Strata session](../modules/strata-session.md#当前行为规格)。见[专名一致性][names]、[翻译子系统][tr]。
 
