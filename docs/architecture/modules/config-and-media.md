@@ -24,7 +24,8 @@ covers:
 
 | 子页 | 何时读 |
 | --- | --- |
-| [配置读取与配方](config-and-media/config-and-recipes.md) | 改 `Config` 读取与校验、配方常量、`recipe_hash`、cross 配方、下混或 `MEDIA` 范围时 |
+| [配置读取与校验](config-and-media/config-loading.md) | 改 `Config` 的读取、路径解析或校验时 |
+| [配方常量与 recipe_hash](config-and-media/recipes.md) | 改配方常量、`recipe_hash`、cross 配方、下混或 `MEDIA` 范围时 |
 | [probe 与 extract](config-and-media/media-extract.md) | 改音轨选择、参照时长、采样率纠正、ffmpeg 提取命令或解码日志时 |
 | [内嵌日文字幕](config-and-media/embedded-subtitles.md) | 改内嵌字幕的选轨、抽取命令或清洗规则时 |
 | [配置参考](config-and-media/reference.md) | 查 `kototoki.toml` 的键、默认值、校验与进身份的键时 |
@@ -43,7 +44,7 @@ covers:
 
 ## 代码与验证入口
 
-代码与验证入口写在各子页末尾：[配置读取与配方](config-and-media/config-and-recipes.md#代码与验证入口)、[probe 与 extract](config-and-media/media-extract.md#代码与验证入口)、[内嵌日文字幕](config-and-media/embedded-subtitles.md#代码与验证入口)、[配置参考](config-and-media/reference.md#代码与验证入口)。
+代码与验证入口写在各子页末尾：[配置读取与校验](config-and-media/config-loading.md#代码与验证入口)、[配方常量与 recipe_hash](config-and-media/recipes.md#代码与验证入口)、[probe 与 extract](config-and-media/media-extract.md#代码与验证入口)、[内嵌日文字幕](config-and-media/embedded-subtitles.md#代码与验证入口)、[配置参考](config-and-media/reference.md#代码与验证入口)。
 
 ## 变更与决策来源
 
