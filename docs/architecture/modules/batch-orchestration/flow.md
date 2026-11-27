@@ -15,7 +15,7 @@ covers:
 退出码：
 
 - 0 全部成功；1 有文件失败（其余照常发布）；2 配置、输入目录或工作目录不可用；3 同一目标目录已有编排器在运行（`WorkLocked`，`EXIT_WORK_LOCKED`）。
-- 4 GPU 锁冲突（`GpuLocked`）：任何阶段——vad、asr、align、names、translate——需要 GPU 锁而撞上都以此结束整批，不写逐文件 `failure.json`；已完成的 CPU 产物保留，可续跑；同批的零条目文件也等到下一次运行再发布。
+- 4 GPU 锁冲突（`GpuLocked`）：整批结束，完整规则见[运行时规则](runtime-rules.md)的“锁”。
 - 源文件旁已有字幕而跳过、仍在写入的文件不改变退出码，后者只告警。
 
 **流程**（阶段 × 整批）：
@@ -38,7 +38,7 @@ covers:
    - 读每个文件的 `ja.srt`，读出错记该文件 `names` 阶段失败；只有某个文件有 cue 时才取 GPU 锁。
    - 有 cue 的文件把共享 session 传给 `names.build_document`（零条目文件传 `None`），随后由编排 `write_artifact(name-table.json, plan.identities["names"], payload)`。
    - `build.status` 不是 `ok`（`too_long`／`failed`，空表）记 WARNING，影片照常往下走；建表抛异常（传输失败、HTTP 错误、OOM、Strata 不可用等）只让该文件失败；随后 `plan.advance`。
-   - 撞 GPU 锁（`GpuLocked`）不捕获，向上抛、整批退出码 4（此时共享 session 尚未启动 Strata）。
+   - 撞 GPU 锁（`GpuLocked`）不捕获，向上抛、整批以退出码 4 结束（规则见[运行时规则](runtime-rules.md)；此时共享 session 尚未启动 Strata）。
 9. translate（进程内，`translate_batch`）：
    - 每文件的 `TranslatePlan` 已在计划里（`plan.translate`）；只有任一文件 `needs_model` 时才取 GPU 锁（names 已取时沿用）。
    - 需要模型的文件把共享 session 传给 `translate_document(plan, session)`；不需要模型的文件（零条目、或 run 已完成而只是源文件旁的字幕被删）传 `None`。
