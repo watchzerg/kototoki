@@ -36,7 +36,8 @@ covers:
 
 ## 实现设计
 
-媒体模块只写 ffmpeg 自身的输出文件（`audio-16k.wav`、`extract.log`；临时文件 `.<名>.<pid>.partial<ext>` 正常结束时自行删除，被强杀留下的残留由编排在下次提取前清理），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败；`Probe.warnings`／`Extract.warnings` 只作数据返回，本模块不发日志，由编排逐条写进运行日志（[批次编排：运行日志](batch-orchestration/runtime-rules.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
+媒体模块只写 ffmpeg 自身的输出文件（`audio-16k.wav`、`extract.log`；两者均先写同目录临时文件 `.<名>.<pid>.partial<ext>` 再原子替换，正常结束时删除临时文件，被强杀留下的残留由编排在下次提取前清理），不读写 JSON 产物、不判断跳过；`MediaError` 由编排记为该文件 extract 阶段失败。
+`Probe.warnings`／`Extract.warnings`（含退出码 0 时的非空 `stderr`）、`Extract.overwritten`／`MediaError.overwritten` 与 `probe_ffmpeg_version` 的失败诊断均只作数据返回，本模块不发日志，由编排写进运行日志（[批次编排：运行日志](batch-orchestration/runtime-rules.md#运行日志)）。时间轴零点只在本模块定义，下游阶段只传 `offset_s = 0`（[模块边界：产品包的责任边界](../module-boundaries.md#产品包的责任边界)）。
 
 ## 接口与依赖
 

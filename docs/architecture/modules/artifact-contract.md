@@ -26,7 +26,7 @@
 
 ## 接口与依赖
 
-只依赖标准库；不导入研究代码、torch 或任何推理包，编排器可直接导入。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)，worker 壳与编排都向它取。CUDA 粘性错误的识别与包装为 `FatalWorkerError` 归 worker 壳（[STT worker](stt-workers.md)）。`<work root>/lock`、GPU 锁与 worker 子进程重启归编排器。
+只依赖标准库；不导入研究代码、torch 或任何推理包，编排器可直接导入。`artifacts` 与 `srt` 仅经标准库 `logging.getLogger(__name__)` 发损坏告警与覆盖审计事件，不配置 handler。本模块只提供身份的组成规则（`video_identity`、`derived_identity`）与匹配（`is_current`、`canonical`）；每个阶段的期望身份由谁的 SHA、哪个配方 hash、哪些模型文件组成，归[阶段计划](stage-plan.md)，worker 壳与编排都向它取。CUDA 粘性错误的识别与包装为 `FatalWorkerError` 归 worker 壳（[STT worker](stt-workers.md)）。`<work root>/lock`、GPU 锁与 worker 子进程重启归编排器。
 
 ## 代码与验证入口
 

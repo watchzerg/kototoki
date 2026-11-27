@@ -31,6 +31,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path, PurePosixPath
@@ -73,6 +74,21 @@ WORK_ID_LENGTH = 12
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 # 视频身份里的 ffprobe 指纹只取这些字段；filename 与 tags 会随改名或重新封装变化，不参与。
 PROBE_STREAM_KEYS = ("index", "codec_name", "channels", "channel_layout", "sample_rate", "start_time", "duration")
+
+logger = logging.getLogger(__name__)
+
+
+def _artifact_label(path: Path) -> str:
+    """用 `<parent>/<name>` 标识产物，兼顾 work_id 与文件名且避免暴露宿主绝对路径。"""
+    return f"{path.parent.name}/{path.name}" if path.parent.name else path.name
+
+
+def _format_error(exc: BaseException) -> str:
+    """将异常压成单行 `<类型>: <首行消息>`（截断到 200 字符），不输出文件内容。"""
+    message = str(exc).strip()
+    if not message:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {message.splitlines()[0][:200]}"
 
 
 # --- 哈希与原子写 -------------------------------------------------------------------------
@@ -248,8 +264,9 @@ def verify_model(path: Path, expected: str, cache_path: Path, *,
 
 # --- JSON 产物 ----------------------------------------------------------------------------
 
-def write_artifact(path: Path, identity: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
-    """原子写出 `{"identity": ..., **payload}`；已存在的同名产物被原地替换。"""
+def write_artifact(path: Path, identity: Mapping[str, Any], payload: Mapping[str, Any],
+                   *, reason: str | None = None) -> None:
+    """原子写出 `{"identity": ..., **payload}`；覆盖既有产物时记 `INFO` 审计日志，首次新建不记。"""
     path = Path(path)
     if "identity" in payload:
         raise ValueError("Payload must not carry its own identity key")
@@ -257,14 +274,22 @@ def write_artifact(path: Path, identity: Mapping[str, Any], payload: Mapping[str
         offset = payload.get("offset_s")
         if isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset):
             raise ValueError(f"{path.name} must record a finite top-level offset_s")
+    existed = path.exists()
     atomic_write_json(path, {"identity": dict(identity), **payload})
+    if existed:
+        logger.info("[artifacts] overwrote %s (%s)", _artifact_label(path), reason or "replacing existing artifact")
 
 
 def is_current(path: Path, expected_identity: Mapping[str, Any]) -> bool:
-    """产物存在、可解析且身份与期望完全相同时返回 True（调用方据此跳过该阶段）。"""
+    """产物存在、可解析且身份与期望完全相同时返回 True；既有产物读取或解析失败时记 `WARNING` 再返回 False。"""
+    path = Path(path)
     try:
         artifact = read_json(path)
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError) as error:
+        logger.warning("[artifacts] failed to read %s (%s); treating as not current",
+                       _artifact_label(path), _format_error(error))
         return False
     return isinstance(artifact, dict) and artifact.get("identity") == json.loads(canonical(expected_identity))
 

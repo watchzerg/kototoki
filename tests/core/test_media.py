@@ -5,9 +5,15 @@
 
 from __future__ import annotations
 
+import io
+import json
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
+from unittest import mock
 
-from kototoki import media, recipes
+from kototoki import config, media, recipes
 
 
 def stream(index: int, kind: str = "audio", **fields: object) -> dict[str, object]:
@@ -151,6 +157,118 @@ class DurationCheckTests(unittest.TestCase):
             media.check_duration(150.1, 100.0, has_video=True)
         (warning,) = media.check_duration(400.0, 100.0, has_video=False)  # 音频输入只告警
         self.assertIn("300.000 s longer than the input duration", warning)
+
+
+class SubprocessDiagnosticsTests(unittest.TestCase):
+    def _cfg(self, root: Path) -> config.Config:
+        toml = root / "kototoki.toml"
+        toml.write_text('[paths]\ninput_dir = "."\n', encoding="utf-8")
+        return config.load(toml)
+
+    def test_probe_ffmpeg_version_reports_reason_and_keeps_string_wrapper(self) -> None:
+        exe = Path("/missing/ffmpeg")
+        with mock.patch("kototoki.media._run", side_effect=FileNotFoundError("no binary")):
+            version, diag = media.probe_ffmpeg_version(exe)
+            self.assertEqual(version, "unavailable")
+            self.assertIsNotNone(diag)
+            self.assertIn("/missing/ffmpeg", diag)
+            self.assertIn("FileNotFoundError", diag)
+            self.assertEqual(media.ffmpeg_version(exe), "unavailable")
+        with mock.patch("kototoki.media._run",
+                        return_value=subprocess.CompletedProcess([str(exe)], 2, stdout="", stderr="bad flag\nline2")):
+            version, diag = media.probe_ffmpeg_version(exe)
+            self.assertEqual(version, "unavailable")
+            self.assertIn("code 2", diag)
+            self.assertIn("bad flag", diag)
+        with mock.patch("kototoki.media._run",
+                        return_value=subprocess.CompletedProcess([str(exe)], 0, stdout="custom banner", stderr="")):
+            version, diag = media.probe_ffmpeg_version(exe)
+            self.assertEqual(version, "unavailable")
+            self.assertIn("custom banner", diag)
+        with mock.patch("kototoki.media._run",
+                        return_value=subprocess.CompletedProcess([str(exe)], 0, stdout="ffmpeg version n9.0.2\n",
+                                                                 stderr="")):
+            self.assertEqual(media.probe_ffmpeg_version(exe), ("n9.0.2", None))
+
+    def test_probe_and_extract_subtitle_surface_stderr_on_exit_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = self._cfg(root)
+            payload = json.dumps({"streams": [VIDEO, audio(1, "jpn")], "format": {"duration": "100.0"}})
+            with mock.patch("kototoki.media._run",
+                            return_value=subprocess.CompletedProcess(["ffprobe"], 0, stdout=payload,
+                                                                     stderr="corrupt atom\nline2")):
+                probe = media.probe(root / "a.mkv", cfg)
+            self.assertTrue(any("ffprobe reported stderr despite exit 0: corrupt atom" in w for w in probe.warnings))
+            self.assertEqual(probe.ffprobe_warnings, probe.warnings[-1:])
+
+            warnings: list[str] = []
+            with mock.patch("kototoki.media._run",
+                            return_value=subprocess.CompletedProcess(["ffmpeg"], 0, stdout="1\n00:00:01,000 --> 00:00:02,000\nhi\n",
+                                                                     stderr="subtitle timestamp wrap")):
+                srt_text = media.extract_subtitle(root / "a.mkv", 2, cfg.paths.ffmpeg, warnings=warnings)
+            self.assertIn("00:00:01,000", srt_text)
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("subtitle timestamp wrap", warnings[0])
+
+    def test_extract_atomic_log_and_overwritten_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = self._cfg(root)
+            work = root / "work"
+            work.mkdir()
+            log_path = work / "extract.log"
+            wav_path = work / "audio-16k.wav"
+            log_path.write_text("old decode log\n", encoding="utf-8")
+            wav_path.write_bytes(b"old wav")
+            probe_result = media.parse_probe({"streams": [VIDEO, audio(1, "jpn")], "format": {"duration": "10.0"}}, "jpn")
+
+            class FakeProc:
+                def __init__(self, stderr_text: str, returncode: int, *, fail_read: bool = False) -> None:
+                    self.stderr = io.StringIO(stderr_text)
+                    self._rc = returncode
+                    self._fail = fail_read
+
+                def __enter__(self) -> FakeProc:
+                    return self
+
+                def __exit__(self, *args: object) -> None:
+                    pass
+
+                def kill(self) -> None:
+                    pass
+
+                def wait(self) -> int:
+                    return self._rc
+
+            # 1) 未替换前抛错：保留旧 extract.log，无残留临时文件
+            with mock.patch("kototoki.media.subprocess.Popen", return_value=FakeProc("", 0)), \
+                    mock.patch("kototoki.media.digest_decode_log", side_effect=RuntimeError("pipe broke")):
+                with self.assertRaisesRegex(RuntimeError, "pipe broke"):
+                    media.extract(root / "a.mkv", work, probe_result, cfg)
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "old decode log\n")
+            self.assertEqual(list(work.glob(".*.partial*")), [])
+
+            # 2) 解码失败（returncode=1）：仍原子替换 extract.log 并在 MediaError.overwritten 记录，不写 wav
+            with mock.patch("kototoki.media.subprocess.Popen",
+                            return_value=FakeProc("[error] bad packet\n", 1)):
+                with self.assertRaises(media.MediaError) as ctx:
+                    media.extract(root / "a.mkv", work, probe_result, cfg)
+            self.assertEqual(ctx.exception.overwritten, ("extract.log",))
+            self.assertIn("bad packet", log_path.read_text(encoding="utf-8"))
+            self.assertEqual(wav_path.read_bytes(), b"old wav")
+
+            # 3) 成功完成：同时记录覆盖了 extract.log 与 audio-16k.wav
+            def fake_popen(cmd, **kwargs):
+                Path(cmd[-1]).write_bytes(b"new wav")
+                return FakeProc("[info] ok\n", 0)
+
+            with mock.patch("kototoki.media.subprocess.Popen", side_effect=fake_popen), \
+                    mock.patch("kototoki.media._wav_pcm", return_value=(16000, 160000, "a" * 64)):
+                result = media.extract(root / "a.mkv", work, probe_result, cfg)
+            self.assertEqual(result.overwritten, ("extract.log", "audio-16k.wav"))
+            self.assertEqual(wav_path.read_bytes(), b"new wav")
+            self.assertEqual(list(work.glob(".*.partial*")), [])
 
 
 if __name__ == "__main__":

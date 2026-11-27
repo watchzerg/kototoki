@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -55,6 +55,10 @@ _SEXAGESIMAL = re.compile(r"(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)")
 class MediaError(RuntimeError):
     """该视频无法提取（无音轨、不支持的声道布局、ffmpeg 失败、解码截断）；编排记为该文件 extract 失败。"""
 
+    def __init__(self, message: str, *, overwritten: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.overwritten = overwritten
+
 
 @dataclass(frozen=True)
 class AudioTrack:
@@ -83,6 +87,7 @@ class Probe:
     container_start_time: float | None
     subtitles: tuple[dict[str, Any], ...]
     warnings: tuple[str, ...]
+    ffprobe_warnings: tuple[str, ...] = ()  # 仅来自 ffprobe 进程 stderr 的告警，采用内嵌字幕时也须呈现在运行日志
 
     def payload(self) -> dict[str, Any]:
         """`probe.json` 的内容（不含身份）。"""
@@ -107,6 +112,7 @@ class Extract:
     compensation: dict[str, Any]
     warnings: tuple[str, ...]
     diagnostics: dict[str, Any] | None = None   # 解码日志的统计（`digest_decode_log`），只作诊断
+    overwritten: tuple[str, ...] = ()           # 本次原子替换覆盖了哪些既有文件（由编排记 INFO 审计）
 
     def payload(self) -> dict[str, Any]:
         return {"wav": self.wav.name, "log": self.log.name,
@@ -490,13 +496,43 @@ def parse_ffmpeg_version(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _format_error(exc: BaseException) -> str:
+    """将异常压成单行 `<类型>: <首行消息>`（截断到 200 字符）。"""
+    message = str(exc).strip()
+    if not message:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {message.splitlines()[0][:200]}"
+
+
+def _stderr_summary(text: str, *, limit: int = 200) -> str:
+    """将进程 stderr/stdout 压成单行摘要（首条非空行截断到 `limit` 字符，附其余行数）。"""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    first = lines[0][:limit]
+    return f"{first} (+{len(lines) - 1} more line(s))" if len(lines) > 1 else first
+
+
+def probe_ffmpeg_version(ffmpeg: Path) -> tuple[str, str | None]:
+    """探测 `ffmpeg -version`：返回 `(版本号, None)`，或 `("unavailable", 含可执行路径与具体原因的诊断说明)`。"""
+    executable = Path(ffmpeg)
+    try:
+        result = _run([str(executable), "-version"])
+    except OSError as error:
+        return "unavailable", f"failed to execute {executable} ({_format_error(error)})"
+    if result.returncode != 0:
+        detail = _stderr_summary(result.stderr) or _stderr_summary(result.stdout) or "no output"
+        return "unavailable", f"{executable} exited with code {result.returncode}: {detail}"
+    version = parse_ffmpeg_version(result.stdout)
+    if not version:
+        detail = _stderr_summary(result.stdout) or _stderr_summary(result.stderr) or "empty output"
+        return "unavailable", f"unexpected `ffmpeg -version` output from {executable}: {detail}"
+    return version, None
+
+
 def ffmpeg_version(ffmpeg: Path) -> str:
     """`ffmpeg -version` 报的构建版本（如 `n9.0.2-31-g…`），写进运行日志首行；取不到时为 `unavailable`。"""
-    try:
-        result = _run([str(ffmpeg), "-version"])
-    except OSError:
-        return "unavailable"
-    return (result.returncode == 0 and parse_ffmpeg_version(result.stdout)) or "unavailable"
+    return probe_ffmpeg_version(ffmpeg)[0]
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -505,20 +541,30 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _run_decode(command: list[str], log_path: Path,
-                track: AudioTrack) -> tuple[int, str, tuple[int, int], dict[str, Any]]:
-    """运行解码命令，stderr 流式经 `digest_decode_log` 写进 `log_path`（不整段读进内存）；返回退出码与
-    `digest_decode_log` 的三项结果。"""
-    with open(log_path, "w", encoding="utf-8", newline="\n") as log, \
-            subprocess.Popen(contained(command), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.PIPE, encoding="utf-8", errors="replace") as process:
-        log.write(f"$ {shlex.join(command)}\n")
-        assert process.stderr is not None
-        try:
-            kept, swr_samples, diagnostics = digest_decode_log(process.stderr, log, track)
-        except BaseException:
-            process.kill()
-            raise
-        return process.wait(), kept, swr_samples, diagnostics
+                track: AudioTrack) -> tuple[int, str, tuple[int, int], dict[str, Any], bool]:
+    """运行解码命令，stderr 流式经 `digest_decode_log` 写进同目录临时文件再原子替换 `log_path`；
+    返回 `(退出码, kept, swr_samples, diagnostics, log_overwritten)`。替换前异常退出时清理临时文件，不破坏旧日志。
+    """
+    partial_log = _partial(log_path)
+    try:
+        with open(partial_log, "w", encoding="utf-8", newline="\n") as log, \
+                subprocess.Popen(contained(command), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.PIPE, encoding="utf-8", errors="replace") as process:
+            log.write(f"$ {shlex.join(command)}\n")
+            assert process.stderr is not None
+            try:
+                kept, swr_samples, diagnostics = digest_decode_log(process.stderr, log, track)
+            except BaseException:
+                process.kill()
+                raise
+            returncode = process.wait()
+            log.flush()
+            os.fsync(log.fileno())
+        existed = log_path.exists()
+        os.replace(partial_log, log_path)
+        return returncode, kept, swr_samples, diagnostics, existed
+    finally:
+        partial_log.unlink(missing_ok=True)
 
 
 def _partial(path: Path) -> Path:
@@ -527,18 +573,27 @@ def _partial(path: Path) -> Path:
 
 
 def probe(path: Path, config: Config) -> Probe:
-    """ffprobe 全部流并按 `config.input.audio_language` 选音轨。"""
+    """ffprobe 全部流并按 `config.input.audio_language` 选音轨；退出码为 0 但 stderr 非空时追加告警。"""
     result = _run(probe_command(config.paths.ffprobe, Path(path)))
     if result.returncode != 0:
         raise MediaError(f"ffprobe failed ({result.returncode}): {result.stderr.strip()}")
-    return parse_probe(json.loads(result.stdout), config.input.audio_language)
+    parsed = parse_probe(json.loads(result.stdout), config.input.audio_language)
+    if stderr := _stderr_summary(result.stderr):
+        warning = f"ffprobe reported stderr despite exit 0: {stderr}"
+        return replace(parsed, warnings=(*parsed.warnings, warning), ffprobe_warnings=(warning,))
+    return parsed
 
 
-def extract_subtitle(video: Path, index: int, ffmpeg: Path) -> str:
-    """内嵌文本字幕轨经 ffmpeg 转出的 SRT 文本（UTF-8，未清洗；清洗在 `kototoki.embedded.clean`）。不写任何文件。"""
+def extract_subtitle(video: Path, index: int, ffmpeg: Path, *, warnings: list[str] | None = None) -> str:
+    """内嵌文本字幕轨经 ffmpeg 转出的 SRT 文本（UTF-8，未清洗；清洗在 `kototoki.embedded.clean`）。不写任何文件。
+
+    退出码为 0 但 stderr 非空时，若调用方传入 `warnings` 列表则追加摘要告警。
+    """
     result = _run(subtitle_command(ffmpeg, Path(video), index))
     if result.returncode != 0:
         raise MediaError(f"ffmpeg subtitle extraction failed ({result.returncode}): {result.stderr.strip()[-2000:]}")
+    if warnings is not None and (stderr := _stderr_summary(result.stderr)):
+        warnings.append(f"ffmpeg subtitle extraction reported stderr despite exit 0: {stderr}")
     return result.stdout
 
 
@@ -555,7 +610,7 @@ def _wav_pcm(path: Path) -> tuple[int, int, str]:
 
 
 def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> Extract:
-    """从输入容器按绝对流索引解码，补齐时间轴、下混、重采样为 `audio-16k.wav`，精简后的解码日志写 `extract.log`。
+    """从输入容器按绝对流索引解码，补齐时间轴、下混、重采样为 `audio-16k.wav`，精简后的解码日志原子写 `extract.log`。
 
     时长校验在替换目标之前完成：截断时不留下 `audio-16k.wav`，只留日志。
     """
@@ -565,8 +620,11 @@ def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> 
     partial = _partial(target)
     track = probe_result.audio
     command = derive_command(config.paths.ffmpeg, Path(path), track, partial)  # 不支持的下混布局在此失败，不运行 ffmpeg
+    overwritten: list[str] = []
     try:
-        returncode, kept, swr_samples, diagnostics = _run_decode(command, log_path, track)
+        returncode, kept, swr_samples, diagnostics, log_overwritten = _run_decode(command, log_path, track)
+        if log_overwritten:
+            overwritten.append(EXTRACT_LOG)
         if returncode != 0:
             raise MediaError(f"ffmpeg decode failed ({returncode}); see {EXTRACT_LOG}")
         rate, samples, pcm_sha256 = _wav_pcm(partial)
@@ -576,11 +634,18 @@ def extract(path: Path, work_dir: Path, probe_result: Probe, config: Config) -> 
         warnings = check_duration(decoded_s, probe_result.duration_s, has_video=probe_result.has_video)
         if errors := error_lines(diagnostics):
             warnings.append(f"ffmpeg reported {errors} error line(s) while decoding; see {EXTRACT_LOG}")
+        wav_existed = target.exists()
         os.replace(partial, target)
+        if wav_existed:
+            overwritten.append(AUDIO_16K)
+    except MediaError as error:
+        if overwritten and not error.overwritten:
+            error.overwritten = tuple(overwritten)
+        raise
     finally:
         partial.unlink(missing_ok=True)
     return Extract(wav=target, log=log_path, sample_rate=rate, samples=samples,
                    pcm_sha256=pcm_sha256, decoded_duration_s=decoded_s,
                    duration_s=probe_result.duration_s, offset_s=float(recipes.MEDIA["offset_s"]),
                    pan=pan_filter(track), compensation=parse_compensation(kept, swr_samples, track, decoded_s),
-                   warnings=tuple(warnings), diagnostics=diagnostics)
+                   warnings=tuple(warnings), diagnostics=diagnostics, overwritten=tuple(overwritten))
