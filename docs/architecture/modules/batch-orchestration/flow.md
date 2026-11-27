@@ -47,13 +47,13 @@ covers:
     - 先查源文件旁是否已出现同名字幕（运行期间由用户或别的工具写入）：有则不覆盖，记入 `existing` 并告警。
     - 否则写副本到 `<work root>/<id>/publish/`（保留）→ `write_srt` 原子写到源文件旁（临时文件在目标目录内，不跨卷）→ 成功后 `record_published`（审计）→ 删除该文件的 `failure.json`。
     - `ja.srt` 留在工作目录，不发布 `zh.srt`。发布日志行在有未翻译 cue（字幕里只有日文一行）时追加 `, N untranslated cue(s)`。
-    - 收尾不变量：未失败的文件此时必须已在 `published`、`existing` 或 `no_speech` 里，否则记 `publish` 失败（`NotPublished`）。
+    - 收尾不变量：未失败的文件此时必须已在 `published`（含无语音）或 `existing` 里，否则记 `publish` 失败（`NotPublished`）。
 
 ## 代码与验证入口
 
 - 代码：
   - `kototoki/__main__.py`（`main`、`check_input_dir`、`check_work_dir`）。
-  - `kototoki/job.py`（`run`、`_run`（按序调用各 `_*_stage`）、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`speech_gate`、`advance_or_fail`、`build_ja_cues`、`cues_batch`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。
+  - `kototoki/job.py`（`run`、`_run`（按序调用 `_scan_stage`→`_check_all_published` 各阶段）、`Summary`、`model_sha_lookup`、`compensation_warnings`、`clean_leftovers`、`probe_and_extract`、`use_embedded_subtitle`、`speech_gate`、`advance_or_fail`、`build_ja_cues`、`cues_batch`、`names_batch`、`translate_batch`、`publish`、`FinalPathCollision`、`NotPublished`）。
   - `kototoki/logs.py`、`kototoki/procs.py`、`kototoki/workers/protocol.py` 与 worker 启动见[运行日志与进程原语](../run-logging-and-processes.md)。
 - 测试（core，`mise run test`）：
   - `tests/core/test_job.py` 以伪 worker 脚本 `tests/fake_worker.py`（经 `plan` 取身份）、属性 patch 的专名、翻译与 Strata 函数（`merge` 用真的）、打桩的 `media.probe`／`extract` 与 `cues.build_cues` 覆盖主路径：

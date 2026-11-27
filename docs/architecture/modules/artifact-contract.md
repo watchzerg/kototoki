@@ -38,14 +38,14 @@ covers:
 **失败与发布**：
 
 - `write_failure(work_dir, stage, error)` 写 `failure.json`：阶段、异常类型与消息、当时已存在的阶段产物（`completed`，按 `STAGE_ARTIFACTS`），不含音频与转写内容。`failure.json` 的清理归编排器（[批次编排](batch-orchestration.md)）：成功发布后删除，运行期间源文件旁才出现字幕而放弃发布时也删除；扫描时源文件旁已有字幕的文件不进任何阶段，它工作目录里以前留下的 `failure.json` 不清理。
-- `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在双语字幕写到源文件旁**之后**写 `published.json`：最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录（`translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。它只是审计记录，不参与任何判定。
+- `record_published(work_dir, final_path, sha256, sources, translate_dir)` 在双语字幕写到源文件旁**之后**写 `published.json`：最终路径、`ja-zh` 的 SHA256、来源产物身份、当前翻译 run 目录（`translate/srt-<sha12>/<配方名>__s<seed>__n<表sha12>`，相对工作目录）。只作审计，不参与判定。
 - 是否需要发布只看源文件旁的 `<主名>.ja-zh.srt` 是否存在（只看文件名，编排在扫描阶段判定，ADR-0007「发布」）；要重做就删掉该字幕。
 
 **worker 协议**（`kototoki/workers/protocol.py`）：
 
 - `--jobs <path>` 指向 `{"stage", "recipe_hash", "config", "files": [{"id", "work_dir", "inputs": {name: path}}]}`，键集合严格、id 唯一（`parse_jobs`／`read_jobs`／`write_jobs`）。
 - `run_worker` 读 jobs、调用一次 `start(jobs)` 加载模型，成功后向 stdout 打 `started` 事件，再由 `run_jobs` 逐文件处理；结果由 worker 写进各自工作目录。
-- stdout 打 UTF-8 JSON 进度行：`started`（模型加载完成、处理首个文件前）与 `done`／`failed`／`fatal`／`startup_failed`，只含事件、id、异常类型与计数，不含窗口文字。
+- stdout 打 UTF-8 JSON 进度行：`started`（模型加载完成、处理首个文件前）与 `done`／`failed`／`fatal`／`startup_failed`，只含事件、id、异常类型、计数与 `startup_failed` 的 `message`，不含窗口文字。
 - 退出码：0 全部完成；1 有文件失败（该文件写 `failure.json`，继续下一文件）；2 启动失败（`startup_failed`，不重启）或 `FatalWorkerError`（`fatal`：CUDA 粘性错误等，当前文件写 `failure.json` 后立即退出，编排器从下一文件重启）；未发出 `started` 与任何文件事件前的异常退出同样视为启动失败、不重启。
 
 **失败窗口**（w0／x0／cross 共用）：

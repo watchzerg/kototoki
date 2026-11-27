@@ -28,7 +28,7 @@ covers:
   2026-10-18 13:05:02Z [  3531.0s] ERROR    [translate] FAILED S1/ep01.mkv: TranslateError
   ```
 
-  文件级失败的 ERROR 行带异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；不带 traceback 的 FAILED 行（同类失败已记过、Strata 不可用之后、worker 崩溃或启动失败）改为 `<类型>: <异常消息首行>`（截到 200 字符），例 `[publish] FAILED S1/ep02.mkv: OSError: [WinError 17] …`。失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`，没有 traceback 也没有消息。
+  文件级失败的 ERROR 行带异常类型，traceback（`exc_info`）紧随其后，控制台与文件相同；不带 traceback 的 FAILED 行（同类失败已记过、Strata 不可用之后、worker 崩溃或启动失败）改为 `<类型>: <异常消息首行>`（截到 200 字符），例 `[publish] FAILED S1/ep02.mkv: OSError: [Errno 28] No space left on device`。失败由 worker 报告（`failure.json` 已由 worker 写出）时类型取自事件的 `error_type`，没有 traceback 也没有消息。
 - **文件**：
   - `<work root>/run-<UTC戳>.log` 与控制台逐行相同，是权威副本。控制台流的编码取决于调用方，产品不改（batch-run-fixes 06.5）。
   - `<work root>/run-<戳>-<stage>.stderr.log` 在每次启动该阶段 worker 时追加其 stderr（壳按同一格式写的日志、第三方告警与裸 traceback）；worker 退出后只读本次追加的部分，统计按本格式写出、级别为 WARNING／ERROR／CRITICAL 的行，非零时在运行日志记一行 WARNING（上例第二行），非本格式的行不计：裸 traceback、tqdm 残行与 torch 的 `W1109 20:31:52…` 这类 glog 行都不计。
