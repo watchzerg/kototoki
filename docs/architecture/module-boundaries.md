@@ -25,7 +25,7 @@
 - 翻译配方与 `RECIPE_HASH`（只在 `kototoki/translate/recipes.py`）、注入规则、run 目录键、`needs_model`、按条追问与未翻译、合并归[翻译子系统](modules/translation-subsystem.md)。
 - 建表配方与 hash（只在 `kototoki/names/recipes.py`）、建表请求额度与 `name-table.json` 的内容归[专名一致性](modules/name-consistency.md)；文件由编排写，表的用法（注入哪些行）归翻译子系统。
 - 扫描、调度、锁、发布、子进程环境与运行日志归[批次编排](modules/batch-orchestration.md)；进程原语在基础层 `kototoki/procs.py`，日志行格式在 `kototoki/logs.py`。
-- 本机回环客户端 `LlamaClient`、`InfraFailure`、`explicit_oom` 归 `kototoki/local_client.py`；llama-server 进程生命周期不在产品里，`list_llama_servers` 在 `scripts/smoke/`。
+- 本机回环客户端 `LlamaClient`、`InfraFailure`、失败分类 `classify_failure`／`response_body` 归 `kototoki/local_client.py`；llama-server 进程生命周期不在产品里，`list_llama_servers` 在 `scripts/smoke/`。
 - Strata 起停、显存轮询（`nvidia_smi`、`wait_for_free_vram`）、身份核对与常量、共享 `Session` 归 `kototoki/strata.py`（[Strata session](modules/strata-session.md)）；启动额度只由 `Session` 计数，`unavailable` 只由它写。
 
 ## 依赖方向

@@ -14,7 +14,7 @@ Strata 的生命周期归中间层 `kototoki.strata`：编排器持有共享 `Se
 不做同调用内重启：传输失败、HTTP 错误、OOM 停掉 Strata（下一部需要模型的影片再启动）并抛 `NamesError`。
 
 依赖方向：只依赖基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata` 与 `kototoki.local_client`
-（`InfraFailure`、`explicit_oom`）；不导入 torch、`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、
+（`InfraFailure`、`classify_failure`、`response_body`）；不导入 torch、`experiments.*`。不取 GPU 锁、不写产物（`name-table.json` 由编排器写）、
 不打含条目文字的日志。见 docs/architecture/modules/name-consistency.md。
 
 模块页：docs/architecture/modules/name-consistency.md。
@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 
-from kototoki.local_client import InfraFailure, explicit_oom
+from kototoki.local_client import InfraFailure, classify_failure, response_body
 from kototoki.srt import SourceDocument
 from kototoki.strata import MODEL, Session, StrataRefused
 
@@ -102,8 +102,8 @@ def build_document(work_dir: Path, document: SourceDocument, session: Session | 
     try:
         result = build_table(document, client.chat_completion, counter, seed)
     except HTTPError as exc:
-        body = _response_body(client) + str(exc)
-        kind = "oom" if explicit_oom(body) else "server_error"
+        body = response_body(client) + str(exc)
+        kind = classify_failure(body)
         log.warning("[names] stopping Strata after HTTP %s (%s)", exc.code, kind)
         session.stop()
         raise NamesError(f"HTTP {exc.code} ({kind}): response body {len(body)} char(s); see {trace_dir}") from exc
@@ -117,9 +117,3 @@ def build_document(work_dir: Path, document: SourceDocument, session: Session | 
         prompt_check="count_tokens" if counter.ok else f"skipped ({counter.error})" if counter.ok is False else None,
         over_budget_by_usage=type(prompt_tokens) is int and prompt_tokens > PROMPT_BUDGET)
     return result
-
-
-def _response_body(client: Any) -> str:
-    exchange = getattr(client, "last_exchange", None)
-    raw = Path(exchange) / "response.raw" if isinstance(exchange, str) else None
-    return raw.read_text(encoding="utf-8", errors="replace") if raw is not None and raw.is_file() else ""

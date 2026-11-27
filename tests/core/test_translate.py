@@ -68,6 +68,14 @@ class FakeClient:
             behaviour()
         if behaviour == "oom":
             raise closed_http_error(500, "CUDA error: out of memory")
+        if behaviour in ("body_oom", "body_other"):  # 状态行不带线索，分类只能来自交换目录里的响应正文
+            exchange = self.server.harness.root / "work" / f"exchange-{self.completions}"
+            exchange.mkdir(parents=True)
+            (exchange / "response.raw").write_text("CUDA error: out of memory" if behaviour == "body_oom" else "boom", encoding="utf-8")
+            self.last_exchange = str(exchange)
+            raise closed_http_error(500, "error")
+        if behaviour in ("error_oom", "error_other"):  # 200 响应里带 error 字段
+            return {"error": "CUDA error: out of memory" if behaviour == "error_oom" else {"message": "boom"}}
         user = body["messages"][1]["content"]
         cache_n = 0 if self.server.completions == 1 and not self.server.harness.warm_cache else 5
         base = {"usage": {"prompt_tokens": len(user), "completion_tokens": 12}, "timings": {"cache_n": cache_n}}
@@ -282,6 +290,29 @@ class TranslateDocumentTests(unittest.TestCase):
         self.assertEqual(second["batches_written"], 2)
         self.assertTrue(run["resumed"])
         self.assertEqual(run["completion"]["restarts_last_call"], 1)
+
+    def test_failure_text_is_classified_oom_or_server_error(self) -> None:
+        for behaviour, kind in (("oom", "oom"), ("body_oom", "oom"), ("body_other", "server_error"),
+                                ("error_oom", "oom"), ("error_other", "server_error")):
+            with self.subTest(behaviour=behaviour):
+                self.setUp()
+                doc = document(3)
+                self.h.plans = [{1: behaviour}]
+                self.h.translate(doc)
+                if kind == "oom":  # oom 停 Strata 并重启，失败类别记在 session 里
+                    first = self.run_json(doc)["sessions"][0]
+                    self.assertEqual((first["stop_reason"], first["infra_failure"]["kind"]), ("oom", "oom"))
+                else:  # server_error 换 seed 重试，类别记在尝试记录里
+                    first = self.batch_lines(doc)[0]["request"]["attempts"][0]
+                    self.assertEqual((first["status"], first["error_kind"]), ("failed", "server_error"))
+
+    def test_context_overflow_is_classified_context_in_attempt_records(self) -> None:
+        doc = document(4)
+        self.h.max_targets = 2
+        self.h.translate(doc)
+        nodes = [n for row in self.batch_lines(doc) for n in (row["resolution"]["nodes"] if "resolution" in row else [row])]
+        kinds = [a.get("error_kind") for node in nodes for a in node["request"]["attempts"]]
+        self.assertIn("context", kinds)
 
     def test_infra_failure_gives_up_after_two_restarts(self) -> None:
         doc = document(12)

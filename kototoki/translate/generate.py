@@ -41,7 +41,7 @@ from kototoki.artifacts import atomic_write_json, object_hash, read_json, sha256
 from kototoki.config import Config
 from kototoki.srt import SourceDocument
 
-from kototoki.local_client import InfraFailure, explicit_oom
+from kototoki.local_client import InfraFailure, classify_failure, response_body
 from kototoki.strata import Session, StrataRefused
 
 from . import resolve
@@ -132,15 +132,6 @@ def whitespace_ratio(text: Any) -> float | None:
     return sum(ch.isspace() for ch in text) / len(text)
 
 
-def _http_body(client: Any) -> str:
-    exchange = getattr(client, "last_exchange", None)
-    if isinstance(exchange, str):
-        raw = Path(exchange) / "response.raw"
-        if raw.is_file():
-            return raw.read_text(encoding="utf-8", errors="replace")
-    return ""
-
-
 def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[str], cache_state: dict[str, Any],
              record: dict[str, Any]) -> R.Parsed:
     """一个节点的 chat completion 与校验：不用 grammar、不查预算端点；最多两次（seed、seed＋1）。
@@ -162,8 +153,10 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
             try:
                 response = client.chat_completion(body)
             except HTTPError as exc:
-                text = _http_body(client) + str(exc)
-                kind = "oom" if explicit_oom(text) else "context" if CONTEXT_ERROR.search(text) else "server_error"
+                text = response_body(client) + str(exc)
+                kind = classify_failure(text)
+                if kind == "server_error" and CONTEXT_ERROR.search(text):  # 先判 oom，再判 context
+                    kind = "context"
                 # 消息只带状态码、分类与正文长度；正文在 transport 交换目录里。
                 raise StepFailed(f"HTTP {exc.code} ({kind}): response body {len(text)} char(s)", kind) from exc
             except (URLError, ConnectionError, TimeoutError) as exc:
@@ -191,7 +184,7 @@ def run_step(client: Any, messages: list[dict[str, str]], seed: int, ids: list[s
                 attempt["cache_reset_check"] = dict(cache_state)
             if response.get("error") is not None:
                 text = json.dumps(response["error"], ensure_ascii=False)
-                kind = "oom" if explicit_oom(text) else "server_error"
+                kind = classify_failure(text)
                 raise StepFailed(f"server error ({kind}): {type(response['error']).__name__} of {len(text)} char(s)",
                                  kind)
             if attempt["stopped_limit"]:

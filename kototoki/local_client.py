@@ -1,6 +1,6 @@
-"""本机回环 HTTP 客户端 `LlamaClient`、基础设施失败 `InfraFailure` 与 OOM 文本识别 `explicit_oom`。
+"""本机回环 HTTP 客户端 `LlamaClient`、基础设施失败 `InfraFailure` 与 Strata 失败分类（`response_body`、`classify_failure`，内部用 `explicit_oom`）。
 
-中间层，不属基础层（它发 HTTP）：`strata`（建客户端、启动失败）、翻译子系统与专名建表（`InfraFailure`、`explicit_oom`）
+中间层，不属基础层（它发 HTTP）：`strata`（建客户端、启动失败）、翻译子系统与专名建表（`InfraFailure`、`response_body`、`classify_failure`）
 单向依赖本模块；本模块只依赖标准库。不导入 torch、`experiments.*`。
 
 来源：2026-11-11 架构整理票据 05（ADR-0025）从 `kototoki/llama_server.py` 拆出产品实际使用的部分，行为不变。
@@ -32,6 +32,18 @@ class InfraFailure(RuntimeError):
 
 def explicit_oom(message: str) -> bool:
     return bool(_OOM.search(message))
+
+
+def response_body(client: Any) -> str:
+    """客户端最近一次交换的 `response.raw` 正文；没有交换或没有该文件时为空串。"""
+    exchange = getattr(client, "last_exchange", None)
+    raw = Path(exchange) / "response.raw" if isinstance(exchange, str) else None
+    return raw.read_text(encoding="utf-8", errors="replace") if raw is not None and raw.is_file() else ""
+
+
+def classify_failure(text: str) -> str:
+    """Strata 失败文本的分类：含显式 OOM 记号为 `oom`，否则 `server_error`（names 与翻译共用的唯一出处）。"""
+    return "oom" if explicit_oom(text) else "server_error"
 
 
 class NoRedirect(HTTPRedirectHandler):

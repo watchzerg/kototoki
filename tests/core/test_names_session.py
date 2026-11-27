@@ -168,6 +168,14 @@ class BuildDocumentTests(Case):
             self.assertNotIn("out of memory", str(caught.exception))  # 正文留在交换目录，不进消息
             self.assertIsNone(session.unavailable)  # 下一部需要模型的影片再启动
 
+    def test_http_error_without_oom_text_is_server_error(self) -> None:
+        self.h.replies = [http_error(500)]
+        self.h.error_raw = '{"error": "internal failure"}'
+        with self.h.session() as session:
+            with self.assertRaisesRegex(names.NamesError, r"^HTTP 500 \(server_error\)"):
+                names.build_document(self.work, self.doc, session, 7)
+            self.assertEqual(self.h.events, ["start:1", "stop:1"])
+
     def test_refused_strata_fails_this_and_every_later_document(self) -> None:
         self.h.start_failures = [StrataRefused("another Strata launch is serving")]
         with self.h.session() as session:

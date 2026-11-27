@@ -58,7 +58,7 @@ covers:
 
 ## 接口与依赖
 
-- 依赖：标准库、`kototoki.artifacts`、`kototoki.config`（只读 `translate.seed`）、`kototoki.srt`、中间层 `kototoki.strata`（`Session`、`StrataRefused`、身份常量）与 `kototoki.local_client`（`InfraFailure`、`explicit_oom`）。共享 `Session` 经 `ensure_started()`、`stop()`、`label`、`client()`、`unavailable` 使用（[Strata 服务与共享 session](strata-session.md#接口与依赖)）。
+- 依赖：标准库、`kototoki.artifacts`、`kototoki.config`（只读 `translate.seed`）、`kototoki.srt`、中间层 `kototoki.strata`（`Session`、`StrataRefused`、身份常量）与 `kototoki.local_client`（`InfraFailure`、`classify_failure`、`response_body`；`context` 档在其结果上由翻译细分）。共享 `Session` 经 `ensure_started()`、`stop()`、`label`、`client()`、`unavailable` 使用（[Strata 服务与共享 session](strata-session.md#接口与依赖)）。
 - 不导入 `names`（只读它写出的表内容，由 `plan` 传入）与研究代码。
 - 编排器只导入包顶层的 `translate_document` 与 `kototoki.merge`；[阶段计划](stage-plan.md)延迟导入包顶层的 `plan` 取 `TranslatePlan`；包顶层还导出 `RECIPE_HASH`、`TranslateError`、`TranslateResult`。`recipes`、`batching`、`resolve`、`generate` 是内部实现。
 - 外部依赖：Strata 本机 8080 服务（安装与模型由用户维护，见[依赖布局](../../development/dependencies.md)）。

@@ -12,7 +12,7 @@ covers:
 负责产品唯一的推理服务 Strata 的生命周期与本机 HTTP 客户端：
 
 - `kototoki/strata.py`：`StrataServer`（启动、身份核对、专家区检查、资源采样、停止与显存释放核实）、显存轮询、Strata 身份常量、整批共用的 `Session`。
-- `kototoki/local_client.py`：`LlamaClient`（只连本机回环）、基础设施失败 `InfraFailure`、OOM 文本识别 `explicit_oom`。
+- `kototoki/local_client.py`：`LlamaClient`（只连本机回环）、基础设施失败 `InfraFailure`、失败分类 `classify_failure` 与 `response_body`。
 
 两者都是中间层：[专名一致性](name-consistency.md)（建表）与[翻译子系统](translation-subsystem.md)单向依赖它们。不负责：何时需要模型、GPU 锁与 Strata pid 写进锁文件（[批次编排](batch-orchestration.md)）；请求内容、重试与追问（各使用者）；Strata 与模型的安装（[依赖布局](../../development/dependencies.md)）。现行定义见[决定定义：产品翻译](../../adr/CURRENT.md#产品翻译)。上级：[架构总览](../INDEX.md)、[模块边界](../module-boundaries.md)。
 
@@ -70,7 +70,7 @@ covers:
 - `request(endpoint, data, *, trace_label=None)` 返回 JSON 对象；非 JSON 或不是对象时抛 `ValueError`，HTTP 与传输异常原样上抛。
 - `chat_completion(body)` 即 `POST /v1/chat/completions`，trace 标签 `chat`。
 - 给了 `trace_dir` 时每个请求写一个交换目录（`request.json`、`response.raw`、`transport.json`）：无标签的目录名为 5 位序号，有标签的为 `<label>-NN`，同一客户端共用一个序号计数。
-- `explicit_oom(message)`：按 CUDA／Vulkan／`std::bad_alloc` 等 OOM 文本判断（不区分大小写）。
+- `classify_failure(text)`：失败文本含 CUDA／Vulkan／`std::bad_alloc` 等 OOM 记号（不区分大小写）为 `oom`，否则 `server_error`；`response_body(client)`：读客户端最近一次交换的 `response.raw`（没有则空串）。names 与翻译的 HTTP 失败、翻译的响应 `error` 都经这两项，是分类的唯一出处。
 
 ## 实现设计
 

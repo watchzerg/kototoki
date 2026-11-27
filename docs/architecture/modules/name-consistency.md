@@ -68,7 +68,7 @@ covers:
 
 - 编排以普通导入使用 `kototoki.names`，只用：`build_document(work_dir, document, session | None, seed) -> BuildResult`（`payload`、`attempts`、`seconds`、`status` ∈ `ok | failed | too_long`）、`NamesError` 与 `BUILD_RECIPE_HASH`。包顶层只导出这几项与 `BuildResult`。
 - [阶段计划](stage-plan.md)延迟导入 `kototoki.names.recipes` 取该 hash。翻译子系统不导入本模块，只读它写出的 `name-table.json`（经 `plan` 传入内容）。
-- 依赖：基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata`（`Session`、`StrataRefused`、身份常量；经 `ensure_started()`、`stop()`、`label`、`client()` 使用，不碰 `ordinal`、`runtime_root`、`client_factory`）与 `kototoki.local_client`（`InfraFailure`、`explicit_oom`）。
+- 依赖：基础层（`artifacts`、`srt`、`recipes`）、中间层 `kototoki.strata`（`Session`、`StrataRefused`、身份常量；经 `ensure_started()`、`stop()`、`label`、`client()` 使用，不碰 `ordinal`、`runtime_root`、`client_factory`）与 `kototoki.local_client`（`InfraFailure`、`classify_failure`、`response_body`）。
 - 不导入 torch、推理模块、翻译子系统与研究代码（`tests/core/test_job.py` 的 `InvariantTests` 禁止导入测试连同 `kototoki.names` 一起守门）。不读配置（`seed` 由编排与阶段计划读）。
 
 ## 代码与验证入口

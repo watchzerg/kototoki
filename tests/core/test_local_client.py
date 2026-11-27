@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 from kototoki.artifacts import read_json
-from kototoki.local_client import LlamaClient, explicit_oom
+from kototoki.local_client import LlamaClient, classify_failure, explicit_oom, response_body
 
 
 class ExplicitOomTests(unittest.TestCase):
@@ -20,6 +20,24 @@ class ExplicitOomTests(unittest.TestCase):
         for message in ("CUDA error: out of memory", "cudaErrorMemoryAllocation"):
             with self.subTest(message=message):
                 self.assertTrue(explicit_oom(message))
+
+
+class FailureClassificationTests(unittest.TestCase):
+    def test_failure_text_is_oom_or_server_error(self):
+        self.assertEqual(classify_failure("CUDA error: out of memory"), "oom")
+        self.assertEqual(classify_failure("internal error"), "server_error")
+
+    def test_response_body_reads_the_last_exchange_of_the_client(self):
+        class Client:
+            last_exchange = None
+
+        client = Client()
+        self.assertEqual(response_body(client), "")
+        with tempfile.TemporaryDirectory() as tmp:
+            client.last_exchange = tmp
+            self.assertEqual(response_body(client), "")  # 交换目录里还没有 response.raw
+            (Path(tmp) / "response.raw").write_bytes("本文".encode() + b"\xff")
+            self.assertTrue(response_body(client).startswith("本文"))
 
 
 class FakeResponse:
